@@ -11,7 +11,7 @@ enum ChatErrorMessages {
             // The router fires an auto-reload attempt on this very failure when
             // the owner armed one, so "try again shortly" is real advice.
             return
-                "Error: This workspace's pool is out of credits. If the owner turned on auto-reload it refills in a moment — send again shortly. Otherwise ask the owner to add credits, or turn off workspace billing for this agent in Settings → Workspaces."
+                "Error: This workspace is out of credits. If the owner turned on auto-reload it refills in a moment — send again shortly. Otherwise ask the owner to add workspace credits, or turn off Bill Workspace Credits for this agent in Sharing → Workspaces."
         }
         // Stale workspace billing: the pref pointed at a workspace/agent the router no
         // longer recognizes (left/removed, workspace deleted, agent unshared).
@@ -24,7 +24,7 @@ enum ChatErrorMessages {
         }
         if isWorkspaceSubscriptionInactiveError(description) {
             return
-                "Error: This workspace isn't active (its subscription lapsed), so workspace-billed inference is paused. Ask the workspace owner to reactivate it, or turn off workspace billing for this agent in Settings → Workspaces."
+                "Error: This workspace isn't active (its subscription lapsed), so workspace-billed inference is paused. Ask the workspace owner to reactivate it, or turn off Bill Workspace Credits for this agent in Sharing → Workspaces."
         }
         if OsaurusRouter.isInsufficientFundsError(description) {
             return "Error: You're out of credits. Add credits to continue."

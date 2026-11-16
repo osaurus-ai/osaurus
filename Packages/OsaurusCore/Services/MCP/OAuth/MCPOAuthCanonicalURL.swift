@@ -8,7 +8,7 @@
 //  authorization & token request must include the **same** canonical resource
 //  URL so the server can validate audience binding. Skipping this works on
 //  some servers and silently fails on Notion/Atlassian. Rules below match
-//  the MCP authorization spec (`2025-06-18`) §3.3:
+//  the MCP authorization spec (`2025-11-25`) §3.3:
 //
 //  - lowercase scheme + host
 //  - drop default ports (80/443)

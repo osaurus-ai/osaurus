@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Network
 import Testing
@@ -12,6 +13,26 @@ struct ModelRepairTests {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("model-repair-\(UUID())")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func chunkedFixture(size: Int) -> Data {
+        let chunkSize = 4 * 1024 * 1024
+        var data = Data(capacity: size)
+        while data.count < size {
+            let count = min(chunkSize, size - data.count)
+            data.append(Data(repeating: UInt8(data.count / chunkSize + 1), count: count))
+        }
+        return data
+    }
+
+    private func digest(of data: Data, gitBlob: Bool) -> ModelFileDigest {
+        if gitBlob {
+            var hash = Insecure.SHA1()
+            hash.update(data: Data("blob \(data.count)\0".utf8))
+            hash.update(data: data)
+            return .gitBlobSHA1(hash.finalize().map { String(format: "%02x", $0) }.joined().uppercased())
+        }
+        return .sha256(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined().uppercased())
     }
 
     @Test(arguments: [false, true])
@@ -85,6 +106,85 @@ struct ModelRepairTests {
             }
         }
         #expect(checks == 3)
+    }
+
+    @Test(arguments: [false, true], [0, 1, (4 << 20) - 1, 4 << 20, (4 << 20) + 1, (8 << 20) + 17])
+    func hashingDrainsEachChunkAndMatchesWholeBufferDigest(gitBlob: Bool, size: Int) throws {
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("payload")
+        let data = chunkedFixture(size: size)
+        try data.write(to: file)
+        let expected = digest(of: data, gitBlob: gitBlob)
+        let chunks = (size + (4 << 20) - 1) / (4 << 20)
+        let released = RepairChunkReleaseCounter()
+        var checks = 0
+
+        // Keep an outer pool alive like a Repair worker. Each chunk's witness
+        // must die before the next read, not at worker/task completion. This
+        // deterministic lifetime check avoids process-footprint timing noise.
+        let matches = try autoreleasepool {
+            let matches = try ModelFileIntegrity.matches(file, size: Int64(size), digest: expected) {
+                checks += 1
+                guard checks > 1 else { return }  // Pre-file cancellation check.
+                #expect(released.count == checks - 2)
+                _ = Unmanaged.passRetained(RepairChunkReleaseWitness(counter: released)).autorelease()
+            }
+            #expect(released.count == chunks, "Last chunk must drain before the outer worker pool")
+            return matches
+        }
+        #expect(matches)
+        #expect(checks == chunks + 1)
+        let wrong: ModelFileDigest =
+            gitBlob
+            ? .gitBlobSHA1(String(repeating: "0", count: 40))
+            : .sha256(String(repeating: "0", count: 64))
+        #expect(try !ModelFileIntegrity.matches(file, size: Int64(size), digest: wrong))
+        #expect(try !ModelFileIntegrity.matches(file, size: Int64(size + 1), digest: expected))
+    }
+
+    @Test(arguments: [false, true], [1, 2, 3])
+    func cancelledHashingDrainsCurrentChunk(gitBlob: Bool, cancelAt: Int) throws {
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("payload")
+        let data = chunkedFixture(size: (8 << 20) + 17)
+        try data.write(to: file)
+        let expected = digest(of: data, gitBlob: gitBlob)
+        let released = RepairChunkReleaseCounter()
+        var checks = 0
+        autoreleasepool {
+            #expect(throws: CancellationError.self) {
+                try ModelFileIntegrity.validate(file, size: Int64(data.count), digest: expected) {
+                    checks += 1
+                    if checks > 1 {
+                        #expect(released.count == checks - 2)
+                        _ = Unmanaged.passRetained(RepairChunkReleaseWitness(counter: released)).autorelease()
+                    }
+                    if checks == cancelAt { throw CancellationError() }
+                }
+            }
+            #expect(checks == cancelAt)
+            #expect(released.count == max(0, cancelAt - 1), "Throwing chunk must drain before the outer pool")
+        }
+    }
+
+    @Test func hashingIOErrorsRemainDifferentFromDigestMismatch() throws {
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("payload")
+        try Data("jello".utf8).write(to: file)
+        #expect(try !ModelFileIntegrity.matches(file, size: 5, digest: .sha256(helloSHA256)))
+        #expect(throws: URLError.self) {
+            try ModelFileIntegrity.validate(file, size: 5, digest: .sha256(helloSHA256))
+        }
+        #expect(throws: (any Error).self) {
+            try ModelFileIntegrity.matches(dir.appendingPathComponent("absent"), size: 5, digest: .sha256(helloSHA256))
+        }
+        #expect(try !ModelFileIntegrity.matches(dir, size: 0, digest: .sha256(helloSHA256)))
+        #expect(throws: (any Error).self) {
+            try ModelFileDigest.sha256(helloSHA256).matches(dir, size: 0)
+        }
     }
 
     @Test(arguments: ["valid", "wrong-size", "wrong-hash", "http-error"])
@@ -161,6 +261,34 @@ struct ModelRepairTests {
             #expect(error.statusCode == 401)
         } catch { Issue.record("Lost HTTP status: \(error)") }
     }
+}
+
+private final class RepairChunkReleaseCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func increment() {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+    }
+}
+
+private final class RepairChunkReleaseWitness: NSObject {
+    private let counter: RepairChunkReleaseCounter
+
+    init(counter: RepairChunkReleaseCounter) {
+        self.counter = counter
+        super.init()
+    }
+
+    deinit { counter.increment() }
 }
 
 private struct RepairHTTPFixture {

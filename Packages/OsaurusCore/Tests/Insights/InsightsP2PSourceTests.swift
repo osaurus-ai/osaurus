@@ -57,8 +57,12 @@ struct InsightsP2PSourceTests {
     }
 
     @Test func sourceFilter_includesP2P() {
-        #expect(SourceFilter.allCases.contains(.p2p))
-        #expect(SourceFilter.p2p.rawValue == "P2P")
+        // The Activity filter bar's Source menu is driven by `RequestSource.allCases`.
+        var filter = ActivityFilter()
+        filter.sources = [.p2p]
+        let p2p = RequestLog(source: .p2p, method: "POST", path: "/agents/0xabc/run", statusCode: 200, durationMs: 1)
+        let http = RequestLog(source: .httpAPI, method: "GET", path: "/v1/models", statusCode: 200, durationMs: 1)
+        #expect(InsightsService.filterInMemory([p2p, http], filter).map { $0.id } == [p2p.id])
     }
 
     // MARK: - Agent-run enrichment shape

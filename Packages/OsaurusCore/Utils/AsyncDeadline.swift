@@ -40,6 +40,70 @@ public struct DeadlineExceededError: Error, LocalizedError, Sendable {
     }
 }
 
+/// Time a deadline does not count: while a person is deciding on an
+/// approval card, a step's or worker's budget stands still. Pauses nest;
+/// the clock runs again when every pause has resumed.
+public final class DeadlineClock: Sendable {
+    private struct State: Sendable {
+        var depth = 0
+        var pausedSince: Date?
+        var pausedTotal: TimeInterval = 0
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    public init() {}
+
+    public func pause(now: Date = Date()) {
+        state.withLock { s in
+            if s.depth == 0 { s.pausedSince = now }
+            s.depth += 1
+        }
+    }
+
+    public func resume(now: Date = Date()) {
+        state.withLock { s in
+            guard s.depth > 0 else { return }
+            s.depth -= 1
+            if s.depth == 0, let since = s.pausedSince {
+                s.pausedTotal += max(0, now.timeIntervalSince(since))
+                s.pausedSince = nil
+            }
+        }
+    }
+
+    public var isPaused: Bool { state.withLock { $0.depth > 0 } }
+
+    /// Seconds spent paused so far, including a pause still open.
+    public func pausedSeconds(now: Date = Date()) -> TimeInterval {
+        state.withLock { s in
+            s.pausedTotal + (s.pausedSince.map { max(0, now.timeIntervalSince($0)) } ?? 0)
+        }
+    }
+
+    /// Whether a budget of `seconds` that started at `start` is spent,
+    /// not counting paused time. Never spent while paused.
+    public func hasElapsed(_ seconds: TimeInterval, since start: Date, now: Date = Date()) -> Bool {
+        remaining(seconds, since: start, now: now) <= 0 && !isPaused
+    }
+
+    /// Unpaused time left of a `seconds` budget that started at `start`.
+    public func remaining(_ seconds: TimeInterval, since start: Date, now: Date = Date()) -> TimeInterval {
+        seconds - (now.timeIntervalSince(start) - pausedSeconds(now: now))
+    }
+
+    /// Pauses this clock while `outer` is told the same, so nested budgets
+    /// (a workflow step running a spawned worker) all stand still together.
+    public func observer(
+        chainingTo outer: (@Sendable (_ waiting: Bool) async -> Void)?
+    ) -> @Sendable (_ waiting: Bool) async -> Void {
+        { [self] waiting in
+            if waiting { pause() } else { resume() }
+            await outer?(waiting)
+        }
+    }
+}
+
 /// Race `operation` against a wall-clock deadline and the caller's own
 /// cancellation, returning its value.
 ///
@@ -56,11 +120,16 @@ public struct DeadlineExceededError: Error, LocalizedError, Sendable {
 ///   deadline fires first, or `CancellationError` when the caller is
 ///   cancelled while waiting (Stop must unblock immediately even when the
 ///   underlying work cannot be interrupted).
+///
+/// With a `clock`, time it spends paused does not count toward `seconds`:
+/// the deadline re-arms for the unpaused remainder instead of firing.
 public func valueWithDeadline<T: Sendable>(
     seconds: Double,
+    clock: DeadlineClock? = nil,
     operationName: String = "operation",
     operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
+    let start = Date()
     let work = Task(priority: .high) { try await operation() }
     let state = OSAllocatedUnfairLock<CheckedContinuation<T, Error>?>(initialState: nil)
 
@@ -92,16 +161,25 @@ public func valueWithDeadline<T: Sendable>(
             // Deadline racer on a Dispatch timer rather than `Task.sleep`
             // so cooperative-pool saturation cannot delay the bound (see
             // `runWithDeadline` below).
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(
-                deadline: .now() + max(0, seconds)
-            ) {
-                if let cont = take() {
-                    work.cancel()
-                    cont.resume(
-                        throwing: DeadlineExceededError(operationName: operationName, seconds: seconds)
-                    )
+            @Sendable func arm(after delay: Double) {
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                    deadline: .now() + max(0, delay)
+                ) {
+                    if let clock, state.withLock({ $0 != nil }) {
+                        // A paused clock has no known end; look again shortly.
+                        if clock.isPaused { return arm(after: 1) }
+                        let left = clock.remaining(seconds, since: start)
+                        if left > 0.001 { return arm(after: left) }
+                    }
+                    if let cont = take() {
+                        work.cancel()
+                        cont.resume(
+                            throwing: DeadlineExceededError(operationName: operationName, seconds: seconds)
+                        )
+                    }
                 }
             }
+            arm(after: seconds)
         }
     } onCancel: {
         work.cancel()

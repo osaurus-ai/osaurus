@@ -77,8 +77,8 @@ final class CaptureRouterTests: XCTestCase {
         )
     }
 
-    func testCloudRouteRequiresConsent() async {
-        let frame = await makeScrubbedFrame()
+    func testCloudRouteRequiresConsent() async throws {
+        let frame = try await makeScrubbedFrame()
         let av = availability(screenRecording: true)
         // No consent → no route, no matter that the frame is scrubbed.
         XCTAssertNil(CaptureRouter.cloudRoute(scrubbed: frame, consentGranted: false, availability: av))
@@ -104,15 +104,9 @@ final class CaptureRouterTests: XCTestCase {
 
     /// A scrubbed frame can only come from `FrameScrubber` — build one from a
     /// trivial solid image (no text ⇒ nothing masked, but still a `ScrubbedFrame`).
-    private func makeScrubbedFrame() async -> ScrubbedFrame {
+    private func makeScrubbedFrame() async throws -> ScrubbedFrame {
         let cu = renderCUImage(text: "")
-        let frame = await FrameScrubber.scrub(cu, mode: .pii)
-        return frame
-            ?? {
-                // Should never happen for a decodable image; fail loudly if it does.
-                XCTFail("FrameScrubber returned nil for a valid image")
-                fatalError("unreachable")
-            }()
+        return try await FrameScrubber.scrub(cu, mode: .pii)
     }
 }
 
@@ -148,24 +142,43 @@ final class CloudVisionConsentTests: XCTestCase {
 // MARK: - Frame scrubber
 
 final class FrameScrubberTests: XCTestCase {
-    func testReturnsScrubbedFrameForValidImage() async {
+    func testReturnsScrubbedFrameForValidImage() async throws {
         let cu = renderCUImage(text: "hello world")
-        let frame = await FrameScrubber.scrub(cu, mode: .pii)
-        XCTAssertNotNil(frame)
-        XCTAssertEqual(frame?.image.mimeType, "image/jpeg")
+        let frame = try await FrameScrubber.scrub(cu, mode: .pii)
+        XCTAssertEqual(frame.image.mimeType, "image/jpeg")
     }
 
-    func testAllTextMasksAtLeastAsMuchAsPII() async {
+    func testAllTextMasksAtLeastAsMuchAsPII() async throws {
         // Independent of exact OCR output: masking every text region is a
         // superset of masking only the PII regions.
         let image = renderCGImage(text: "Reach me: jane.doe@example.com or 415-555-0142")
-        guard let pii = await FrameScrubber.scrub(cgImage: image, mode: .pii),
-            let all = await FrameScrubber.scrub(cgImage: image, mode: .allText)
-        else { return XCTFail("scrub returned nil") }
+        let pii = try await FrameScrubber.scrub(cgImage: image, mode: .pii)
+        let all = try await FrameScrubber.scrub(cgImage: image, mode: .allText)
         XCTAssertGreaterThanOrEqual(all.1.maskedRegions, pii.1.maskedRegions)
         // If OCR ran at all, allText masks exactly the recognized regions.
         if all.1.textRegions > 0 {
             XCTAssertEqual(all.1.maskedRegions, all.1.textRegions)
+        }
+    }
+
+    /// Regression for APPLE-MACOS-37K: a degenerate image Vision can't
+    /// recognize must report failure instead of trapping on a double-resumed
+    /// continuation or claiming an empty successful scan.
+    func testDegenerateImageDoesNotTrap() async {
+        let image = renderCGImage(text: "", size: CGSize(width: 1, height: 1))
+        for mode in [ScrubMode.pii, .allText] {
+            do {
+                let result = try await FrameScrubber.scrub(cgImage: image, mode: mode)
+                XCTAssertEqual(result.1.textRegions, 0)
+                XCTAssertEqual(result.1.maskedRegions, 0)
+            } catch let error as FrameScrubError {
+                switch error {
+                case .recognitionFailed, .recognitionResultsUnavailable: break
+                default: XCTFail("Unexpected degenerate-image failure: \(error)")
+                }
+            } catch {
+                XCTFail("Unexpected failure: \(error)")
+            }
         }
     }
 }

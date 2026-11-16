@@ -34,6 +34,27 @@ import Foundation
         case none
     }
 
+    /// The VM's network for one boot. Networking is a VM-wide boot
+    /// property shared by every container in the pod, so it is composed
+    /// from the members' own policies.
+    public enum SandboxPodNetwork: String, Equatable, Sendable {
+        /// Every member is open: shared NAT, every protocol.
+        case nat
+        /// Members disagree: host-only network, and members reach the
+        /// outside only through the filtering proxy, which applies each
+        /// one's own policy. Only proxy-aware HTTP(S) clients get out.
+        case filtered
+        /// Every member is off: no guest networking.
+        case none
+    }
+
+    /// What the filtering proxy lets one caller reach.
+    public enum SandboxProxyGrant: Equatable, Sendable {
+        /// Any public host name (an open agent sharing a filtered VM).
+        case anyPublicHost
+        case domains([String])
+    }
+
     public enum SandboxEgressPolicy {
 
         // MARK: - Mode resolution
@@ -52,6 +73,43 @@ import Foundation
             guard networkEnabled else { return .none }
             let domains = normalizedAllowlist(allowedDomains)
             return domains.isEmpty ? .open : .allowlist(domains)
+        }
+
+        /// The pod's network for members with these policies. A pod with no
+        /// agent members runs only setup and diagnostics, which keep NAT.
+        public static func podNetwork(for members: [SandboxEgressMode]) -> SandboxPodNetwork {
+            if members.allSatisfy({ $0 == .open }) { return .nat }
+            if members.allSatisfy({ $0 == .none }) { return .none }
+            return .filtered
+        }
+
+        /// The proxy grant for a caller with `mode`: nothing when its
+        /// network is off, any public host when open, else its own domains
+        /// plus those its installed plugins declare.
+        public static func proxyGrant(
+            for mode: SandboxEgressMode,
+            pluginNetworkPermissions: [String?]
+        ) -> SandboxProxyGrant? {
+            switch mode {
+            case .none:
+                return nil
+            case .open:
+                return .anyPublicHost
+            case .allowlist(let domains):
+                return .domains(
+                    resolvedAllowlist(agentDomains: domains, pluginNetworkPermissions: pluginNetworkPermissions))
+            }
+        }
+
+        public static func hostAllowed(_ host: String, grant: SandboxProxyGrant) -> Bool {
+            switch grant {
+            case .domains(let allowlist):
+                return hostAllowed(host, allowlist: allowlist)
+            case .anyPublicHost:
+                let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                return !normalized.isEmpty && !isIPLiteral(normalized.lowercased())
+            }
         }
 
         /// Lowercase, trim, drop empties and invalid patterns. Accepts

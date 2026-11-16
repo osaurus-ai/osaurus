@@ -1,0 +1,20 @@
+{
+  "id": "chat_import_reader.codex-toml",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • Codex config.toml MCP block",
+  "query": "Use this config",
+  "notes": "TOML is not a fast-path format; the reader reports the server and the env name, never the token value.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "your message",
+          "text": "[mcp_servers.github]\ncommand = \"npx\"\nargs = [\"-y\", \"@modelcontextprotocol/server-github\"]\nenv = { \"GITHUB_PERSONAL_ACCESS_TOKEN\" = \"ghp_exampleTokenValue000111\" }"
+        }
+      ],
+      "items": [{ "kind": "mcp_server", "name": "github" }],
+      "forbidden": ["ghp_exampleTokenValue000111"]
+    }
+  }
+}

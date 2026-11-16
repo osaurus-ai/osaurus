@@ -1,0 +1,42 @@
+{
+  "id": "configurator.schedule-create-daily",
+  "domain": "configurator",
+  "label": "configurator • create a daily schedule automation (declarative apply)",
+  "query": "Create a daily schedule named \"Morning Brief\" for the agent \"Eval Reporter Agent\" at 08:00 that summarizes my unread news.",
+  "notes": "osaurus_config apply with an automations entry whose source is a schedule (name, agent by name, instructions, frequency 'daily', frequency_time_of_day). The referenced agent is seeded so create SUCCEEDS (the happy path: correct daily mapping + a real schedule automation) rather than looping on a not-found agent — the agent is torn down after the case. The selection assertion pins the apply, the daily frequency, and the automations section (the legacy `schedules:` section is still accepted at runtime).",
+  "fixtures": {
+    "seedAgents": [
+      {
+        "id": "e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079",
+        "name": "Eval Reporter Agent"
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "daily"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "automations"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

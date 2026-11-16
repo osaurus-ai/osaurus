@@ -290,6 +290,223 @@ struct OsaurusRouterAPIClientTests {
         }
     }
 
+    // MARK: - Announcements (unauthenticated feed)
+
+    /// The feed is public and IP rate-limited: no wallet headers may be
+    /// attached (the signer would otherwise leak the address on a call
+    /// that happens on every launch), and the version travels as a query
+    /// item so the router can filter by `min_app_version`.
+    @Test func announcements_isUnsignedAndCarriesAppVersion() async throws {
+        let client = try makeClient { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/announcements")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            #expect(query == [URLQueryItem(name: "app_version", value: "1.42.0")])
+            #expect(request.value(forHTTPHeaderField: "x-wallet-address") == nil)
+            #expect(request.value(forHTTPHeaderField: "x-wallet-timestamp") == nil)
+            #expect(request.value(forHTTPHeaderField: "x-wallet-signature") == nil)
+            return json(
+                #"{"server_time":"2026-10-02T10:00:00Z","announcements":[{"id":"a1","slug":"raptor-launch","title":"Raptor is live","body":"**Today** on Product Hunt.","body_format":"markdown","image_url":"https://cdn.osaurus.ai/raptor.png","ctas":[{"label":"Upvote","kind":"external_url","url":"https://www.producthunt.com/posts/osaurus","style":"primary"},{"label":"Credits","kind":"deeplink","url":"osaurus://settings?tab=credits"}],"starts_at":"2026-10-02T07:00:00Z","ends_at":"2026-10-03T07:00:00Z","priority":10}]}"#
+            )
+        }
+
+        let response = try await client.announcements(appVersion: "1.42.0")
+        #expect(response.serverTime == "2026-10-02T10:00:00Z")
+        #expect(response.announcements.count == 1)
+        let a = try #require(response.announcements.first)
+        #expect(a.slug == "raptor-launch")
+        #expect(a.priority == 10)
+        #expect(a.resolvedImageURL?.host == "cdn.osaurus.ai")
+        #expect(a.actionableCTAs.count == 2)
+        #expect(a.actionableCTAs[0].isPrimary)
+        #expect(a.actionableCTAs[1].isDeepLink)
+    }
+
+    @Test func announcements_omitsEmptyAppVersionAndMapsRateLimit() async throws {
+        let client = try makeClient { request in
+            #expect(request.url?.query == nil)
+            return (429, Data(#"{"error":{"code":"RATE_LIMITED","message":"slow down"}}"#.utf8),
+                ["content-type": "application/json", "retry-after": "120"])
+        }
+
+        do {
+            _ = try await client.announcements(appVersion: nil)
+            Issue.record("Expected rate-limited error")
+        } catch let error as OsaurusRouterAPIError {
+            guard case .rateLimited(let retryAfter) = error else {
+                Issue.record("Expected .rateLimited, got \(error)")
+                return
+            }
+            #expect(retryAfter == "120")
+        }
+    }
+
+    /// Insights must not record the public feed or health probe (no account
+    /// data leaves), but every signed control-plane call stays logged.
+    @Test func controlPlaneLogging_excludesUnauthenticatedProbes() {
+        #expect(!OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: "/announcements"))
+        #expect(!OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: "/health"))
+        #expect(!OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: "/v1/search"))
+        #expect(OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: "/credits/balance"))
+        #expect(OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: "/workspaces"))
+        #expect(OsaurusRouterAPIClient.shouldLogControlPlaneCall(path: nil))
+    }
+
+    // MARK: - Help (/support/*)
+
+    private static let supportThreadJSON = #"""
+        {"id":"7d0f0c2e-0000-4000-8000-000000000001","subject":"Chat freezes","status":"open","unread":false,
+         "last_user_message_at":"2026-11-13T21:22:28.955Z","last_staff_message_at":null,
+         "created_at":"2026-11-13T21:22:28.955Z","updated_at":"2026-11-13T21:22:28.955Z",
+         "messages":[{"id":"m1","author":"user","body":"Chat freezes","created_at":"2026-11-13T21:22:28.955Z"}]}
+        """#
+
+    @Test func supportThreads_isSignedAndDecodesUnreadCount() async throws {
+        let client = try makeClient { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/support/threads")
+            #expect(request.value(forHTTPHeaderField: "x-wallet-address") == TestKeys.aliceAddress.lowercased())
+            #expect(request.value(forHTTPHeaderField: "x-wallet-signature") != nil)
+            return json(
+                #"""
+                {"data":[{"id":"t1","subject":"S","status":"answered","unread":true,
+                  "last_user_message_at":"2026-11-13T21:22:28Z","last_staff_message_at":"2026-11-13T22:00:00Z",
+                  "created_at":"2026-11-13T21:22:28Z","updated_at":"2026-11-13T22:00:00Z"}],"unread_count":1}
+                """#
+            )
+        }
+
+        let response = try await client.supportThreads()
+        #expect(response.unreadCount == 1)
+        #expect(response.data.map(\.status) == [.answered])
+    }
+
+    /// The report body on the wire: literal `consent: true`, snake_case
+    /// app and hardware keys, and the diagnostics value untouched.
+    @Test func createSupportThread_postsConsentAndReportFields() async throws {
+        let client = try makeClient { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/support/threads")
+            #expect(request.value(forHTTPHeaderField: "x-wallet-address") == TestKeys.aliceAddress.lowercased())
+            let data = request.httpBodyStreamData ?? request.httpBody ?? Data()
+            let body = try JSONDecoder().decode(JSONValue.self, from: data)
+            guard case .object(let fields) = body else {
+                Issue.record("report body is not a JSON object")
+                return json(Self.supportThreadJSON, status: 201)
+            }
+            #expect(fields["consent"] == .bool(true))
+            #expect(fields["description"] == .string("Chat freezes when I attach a PDF"))
+            #expect(
+                fields["app"]
+                    == .object([
+                        "version": .string("1.2.3"), "build": .string("456"), "os_version": .string("macOS test"),
+                    ]))
+            #expect(
+                fields["hardware"]
+                    == .object(["model": .string("MacBook Air"), "chip": .string("M4"), "memory_gb": .number(24)]))
+            #expect(fields["diagnostics"] == .object(["schemaVersion": .number(1)]))
+            return json(Self.supportThreadJSON, status: 201)
+        }
+
+        let thread = try await client.createSupportThread(
+            OsaurusRouterSupportReportBody(
+                description: "Chat freezes when I attach a PDF",
+                consent: true,
+                app: .init(version: "1.2.3", build: "456", osVersion: "macOS test"),
+                hardware: .init(model: "MacBook Air", chip: "M4", memoryGB: 24),
+                diagnostics: .object(["schemaVersion": .number(1)])
+            ))
+        #expect(thread.id == "7d0f0c2e-0000-4000-8000-000000000001")
+        #expect(thread.messages?.count == 1)
+    }
+
+    @Test func supportThreadDetailReplyAndRead_useTheThreadPath() async throws {
+        let id = "7d0f0c2e-0000-4000-8000-000000000001"
+        let seen = RequestRecorder()
+        let client = try makeClient { request in
+            let body = String(data: request.httpBodyStreamData ?? request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            seen.record("\(request.httpMethod ?? "") \(request.url?.path ?? "") \(body)")
+            #expect(request.value(forHTTPHeaderField: "x-wallet-signature") != nil)
+            return json(Self.supportThreadJSON)
+        }
+
+        _ = try await client.supportThread(id: id)
+        _ = try await client.replyToSupportThread(id: id, body: "Still happening")
+        _ = try await client.markSupportThreadRead(id: id)
+
+        #expect(
+            seen.entries == [
+                "GET /support/threads/\(id) ",
+                #"POST /support/threads/\#(id)/messages {"body":"Still happening"}"#,
+                "POST /support/threads/\(id)/read ",
+            ])
+    }
+
+    /// A thread id is a path segment the app got from the router; anything
+    /// that could change the path is refused before a request is signed.
+    @Test func supportThread_rejectsIdsThatAreNotOnePathSegment() async throws {
+        let seen = RequestRecorder()
+        let client = try makeClient { request in
+            seen.record(request.url?.path ?? "")
+            return json(Self.supportThreadJSON)
+        }
+
+        for id in ["../credits/balance", "a/b", "a?x=1", ""] {
+            await #expect(throws: (any Error).self) { _ = try await client.supportThread(id: id) }
+            await #expect(throws: (any Error).self) { _ = try await client.markSupportThreadRead(id: id) }
+            await #expect(throws: (any Error).self) {
+                _ = try await client.replyToSupportThread(id: id, body: "x")
+            }
+        }
+        #expect(seen.entries.isEmpty)
+    }
+
+    @Test func supportErrors_mapOpenLimitAndRateLimit() async throws {
+        let limited = try makeClient { _ in
+            (429, Data(#"{"error":{"code":"RATE_LIMITED","message":"slow down"}}"#.utf8), ["retry-after": "120"])
+        }
+        do {
+            _ = try await limited.supportThreads()
+            Issue.record("expected a rate-limit error")
+        } catch let error as OsaurusRouterAPIError {
+            guard case .rateLimited(let retryAfter) = error else {
+                Issue.record("unexpected error: \(error)")
+                return
+            }
+            #expect(retryAfter == "120")
+        }
+
+        let capped = try makeClient { _ in
+            json(#"{"error":{"code":"INVALID_STATE","message":"too many open threads"}}"#, status: 409)
+        }
+        do {
+            _ = try await capped.createSupportThread(
+                OsaurusRouterSupportReportBody(
+                    description: "Chat freezes when I attach a PDF", consent: true,
+                    app: .init(version: nil, build: nil, osVersion: nil),
+                    hardware: .init(model: nil, chip: nil, memoryGB: nil), diagnostics: nil))
+            Issue.record("expected the open-report cap error")
+        } catch let error as OsaurusRouterAPIError {
+            guard case .server(let code, _, let status) = error else {
+                Issue.record("unexpected error: \(error)")
+                return
+            }
+            #expect(code == "INVALID_STATE")
+            #expect(status == 409)
+            #expect(
+                SupportService.userMessage(for: error)
+                    == L("You already have 3 open reports. Add to one of them, or wait until one is closed."))
+        }
+    }
+
+    @Test func supportCalls_areLabeledHelpInInsights() {
+        #expect(OsaurusRouterAPIClient.controlPlanePurpose(path: "/support/threads") == L("Help & feedback"))
+        #expect(
+            OsaurusRouterAPIClient.controlPlanePurpose(path: "/support/threads/abc/messages")
+                == L("Help & feedback"))
+        #expect(OsaurusRouterAPIClient.controlPlanePurpose(path: "/credits/balance") != L("Help & feedback"))
+    }
+
     private func makeClient(
         handler: @escaping @Sendable (URLRequest) throws -> (Int, Data, [String: String])
     ) throws -> OsaurusRouterAPIClient {
@@ -312,6 +529,15 @@ struct OsaurusRouterAPIClientTests {
     private func json(_ body: String, status: Int = 200) -> (Int, Data, [String: String]) {
         (status, Data(body.utf8), ["content-type": "application/json"])
     }
+}
+
+/// Requests the stub saw, in order.
+private final class RequestRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _entries: [String] = []
+
+    var entries: [String] { lock.withLock { _entries } }
+    func record(_ entry: String) { lock.withLock { _entries.append(entry) } }
 }
 
 private final class RouterURLProtocol: URLProtocol, @unchecked Sendable {

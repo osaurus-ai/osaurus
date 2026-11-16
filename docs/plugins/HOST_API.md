@@ -100,7 +100,7 @@ You give up the early misalignment detection if you do this, so prefer to leave 
 
 ## Config
 
-Per-plugin secrets, scoped by `(plugin_id, agent_id)` and stored in the macOS Keychain.
+Per-plugin config, scoped by `(plugin_id, agent_id)`. Keys the manifest declares under `secrets` resolve through Keys ([CREDENTIALS.md](../CREDENTIALS.md)): the calling agent's own value, then the value shared by all agents. `config_set` / `config_delete` of a declared secret change the calling agent's own value. Any other key is plugin config or runtime state and is stored per plugin and agent in the macOS Keychain as before.
 
 ### `config_get(key) -> char*`
 
@@ -179,7 +179,7 @@ The host also emits a one-shot warning per `(plugin, op)` to the unified log whe
 
 ## Storage
 
-Per-plugin SQLite database, lazy-opened on first use. It follows the app-wide storage posture — plaintext SQLite by default (protected by macOS FileVault), or SQLCipher-encrypted when the user opts in under **Settings → Storage** (see [STORAGE.md](../STORAGE.md)). Either way the API is identical; `ATTACH`, `DETACH`, and `LOAD_EXTENSION` are blocked at the SQL guard.
+Per-plugin SQLite database, lazy-opened on first use. It follows the app-wide storage posture — plaintext SQLite by default (protected by macOS FileVault), or SQLCipher-encrypted when the user opts in under **Settings… (⌘,) → Privacy & Security → Data & Storage** (see [STORAGE.md](../STORAGE.md)). Either way the API is identical; `ATTACH`, `DETACH`, and `LOAD_EXTENSION` are blocked at the SQL guard.
 
 **Size cap.** Each plugin's database is capped at **100 MiB** by default (configurable per-context, but not via the plugin API — this is a host-side guard). INSERT / UPDATE statements that would push past the cap fail with `database or disk is full`; the plugin sees a normal SQL error in the response envelope (no host crash). For larger payloads, use shared artifacts via the chat / dispatch flow, not `db_exec`.
 
@@ -301,7 +301,9 @@ From any thread (including the `on_chunk` callback or a separate worker), call `
 }
 ```
 
-`complete_cancel` is non-blocking — it only flips the cancellation flag. The streaming task observes it between deltas, so cancellation latency is bounded by the model's per-token decode time. Callers from `on_chunk` are safe (no deadlock).
+`complete_cancel` is non-blocking. It cancels the active host task directly, including while the model stream is waiting for its first event; it does not wait for another delta. Downstream work must cooperate with task cancellation before cleanup can finish. Calls from `on_chunk` are safe. If concurrent calls reuse an ID, cancellation reaches every currently active call with that ID; each call removes only its own registration.
+
+Tool execution uses the shared ToolRegistry timeout policy. Streaming-aware tools such as `shell_run` and `sandbox_exec` opt out of the per-tool wall-clock cap and retain their own wait/termination lifecycle. Plugin inference still has the host bridge’s overall 30-minute deadline.
 
 ### `complete_cancel(stream_id) -> void`
 

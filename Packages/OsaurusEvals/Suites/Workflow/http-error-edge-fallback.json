@@ -1,0 +1,80 @@
+{
+  "id": "workflow.http-error-edge-fallback",
+  "domain": "workflow",
+  "label": "workflow • a failed http step takes its error edge; the success branch is skipped",
+  "query": "a failed http step takes its error edge; the success branch is skipped",
+  "notes": "No model, no network beyond a refused loopback connection. The http step calls a port nothing listens on, fails, and with `on_error: continue` the run carries on along the `on: error` edge: a state step records the error message, the success-branch step is skipped, and the join-any step after both reads the recorded message into the output.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [
+          { "from": "fetch", "to": "record_ok" },
+          { "from": "fetch", "to": "record_error", "on": "error" },
+          { "from": "record_ok", "to": "done" },
+          { "from": "record_error", "to": "done" }
+        ],
+        "examples": [],
+        "input_schema": { "properties": {}, "type": "object" },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "fetch",
+            "kind": "http",
+            "name": "Fetch Health",
+            "on_error": "continue",
+            "timeout": 20,
+            "retry": { "max_attempts": 1, "backoff_seconds": 0 },
+            "http": {
+              "method": "get",
+              "url": "http://127.0.0.1:9/health",
+              "response": "json"
+            },
+            "output_schema": { "type": "object" }
+          },
+          {
+            "id": "record_ok",
+            "kind": "state",
+            "name": "Record OK",
+            "state": { "action": "set", "key": "last", "value": "ok" },
+            "output_schema": {}
+          },
+          {
+            "id": "record_error",
+            "kind": "state",
+            "name": "Record Error",
+            "state": { "action": "set", "key": "last", "value": "failed: {{nodes.fetch.output.error.kind}}" },
+            "output_schema": {}
+          },
+          {
+            "id": "done",
+            "kind": "state",
+            "name": "Read Back",
+            "state": { "action": "get", "key": "last" },
+            "output_schema": {}
+          }
+        ],
+        "output": { "last": "{{nodes.done.output.value}}", "exists": "{{nodes.done.output.exists}}" },
+        "output_schema": {
+          "properties": { "last": { "type": "string" }, "exists": { "type": "boolean" } },
+          "required": ["last", "exists"],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {},
+      "status": "completed",
+      "nodeStatuses": {
+        "fetch": "failed",
+        "record_ok": "skipped",
+        "record_error": "done",
+        "done": "done"
+      },
+      "outputKeys": ["last"],
+      "outputValues": {
+        "exists": [true]
+      }
+    }
+  }
+}

@@ -229,7 +229,9 @@ final class RedactionHoverController {
 /// ("before leaving your Mac" / "after the cloud responded") so the
 /// user understands the privacy direction without parsing a verb.
 struct RedactionTooltipView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(52, enabled: inspectionEnabled) }
     let model: RedactionTooltipModel
 
     private var titleKey: String {
@@ -258,53 +260,57 @@ struct RedactionTooltipView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        Group {
+
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(52, "gap", theme.space.s10, theme))) {
             Image(systemName: "shield.lefthalf.filled")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.accentColor)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 4) {
+                .glyphSize(.label, weight: .semibold)
+                .foregroundColor(theme.status.info.foreground)
+                .padding(.top, theme.space.s2)
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(52, "gap", theme.space.s4, theme))) {
                 Text(String(localized: String.LocalizationValue(titleKey), bundle: .module))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .componentInspectionText(52, role: .caption, fallback: .footnote, weight: 600, theme: theme)
+                    .foregroundColor(theme.text.primary)
                 valueText
                 Text(String(localized: String.LocalizationValue(subtitleKey), bundle: .module))
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.secondaryText)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+                    .componentInspectionText(52, role: .caption, fallback: .micro, theme: theme)
+                    .foregroundColor(theme.text.secondary)
+            }.catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.body.verticalGap")
+        }.catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.body.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(52, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(52, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.body.paddingY")
         .frame(maxWidth: 320, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.secondaryBackground)
+            RoundedRectangle(cornerRadius: theme.radius.medium)
+                .fill(theme.surface.subtle)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.accentColor.opacity(0.25), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                        .stroke(theme.status.info.border, lineWidth: theme.stroke.default)
                 )
         )
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     @ViewBuilder
     private var valueText: some View {
         let base = Text(model.placeholderToken)
-            .foregroundColor(theme.accentColor)
+            .foregroundColor(theme.status.info.foreground)
         if rendersValueAsCapsule {
             base
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .componentInspectionText(52, role: .code, fallback: .footnote, weight: 500, family: .code, theme: theme)
                 .textSelection(.enabled)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.valueText.paddingX", inheriting: NativeComponentInspectionStyle.metric(52, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.valueText.paddingX")
+                .padding(.vertical, theme.space.s2)
                 .background(
-                    Capsule().fill(theme.accentColor.opacity(0.12))
+                    Capsule().fill(theme.status.info.background)
                 )
         } else {
             // Preview direction: an email / phone / URL reads
             // better in the body font without a capsule wrapper.
             base
-                .font(.system(size: 12, weight: .medium))
+                .componentInspectionText(52, role: .caption, fallback: .caption, weight: 500, theme: theme)
                 .textSelection(.enabled)
                 .lineLimit(2)
                 .truncationMode(.middle)

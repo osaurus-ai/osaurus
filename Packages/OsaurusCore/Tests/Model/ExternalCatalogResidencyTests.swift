@@ -5,6 +5,59 @@ import Testing
 
 @Suite(.serialized)
 struct ExternalCatalogResidencyTests {
+    @Test func dynamicReasoningProfileDoesNotMemoizeAColdMiss() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("reasoning-profile-\(UUID().uuidString)")
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousExternal = ExternalModelLocator.testRootsOverride
+            let previousLocal = ModelManager.scanLocalModelsOverrideForTests
+            defer {
+                ExternalModelLocator.testRootsOverride = previousExternal
+                ModelManager.scanLocalModelsOverrideForTests = previousLocal
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.invalidateInMemory()
+                ModelManager.invalidateLocalModelsCache()
+                LocalReasoningCapability.invalidate()
+                try? FileManager.default.removeItem(at: root)
+            }
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root.appendingPathComponent("state")
+            ExternalModelLocator.testRootsOverride = []
+            ModelManager.scanLocalModelsOverrideForTests = { _ in [] }
+            ExternalModelLocator.invalidateInMemory()
+            _ = ExternalModelLocator.rescan()
+            ModelManager.invalidateLocalModelsCache()
+            _ = ModelManager.discoverLocalModels()
+            LocalReasoningCapability.invalidate()
+            let model = "publisher/reasoning-fixture-\(UUID().uuidString)"
+            let initiallyMissing = ModelProfileRegistry.profile(for: model) == nil
+            #expect(initiallyMissing)
+
+            let bundle = root.appendingPathComponent("models/\(model)")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            for name in ["config.json", "tokenizer.json", "model.safetensors"] {
+                try Data("{}".utf8).write(to: bundle.appendingPathComponent(name))
+            }
+            try Data("{% if enable_thinking is undefined or enable_thinking %}<think>{% endif %}".utf8)
+                .write(to: bundle.appendingPathComponent("chat_template.jinja"))
+            ExternalModelLocator.testRootsOverride = [(root.appendingPathComponent("models"), .customModelFolder)]
+            _ = ExternalModelLocator.rescan()
+            LocalReasoningCapability.invalidate()
+            let capability = await LocalReasoningCapability.resolveForDispatch(modelId: model)
+            #expect(capability.isToggleableThinking)
+            let detected = ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
+            #expect(detected)
+
+            ExternalModelLocator.testRootsOverride = []
+            _ = ExternalModelLocator.rescan()
+            LocalReasoningCapability.invalidate()
+            _ = await LocalReasoningCapability.resolveForDispatch(modelId: model)
+            let removed = ModelProfileRegistry.profile(for: model) == nil
+            #expect(removed)
+        }
+    }
+
     @Test func completedExternalCatalogInvalidatesProvisionalNameMiss() async throws {
         try await StoragePathsTestLock.shared.run {
             let root = FileManager.default.temporaryDirectory

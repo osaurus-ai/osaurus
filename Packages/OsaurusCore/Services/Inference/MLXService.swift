@@ -15,7 +15,15 @@ private struct LocalModelRef {
     let modelId: String
 }
 
-actor MLXService: ToolCapableService {
+actor MLXService: ToolCapableService, ResponsesGenerationService {
+
+    enum OneShotError: Error, Equatable, LocalizedError {
+        case outputTruncated
+
+        var errorDescription: String? {
+            "The local model reached its output limit before completing the response"
+        }
+    }
 
     /// Shared instance for convenience (actor is stateless, delegates to ModelRuntime.shared)
     static let shared = MLXService()
@@ -51,7 +59,9 @@ actor MLXService: ToolCapableService {
     }
 
     fileprivate nonisolated static func findModel(named name: String) -> LocalModelRef? {
-        if let found = ModelManager.findInstalledModel(named: name) {
+        if let installed = ModelManager.findInstalledMLXModel(named: name), !installed.isDecision,
+            !installed.isEmbedding,
+            let found = ModelManager.findInstalledModel(named: name) {
             return LocalModelRef(name: found.name, modelId: found.id)
         }
         return nil
@@ -66,6 +76,7 @@ actor MLXService: ToolCapableService {
         stopSequences: [String]
     ) async throws -> AsyncThrowingStream<String, Error> {
         let model = try selectModel(requestedName: requestedModel)
+        let parameters = try Self.structuredParameters(parameters, model: model.name)
         try Self.validateRuntimePolicy(
             modelName: model.name,
             modelId: model.modelId,
@@ -74,15 +85,84 @@ actor MLXService: ToolCapableService {
             tools: [],
             runtime: ServerRuntimeSettingsStore.snapshot()
         )
-        return try await ModelRuntime.shared.streamWithTools(
-            messages: messages,
-            parameters: parameters,
-            stopSequences: stopSequences,
-            tools: [],
-            toolChoice: nil,
-            modelId: model.modelId,
-            modelName: model.name
-        )
+        let hasSchema = parameters.responseSchema != nil
+        do {
+            let stream = try await ModelRuntime.shared.streamWithTools(
+                messages: messages,
+                parameters: parameters,
+                stopSequences: hasSchema ? [] : stopSequences,
+                tools: [],
+                toolChoice: nil,
+                modelId: model.modelId,
+                modelName: model.name
+            )
+            guard hasSchema else { return stream }
+            return Self.mappingStructuredFailures(stream, model: model.name)
+        } catch {
+            guard hasSchema else { throw error }
+            throw Self.mapStructuredFailure(error, model: model.name)
+        }
+    }
+
+    // MARK: - Structured output (workflow nodes)
+
+    /// Turn a workflow node's `responseSchema` into the engine's
+    /// grammar-constrained request. The schema goes to vmlx in the same
+    /// strict wire form every cloud provider receives, so
+    /// `StructuredOutputSchema.decode` reads one shape regardless of
+    /// backend. The engine rejects a request whose prompt opens a reasoning
+    /// envelope rather than letting a caller coerce it, so when the caller
+    /// expressed no reasoning preference the model's own non-reasoning
+    /// template switch is selected; an explicit `disableThinking` or
+    /// `reasoningEffort` is left alone. Nothing is added to the prompt.
+    nonisolated static func structuredParameters(
+        _ parameters: GenerationParameters, model: String
+    ) throws -> GenerationParameters {
+        guard let schema = parameters.responseSchema else { return parameters }
+        var out = parameters
+        do {
+            out.jsonSchema = try StructuredOutputSchema.localWire(schema)
+        } catch {
+            throw StructuredOutputError.unsupportedModel(
+                model: model, reason: "the node output schema could not be encoded: \(error.localizedDescription)")
+        }
+        if out.modelOptions["disableThinking"] == nil, out.modelOptions["reasoningEffort"] == nil {
+            out.modelOptions["disableThinking"] = .bool(true)
+        }
+        return out
+    }
+
+    /// Whether a runtime error means the request could not be prepared for
+    /// constrained decoding (unsupported tokenizer, active reasoning
+    /// envelope, schema outside the engine's subset). Asking again with the
+    /// same model changes nothing, so these become the non-retryable
+    /// `StructuredOutputError.unsupportedModel`. Decoding-stage failures
+    /// (length exhaustion before the matcher accepted a stop token) pass
+    /// through and stay retryable under the node's retry policy.
+    nonisolated static func mapStructuredFailure(_ error: Error, model: String) -> Error {
+        if let engine = error as? ChatEngine.EngineError, case .invalidStructuredOutput(let reason) = engine.kind {
+            return StructuredOutputError.unsupportedModel(model: model, reason: reason)
+        }
+        if let failure = error as? GenerationFailure, failure.stage == .preparation {
+            return StructuredOutputError.unsupportedModel(model: model, reason: failure.cause)
+        }
+        return error
+    }
+
+    private nonisolated static func mappingStructuredFailures(
+        _ upstream: AsyncThrowingStream<String, Error>, model: String
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await delta in upstream { continuation.yield(delta) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: mapStructuredFailure(error, model: model))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     func generateOneShot(
@@ -96,7 +176,14 @@ actor MLXService: ToolCapableService {
             requestedModel: requestedModel,
             stopSequences: []
         )
+        return try await Self.collectOneShot(stream, parameters: parameters)
+    }
+
+    nonisolated static func collectOneShot(
+        _ stream: AsyncThrowingStream<String, Error>, parameters: GenerationParameters
+    ) async throws -> String {
         var out = ""
+        var stopReason: String?
         for try await s in stream {
             // `streamDeltas` wraps `ModelRuntime.streamWithTools`, which
             // encodes non-token events (reasoning, stats, tool calls) as
@@ -111,8 +198,28 @@ actor MLXService: ToolCapableService {
             // sentinel marker; `StreamingToolHint.isSentinel` covers
             // tool/args/done, reasoning, stats, and any future sentinel
             // that adheres to the `\u{FFFE}` prefix contract.
+            if let stats = StreamingStatsHint.decode(s) {
+                stopReason = stats.stopReason
+                if parameters.auxiliaryCacheIntent,
+                    ProcessInfo.processInfo.environment["OSAURUS_UTILITY_GENERATION_TRACE"] == "1"
+                {
+                    // Diagnostic metrics only: never log utility prompts, answers or reasoning.
+                    let row = "[osaurus][utility-generation] tokens=\(stats.tokenCount) "
+                        + "tokens_per_second=\(stats.tokensPerSecond) "
+                        + "prefill_tokens_per_second=\(stats.prefillTokensPerSecond ?? 0) "
+                        + "stop=\(stats.stopReason ?? "unknown")\n"
+                    RuntimeDiagnostics.write(Data(row.utf8))
+                }
+                continue
+            }
             if StreamingToolHint.isSentinel(s) { continue }
             out += s
+        }
+        // Drain first so a real upstream error takes precedence over terminal
+        // stats. Reasoning-only truncation is incomplete even without visible text.
+        if parameters.requireCompleteOutput {
+            if stopReason == "length" { throw OneShotError.outputTruncated }
+            if stopReason == "cancelled" { throw CancellationError() }
         }
         return out
     }
@@ -198,6 +305,38 @@ actor MLXService: ToolCapableService {
             toolChoice: toolChoice,
             modelId: model.modelId,
             modelName: model.name
+        )
+    }
+
+    func streamResponses(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        tools: [Tool],
+        toolChoice: ToolChoiceOption?,
+        requestedModel: String?
+    ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+        let model = try selectModel(requestedName: requestedModel)
+        try Self.validateRuntimePolicy(
+            modelName: model.name,
+            modelId: model.modelId,
+            messages: messages,
+            parameters: parameters,
+            tools: tools,
+            runtime: ServerRuntimeSettingsStore.snapshot()
+        )
+        let events = try await ModelRuntime.shared.streamResponseEvents(
+            messages: messages,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: tools,
+            toolChoice: toolChoice,
+            modelId: model.modelId,
+            modelName: model.name
+        )
+        return ResponsesGenerationStream.native(
+            events.events,
+            waitForProducerDrain: events.waitForProducerDrain
         )
     }
 
@@ -413,15 +552,27 @@ actor MLXService: ToolCapableService {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
+        let capabilities = root["capabilities"] as? [String: Any]
+        if capabilities?["supports_tools"] as? Bool == false {
+            return .some(nil)
+        }
         let candidates: [Any?] = [
+            capabilities?["tool_parser"],
             ((root["chat"] as? [String: Any])?["tool_calling"] as? [String: Any])?["parser"],
+            ((root["chat"] as? [String: Any])?["tool_calling"] as? [String: Any])?["dialect"],
             ((root["chat"] as? [String: Any])?["tool_calling"] as? [String: Any])?["format"],
             (root["tool_calling"] as? [String: Any])?["parser"],
+            (root["tool_calling"] as? [String: Any])?["dialect"],
             (root["tool_calling"] as? [String: Any])?["format"],
         ]
         for candidate in candidates {
-            if let raw = candidate as? String {
-                return ToolCallFormat.fromCapabilityName(raw)
+            // `format` can contain an example wire payload rather than a parser
+            // identifier. Unknown names must fall through to the next stamp or
+            // model-type inference, not become an explicit tool prohibition.
+            if let raw = candidate as? String,
+                let format = ToolCallFormat.fromCapabilityName(raw)
+            {
+                return .some(format)
             }
         }
         return nil

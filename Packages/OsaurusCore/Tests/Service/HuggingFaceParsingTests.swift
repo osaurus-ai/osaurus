@@ -211,3 +211,60 @@ struct HuggingFaceParsingTests {
         #expect(output.contains(#"<p align="center"><img src="x.png"></p>"#))
     }
 }
+
+// MARK: - Deep-link compatibility outcomes
+
+struct HuggingFaceCompatibilityFailureTests {
+
+    @Test func hubStatusMapsToFailure() {
+        typealias C = HuggingFaceService.MLXCompatibility
+        #expect(C.failure(forHTTPStatus: 401) == .unauthorized(status: 401))
+        #expect(C.failure(forHTTPStatus: 403) == .unauthorized(status: 403))
+        #expect(C.failure(forHTTPStatus: 404) == .notFound)
+        #expect(C.failure(forHTTPStatus: 429) == .rateLimited)
+        #expect(C.failure(forHTTPStatus: 500) == .unreachable)
+        #expect(C.failure(forHTTPStatus: 503) == .unreachable)
+    }
+
+    @Test func untaggedPublicBundleReportsNotMLX() async {
+        let meta = HuggingFaceService.ModelMeta(
+            id: "owner/custom-checkpoint",
+            tags: nil,
+            siblings: [.init(rfilename: "config.json", size: 1)],
+            isPrivate: false
+        )
+        let result = await HuggingFaceService.shared.evaluateMLXCompatibility(repoId: meta.id, meta: meta)
+        #expect(!result.isCompatible)
+        #expect(result.failure == .notMLX)
+    }
+
+    @Test func compatibleBundleCarriesGatedFlagAndNoFailure() async {
+        let meta = HuggingFaceService.ModelMeta(
+            id: "owner/Llama-mlx-4bit",
+            tags: ["mlx"],
+            siblings: nil,
+            isPrivate: false,
+            isGated: true
+        )
+        let result = await HuggingFaceService.shared.evaluateMLXCompatibility(repoId: meta.id, meta: meta)
+        #expect(result.isCompatible)
+        #expect(result.isGated)
+        #expect(result.failure == nil)
+    }
+
+    @Test func gatedDecodesFromBoolAndFromMode() throws {
+        func decode(_ gated: String) throws -> HuggingFaceService.ModelMeta {
+            let json = #"{"id":"o/r","tags":["mlx"],"private":false,"gated":"# + gated + "}"
+            return try JSONDecoder().decode(HuggingFaceService.ModelMeta.self, from: Data(json.utf8))
+        }
+        #expect(try decode("false").isGated == false)
+        #expect(try decode("true").isGated == true)
+        #expect(try decode("\"auto\"").isGated == true)
+        #expect(try decode("\"manual\"").isGated == true)
+        let absent = try JSONDecoder().decode(
+            HuggingFaceService.ModelMeta.self,
+            from: Data(#"{"id":"o/r","tags":["mlx"]}"#.utf8)
+        )
+        #expect(absent.isGated == false)
+    }
+}

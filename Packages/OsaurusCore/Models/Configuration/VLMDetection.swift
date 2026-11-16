@@ -22,6 +22,10 @@ enum VLMDetection {
         let normalized = trimmed.lowercased()
         guard normalized != "zaya" else { return false }
         if normalized == "diffusion_gemma" { return true }
+        // DeepSeek-V4.1-Flash: LLM-factory model with an in-bundle vision tower.
+        if normalized == "deepseek_v41" { return LocalVisionEvidence.deepseekV41VisionRuntimeAvailable }
+        // MiniMax-M3.1: LLM-factory model with an in-bundle vision stack.
+        if normalized == "minimax_m3_vl" { return LocalVisionEvidence.miniMaxM3VisionRuntimeAvailable }
         return VLMTypeRegistry.supportedModelTypes.contains(trimmed)
             || VLMTypeRegistry.supportedModelTypes.contains(normalized)
     }

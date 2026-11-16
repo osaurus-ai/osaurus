@@ -1,0 +1,18 @@
+{
+  "id": "judge_calibration.negated-condition-absent-content",
+  "domain": "judge_calibration",
+  "label": "Judge • 'Does not surface X' passes when X is absent",
+  "query": "(calibration) The judge grades a negatively phrased condition whose unwanted content never appears in the reply.",
+  "notes": "#3032 polarity probe, mirrored from screen_context.safari-article-beats-chrome. Strong judges returned pass=false with reason 'The reply contains no browser or build version numbers at all, so it does not surface them' — the correct behaviour (unwanted content absent) scored as a failure. Unlike negated-condition (topic mentioned, claim negated), here the forbidden content is simply missing, so 'no' in the judge's head maps to the wrong verdict unless it judges the condition as written.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "You're reading an article in Safari about macOS accessibility — specifically how VoiceOver and the accessibility inspector expose on-screen controls to assistive apps. The main column shows the article body; the toolbar and tab strip are browser chrome.",
+      "conditions": [
+        "Indicates the user is reading an article about macOS accessibility",
+        "Does not surface the browser/build version numbers as on-screen content"
+      ],
+      "expectedVerdicts": [true, true]
+    }
+  }
+}

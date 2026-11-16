@@ -57,7 +57,9 @@ public struct VoiceInputOverlay: View {
     var onSend: ((String) -> Void)?
     var onEdit: (() -> Void)?
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     @State private var showEditHint = false
 
     public init(
@@ -110,142 +112,118 @@ public struct VoiceInputOverlay: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            // Main content card
-            VStack(spacing: 12) {
-                // Header with status and controls
-                HStack(alignment: .center, spacing: 12) {
-                    // status indicator is hidden during .sending to avoid duplicate
-                    // "Processing" with the bottom center action area indicator.
-                    if state != .sending {
-                        VoiceStatusIndicator(
-                            state: voiceStatusFromState,
-                            showLabel: true,
-                            compact: false
-                        )
-                    }
+        Group {
 
-                    // Waveform visualization (when recording)
-                    if case .recording = state {
-                        WaveformView(level: audioLevel, style: .bars, barCount: 16)
-                            .frame(height: 28)
-                            .frame(maxWidth: .infinity)
-                            .transition(.opacity)
-                    } else {
-                        Spacer()
-                    }
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s10, theme))) {
+            header
 
-                    // Silence timeout hint (all voice input modes, but only when it's user's turn)
-                    if silenceTimeoutDuration > 0 && !isStreaming {
-                        SilenceTimeoutIndicator(
-                            silenceDuration: silenceTimeoutProgress,
-                            timeoutDuration: silenceTimeoutDuration
-                        )
-                    }
-
-                    // Cancel button
-                    Button(action: { cancelRecording() }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(8)
-                            .background(
-                                ZStack {
-                                    Circle()
-                                        .fill(theme.tertiaryBackground)
-                                    Circle()
-                                        .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-                                }
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .localizedHelp("Cancel voice input")
-                }
-
-                // live transcription area is hidden during .sending since the
-                // bottom "Processing..." indicator is the sole state signal
-                if state != .sending {
-                    transcriptionArea
-                        .frame(minHeight: 60)
-                }
-
-                // Action area (countdown or buttons)
-                actionArea
+            // live transcription area is hidden during .sending since the
+            // bottom "Processing..." indicator is the sole state signal
+            if state != .sending {
+                transcriptionArea
+                    .frame(minHeight: 48, alignment: .topLeading)
             }
-            .padding(16)
-            .frame(minHeight: 160)
-            .background(overlayBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: 1)
-            )
-            .shadow(color: shadowColor, radius: 16, x: 0, y: 6)
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 20)
+
+            actionArea
+        }.catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.body.verticalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(45, "padding", PickerCardMetrics.padding, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(45, "padding", PickerCardMetrics.padding, theme))).catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.body.padding.horizontal").catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.body.padding.vertical")
+        .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
+        .pickerCardSurface(elevated: true, assignmentFamily: 45)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s20, theme))).catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.body.paddingX")
+        .padding(.bottom, theme.space.s20)
+    
+        }.environment(\.theme, theme)
+}
+
+    // MARK: - Header
+
+    /// Status as the card heading, the live waveform beside it, and a quiet
+    /// close control — the same heading row the composer's other cards use.
+    private var header: some View {
+        HStack(alignment: .center, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.header.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s10, theme))) {
+            // Hidden while sending: the centred "Processing..." row is then
+            // the sole state signal.
+            if state != .sending {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.header.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s8, theme))) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 7, height: 7)
+                    Text(voiceStatusLabel)
+                        .componentInspectionText(45, role: .body, fallback: .body, theme: theme)
+                        .foregroundStyle(theme.text.secondary)
+                        .lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                }.catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.header.horizontalGap2")
+            }
+
+            if case .recording = state {
+                WaveformView(level: audioLevel, style: .bars, barCount: 16)
+                    .frame(height: 24)
+                    .frame(maxWidth: .infinity)
+                    .transition(.opacity)
+            } else {
+                Spacer(minLength: 0)
+            }
+
+            // Silence timeout hint (all voice input modes, but only when it's user's turn)
+            if silenceTimeoutDuration > 0 && !isStreaming {
+                SilenceTimeoutIndicator(
+                    silenceDuration: silenceTimeoutProgress,
+                    timeoutDuration: silenceTimeoutDuration
+                )
+            }
+
+            VoiceOverlayIconButton(icon: "xmark", label: "Cancel voice input", action: cancelRecording)
+        }.catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.header.horizontalGap")
     }
 
-    private var voiceStatusFromState: VoiceState {
+    private var statusColor: Color {
+        if case .recording = state { return theme.status.info.foreground }
+        return theme.text.tertiary
+    }
+
+    private var voiceStatusLabel: String {
         switch state {
-        case .idle: return .idle
-        case .recording: return .listening
-        case .paused: return .processing
-        case .sending: return .processing
+        case .idle: return VoiceState.idle.label
+        case .recording: return VoiceState.listening.label
+        case .paused: return L("Ready to send")
+        case .sending: return VoiceState.processing.label
         }
     }
 
     // MARK: - Transcription Area
 
+    /// The transcript sits on the card itself, inset like the other cards'
+    /// row content; a bordered box here read as an editable text field.
     private var transcriptionArea: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Combined transcription display
-            HStack(alignment: .top, spacing: 2) {
-                // full text with styling
-                if state == .recording {
-                    // hide live transcription jitter while recording
-                    Text("Listening...", bundle: .module)
-                        .font(.system(size: 15))
-                        .foregroundColor(theme.tertiaryText)
-                        .italic()
-                } else if visibleFullText.isEmpty {
-                    Text("Listening...", bundle: .module)
-                        .font(.system(size: 15))
-                        .foregroundColor(theme.tertiaryText)
-                        .italic()
-                } else {
-                    Text(visibleFullText)
-                        .font(.system(size: 15))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(nil)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                // Blinking cursor when recording
-                if case .recording = state {
-                    Rectangle()
-                        .fill(theme.accentColor)
-                        .frame(width: 2, height: 18)
-                        .modifier(BlinkingCursor())
-                }
-
-                Spacer(minLength: 0)
+        return HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.transcriptionArea.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s2, theme))) {
+            // hide live transcription jitter while recording
+            if state == .recording || visibleFullText.isEmpty {
+                Text("Speak now…", bundle: .module)
+                    .componentInspectionText(45, role: .body, fallback: .body, theme: theme)
+                    .foregroundStyle(theme.text.tertiary)
+            } else {
+                Text(visibleFullText)
+                    .componentInspectionText(45, role: .body, fallback: .body, theme: theme)
+                    .foregroundStyle(theme.text.primary)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
-        }
+
+            if case .recording = state {
+                Rectangle()
+                    .fill(theme.action.primary.default.background)
+                    .frame(width: 2, height: 17)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 }
+                    .modifier(BlinkingCursor())
+            }
+
+            Spacer(minLength: 0)
+        }.catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.transcriptionArea.horizontalGap")
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.inputBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(
-                    state == .recording ? theme.accentColor.opacity(0.4) : theme.inputBorder,
-                    lineWidth: state == .recording ? 1.5 : 1
-                )
-        )
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.transcriptionArea.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", PickerCardMetrics.rowInset, theme))).catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.transcriptionArea.paddingX")
+        .padding(.top, theme.space.s4)
     }
 
     // MARK: - Action Area
@@ -258,48 +236,18 @@ public struct VoiceInputOverlay: View {
 
         case .recording:
             // Recording controls
-            HStack(spacing: 10) {
-                // Edit button (transfers to text input)
-                Button(action: { onEdit?() }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 12, weight: .medium))
-                        Text("Edit", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(theme.tertiaryBackground)
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-                        }
-                    )
-                }
-                .buttonStyle(.plain)
-                .opacity(visibleFullText.isEmpty ? 0.5 : 1)
-                .disabled(visibleFullText.isEmpty)
+            HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.actionArea.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s10, theme))) {
+                // Edit transfers the transcript to the text input.
+                PickerCardTextLink(title: L("Edit"), icon: "pencil", fillsWidth: false) { onEdit?() }
+                    .opacity(visibleFullText.isEmpty ? 0.5 : 1)
+                    .disabled(visibleFullText.isEmpty)
 
                 Spacer()
 
                 if transcriptionStopMode == .manual {
                     Button(action: { sendMessage() }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "stop.fill")
-                                .font(.system(size: 12, weight: .bold))
-                            Text("Stop", bundle: .module)
-                                .font(.system(size: 13, weight: .bold))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule()
-                                .fill(theme.errorColor)
-                        )
+                        StatusChip(L("Stop"), tone: .error, icon: "stop.fill")
+                        .frame(height: 28)
                     }
                     .buttonStyle(.plain)
                     .opacity(visibleFullText.isEmpty ? 0.5 : 1)
@@ -318,9 +266,9 @@ public struct VoiceInputOverlay: View {
                             .transition(.opacity.combined(with: .scale(scale: 0.9)))
                         }
                     }
-                    .animation(.easeOut(duration: 0.2), value: silenceDuration > 0.2)
+                    .animation(theme.motion.quick, value: silenceDuration > 0.2)
                 }
-            }
+            }.catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.actionArea.horizontalGap")
 
         case .paused(let remaining):
             // Clean countdown card - use state remaining value
@@ -333,82 +281,14 @@ public struct VoiceInputOverlay: View {
 
         case .sending:
             // processing indicator (LLM cleanup runs here)
-            HStack(spacing: 8) {
-                ProgressView()
-                    .scaleEffect(0.8)
+            HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.actionArea.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s8, theme))) {
+                SettingsSpinner()
                 Text("Processing...", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
+                    .componentInspectionText(45, role: .body, fallback: .bodySmall, theme: theme)
+                    .foregroundStyle(theme.text.secondary)
+            }.catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.actionArea.horizontalGap2")
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-        }
-    }
-
-    // MARK: - Styling
-
-    private var overlayBackground: some View {
-        ZStack {
-            // Layer 1: Glass material
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-
-            // Layer 2: Semi-transparent card background
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(theme.cardBackground.opacity(theme.isDark ? 0.85 : 0.92))
-
-            // Layer 3: State-based accent gradient
-            LinearGradient(
-                colors: [stateAccentColor.opacity(theme.isDark ? 0.08 : 0.05), Color.clear],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-    }
-
-    private var stateAccentColor: Color {
-        switch state {
-        case .recording: return theme.accentColor
-        case .paused: return theme.accentColor
-        case .sending: return theme.successColor
-        default: return theme.accentColor
-        }
-    }
-
-    private var borderColor: LinearGradient {
-        let primaryColor: Color
-        let secondaryColor: Color
-
-        switch state {
-        case .recording:
-            primaryColor = theme.glassEdgeLight.opacity(0.2)
-            secondaryColor = theme.cardBorder
-        case .paused:
-            primaryColor = theme.accentColor.opacity(0.4)
-            secondaryColor = theme.accentColor.opacity(0.15)
-        case .sending:
-            primaryColor = theme.successColor.opacity(0.4)
-            secondaryColor = theme.successColor.opacity(0.15)
-        default:
-            primaryColor = theme.glassEdgeLight.opacity(0.15)
-            secondaryColor = theme.cardBorder
-        }
-
-        return LinearGradient(
-            colors: [primaryColor, secondaryColor],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private var shadowColor: Color {
-        switch state {
-        case .paused: return theme.accentColor.opacity(0.15)
-        case .sending: return theme.successColor.opacity(0.15)
-        default: return theme.shadowColor.opacity(0.12)
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.actionArea.paddingY", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.actionArea.paddingY")
         }
     }
 
@@ -435,15 +315,46 @@ public struct VoiceInputOverlay: View {
     }
 }
 
+/// Shared icon action for the voice input and Transcription Mode overlays.
+struct VoiceOverlayIconButton: View {
+    let icon: String
+    let label: LocalizedStringKey
+    let action: () -> Void
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
+    @State private var hovered = false
+
+    var body: some View {
+        let size = NativeComponentInspectionStyle.metric(45, "height", 24, theme)
+        Button(action: action) {
+            Image(systemName: icon)
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundStyle(hovered ? theme.text.primary : theme.text.tertiary)
+                .frame(width: size, height: size)
+                .componentInspectionSurface(45, background: hovered ? theme.surface.hover : .clear, radius: 12)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .accessibilityLabel(Text(label, bundle: .module))
+        .localizedHelp(label)
+        .environment(\.theme, theme)
+    }
+}
+
 // MARK: - Blinking Cursor Modifier
 
 private struct BlinkingCursor: ViewModifier {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     @State private var visible = true
 
     func body(content: Content) -> some View {
         content
             .opacity(visible ? 1 : 0)
-            .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: visible)
+            .animation(theme.motion.loop(.easeInOut, duration: 0.5, autoreverses: true), value: visible)
             .onAppear {
                 visible = true
             }
@@ -459,7 +370,7 @@ private struct BlinkingCursor: ViewModifier {
 
             var body: some View {
                 ZStack(alignment: .bottom) {
-                    Color(hex: "0f0f10")
+                    CustomizableTheme.dark().surface.canvas
                         .ignoresSafeArea()
 
                     VStack {
@@ -491,7 +402,7 @@ private struct BlinkingCursor: ViewModifier {
 
             var body: some View {
                 ZStack(alignment: .bottom) {
-                    Color(hex: "0f0f10")
+                    CustomizableTheme.dark().surface.canvas
                         .ignoresSafeArea()
 
                     VStack {

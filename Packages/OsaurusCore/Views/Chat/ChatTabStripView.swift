@@ -2,64 +2,27 @@
 //  ChatTabStripView.swift
 //  osaurus
 //
-//  Chrome-style tab strip for chat windows, hosted in the toolbar's
-//  centered slot (the space the agent pill vacated when it moved into the
-//  sidebar) and in the themed full-screen header. Follows modern Chrome's
-//  visual grammar: only the ACTIVE tab draws the full tab shape (rounded
-//  top corners, outward-curved "feet" at the bottom); inactive tabs are
-//  flat labels that light up with a rounded rect on hover, separated by
-//  hairline dividers that hide next to the active/hovered tab.
+//  Tab strip for chat windows, hosted in the toolbar's centered slot (the
+//  space the agent pill vacated when it moved into the sidebar) and in the
+//  themed full-screen header. Follows Safari's compact-tab grammar in the
+//  sidebar lens bar's palette: one recessed rounded track holds equal-width
+//  tabs with centered titles, the active tab is an accent-tinted pill, and
+//  inactive tabs are flat labels separated by hairline dividers that hide
+//  next to the active/hovered tab. "+" and the overflow menu sit outside
+//  the track.
 //
 
 import AppKit
 import SwiftUI
 
-/// Chrome's tab silhouette: vertical sides with rounded top corners and
-/// bottom corners that flare outward to a flat base, so the tab reads as
-/// growing out of the surface below it.
-struct ChromeTabShape: Shape {
-    var topRadius: CGFloat = 8
-    var footRadius: CGFloat = 8
-
-    func path(in rect: CGRect) -> Path {
-        let w = rect.width
-        let h = rect.height
-        let top = min(topRadius, h / 2)
-        let foot = min(footRadius, h / 2)
-        var p = Path()
-        p.move(to: CGPoint(x: 0, y: h))
-        // Left foot: curve up and inward off the baseline.
-        p.addQuadCurve(
-            to: CGPoint(x: foot, y: h - foot),
-            control: CGPoint(x: foot, y: h)
-        )
-        // Left side.
-        p.addLine(to: CGPoint(x: foot, y: top))
-        // Top-left corner.
-        p.addQuadCurve(
-            to: CGPoint(x: foot + top, y: 0),
-            control: CGPoint(x: foot, y: 0)
-        )
-        // Top edge.
-        p.addLine(to: CGPoint(x: w - foot - top, y: 0))
-        // Top-right corner.
-        p.addQuadCurve(
-            to: CGPoint(x: w - foot, y: top),
-            control: CGPoint(x: w - foot, y: 0)
-        )
-        // Right side.
-        p.addLine(to: CGPoint(x: w - foot, y: h - foot))
-        // Right foot: curve outward back to the baseline.
-        p.addQuadCurve(
-            to: CGPoint(x: w, y: h),
-            control: CGPoint(x: w - foot, y: h)
-        )
-        p.closeSubpath()
-        return p
-    }
-}
-
 struct ChatTabStripView: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.nativeCatalogPreview) private var catalogPreview
+    private var theme: any ThemeProtocol {
+        if catalogPreview { return inheritedTheme.catalogFamily(43, enabled: enabled) }
+        return windowState.theme.catalogFamily(43, enabled: enabled)
+    }
     @ObservedObject var windowState: ChatWindowState
     /// Fallback for the width of the chrome preceding this item, used only
     /// until the first live measurement lands (see `measuredChromeX`).
@@ -72,6 +35,16 @@ struct ChatTabStripView: View {
     /// the chrome BEFORE the strip, so it holds still during a window resize.
     @State private var measuredChromeX: CGFloat?
 
+    /// Fallback for the width of the chrome AFTER this item (the inspector
+    /// toggle and window pin, plus toolbar padding), used only until the
+    /// first live measurement lands (see `measuredTrailingChrome`).
+    var trailingChromeWidth: CGFloat = 80
+
+    /// Distance from the strip's trailing edge to the window's trailing
+    /// edge, measured from AppKit like `measuredChromeX`. Only depends on
+    /// the chrome after the strip, so it too holds still during a resize.
+    @State private var measuredTrailingChrome: CGFloat?
+
     /// Last laid-out strip width, for drag math that runs outside `body`.
     @State private var lastStripWidth: CGFloat = 0
 
@@ -79,97 +52,140 @@ struct ChatTabStripView: View {
     /// strip. The strip does not size itself: the toolbar item is flexible
     /// (AppKit gives it whatever lies between the sidebar button and the
     /// trailing items, in the same layout pass as the window resize), so a
-    /// fast resize can never race a measurement. `footFlare` on each side
-    /// keeps the active tab's outward-curving feet inside the item.
+    /// fast resize can never race a measurement.
     private func stripWidth(in available: CGFloat) -> CGFloat {
-        max(0, available - leadingInset - 2 * Self.footFlare)
+        max(0, available - leadingInset - trailingInset)
+    }
+
+    /// How far the strip must start past its own leading edge so the first
+    /// tab lands at the content area's left edge: the sidebar's width less
+    /// the chrome (sidebar button, toolbar padding) already ahead of the
+    /// strip. Zero when the sidebar is narrower than that chrome.
+    static func leadingInset(sidebarWidth: CGFloat, chromeWidth: CGFloat) -> CGFloat {
+        max(0, sidebarWidth - chromeWidth)
+    }
+
+    /// Mirror image for the right rail: the inspector's width less the
+    /// chrome (rail toggle, pin, toolbar padding) already after the strip,
+    /// so the last tab and "+" end at the chat column's trailing edge
+    /// instead of running under the rail. Zero while the rail is closed or
+    /// narrower than that chrome.
+    static func trailingInset(inspectorWidth: CGFloat, chromeWidth: CGFloat) -> CGFloat {
+        max(0, inspectorWidth - chromeWidth)
     }
 
     /// Hover is tracked at strip level (not per item) so separators can
-    /// hide beside the hovered tab, matching Chrome.
+    /// hide beside the hovered tab.
     @State private var hoveredTabId: UUID?
 
     /// Drag-to-reorder: the tab under the pointer and how far it has been
     /// pulled from its slot. Reordering happens LIVE as the pointer crosses
-    /// a neighbour's midpoint (Chrome), so the offset is re-based by one
+    /// a neighbour's midpoint, so the offset is re-based by one
     /// slot pitch on every swap to keep the chip glued to the pointer.
     @State private var draggingTabId: UUID?
     @State private var dragOffset: CGFloat = 0
 
-    /// The sidebar's user-chosen width, shared with the resizable sidebar
-    /// via the same defaults key so the strip tracks the content edge.
-    @AppStorage("chatSidebarWidth") private var storedSidebarWidth: Double = 240
-
-    /// Leading inset that keeps the first tab at the CONTENT area's left
-    /// edge while the sidebar is open — without it the tabs float over the
-    /// sidebar.
-    private var sidebarOpenInset: CGFloat {
-        let clamped = min(max(storedSidebarWidth, 260), 460)
-        return max(0, CGFloat(clamped) - (measuredChromeX ?? leadingChromeWidth))
+    /// Keeps the first tab at the CONTENT area's left edge while the
+    /// sidebar is open — without it the tabs float over the sidebar.
+    /// `sidebarColumnWidth` is the rail's on-screen width as `ChatView`
+    /// laid it out: 0 while hidden or pushed aside by the inspector at
+    /// narrow widths (the tabs return to the window's left edge), and the
+    /// LIVE value during a resize drag — reading the persisted defaults key
+    /// here instead made the tabs lag the rail until the drag released.
+    private var leadingInset: CGFloat {
+        let inset = Self.leadingInset(
+            sidebarWidth: windowState.sidebarColumnWidth,
+            chromeWidth: measuredChromeX ?? leadingChromeWidth)
+        return inset > 0 ? inset + edgeSpacing : 0
     }
 
-    private var leadingInset: CGFloat {
-        windowState.showSidebar ? sidebarOpenInset : 0
+    /// The one visual gap the strip keeps around its parts: from an open
+    /// rail's divider to the track, from the track to "+", and from "+" to
+    /// the right rail's divider.
+    static let edgeGap: CGFloat = 12
+    /// Transparent padding `HeaderActionButton` wraps around its circle;
+    /// gaps beside the "+" button subtract it so the VISIBLE gap is `edgeGap`.
+    private static let headerButtonPadding: CGFloat = 4
+
+    /// Keeps the tabs clear of the right rail (chat inspector or Project
+    /// Settings). `inspectorColumnWidth` is the rail's on-screen width as
+    /// `ChatView` laid it out — squeezed at narrow windows, live during a
+    /// resize drag — so the strip tracks it without a second computation.
+    private var trailingInset: CGFloat {
+        let inset = Self.trailingInset(
+            inspectorWidth: windowState.inspectorColumnWidth,
+            chromeWidth: measuredTrailingChrome ?? trailingChromeWidth)
+        return inset > 0 ? inset + edgeSpacing - headerPadding : 0
     }
 
     var body: some View {
-        // Tabs are chat chrome; the project detail page hides them along
-        // with the rest of the chat-specific toolbar items.
-        if !windowState.isProjectPageVisible {
-            GeometryReader { proxy in
-                let width = stripWidth(in: proxy.size.width)
-                // The row is laid out at IDEAL size (fixedSize in `tabsRow`),
-                // so chips hug their titles; crowding is handled by shrinking
-                // the per-tab width cap (`maxTabWidth`) as tabs multiply,
-                // computed so the row NEVER exceeds the strip. An overflowing
-                // row would push the "+" button outside the toolbar item's
-                // bounds, where it still draws but no longer hit-tests.
-                tabsRow(stripWidth: width)
-                    // Tour spotlight anchor (invisible; reports the strip's frame).
-                    .background(TourAnchorMarker(anchor: .tabStrip))
-                    // Tabs slide over when a neighbor closes (Chrome-like).
-                    // Opening stays un-animated: `newTab()` disables
-                    // animations in its transaction so the strip doesn't
-                    // interpolate while ChatView remounts for the fresh session.
-                    .animation(
-                        windowState.theme.animationQuick(),
-                        value: windowState.scopedTabs.map(\.id)
-                    )
-                    .frame(width: width, alignment: .leading)
-                    .padding(.horizontal, Self.footFlare)
-                    .frame(height: Self.stripHeight)
-                    // Nothing draws outside the strip, even for a frame: the
-                    // sidebar and trailing buttons stay clear mid-resize.
-                    .clipped()
-                    .padding(.leading, leadingInset)
-                    .onChange(of: width, initial: true) { _, newWidth in
-                        lastStripWidth = newWidth
-                    }
-            }
-            .frame(height: Self.stripHeight)
-            // Anchored to the strip's OUTER leading edge (the inset lies
-            // inside the measured bounds, so the reading is the pre-inset
-            // chrome edge — no feedback loop).
-            .background(alignment: .leading) {
-                WindowXReader { x in
-                    if abs((measuredChromeX ?? -1) - x) > 0.5 {
-                        measuredChromeX = x
-                    }
+        GeometryReader { proxy in
+            let width = stripWidth(in: proxy.size.width)
+            // Every tab renders at `maxTabWidth`, computed so the tabs
+            // fill the track and the row NEVER exceeds the strip. An
+            // overflowing row would push the "+" button outside the
+            // toolbar item's bounds, where it still draws but no longer
+            // hit-tests.
+            tabsRow(stripWidth: width)
+                // Tabs slide over when a neighbor closes. Opening stays
+                // un-animated: `newTab()` disables animations in its
+                // transaction so the strip doesn't interpolate while
+                // ChatView remounts for the fresh session.
+                .animation(
+                    theme.motion.quick,
+                    value: windowState.scopedTabs.map(\.id)
+                )
+                .frame(width: width, alignment: .leading)
+                .frame(height: Self.inspectionStripHeight(theme))
+                .padding(.leading, leadingInset)
+                .onChange(of: width, initial: true) { _, newWidth in
+                    lastStripWidth = newWidth
                 }
-                .frame(width: 0)
-            }
-            .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
-            // Leaving the strip ends a close streak: widths relax to fit.
-            .onHover { inside in
-                guard !inside, frozenTabWidth != nil else { return }
-                withAnimation(windowState.theme.animationQuick()) { frozenTabWidth = nil }
-            }
-            .environment(\.theme, windowState.theme)
         }
+        .frame(height: Self.inspectionStripHeight(theme))
+        // The strip fills the toolbar, so its empty space must still
+        // move the window the way the title bar it covers would.
+        .background(WindowDragArea())
+        // Anchored to the strip's OUTER leading edge (the inset lies
+        // inside the measured bounds, so the reading is the pre-inset
+        // chrome edge — no feedback loop).
+        .background(alignment: .leading) {
+            WindowEdgeReader(edge: .leading) { x in
+                if abs((measuredChromeX ?? -1) - x) > 0.5 {
+                    measuredChromeX = x
+                }
+            }
+            .frame(width: 0)
+        }
+        // Same at the OUTER trailing edge: the distance from there to
+        // the window's edge is the trailing chrome, whatever AppKit (or
+        // the full-screen header) puts after the strip.
+        .background(alignment: .trailing) {
+            WindowEdgeReader(edge: .trailing) { gap in
+                if abs((measuredTrailingChrome ?? -1) - gap) > 0.5 {
+                    measuredTrailingChrome = gap
+                }
+            }
+            .frame(width: 0)
+        }
+        // Rail open/close slides the tabs along with the rail; keyed on
+        // presence, not width, so a live resize drag is not lagged by
+        // the animation.
+        .animation(theme.motion.quick, value: windowState.sidebarColumnWidth > 0)
+        .animation(theme.motion.quick, value: windowState.inspectorColumnWidth > 0)
+        // Leaving the strip ends a close streak: widths relax to fit.
+        .onHover { inside in
+            guard !inside, frozenTabWidth != nil else { return }
+            withAnimation(theme.motion.quick) { frozenTabWidth = nil }
+        }
+        // A close streak may hold the old width, but live design edits
+        // must measure the current recipe and geometry again.
+        .onChange(of: theme.inspectionRevision) { _, _ in frozenTabWidth = nil }
+        .environment(\.theme, theme)
     }
 
-    /// Tab width pinned by a × close (Chrome): closing a tab would otherwise
-    /// widen the survivors and slide the next × out from under the cursor.
+    /// Tab width pinned by a × close: closing a tab would otherwise widen
+    /// the survivors and slide the next × out from under the cursor.
     /// Held until the pointer leaves the strip, at which point the tabs
     /// relax to `fittedTabWidth` in one animated pass.
     @State private var frozenTabWidth: CGFloat?
@@ -182,48 +198,77 @@ struct ChatTabStripView: View {
         min(frozenTabWidth ?? .infinity, fittedTabWidth(stripWidth: stripWidth))
     }
 
-    /// Per-tab width cap, shrunk as tabs multiply so the whole row (tabs +
-    /// separators + "+" button) always fits inside the strip.
+    /// Per-tab width: the track's width shared equally (Safari), shrunk as
+    /// tabs multiply so the whole row (track + "+" button) always fits
+    /// inside the strip.
     private func fittedTabWidth(stripWidth: CGFloat) -> CGFloat {
         let visibleCount = visibleTabs(stripWidth: stripWidth).count
         let count = CGFloat(max(visibleCount, 1))
         let hasHidden = windowState.scopedTabs.count > visibleCount
-        let available = stripWidth - Self.plusButtonReserve - (count - 1)
-            - (hasHidden ? Self.overflowButtonReserve : 0)
+        let available = tabsBudget(stripWidth: stripWidth) - (count - 1) * separatorSlot
+            - (hasHidden ? overflowReserve : 0)
         // Floor at the compact chip: below it a tab is unreadable, so tabs
         // that would push under the floor drop into the overflow menu
         // instead (see `visibleTabs`) — the row never exceeds the strip.
-        return min(Self.maxTabWidthCap, max(Self.minTabWidth, available / count))
+        return max(Self.minTabWidth, available / count)
     }
 
-    /// How far the active tab's feet flare beyond its slot (mirrors the
-    /// item's `footRadius`); the strip is inset by this on both sides.
-    static let footFlare: CGFloat = 8
-    static let stripHeight: CGFloat = 30
+    /// Width left for tabs and their separators once the "+" button and
+    /// the track's inner padding are taken out.
+    private func tabsBudget(stripWidth: CGFloat) -> CGFloat {
+        stripWidth - plusReserve - 2 * trackInset
+    }
 
-    /// Narrowest chip: avatar only, no title (Chrome's pinned-tab size).
-    /// Widest a tab grows with room to spare (Chrome caps around 240).
-    static let maxTabWidthCap: CGFloat = 200
+    static let stripHeight: CGFloat = 30
+    /// Matches the toolbar's 28pt circle buttons so the track's top and
+    /// bottom line up with theirs.
+    static let trackHeight: CGFloat = 28
+    /// Inset between the recessed track and the tabs it holds.
+    static let trackPadding: CGFloat = 2
+
+    /// Slot between adjacent tabs: keeps neighbouring pills from touching,
+    /// with the hairline divider centred in it.
+    static let separatorWidth: CGFloat = 4
+
+    /// Narrowest chip: avatar only, no title.
     static let minTabWidth: CGFloat = 56
-    private static let plusButtonReserve: CGFloat = 30
+    /// Lead-in gap plus the 28pt circle and its transparent padding.
+    private static let plusButtonReserve: CGFloat = (edgeGap - headerButtonPadding) + 28 + 2 * headerButtonPadding
     private static let overflowButtonReserve: CGFloat = 40
 
-    /// Narrowest the toolbar item may get: one compact tab, the overflow
-    /// chevron and "+", plus the feet. AppKit folds the trailing buttons
+    /// Narrowest the toolbar item may get: one compact tab in its track,
+    /// the overflow chevron and "+". AppKit folds the trailing buttons
     /// before it squeezes the strip below this.
     static let minimumItemWidth: CGFloat =
-        minTabWidth + overflowButtonReserve + plusButtonReserve + 2 * footFlare
+        minTabWidth + 2 * trackPadding + overflowButtonReserve + plusButtonReserve
+
+    static func inspectionStripHeight(_ theme: any ThemeProtocol) -> CGFloat {
+        let scoped = theme.catalogFamily(43)
+        return max(scoped.assignedMetric("component.library.43.height", fallback: stripHeight), scoped.lineHeight(.label) + 2 * scoped.assignedMetric("component.library.43.padding", fallback: trackPadding) + 2)
+    }
+    static func inspectionMinimumItemWidth(_ theme: any ThemeProtocol) -> CGFloat {
+        let pad = theme.assignedMetric("component.library.43.padding", fallback: trackPadding)
+        let side = theme.assignedMetric("component.library.43.height", fallback: 28)
+        let gap = theme.assignedMetric("component.library.43.gap", fallback: edgeGap)
+        return minTabWidth + 2 * pad + max(overflowButtonReserve, side + 16) + gap + side + pad
+    }
+    private var edgeSpacing: CGFloat { NativeComponentInspectionStyle.metric(43, "gap", Self.edgeGap, theme) }
+    private var headerPadding: CGFloat { NativeComponentInspectionStyle.metric(43, "padding", Self.headerButtonPadding, theme) }
+    private var trackInset: CGFloat { NativeComponentInspectionStyle.metric(43, "padding", Self.trackPadding, theme) }
+    private var separatorSlot: CGFloat { NativeComponentInspectionStyle.metric(43, "gap", Self.separatorWidth, theme) }
+    private var plusReserve: CGFloat { max(0, edgeSpacing - headerPadding) + NativeComponentInspectionStyle.metric(43, "height", 28, theme) + 2 * headerPadding }
+    private var overflowReserve: CGFloat { max(Self.overflowButtonReserve, NativeComponentInspectionStyle.metric(43, "height", 22, theme) + 16) }
 
     /// How many tabs fit at the floor width, keeping the active tab visible.
     /// Only the active agent's tabs are candidates: the strip is scoped per
     /// agent (other agents' tabs stay live but out of sight until selected).
     private func visibleTabs(stripWidth: CGFloat) -> [ChatTab] {
         let tabs = windowState.scopedTabs
-        let fitsAll = stripWidth - Self.plusButtonReserve - CGFloat(tabs.count - 1)
+        let fitsAll = tabsBudget(stripWidth: stripWidth) - CGFloat(tabs.count - 1) * separatorSlot
             >= CGFloat(tabs.count) * Self.minTabWidth
         if fitsAll { return tabs }
-        let budget = stripWidth - Self.plusButtonReserve - Self.overflowButtonReserve
-        let capacity = max(1, Int(budget / (Self.minTabWidth + 1)))
+        let budget = tabsBudget(stripWidth: stripWidth) - overflowReserve
+        let capacity = max(1, Int(budget / (Self.minTabWidth + separatorSlot)))
         var shown = Array(tabs.prefix(capacity))
         // The active tab always stays in the strip: swap it in for the last
         // visible slot when it would otherwise be folded away.
@@ -240,71 +285,84 @@ struct ChatTabStripView: View {
         let visibleIds = Set(shown.map(\.id))
         let hiddenTabs = windowState.scopedTabs.filter { !visibleIds.contains($0.id) }
         let tabWidth = maxTabWidth(stripWidth: stripWidth)
-        return HStack(spacing: 0) {
-            ForEach(Array(shown.enumerated()), id: \.element.id) { index, tab in
-                // Hairline divider between adjacent tabs, suppressed
-                // when either neighbor is active or hovered (their
-                // background shape already provides the edge).
-                if index > 0 {
-                    separator(
-                        hidden: isProminent(tab.id)
-                            || isProminent(shown[index - 1].id)
-                    )
-                }
-                ChatTabItemView(
-                    windowState: windowState,
-                    tabId: tab.id,
-                    session: tab.session,
-                    isActive: tab.id == windowState.activeTabId,
-                    isHovered: hoveredTabId == tab.id,
-                    roundsLeading: index == 0 || shown[index - 1].id == windowState.activeTabId,
-                    roundsTrailing: index == shown.count - 1
-                        || shown[index + 1].id == windowState.activeTabId,
-                    hasSiblings: shown.count + hiddenTabs.count > 1,
-                    isHibernated: tab.isHibernated,
-                    width: tabWidth,
-                    isDragging: draggingTabId == tab.id,
-                    dragOffset: draggingTabId == tab.id ? dragOffset : 0,
-                    onSelect: { windowState.selectTab(id: tab.id) },
-                    onClose: {
-                        // Pin the current width for the rest of this close
-                        // streak so the next tab's × lands under the cursor.
-                        if frozenTabWidth == nil { frozenTabWidth = tabWidth }
-                        windowState.closeTab(id: tab.id)
-                    },
-                    onOpenProject: {
-                        windowState.selectTab(id: tab.id)
-                        NotificationCenter.default.post(
-                            name: .chatToolbarBackToProject,
-                            object: nil,
-                            userInfo: ["windowId": windowState.windowId])
-                    },
-                    onDragChanged: { translation in
-                        handleDragChanged(tab.id, translation: translation)
-                    },
-                    onDragEnded: { endDrag() },
-                    onHover: { hovering in
-                        if hovering {
-                            hoveredTabId = tab.id
-                        } else if hoveredTabId == tab.id {
-                            hoveredTabId = nil
-                        }
+        // A lone tab reads as the window title; the recessed track only
+        // appears once there are tabs to group.
+        let showsTrack = shown.count + hiddenTabs.count > 1
+        return HStack(spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s0) {
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, tab in
+                    // Hairline divider between adjacent tabs, suppressed
+                    // when either neighbor is active or hovered (their
+                    // pill already provides the edge).
+                    if index > 0 {
+                        separator(
+                            hidden: isProminent(tab.id)
+                                || isProminent(shown[index - 1].id)
+                        )
                     }
-                )
+                    tabItem(tab, hasSiblings: shown.count + hiddenTabs.count > 1, width: tabWidth)
+                }
             }
+            // The track spans the strip even while a close streak pins
+            // the tab width, so "+" stays put at the trailing end.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .padding(trackInset)
+            .frame(height: max(Self.trackHeight, Self.inspectionStripHeight(theme) - 2))
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                        .fill(theme.assignedColor("component.library.43.background", fallback: theme.surface.subtle))
+                        .opacity(showsTrack ? 1 : 0)
+                    WindowDragArea()
+                }
+            }
+            // Tabs never draw outside the track, even for a frame mid-resize.
+            // Only the track is clipped: clipping the whole row would cut
+            // the "+" button's glass shadow into a hard-edged rectangle.
+            .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
 
             if !hiddenTabs.isEmpty {
                 overflowButton(hiddenTabs: hiddenTabs)
-                    .padding(.leading, 2)
+                    .padding(.leading, theme.space.s6)
             }
 
             newTabButton
-                .padding(.leading, 6)
+                .padding(.leading, max(0, edgeSpacing - headerPadding))
         }
-        // Ideal-size pass: every chip hugs its title, clamped to the
-        // computed min/max, so the row width is Σ(clamped hug widths) and
-        // never exceeds the strip by construction.
-        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func tabItem(_ tab: ChatTab, hasSiblings: Bool, width tabWidth: CGFloat) -> some View {
+        ChatTabItemView(
+            windowState: windowState,
+            tabId: tab.id,
+            session: tab.session,
+            isActive: tab.id == windowState.activeTabId,
+            isHovered: hoveredTabId == tab.id,
+            hasSiblings: hasSiblings,
+            isHibernated: tab.isHibernated,
+            kind: tab.kind,
+            width: tabWidth,
+            isDragging: draggingTabId == tab.id,
+            dragOffset: draggingTabId == tab.id ? dragOffset : 0,
+            onSelect: { windowState.selectTab(id: tab.id) },
+            onClose: {
+                // Pin the current width for the rest of this close
+                // streak so the next tab's × lands under the cursor.
+                if frozenTabWidth == nil { frozenTabWidth = tabWidth }
+                windowState.closeTab(id: tab.id)
+            },
+            onDragChanged: { translation in
+                handleDragChanged(tab.id, translation: translation)
+            },
+            onDragEnded: { endDrag() },
+            onHover: { hovering in
+                if hovering {
+                    hoveredTabId = tab.id
+                } else if hoveredTabId == tab.id {
+                    hoveredTabId = nil
+                }
+            }
+        )
     }
 
     private func isProminent(_ id: UUID) -> Bool {
@@ -314,16 +372,22 @@ struct ChatTabStripView: View {
 
     // MARK: Drag to reorder
 
-    /// Distance between adjacent tab origins: tab width plus the 1pt
-    /// separator laid out between neighbours.
-    private var slotPitch: CGFloat { maxTabWidth(stripWidth: lastStripWidth) + 1 }
+    /// Distance between adjacent tab origins: tab width plus the separator
+    /// slot laid out between neighbours.
+    private var slotPitch: CGFloat { maxTabWidth(stripWidth: lastStripWidth) + separatorSlot }
 
     /// Cumulative pitch already absorbed by live swaps during this drag.
     @State private var swappedDistance: CGFloat = 0
 
     private func handleDragChanged(_ id: UUID, translation: CGFloat) {
+        // A lone tab stands in for the title bar it covers: dragging it
+        // moves the window (there is nothing to reorder).
+        if windowState.scopedTabs.count == 1 {
+            WindowDragArea.moveWindow(with: NSApp.currentEvent)
+            return
+        }
         if draggingTabId != id {
-            // Pressing a tab selects it (Chrome) before it starts moving.
+            // Pressing a tab selects it before it starts moving.
             draggingTabId = id
             dragOffset = 0
             swappedDistance = 0
@@ -357,92 +421,80 @@ struct ChatTabStripView: View {
     }
 
     private func move(_ id: UUID, to index: Int) {
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(theme.motion.quick) {
             windowState.moveTab(id: id, to: index)
         }
     }
 
     private func endDrag() {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+        withAnimation(theme.motion.springAnimation) {
             dragOffset = 0
         }
         draggingTabId = nil
         swappedDistance = 0
     }
+
     private func separator(hidden: Bool) -> some View {
         Rectangle()
-            .fill(windowState.theme.primaryBorder.opacity(hidden ? 0 : 0.55))
-            .frame(width: 1, height: 14)
+            .fill(hidden ? Color.clear : theme.border.subtle)
+            .frame(width: NativeComponentInspectionStyle.metric(43, "borderWidth", 1, theme), height: 14)
+            .frame(width: separatorSlot)
     }
 
-    /// Tabs that don't fit at the floor width, as a native menu (Chrome's
-    /// tab-search chevron). Picking one selects it, which swaps it into the
-    /// strip in place of the last visible tab.
+    /// Tabs that don't fit at the floor width, as a native menu. Picking
+    /// one selects it, which swaps it into the strip in place of the last
+    /// visible tab.
+    @ViewBuilder
     private func overflowButton(hiddenTabs: [ChatTab]) -> some View {
-        Button(action: { presentOverflowTabs(hiddenTabs) }) {
-            HStack(spacing: 2) {
+        AssignedExistingActionMenu(accessibilityLabel: L("More Tabs"), makeMenu: { overflowMenu(hiddenTabs) }, label: overflowLabel(hiddenTabs))
+            .buttonStyle(TabHoverCapsuleButtonStyle(theme: theme))
+    }
+    private func overflowLabel(_ hiddenTabs: [ChatTab]) -> some View {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabStripView.overflowLabel.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(43, "gap", theme.space.s2, theme))) {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .glyphSize(.tiny, weight: .bold)
                 Text(verbatim: "\(hiddenTabs.count)")
-                    .font(.system(size: 10, weight: .semibold))
-            }
-            .foregroundColor(windowState.theme.secondaryText)
+                    .componentInspectionText(43, role: .caption, fallback: .micro, weight: 600, theme: theme)
+            }.catalogLayoutTarget("component.library.43.elements.layout.chatTabStripView.overflowLabel.horizontalGap")
+            .foregroundColor(theme.text.secondary)
             // Wide enough that the capsule highlight reads as a pill, not a
             // squeezed circle around the chevron and count.
-            .padding(.horizontal, 8)
-            .frame(height: 22)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabStripView.overflowLabel.paddingX", inheriting: NativeComponentInspectionStyle.metric(43, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.43.elements.layout.chatTabStripView.overflowLabel.paddingX")
+            .frame(height: NativeComponentInspectionStyle.metric(43, "height", 22, theme))
+            .fixedSize(horizontal: true, vertical: false)
             .contentShape(Capsule())
-        }
-        .buttonStyle(ChromeHoverCapsuleButtonStyle(theme: windowState.theme))
-        .help(Text(LocalizedStringKey("More Tabs"), bundle: .module))
     }
 
-    private func presentOverflowTabs(_ hiddenTabs: [ChatTab]) {
+    private func overflowMenu(_ hiddenTabs: [ChatTab]) -> NSMenu {
         let menu = NSMenu()
         for tab in hiddenTabs {
+            let title = tab.workflowID.map { InstalledWorkflowStore.shared.workflow(id: $0)?.name ?? L("Workflow") }
+                ?? (tab.session.title.isEmpty ? L("New Chat") : tab.session.title)
             let item = NSMenuItem(
-                title: tab.session.title.isEmpty ? L("New Chat") : tab.session.title,
+                title: title,
                 action: #selector(TabMenuTarget.select(_:)), keyEquivalent: "")
             let target = TabMenuTarget { [windowState] in windowState.selectTab(id: tab.id) }
             item.target = target
             item.representedObject = target  // keeps the target alive with the item
             menu.addItem(item)
         }
+        return menu
+    }
+    private func presentOverflowTabs(_ hiddenTabs: [ChatTab]) {
+        let menu = overflowMenu(hiddenTabs)
         let origin = NSEvent.mouseLocation
         menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
     }
 
+    /// Same circle as the toolbar's other buttons (sidebar, rail toggle,
+    /// pin), so "+" reads as one of that row rather than part of the track.
     private var newTabButton: some View {
-        Button(action: { windowState.newTab() }) {
-            Image(systemName: "plus")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(windowState.theme.secondaryText)
-                .frame(width: 20, height: 20)
-                .contentShape(Circle())
-        }
-        .buttonStyle(ChromeHoverCircleButtonStyle(theme: windowState.theme))
-        .help(Text(LocalizedStringKey("New Tab"), bundle: .module))
-    }
-}
-
-/// Circular hover backplate for the "+" button, like Chrome's new-tab button.
-private struct ChromeHoverCircleButtonStyle: ButtonStyle {
-    let theme: ThemeProtocol
-    @State private var isHovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                Circle()
-                    .fill(theme.tertiaryBackground)
-                    .opacity(isHovered || configuration.isPressed ? 1 : 0)
-            )
-            .onHover { isHovered = $0 }
+        HeaderActionButton(icon: "plus", help: "New Tab") { windowState.newTab() }
     }
 }
 
 /// Capsule variant of the hover highlight for the wider overflow button.
-private struct ChromeHoverCapsuleButtonStyle: ButtonStyle {
+private struct TabHoverCapsuleButtonStyle: ButtonStyle {
     let theme: ThemeProtocol
     @State private var isHovered = false
 
@@ -450,7 +502,7 @@ private struct ChromeHoverCapsuleButtonStyle: ButtonStyle {
         configuration.label
             .background(
                 Capsule()
-                    .fill(theme.tertiaryBackground)
+                    .fill(theme.surface.hover)
                     .opacity(isHovered || configuration.isPressed ? 1 : 0)
             )
             .onHover { isHovered = $0 }
@@ -466,11 +518,6 @@ private struct ChatTabItemView: View {
     @ObservedObject var session: ChatSession
     let isActive: Bool
     let isHovered: Bool
-    /// Inactive tabs share one continuous tinted band; only the ends of a
-    /// run (strip edge, or beside the active tab) are rounded so adjacent
-    /// inactive tabs merge into a single surface.
-    var roundsLeading: Bool = true
-    var roundsTrailing: Bool = true
     /// Whether the active agent has other tabs. A lone tab can still be
     /// closed when it holds a conversation (it is replaced by a blank chat);
     /// a lone BLANK tab has nothing to close — `closeTab` refuses, so the ×
@@ -478,14 +525,14 @@ private struct ChatTabItemView: View {
     /// the blank test reads session state only this view observes.
     let hasSiblings: Bool
     let isHibernated: Bool
+    let kind: ChatTabKind
 
     private var canClose: Bool {
-        hasSiblings || isHibernated || !session.turns.isEmpty || session.isStreaming
+        kind != .chat || hasSiblings || isHibernated || !session.turns.isEmpty || session.isStreaming
             || session.awaitingClarify != nil
     }
-    /// Fixed width computed by the strip: every tab renders the SAME width
-    /// (Chrome-style), shrinking together as tabs multiply, so the strip
-    /// reads as a uniform band rather than a ragged row of hugged chips.
+    /// Fixed width computed by the strip: every tab renders the SAME width,
+    /// sharing the track equally and shrinking together as tabs multiply.
     let width: CGFloat
     /// Drag-to-reorder state owned by the strip: lifted above siblings and
     /// translated by `dragOffset` while the pointer holds it.
@@ -493,14 +540,14 @@ private struct ChatTabItemView: View {
     let dragOffset: CGFloat
     let onSelect: () -> Void
     let onClose: () -> Void
-    /// Open the project this tab's chat belongs to (folder glyph).
-    let onOpenProject: () -> Void
     /// Horizontal translation since the press (≥ minimum distance).
     let onDragChanged: (CGFloat) -> Void
     let onDragEnded: () -> Void
     let onHover: (Bool) -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var enabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled) }
     /// Live activity for this tab's session — drives the avatar's spinning
     /// ring, the same signal the sidebar rows use.
     @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
@@ -511,12 +558,22 @@ private struct ChatTabItemView: View {
     /// locally, so the local agent would misrepresent it).
     @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
     @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
+    /// A hosted tab's agent lives on another Mac; its name and avatar come
+    /// from that Mac's agent directory.
+    @ObservedObject private var agentDirectory = SyncAgentDirectory.shared
 
-    /// The feet of the active tab's shape; content is inset past them.
-    private static let footRadius: CGFloat = 8
     private static let avatarDiameter: CGFloat = 16
+    private static let closeButtonSize: CGFloat = 15
+    /// Gap between the tab's leading edge and its ×.
+    private static let closeInset: CGFloat = 5
+    /// Horizontal inset of the centred avatar + title on BOTH sides, so the
+    /// group stays centred while clearing the leading ×.
+    private static let contentInset: CGFloat = closeInset + closeButtonSize + 4
 
     private var title: String {
+        if case .workflowRun(let workflowID, _) = kind {
+            return InstalledWorkflowStore.shared.workflow(id: workflowID)?.name ?? L("Workflow")
+        }
         let stored = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
         // A hibernated tab has no turns in memory but is a saved
         // conversation: show its title, not "New Chat".
@@ -534,17 +591,31 @@ private struct ChatTabItemView: View {
     /// via API / channel, delegated…), so a background run's tab reads as
     /// such at a glance. Nil for ordinary chats.
     private var originIconName: String? {
-        session.source == .chat ? nil : session.source.iconName
+        if kind != .chat { return "flowchart" }
+        if isFromPairedPhone { return "iphone" }
+        return session.source == .chat ? nil : session.runtimeSource.iconName
+    }
+
+    /// A chat from the paired iPhone: one it started, or an older workspace
+    /// row that is the owner's own, so its tab reads as the iPhone's.
+    private var isFromPairedPhone: Bool {
+        RemoteSessionContinuation.isFromPairedPhone(
+            source: session.source,
+            externalSessionKey: session.externalSessionKey,
+            workspace: session.workspaceContext
+        )
     }
 
     private var originLabel: String? {
+        if kind != .chat { return L("Workflow") }
+        if isFromPairedPhone { return "via Mobile" }
         guard session.source != .chat else { return nil }
         // A run hosted for a remote caller names them ("for Alice · Workspace").
         if session.source == .workspace, let context = session.workspaceContext, context.isServedForTeammate {
             return session.source.originLabel(workspace: context)
         }
         let pluginName = session.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
-        return session.source.originLabel(pluginDisplayName: pluginName)
+        return session.runtimeSource.originLabel(pluginDisplayName: pluginName)
     }
 
     /// Below this width the title is dropped (avatar + × only).
@@ -566,163 +637,173 @@ private struct ChatTabItemView: View {
         return SharedAgentIdentity.resolve(address: context.agentAddress)
     }
 
-    private var avatarMascotId: String? { sharedAgent.map(\.avatar) ?? agent.avatar }
-    private var avatarName: String { sharedAgent?.name ?? agent.displayName }
+    private var isHosted: Bool { session.hostDeviceElsewhere != nil && session.agentId != nil }
+
+    /// Nil when the host no longer lists the agent; the tab then shows the
+    /// same "Agent" fallback as the thread.
+    private var hostedAgent: SyncHostedRunContract.DirectoryEntry? {
+        guard let host = session.hostDeviceElsewhere, let agentId = session.agentId else { return nil }
+        return agentDirectory.entry(device: host, agentId: agentId)
+    }
+
+    private var avatarMascotId: String? {
+        if isHosted { return hostedAgent?.avatar }
+        return sharedAgent.map(\.avatar) ?? agent.avatar
+    }
+    private var avatarName: String {
+        if isHosted { return hostedAgent?.name ?? L("Agent") }
+        return sharedAgent?.name ?? agent.displayName
+    }
     private var avatarCustomImageURL: URL? {
+        if isHosted { return nil }
         if let sharedAgent { return sharedAgent.customAvatarURL }
         return agent.customAvatarURL
     }
+
+    /// The active tab is picked out with `surface.selected` only when there
+    /// are siblings to pick it out from; a lone tab reads as a neutral window
+    /// title.
+    private var isHighlighted: Bool { isActive && hasSiblings }
+    private var titleColor: Color {
+        isActive ? theme.text.primary : theme.text.secondary
+    }
+    private var glyphColor: Color { isHighlighted ? theme.text.primary : theme.text.secondary }
 
     private var activityStatus: SessionActivityMonitor.Status? {
         session.sessionId.flatMap { activityMonitor.statuses[$0] }
     }
 
+    /// Safari's layout: the identity (avatar, glyphs, title) centred as a
+    /// group, with the × pinned to the leading edge.
     private var chipContent: some View {
-        HStack(spacing: 6) {
+        ZStack {
+            identity
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, isCompact ? 0 : theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabChip.identityInset", inheriting: NativeComponentInspectionStyle.metric(43, "padding", Self.contentInset, theme))).catalogLayoutTarget("component.library.43.elements.layout.chatTabChip.identityInset")
+
+            if canClose, !isCompact {
+                closeButton
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, Self.closeInset)
+            }
+        }
+    }
+
+    private var avatar: some View {
+        AgentAvatarView(
+            mascotId: avatarMascotId,
+            name: avatarName,
+            tint: theme.text.primary,
+            diameter: Self.avatarDiameter,
+            customImageURL: avatarCustomImageURL,
+            monogramFontSize: 9,
+            borderWidth: 0
+        )
+        .frame(width: Self.avatarDiameter, height: Self.avatarDiameter)
+        .overlay(
+            Group {
+                if let activityStatus {
+                    TabActivityRing(status: activityStatus)
+                }
+            }
+            .allowsHitTesting(false)
+        )
+        // Reserve the RING's footprint, not the avatar's: the ring is
+        // drawn as an overlay and otherwise bleeds into the title gap
+        // whenever it appears (and the title would shift with it).
+        .frame(width: TabActivityRing.diameter, height: TabActivityRing.diameter)
+    }
+
+    private var identity: some View {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabItemView.identity.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(43, "gap", theme.space.s6, theme))) {
             if isCompact, canClose, isHovered {
                 // No room for both: the × takes the avatar's slot on hover.
                 closeButton
             } else {
-            AgentAvatarView(
-                mascotId: avatarMascotId,
-                name: avatarName,
-                tint: theme.accentColor,
-                diameter: Self.avatarDiameter,
-                customImageURL: avatarCustomImageURL,
-                monogramFontSize: 9,
-                borderWidth: 0
-            )
-            .frame(width: Self.avatarDiameter, height: Self.avatarDiameter)
-            .overlay(
-                Group {
-                    if let activityStatus {
-                        TabActivityRing(status: activityStatus)
-                    }
-                }
-                .allowsHitTesting(false)
-            )
-            // Reserve the RING's footprint, not the avatar's: the ring is
-            // drawn as an overlay and otherwise bleeds into the title gap
-            // whenever it appears (and the title would shift with it).
-            .frame(width: TabActivityRing.diameter, height: TabActivityRing.diameter)
+                avatar
             }
 
-            // Project membership: a folder glyph ahead of the title, which
-            // doubles as the "back to project" control (the pill this replaces
-            // lived in the title bar and collided with the strip).
+            // Project membership: a folder glyph ahead of the title; the
+            // tooltip names the project.
             if !isNarrow, let project = projectManager.project(for: session.projectId) {
-                Button(action: onOpenProject) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
-                        .frame(width: 14, height: 14)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(Text(verbatim: project.name))
+                Image(systemName: "folder.fill")
+                    .glyphSize(.micro, weight: .semibold)
+                    .foregroundColor(glyphColor)
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+                    .help(Text(verbatim: project.name))
             }
 
             // Background-run origin ("scheduled", "via API"…) as a glyph
             // ahead of the title; the tooltip spells it out.
             if !isNarrow, let originIconName {
                 Image(systemName: originIconName)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                    .glyphSize(.tiny, weight: .semibold)
+                    .foregroundColor(glyphColor)
                     .frame(width: 12, height: 12)
                     .accessibilityHidden(true)
             }
 
             if !isNarrow {
-            Text(title)
-                .font(.system(size: 11.5, weight: .regular))
-                // Optical centring: the label's x-height sits a hair above
-                // the avatar's centre at this size.
-                .offset(y: 0.5)
-                .foregroundColor(isActive ? theme.primaryText : theme.secondaryText)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else if !isCompact {
-                // No title, but the × keeps its trailing inset: without the
-                // spacer the avatar and × pack left and the slack piles up
-                // on the right.
-                Spacer(minLength: 0)
+                Text(title)
+                    .componentInspectionText(43, role: .label, fallback: .footnote, weight: isActive ? 600 : 500, theme: theme)
+                    // Optical centring: the label's x-height sits a hair above
+                    // the avatar's centre at this size.
+                    .offset(y: 0.5)
+                    .foregroundColor(titleColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-
-            if canClose, !isCompact {
-                closeButton
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: isCompact ? .center : .leading)
-        .padding(.leading, isCompact ? 0 : Self.footRadius + 14 - (TabActivityRing.diameter - Self.avatarDiameter) / 2)
-        // Same inset for every tab: the × must not shift when a tab gains
-        // or loses selection (closing tabs one by one made that jump felt).
-        .padding(.trailing, isCompact ? 0 : Self.footRadius + 2)
+        }.catalogLayoutTarget("component.library.43.elements.layout.chatTabItemView.identity.horizontalGap")
     }
 
     private var closeButton: some View {
         Button(action: onClose) {
             Image(systemName: "xmark")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(isActive ? theme.primaryText : theme.secondaryText)
-                .frame(width: 15, height: 15)
+                .glyphSize(.tiny, weight: .bold)
+                .foregroundColor(glyphColor)
+                .frame(width: Self.closeButtonSize, height: Self.closeButtonSize)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(ChromeCloseButtonStyle(theme: theme))
-        // Chrome keeps the active tab's × always; inactive tabs
-        // reveal it on hover.
-        .opacity(isActive || isHovered ? 1 : 0)
+        .buttonStyle(TabCloseButtonStyle(theme: theme))
+        // Safari reveals the × only while the pointer is over the tab.
+        .opacity(isHovered ? 1 : 0)
         .help(Text(LocalizedStringKey("Close Tab"), bundle: .module))
+    }
+
+    /// `surface.selected` pill for the active tab (the sidebar lens bar's
+    /// selected segment), `surface.hover` on hover, nothing at rest. A lone
+    /// tab has nothing to be selected against and reads as the window title,
+    /// so it draws no pill at all.
+    private var pillFill: Color {
+        guard hasSiblings else { return .clear }
+        if isActive { return theme.surface.selected }
+        return isHovered ? theme.surface.hover : theme.assignedColor("component.library.43.background", fallback: .clear)
+    }
+
+    private var marksActive: Bool { hasSiblings && isActive && !theme.isDark }
+
+    private var pillStroke: Color {
+        marksActive ? theme.selectionBorder : theme.assignedColor("component.library.43.border", fallback: .clear)
+    }
+
+    private var pillStrokeWidth: CGFloat {
+        marksActive ? theme.selectionStroke : theme.assignedMetric("component.library.43.borderWidth", fallback: 0)
     }
 
     var body: some View {
         chipContent
         .frame(width: width)
         .frame(maxHeight: .infinity)
-        .background(alignment: .bottom) {
-            if isActive {
-                // The full Chrome tab silhouette, flush with the strip's
-                // baseline so it reads as rising out of the content below.
-                // The feet flare OUTSIDE the slot (negative inset) so the
-                // body spans the full tab width like the inactive cards and
-                // the curves overlap the neighbours' gaps, as in Chrome.
-                ChromeTabShape(topRadius: 8, footRadius: Self.footRadius)
-                    .fill(theme.tertiaryBackground.opacity(theme.isDark ? 0.95 : 0.85))
-                    .padding(.horizontal, -Self.footRadius)
-            } else {
-                // Resting tint for inactive tabs, drawn as ONE continuous
-                // band per run (no per-tab inset, corners only at the run's
-                // ends) so the raised active tab's flared feet cover the
-                // band edge and blend into it like Chrome. Hover brightens
-                // just this tab's stretch of the band.
-                UnevenRoundedRectangle(
-                    topLeadingRadius: roundsLeading ? 7 : 0,
-                    bottomLeadingRadius: roundsLeading ? 7 : 0,
-                    bottomTrailingRadius: roundsTrailing ? 7 : 0,
-                    topTrailingRadius: roundsTrailing ? 7 : 0,
-                    style: .continuous
-                )
-                // Recessed below the raised active tab using the palette's own
-                // shadow tone (each theme defines it), so the band follows a
-                // theme's tint instead of a neutral black. Full height so it
-                // sits flush with the active silhouette.
-                .fill(theme.shadowColor.opacity(theme.isDark ? 0.2 : 0.06))
-                .overlay(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: roundsLeading ? 7 : 0,
-                        bottomLeadingRadius: roundsLeading ? 7 : 0,
-                        bottomTrailingRadius: roundsTrailing ? 7 : 0,
-                        topTrailingRadius: roundsTrailing ? 7 : 0,
-                        style: .continuous
-                    )
-                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.4 : 0))
-                )
-            }
-        }
+        .background(
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .fill(pillFill)
+        )
+        .overlay(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous).strokeBorder(pillStroke, lineWidth: pillStrokeWidth))
         .contentShape(Rectangle())
         .offset(x: dragOffset)
-        // Active above its neighbours so its flared feet draw over them.
-        .zIndex(isDragging ? 2 : (isActive ? 1 : 0))
+        .zIndex(isDragging ? 1 : 0)
+        .modifier(LoneTabTitleBarDoubleClick(isLone: !hasSiblings))
         .onTapGesture(perform: onSelect)
         // A short travel threshold keeps plain clicks as taps; beyond it
         // the press becomes a reorder drag.
@@ -732,7 +813,7 @@ private struct ChatTabItemView: View {
                 .onEnded { _ in onDragEnded() }
         )
         .onHover(perform: onHover)
-        .animation(.easeOut(duration: 0.1), value: isHovered)
+        .animation(theme.motion.quick, value: isHovered)
         // Same actions the History dialog / sidebar rows offer, plus Close
         // Tab, so a chat can be managed without leaving the strip.
         .overlay(
@@ -740,6 +821,7 @@ private struct ChatTabItemView: View {
                 ChatTabContextMenu(
                     windowState: windowState,
                     session: session,
+                    isWorkflow: kind != .chat,
                     activityStatus: activityStatus,
                     canClose: canClose,
                     onClose: onClose
@@ -782,6 +864,8 @@ private struct ChatTabItemView: View {
 private struct ChatTabContextMenu {
     let windowState: ChatWindowState
     let session: ChatSession
+    /// Workflow tabs have no conversation: only Close applies.
+    let isWorkflow: Bool
     let activityStatus: SessionActivityMonitor.Status?
     let canClose: Bool
     let onClose: () -> Void
@@ -795,6 +879,10 @@ private struct ChatTabContextMenu {
 
     func makeMenu() -> NSMenu {
         let menu = NSMenu()
+        if isWorkflow {
+            add(to: menu, L("Close Tab"), handler: onClose)
+            return menu
+        }
         let session = self.session
         let windowState = self.windowState
         if activityStatus != nil {
@@ -806,8 +894,7 @@ private struct ChatTabContextMenu {
         let isBlank = session.turns.isEmpty && !session.isStreaming
         if let persisted {
             add(to: menu, L("Open in New Window"), icon: "macwindow.badge.plus") {
-                ChatWindowManager.shared.createWindow(
-                    agentId: persisted.agentId, sessionData: persisted)
+                ChatWindowManager.shared.openSessionInNewWindow(persisted)
             }
             menu.addItem(.separator())
         } else if isBlank {
@@ -1013,30 +1100,94 @@ private struct ChatTabContextMenu {
     }
 }
 
-/// Reports the hosting SwiftUI view's leading x in WINDOW coordinates.
-/// SwiftUI's `.global` coordinate space bottoms out at the enclosing
-/// `NSHostingView` (each toolbar item is its own), so window-relative
-/// geometry needs an AppKit bridge.
-private struct WindowXReader: NSViewRepresentable {
+/// A lone tab reads as the window title, so a double-click on it does what
+/// a title bar double-click does. Tabs with siblings get no double-tap
+/// recogniser, which would otherwise delay every single-click select.
+private struct LoneTabTitleBarDoubleClick: ViewModifier {
+    let isLone: Bool
+
+    func body(content: Content) -> some View {
+        if isLone {
+            content.onTapGesture(count: 2) {
+                WindowDragArea.titleBarDoubleClick(NSApp.currentEvent?.window)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// Empty strip space behaves like the title bar under it: dragging moves
+/// the window, and a double-click does what System Settings says a title
+/// bar double-click does.
+private struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    /// Starts a window move from a mouse event already in flight (a
+    /// gesture's mouse-down or mouse-dragged); returns once the button is up.
+    static func moveWindow(with event: NSEvent?) {
+        guard let event, let window = event.window,
+            event.type == .leftMouseDown || event.type == .leftMouseDragged
+        else { return }
+        window.performDrag(with: event)
+    }
+
+    static func titleBarDoubleClick(_ window: NSWindow?) {
+        guard let window else { return }
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize": window.miniaturize(nil)
+        case "None": break
+        default: window.zoom(nil)
+        }
+    }
+
+    private final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                WindowDragArea.titleBarDoubleClick(window)
+            } else {
+                window?.performDrag(with: event)
+            }
+        }
+    }
+}
+
+/// Reports the hosting SwiftUI view's distance from one WINDOW edge: its
+/// leading x for `.leading`, or the gap from its own x to the window's
+/// trailing edge for `.trailing`. SwiftUI's `.global` coordinate space
+/// bottoms out at the enclosing `NSHostingView` (each toolbar item is its
+/// own), so window-relative geometry needs an AppKit bridge. Mount it as a
+/// zero-width view on the edge to be measured.
+private struct WindowEdgeReader: NSViewRepresentable {
+    enum Edge { case leading, trailing }
+
+    var edge: Edge
     var onChange: (CGFloat) -> Void
 
     func makeNSView(context: Context) -> ReaderView {
-        ReaderView(onChange: onChange)
+        ReaderView(edge: edge, onChange: onChange)
     }
 
     func updateNSView(_ view: ReaderView, context: Context) {
+        view.edge = edge
         view.onChange = onChange
         view.report()
     }
 
     final class ReaderView: NSView {
+        var edge: Edge
         var onChange: (CGFloat) -> Void
         // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
         // observer; all writes happen on the main thread (same pattern as
         // ChatWindowState's notificationObservers).
         private nonisolated(unsafe) var resizeObserver: NSObjectProtocol?
 
-        init(onChange: @escaping (CGFloat) -> Void) {
+        init(edge: Edge, onChange: @escaping (CGFloat) -> Void) {
+            self.edge = edge
             self.onChange = onChange
             super.init(frame: .zero)
         }
@@ -1075,14 +1226,19 @@ private struct WindowXReader: NSViewRepresentable {
         }
 
         func report() {
-            guard window != nil else { return }
+            guard let window else { return }
             let x = convert(CGPoint.zero, to: nil).x
+            let value: CGFloat
+            switch edge {
+            case .leading: value = x
+            case .trailing: value = window.frame.width - x
+            }
             let callback = onChange
             // Defer: `layout` runs mid-layout-pass, and mutating SwiftUI
             // @State from inside it is undefined (AttributeGraph reentrancy).
-            // The x only depends on the chrome before the strip, so the one
-            // runloop of lag never shows during a resize.
-            DispatchQueue.main.async { callback(x) }
+            // The value only depends on the chrome beside the strip, so the
+            // one runloop of lag never shows during a resize.
+            DispatchQueue.main.async { callback(value) }
         }
     }
 }
@@ -1093,7 +1249,9 @@ private struct WindowXReader: NSViewRepresentable {
 private struct TabActivityRing: View {
     let status: SessionActivityMonitor.Status
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var enabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSpinning = false
 
@@ -1104,14 +1262,14 @@ private struct TabActivityRing: View {
         switch status {
         case .working:
             if reduceMotion {
-                ring(theme.accentColor.opacity(0.85))
+                ring(theme.status.info.foreground)
             } else {
                 Circle()
                     .stroke(
                         AngularGradient(
                             gradient: Gradient(colors: [
-                                theme.accentColor.opacity(0.05),
-                                theme.accentColor,
+                                theme.status.info.background,
+                                theme.status.info.foreground,
                             ]),
                             center: .center
                         ),
@@ -1120,14 +1278,14 @@ private struct TabActivityRing: View {
                     .frame(width: Self.diameter, height: Self.diameter)
                     .rotationEffect(.degrees(isSpinning ? 360 : 0))
                     .animation(
-                        .linear(duration: 1.1).repeatForever(autoreverses: false),
+                        theme.motion.loop(duration: 1.1),
                         value: isSpinning
                     )
                     .onAppear { isSpinning = true }
                     .onDisappear { isSpinning = false }
             }
         case .waitingForInput:
-            ring(theme.warningColor.opacity(0.9))
+            ring(theme.status.warning.foreground)
         }
     }
 
@@ -1138,9 +1296,9 @@ private struct TabActivityRing: View {
     }
 }
 
-/// Chrome-style close button: bare × that gains a circular backplate on its
-/// own hover, sized so it never grows the tab.
-private struct ChromeCloseButtonStyle: ButtonStyle {
+/// Tab close button: bare × that gains a circular backplate on its own
+/// hover, sized so it never grows the tab.
+private struct TabCloseButtonStyle: ButtonStyle {
     let theme: ThemeProtocol
     @State private var isHovered = false
 
@@ -1148,7 +1306,7 @@ private struct ChromeCloseButtonStyle: ButtonStyle {
         configuration.label
             .background(
                 Circle()
-                    .fill(theme.secondaryText.opacity(configuration.isPressed ? 0.35 : 0.22))
+                    .fill((configuration.isPressed ? theme.text.tertiary : theme.surface.pressed))
                     .opacity(isHovered || configuration.isPressed ? 1 : 0)
             )
             .onHover { isHovered = $0 }
@@ -1167,16 +1325,31 @@ private struct ChromeCloseButtonStyle: ButtonStyle {
 /// event, and consuming it there keeps the toolbar menu from appearing.
 private struct TabRightClickCatcher: NSViewRepresentable {
     let makeMenu: @MainActor () -> NSMenu
+    @Environment(\.theme) private var theme
 
     func makeNSView(context: Context) -> CatcherView { CatcherView(makeMenu: makeMenu) }
 
-    func updateNSView(_ view: CatcherView, context: Context) { view.makeMenu = makeMenu }
+    func updateNSView(_ view: CatcherView, context: Context) {
+        view.makeMenu = makeMenu
+        view.menuTheme = theme
+        if view.presenter.isPresented { view.showAssignedMenu() }
+    }
+    static func dismantleNSView(_ view: CatcherView, coordinator: ()) {
+        view.presenter.close(notify: false)
+    }
 
     final class CatcherView: NSView {
         var makeMenu: @MainActor () -> NSMenu
+        var menuTheme: (any ThemeProtocol)?
+        let presenter = AssignedMenuPanelPresenter()
+        func showAssignedMenu() {
+            guard let menuTheme else { return }
+            let menu = makeMenu()
+            presenter.showContextMenu(menu, from: self, theme: menuTheme)
+        }
         // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
         // monitor; all writes happen on the main thread (same pattern as
-        // WindowXReader's resize observer).
+        // WindowEdgeReader's resize observer).
         private nonisolated(unsafe) var monitor: Any?
 
         init(makeMenu: @escaping @MainActor () -> NSMenu) {
@@ -1208,7 +1381,7 @@ private struct TabRightClickCatcher: NSViewRepresentable {
                 nonisolated(unsafe) let event = incoming
                 let handled = MainActor.assumeIsolated { () -> Bool in
                     guard let self, self.shouldHandle(event) else { return false }
-                    NSMenu.popUpContextMenu(self.makeMenu(), with: event, for: self)
+                    self.showAssignedMenu()
                     return true
                 }
                 return handled ? nil : incoming

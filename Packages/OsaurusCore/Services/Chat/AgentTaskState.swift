@@ -180,7 +180,7 @@ public final class AgentTaskState {
     /// invalidates (see `record`).
     private static let configurationReadTools: Set<String> = ["osaurus_inspect", "osaurus_help"]
     /// The configuration writes that can change what those reads return.
-    private static let configurationWriteTools: Set<String> = ["osaurus_config"]
+    private static let configurationWriteTools: Set<String> = ["osaurus_config", "osaurus_import"]
 
     /// Read-like tools that can explicitly classify a failure as
     /// non-retryable for the exact same arguments. `search_and_extract` uses
@@ -255,6 +255,23 @@ public final class AgentTaskState {
     /// varied re-querying stops looking like work. Advisory only — the call
     /// always executes.
     private static let dynamicToolRunThreshold = 4
+
+    /// Job states a status tool reports while its work is still in flight.
+    /// Polling one that answers with one of these is waiting, not a loop, so
+    /// it arms neither the identical-call nor the dynamic-run nudge (exec
+    /// tools excluded). A finished, failed, or unrecognized status counts as
+    /// usual. Submission-time states (`queued`, `pending`, `submitted`,
+    /// `started`) are deliberately absent: a job-starting tool answers with
+    /// them, and exempting it would let identical re-submissions start the
+    /// same job again and again with no nudge.
+    private static let pendingJobStatuses: Set<String> = [
+        "running", "in_progress", "working", "processing",
+    ]
+
+    /// Consecutive pending-job polls of one tool before the poll-limit notice
+    /// fires. Far above the loop thresholds so real waiting is left alone,
+    /// but a job stuck on "running" cannot burn the whole turn unnoticed.
+    private static let pendingPollThreshold = 15
 
     /// Consecutive `invalid_args` rejections of ONE tool name (arguments
     /// ignored) before the argument-rejection notice fires. Every existing
@@ -381,6 +398,10 @@ public final class AgentTaskState {
     /// mirror of `planningRunName` (reset by any interleaved different tool).
     private var dynamicRunName: String?
     private var dynamicRunCount = 0
+    /// Consecutive pending-job polls of `lastToolName`; armed as
+    /// `pendingPollName` at `pendingPollThreshold`.
+    private var pendingPollCount = 0
+    private var pendingPollName: String?
     /// Executions per signature this message, reads and replays included —
     /// unlike `nonReadCallCounts`, which exists to arm the repeated-call
     /// nudge and deliberately excludes reads. Backs the UI's "×N" repeat
@@ -453,6 +474,8 @@ public final class AgentTaskState {
         // `biasEnabled`); only the run tracking resets with the message.
         dynamicRunName = nil
         dynamicRunCount = 0
+        pendingPollCount = 0
+        pendingPollName = nil
         callCounts.removeAll(keepingCapacity: true)
         webDiscoveryRunCount = 0
         invalidArgsRuns.removeAll(keepingCapacity: true)
@@ -757,7 +780,7 @@ public final class AgentTaskState {
         }
 
         if name == "file_undo", let payload = successPayload {
-            clearEditSnapshotsUndone(by: payload)
+            invalidateResultsUndone(by: payload)
         }
 
         // Capture (or clear) a held deterministic error for this signature.
@@ -766,8 +789,11 @@ public final class AgentTaskState {
         // `retryable:false` contract. Transient extraction failures therefore
         // execute again, while an unchanged challenge-page request is replayed
         // rather than sent to the network indefinitely.
+        // A batch `file_read` (`paths`) has no single path a later write
+        // could invalidate against, so it is never held or replayed.
         if Self.deterministicErrorTools.contains(name)
-            || Self.deterministicAsIsFailureTools.contains(name)
+            || Self.deterministicAsIsFailureTools.contains(name),
+            !(name == "file_read" && Self.hasBatchPaths(argsJSON))
         {
             let holdsByKind = Self.errorKind(result).map(Self.deterministicErrorKinds.contains)
                 ?? false
@@ -869,7 +895,19 @@ public final class AgentTaskState {
         // design (it may legitimately differ) — so count it, and once the
         // model has issued the same call `repeatedCallThreshold` times,
         // arm the bias nudge. Any different call disarms it.
-        if Self.readLikeTools.contains(name) {
+        // Exec output is arbitrary program text, so only structured tool
+        // results (MCP, plugin, built-in) may claim a pending job.
+        let pollsPendingJob =
+            !Self.readLikeTools.contains(name) && !Self.execLikeTools.contains(name)
+            && Self.reportsPendingJob(successPayload)
+        if pollsPendingJob {
+            pendingPollCount = (previousToolName == name && pendingPollCount > 0) ? pendingPollCount + 1 : 1
+            pendingPollName = pendingPollCount >= Self.pendingPollThreshold ? name : nil
+        } else {
+            pendingPollCount = 0
+            pendingPollName = nil
+        }
+        if Self.readLikeTools.contains(name) || pollsPendingJob {
             repeatedCallName = nil
         } else {
             let count = (nonReadCallCounts[sig] ?? 0) + 1
@@ -905,7 +943,10 @@ public final class AgentTaskState {
         // interleaved different tool resets the run — consecutive varied
         // calls to ONE dynamic name are the stuck signal, alternating tools
         // are work. Advisory only; the call always executes.
-        if dynamicToolClassifier(name) {
+        if pollsPendingJob {
+            dynamicRunName = nil
+            dynamicRunCount = 0
+        } else if dynamicToolClassifier(name) {
             dynamicRunCount = (previousToolName == name) ? dynamicRunCount + 1 : 1
             dynamicRunName = dynamicRunCount >= Self.dynamicToolRunThreshold ? name : nil
         } else {
@@ -959,7 +1000,9 @@ public final class AgentTaskState {
         // Search tools may omit `path` (it defaults to the root); key them
         // on "." — write invalidation clears search entries wholesale, so
         // the sentinel never has to match a written path.
-        if Self.readLikeTools.contains(name), ToolEnvelope.isSuccess(result) {
+        if Self.readLikeTools.contains(name), ToolEnvelope.isSuccess(result),
+            !(name == "file_read" && Self.hasBatchPaths(argsJSON))
+        {
             if let target = pathArgument(argsJSON) {
                 freshReads[sig] = FreshRead(
                     canonicalPath: Self.canonicalPath(target),
@@ -983,13 +1026,6 @@ public final class AgentTaskState {
     /// entirely when `biasEnabled` is false.
     public func nextStepBias() -> String? {
         guard biasEnabled, let last = lastResultClass else { return nil }
-
-        if lastToolName == "file_write",
-            let envelope = lastResultEnvelope,
-            Self.isFileWriteContentTooLarge(envelope) {
-            return
-                "The previous `file_write` did not execute because `content` exceeded the per-call limit. Do not regenerate another complete oversized payload. Split the content now: send a first chunk under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters with overwrite mode, then send only each remaining chunk with `mode: \"append\"`."
-        }
 
         // Consecutive argument rejections of one tool with varying
         // arguments: the model is retrying without reading the validator.
@@ -1015,6 +1051,13 @@ public final class AgentTaskState {
             let notice = Self.runnableMutationNotice(tool: tool, envelope: envelope)
         {
             return notice
+        }
+
+        // A job polled `pendingPollThreshold` times in a row and still
+        // running: waiting longer inside this turn will not help.
+        if let name = pendingPollName {
+            return
+                "`\(name)` has reported the job as still running \(Self.pendingPollThreshold)+ times in a row. Stop polling for now: tell the user the job is still in progress and how to check on it later, unless you have other work to do meanwhile."
         }
 
         // Repeated identical write/exec call: the strongest stuck signal we
@@ -1066,7 +1109,7 @@ public final class AgentTaskState {
         case .populatedListing:
             guard isWandering else { return nil }
             return
-                "Entries are in `result.entries`. To read one, call `file_read` with that entry's `path` value. Do not re-list this directory."
+                "Entries are in `result.entries`. To read one, call `file_read` with that entry's `path` value; to read several, pass their `path` values together as `paths`. Do not re-list this directory."
         case .emptyListing:
             guard isWandering else { return nil }
             return
@@ -1125,6 +1168,29 @@ public final class AgentTaskState {
 
     // MARK: - Classification
 
+    /// Whether a success payload reports a background job that is still in
+    /// flight: a JSON object (the payload itself, or MCP text under `text`)
+    /// whose top-level or `job` `status`/`state` is in `pendingJobStatuses`.
+    static func reportsPendingJob(_ payload: [String: Any]?) -> Bool {
+        guard let payload else { return false }
+        var object = payload
+        if let text = payload["text"] as? String,
+            text.drop(while: \.isWhitespace).first == "{",
+            text.contains("\"stat"),
+            let data = text.data(using: .utf8),
+            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
+            object = parsed
+        }
+        let candidates = [object, object["job"] as? [String: Any]].compactMap { $0 }
+        return candidates.contains { candidate in
+            ["status", "state"].contains { key in
+                guard let value = candidate[key] as? String else { return false }
+                return pendingJobStatuses.contains(value.lowercased())
+            }
+        }
+    }
+
     /// Classify a result envelope into a `ToolResultClass`. Pure function so
     /// it can be unit-tested independently of any loop.
     public static func classify(_ envelope: String) -> ToolResultClass {
@@ -1164,6 +1230,22 @@ public final class AgentTaskState {
                     nextStartLine: nextStart,
                     nextEndLine: nextEnd
                 )
+            }
+            return .fileContent
+        case "files":
+            // A batch read: the first file cut short by the output cap
+            // drives the continuation steer, like a single partial read.
+            for file in payload["files"] as? [[String: Any]] ?? []
+            where file["truncated"] as? Bool == true {
+                if let nextStart = file["next_start_line"] as? Int,
+                    let nextEnd = file["next_end_line"] as? Int
+                {
+                    return .partialFileContent(
+                        path: file["path"] as? String ?? "",
+                        nextStartLine: nextStart,
+                        nextEndLine: nextEnd
+                    )
+                }
             }
             return .fileContent
         case "native_image_generation_job":
@@ -1209,17 +1291,6 @@ public final class AgentTaskState {
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return dict["retryable"] as? Bool
-    }
-
-    private static func isFileWriteContentTooLarge(_ envelope: String) -> Bool {
-        guard ToolEnvelope.isError(envelope),
-            let data = envelope.data(using: .utf8),
-            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            dict["kind"] as? String == ToolEnvelope.Kind.invalidArgs.rawValue,
-            dict["field"] as? String == "content",
-            let message = dict["message"] as? String
-        else { return false }
-        return message.contains("must contain at most")
     }
 
     /// Longest slice of the validator message the notice quotes. Validator
@@ -1421,6 +1492,36 @@ public final class AgentTaskState {
         else { return nil }
         if let p = dict["path"] as? String, !p.isEmpty { return p }
         if let p = dict["file_path"] as? String, !p.isEmpty { return p }
+        // `file_edit` accepts a `path` carried identically by every
+        // `edits` / `operations` entry (hoisted before validation by
+        // `FileEditTool.normalizeArgumentsBeforeValidation`); the state
+        // machine sees the raw call, so it must resolve the same target or
+        // a verify-read after that edit would replay stale content.
+        return Self.sharedEntryPath(dict)
+    }
+
+    static func hasBatchPaths(_ argsJSON: String) -> Bool {
+        guard let data = argsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (FileReadTool.batchPaths(dict)?.count ?? 0) > 1
+    }
+
+    /// The one `path` every `edits` / `operations` entry names (entries may
+    /// arrive as a JSON string); nil when absent or when entries disagree.
+    static func sharedEntryPath(_ dict: [String: Any]) -> String? {
+        for key in ["edits", "operations"] {
+            var entries = dict[key] as? [[String: Any]]
+            if entries == nil, let encoded = dict[key] as? String, let bytes = encoded.data(using: .utf8) {
+                entries = try? JSONSerialization.jsonObject(with: bytes) as? [[String: Any]]
+            }
+            guard let entries, !entries.isEmpty else { continue }
+            let paths = entries.compactMap { ($0["path"] as? String)?.trimmingCharacters(in: .whitespaces) }
+            guard paths.count == entries.count, let first = paths.first, !first.isEmpty,
+                Set(paths.map(canonicalPath)).count == 1
+            else { continue }
+            return first
+        }
         return nil
     }
 
@@ -1461,16 +1562,24 @@ public final class AgentTaskState {
         return dict[key] as? String
     }
 
-    private func clearEditSnapshotsUndone(by payload: [String: Any]) {
+    /// Undo can restore several files without a path argument. Invalidate from the
+    /// receipt's actual restored paths, not the requested scope (which may conflict).
+    private func invalidateResultsUndone(by payload: [String: Any]) {
         guard let undone = payload["undone"] as? [[String: Any]] else { return }
-        for entry in undone {
-            if let path = entry["path"] as? String {
-                successfulEditSnapshots[Self.canonicalPath(path)] = nil
-            }
-            if let destination = entry["destination_path"] as? String {
-                successfulEditSnapshots[Self.canonicalPath(destination)] = nil
-            }
+        let targets = Set(undone.flatMap { entry in
+            [entry["path"] as? String, entry["destination_path"] as? String]
+                .compactMap { $0 }.map(Self.canonicalPath)
+        })
+        guard !targets.isEmpty else { return }
+        freshReads = freshReads.filter {
+            !Self.searchLikeTools.contains($0.key.name) && !targets.contains($0.value.canonicalPath)
         }
+        heldErrors = heldErrors.filter {
+            !Self.searchLikeTools.contains($0.key.name)
+                && !($0.value.canonicalPath.map(targets.contains) ?? false)
+        }
+        heldAppends = heldAppends.filter { !targets.contains($0.value.canonicalPath) }
+        for path in targets { successfulEditSnapshots[path] = nil }
     }
 
     private func parseListing(_ envelope: String) -> ListingSnapshot? {

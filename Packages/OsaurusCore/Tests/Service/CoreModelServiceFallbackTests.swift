@@ -67,6 +67,23 @@ struct CoreModelServiceFallbackTests {
         }
     }
 
+    @Test("utility calls preserve model defaults or an explicit override", arguments: [false, true])
+    func utilityNativeDefaultsReachService(explicitOverride: Bool) async throws {
+        let probe = ResidencyProbe()
+        let service = CoreModelService(localServices: [probe])
+        if explicitOverride {
+            _ = try await service.generate(
+                prompt: "Describe an agent", temperature: 0.2, timeout: 5, modelOverride: probe.id)
+        } else {
+            _ = try await service.generate(
+                prompt: "Describe an agent", timeout: 5, modelOverride: probe.id)
+        }
+        let parameters = try #require(await probe.parameters)
+        #expect(parameters.temperature == (explicitOverride ? Float(0.2) : nil))
+        #expect(parameters.auxiliaryCacheIntent)
+        #expect(parameters.preserveExistingResidencyOwner)
+    }
+
     @Test("core utility routing preserves the resident owner for window-close cleanup")
     func utilityGenerationPreservesResidencyOwner() async throws {
         for intent in [CoreModelIntent.background, .interactive] {
@@ -373,9 +390,17 @@ struct CoreModelServiceFallbackTests {
     }
 
     @Test
-    func transientErrors_neverFallBack() {
+    func hangsFallBack_breakerOpenNeverDoes() {
+        // A hung primary hands over to the chat model (the hang is still
+        // counted against the primary's breaker); an open breaker is handled
+        // structurally in `generate` and never reaches this decision.
         #expect(
-            !CoreModelService.shouldFallBackToChatModel(for: .timedOut, allowResidencyRefusal: true)
+            CoreModelService.shouldFallBackToChatModel(for: .timedOut, allowResidencyRefusal: false)
+        )
+        #expect(
+            CoreModelService.shouldFallBackToChatModel(
+                for: .unresponsive("foundation"), allowResidencyRefusal: false
+            )
         )
         #expect(
             !CoreModelService.shouldFallBackToChatModel(

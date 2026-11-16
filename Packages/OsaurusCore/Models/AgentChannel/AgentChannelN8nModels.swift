@@ -155,7 +155,6 @@ struct AgentChannelN8nConfiguration: Codable, Equatable, Sendable {
     var inboundVerification: AgentChannelN8nInboundVerification
     /// Keychain secret name under `osaurus.agent-channel.<connection_id>`.
     var secretName: String
-    var inboundDispatch: AgentChannelInboundDispatchConfiguration
     var remoteTransportPolicy: AgentChannelN8nRemoteTransportPolicy
     var outbound: AgentChannelN8nOutboundConfiguration
     /// Where n8n runs; nil on rows saved before the setup step existed.
@@ -164,7 +163,6 @@ struct AgentChannelN8nConfiguration: Codable, Equatable, Sendable {
     init(
         inboundVerification: AgentChannelN8nInboundVerification = AgentChannelN8nInboundVerification(),
         secretName: String = AgentChannelN8nConfiguration.defaultSecretName,
-        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(),
         remoteTransportPolicy: AgentChannelN8nRemoteTransportPolicy = .secureChannelRequired,
         outbound: AgentChannelN8nOutboundConfiguration = AgentChannelN8nOutboundConfiguration(),
         callerLocation: AgentChannelN8nCallerLocation? = nil
@@ -172,11 +170,6 @@ struct AgentChannelN8nConfiguration: Codable, Equatable, Sendable {
         self.inboundVerification = inboundVerification
         let trimmedName = secretName.trimmingCharacters(in: .whitespacesAndNewlines)
         self.secretName = trimmedName.isEmpty ? Self.defaultSecretName : trimmedName
-        // n8n has no mention concept; the workflow already decided this
-        // message is for the agent.
-        var dispatch = inboundDispatch
-        dispatch.requireMention = false
-        self.inboundDispatch = dispatch
         self.remoteTransportPolicy = remoteTransportPolicy
         self.outbound = outbound
         self.callerLocation = callerLocation
@@ -196,10 +189,6 @@ struct AgentChannelN8nConfiguration: Codable, Equatable, Sendable {
             ) ?? AgentChannelN8nInboundVerification(),
             secretName: try container.decodeIfPresent(String.self, forKey: .secretName)
                 ?? Self.defaultSecretName,
-            inboundDispatch: try container.decodeIfPresent(
-                AgentChannelInboundDispatchConfiguration.self,
-                forKey: .inboundDispatch
-            ) ?? AgentChannelInboundDispatchConfiguration(),
             remoteTransportPolicy: try container.decodeIfPresent(
                 AgentChannelN8nRemoteTransportPolicy.self,
                 forKey: .remoteTransportPolicy
@@ -219,7 +208,6 @@ struct AgentChannelN8nConfiguration: Codable, Equatable, Sendable {
         AgentChannelN8nConfiguration(
             inboundVerification: inboundVerification,
             secretName: secretName,
-            inboundDispatch: inboundDispatch,
             remoteTransportPolicy: remoteTransportPolicy,
             outbound: outbound,
             callerLocation: callerLocation

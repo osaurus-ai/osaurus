@@ -48,6 +48,29 @@ struct BackgroundTaskStreamingObserverTests {
     // MARK: - Tests
 
     @Test
+    func childChatStop_resumesPendingDelegateAsCancelledNotCompleted() async throws {
+        let (state, mgr) = makeObservedState()
+        defer { mgr.finalizeTask(state.id) }
+        state.chatSession?.turns = [
+            ChatTurn(role: .user, content: "Check the result"),
+            ChatTurn(role: .assistant, content: "I am still checking"),
+        ]
+        state.chatSession?.isStreaming = true
+        let waiter = Task { @MainActor in
+            await mgr.awaitCompletion(state.id, timeoutSeconds: 5)
+        }
+        await Task.yield()
+        // The visible child chat calls stop() directly, bypassing cancelTask.
+        state.chatSession?.stop()
+        guard case .cancelled = await waiter.value else {
+            Issue.record("The child chat's Stop reported its partial answer as success")
+            return
+        }
+        #expect(state.status == .cancelled)
+        #expect(mgr.hasPendingAutoFinalizeForTesting(state.id))
+    }
+
+    @Test
     func cancelTask_resumesPendingDelegateAsCancelledNotCompleted() async throws {
         let (state, mgr) = makeObservedState()
         defer { mgr.finalizeTask(state.id) }
@@ -129,5 +152,40 @@ struct BackgroundTaskStreamingObserverTests {
         try await Task.sleep(for: .milliseconds(10))
 
         #expect(state.status == .failed(summary: "boom"))
+    }
+
+    /// The task row shows the run's step. `objectWillChange` fires before a
+    /// mutation, so reading the step there recorded the one being left
+    /// ("Queued" for a run that had just started), and the lease throttle
+    /// kept it for the whole heartbeat interval.
+    @Test
+    func observeChatTask_progressNoteFollowsTheCurrentStep() async throws {
+        let mgr = BackgroundTaskManager.makeForTesting()
+        let agentId = UUID()
+        let context = ExecutionContext(agentId: agentId)
+        context.chatSession.chatEngineFactory = { _ in MockChatEngine() }
+        let state = BackgroundTaskState(
+            id: context.id,
+            taskTitle: "progress-note",
+            agentId: agentId,
+            chatSession: context.chatSession,
+            executionContext: context,
+            status: .queued,
+            currentStep: "Queued"
+        )
+        defer { mgr.finalizeTask(state.id) }
+        mgr.recordTaskForTesting(
+            DispatchRequest(id: state.id, prompt: "hi", agentId: agentId, source: .http), state: state)
+        mgr.admitTaskForTesting(state, start: {})
+        #expect(mgr.taskRecordForTesting(state.id)?.state == .running)
+        mgr.observeChatTask(state, session: context.chatSession)
+
+        state.currentStep = "Loading model"
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(mgr.taskRecordForTesting(state.id)?.progressNote == "Loading model")
+
+        state.currentStep = "Searching files"
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(mgr.taskRecordForTesting(state.id)?.progressNote == "Searching files")
     }
 }

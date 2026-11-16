@@ -58,6 +58,12 @@ public struct AppBundleDiagnostic: Codable, Equatable, Sendable {
     }
 }
 
+public struct LegacyModelDirectoryDiagnostic: Codable, Equatable, Sendable {
+    public let path: String
+    public let count: Int
+    public let complete: Bool
+}
+
 public struct InstallationDiagnosticReport: Codable, Equatable, Sendable {
     public let generatedAt: Date
     public let cliPath: String
@@ -75,6 +81,7 @@ public struct InstallationDiagnosticReport: Codable, Equatable, Sendable {
     public let apps: [AppBundleDiagnostic]
     public let diagnosis: StartupDiagnosticKind
     public let recommendation: String
+    public var strandedLegacyModels: LegacyModelDirectoryDiagnostic? = nil
 
     public func redacted(homeDirectory: String = NSHomeDirectory()) -> Self {
         func scrub(_ value: String) -> String {
@@ -124,7 +131,10 @@ public struct InstallationDiagnosticReport: Codable, Equatable, Sendable {
                 )
             },
             diagnosis: diagnosis,
-            recommendation: scrub(recommendation)
+            recommendation: scrub(recommendation),
+            strandedLegacyModels: strandedLegacyModels.map {
+                .init(path: scrub($0.path), count: $0.count, complete: $0.complete)
+            }
         )
     }
 }
@@ -252,10 +262,11 @@ public enum InstallationDiagnostics {
         let modelSnapshot = await Task.detached(priority: .utility) {
             let readable = FileManager.default.isReadableFile(atPath: modelResolution.url.path)
             guard includeModelInventory else {
-                return (readable, (count: 0, complete: false))
+                return (readable, (count: 0, complete: false), Optional<LegacyModelDirectoryDiagnostic>.none)
             }
             let count = countModelBundles(in: modelResolution.url)
-            return (readable, count)
+            let legacy = strandedLegacyModelDirectories(activeRoot: modelResolution.url)
+            return (readable, count, legacy)
         }.value
 
         return InstallationDiagnosticReport(
@@ -274,7 +285,8 @@ public enum InstallationDiagnostics {
             modelCountComplete: modelSnapshot.1.complete,
             apps: apps,
             diagnosis: diagnosis,
-            recommendation: recommendation(for: diagnosis, port: port)
+            recommendation: recommendation(for: diagnosis, port: port),
+            strandedLegacyModels: modelSnapshot.2
         )
     }
 
@@ -417,6 +429,22 @@ public enum InstallationDiagnostics {
     nonisolated private static func isOsaurusPortOwner(_ owner: String) -> Bool {
         let command = owner.split(separator: " ").first.map(String.init)?.lowercased()
         return command == "osaurus"
+    }
+
+    /// Old CLI downloads are not part of the app's automatic model roots.
+    /// Report them without moving files or changing the selected directory.
+    nonisolated static func strandedLegacyModelDirectories(
+        activeRoot: URL,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        maximumEntries: Int = 100_000
+    ) -> LegacyModelDirectoryDiagnostic? {
+        let legacy = home.appendingPathComponent(".osaurus/models", isDirectory: true)
+        guard legacy.resolvingSymlinksInPath().standardizedFileURL
+            != activeRoot.resolvingSymlinksInPath().standardizedFileURL
+        else { return nil }
+        let (modelCount, scanComplete) = countModelBundles(in: legacy, maximumEntries: maximumEntries)
+        guard modelCount > 0 else { return nil }
+        return .init(path: legacy.path, count: modelCount, complete: scanComplete)
     }
 
     nonisolated static func countModelBundles(

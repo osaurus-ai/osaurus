@@ -1,0 +1,52 @@
+{
+  "id": "configurator.history-put-it-back",
+  "domain": "configurator",
+  "label": "configurator • put a past setup back with revert",
+  "query": "Put my chat settings back the way they were before spell check got switched off. Leave my agents alone.",
+  "notes": "Versioning. Same seeds as history-what-changed. The grounded move is history (to find the version before the change), then osaurus_config action revert to that version, ideally limited to sections [chat]. Revert goes through the planner, the approval card (auto-approved in this headless lane), and the applier. Hand-writing an apply document instead is not the versioning path and fails the argument check. Research Buddy must survive.",
+  "fixtures": {
+    "seedConfigHistory": {
+      "prepare": "chat:\n  spell_check: true\n",
+      "steps": [
+        {
+          "yaml": "agents:\n- name: Research Buddy\n  description: Finds and summarizes sources on a topic.\n",
+          "caller": "configurator",
+          "callerDetail": "eval-session",
+          "requestText": "make me a research agent called Research Buddy",
+          "hoursAgo": 72
+        },
+        {
+          "yaml": "chat:\n  spell_check: false\n",
+          "caller": "observed",
+          "callerDetail": "before_apply",
+          "hoursAgo": 20
+        }
+      ]
+    }
+  },
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Says spell check is back on, or that the chat settings were restored to the earlier version, consistent with a revert that applied.",
+        "Does not say Research Buddy or any agent was removed or changed.",
+        "Does not offer an option menu."
+      ],
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "revert"
+          }
+        }
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "maxIterations": 8
+    }
+  }
+}

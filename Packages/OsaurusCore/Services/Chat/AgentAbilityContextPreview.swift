@@ -58,6 +58,14 @@ struct AgentAbilityContextPreview: Equatable {
         var appleScriptEnabled: Bool? = nil
         var spawnableAgentIDs: [UUID]? = nil
         var spawnConfiguration: AgentSpawnConfigSnapshot? = nil
+        /// Live Abilities-tab Apple Apps toggles (nil = use the stored set).
+        var enabledAppleApps: Set<AppleApp>? = nil
+        /// Live optional built-in tool toggles (nil = use the stored value).
+        var calculatorEnabled: Bool? = nil
+        var redactionToolsEnabled: Bool? = nil
+        var taskChecklistEnabled: Bool? = nil
+        var clarifyEnabled: Bool? = nil
+        var artifactsEnabled: Bool? = nil
         /// Full live Sandbox-tab configuration. `codeExecutionEnabled`
         /// remains the compatibility fallback for Overview-only callers.
         var autonomousConfig: AutonomousExecConfig? = nil
@@ -215,7 +223,14 @@ struct AgentAbilityContextPreview: Equatable {
                 && draft.knowledgeCuratorEnabled
                 && !effectiveCollections.isEmpty,
             knowledgeCollections: draft.knowledgeEnabled ? effectiveCollections : [],
-            hasChannelPublishDestinations: base.hasChannelPublishDestinations
+            hasChannelPublishDestinations: base.hasChannelPublishDestinations,
+            enabledAppleApps: draft.enabledAppleApps ?? base.enabledAppleApps,
+            calculatorEnabled: draft.calculatorEnabled ?? base.calculatorEnabled,
+            redactionToolsEnabled: draft.redactionToolsEnabled ?? base.redactionToolsEnabled,
+            taskChecklistEnabled: draft.taskChecklistEnabled ?? base.taskChecklistEnabled,
+            clarifyEnabled: draft.clarifyEnabled ?? base.clarifyEnabled,
+            artifactsEnabled: draft.artifactsEnabled ?? base.artifactsEnabled,
+            workingFolderReadOnly: base.workingFolderReadOnly
         )
 
         // Mirror ChatView's optimistic execution-mode estimate: autonomous-on

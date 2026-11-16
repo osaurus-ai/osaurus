@@ -279,7 +279,7 @@ public enum SubagentSession {
                     )
                 }
             }
-            _ = await runPrepared(
+            let completedEnvelope = await runPrepared(
                 prepared,
                 presentation: SubagentRunPresentation(
                     feed: feed,
@@ -305,22 +305,41 @@ public enum SubagentSession {
                 title: title,
                 success: success,
                 summary: summary,
+                completedEnvelope: completedEnvelope,
                 to: parentSession
             )
         }
 
-        return ToolEnvelope.success(
-            tool: tool,
-            result: [
-                "dispatched": true,
-                "background": true,
-                "helper": title,
-                "note":
-                    "The helper is running in the background. Its result will arrive as a "
-                    + "follow-up message in this conversation — do not wait, poll, or "
-                    + "re-dispatch the same task. Tell the user the helper will report back.",
-            ]
-        )
+        return backgroundAck(tool: tool, helper: title, sessionId: kind.plannedSessionId)
+    }
+
+    /// The acknowledgment a `background: true` spawn returns. Carries the
+    /// worker's `session_id` when the kind knows it ahead of the run (a
+    /// delegated agent or workspace worker), so the parent can `continue`
+    /// with it or name it before the report-back arrives.
+    public static func backgroundAck(tool: String, helper: String, sessionId: UUID?) -> String {
+        var result: [String: Any] = [
+            "dispatched": true,
+            "background": true,
+            "helper": helper,
+            "note":
+                "The helper is running in the background. Its result will arrive as a "
+                + "follow-up message in this conversation — do not wait, poll, or "
+                + "re-dispatch the same task. Tell the user the helper will report back.",
+        ]
+        if let sessionId {
+            result["session_id"] = sessionId.uuidString
+        }
+        return ToolEnvelope.success(tool: tool, result: result)
+    }
+
+    /// Whether `envelope` is a background acknowledgment (as opposed to a
+    /// settled `spawn_result` or a failure).
+    public static func isBackgroundAck(_ envelope: String) -> Bool {
+        guard ToolEnvelope.isSuccess(envelope),
+            let payload = ToolEnvelope.resultPayload(envelope) as? [String: Any]
+        else { return false }
+        return payload["dispatched"] as? Bool == true && payload["background"] as? Bool == true
     }
 
     /// Resolve and authorize a kind without admitting it or changing model
@@ -507,6 +526,36 @@ public enum SubagentSession {
         postAdmissionLocalCapacityOverride:
             (@Sendable (PreparedSubagentRun, ResidencyPlan) async -> Int)? = nil
     ) async -> String {
+        let host = {
+            await runPreparedHost(
+                prepared,
+                presentation: suppliedPresentation,
+                skipAdmission: skipAdmission,
+                handoffOverride: handoffOverride,
+                captureProcessCacheSnapshot: captureProcessCacheSnapshot,
+                admissionController: admissionController,
+                postAdmissionLocalCapacityOverride: postAdmissionLocalCapacityOverride
+            )
+        }
+        guard activeKindId == nil else { return await host() }
+        let taskId = SubagentTaskRecorder.record(
+            title: prepared.kind.feedTitle, scope: prepared.scope, model: prepared.resolved.name)
+        let envelope = await ChatExecutionContext.$currentTaskId.withValue(taskId) { await host() }
+        let interrupted = Task.isCancelled || suppliedPresentation?.interrupt.isInterrupted == true
+        SubagentTaskRecorder.recordFinished(taskId, envelope: envelope, interrupted: interrupted)
+        return envelope
+    }
+
+    private static func runPreparedHost(
+        _ prepared: PreparedSubagentRun,
+        presentation suppliedPresentation: SubagentRunPresentation? = nil,
+        skipAdmission: Bool = false,
+        handoffOverride: (any SubagentHandoff)? = nil,
+        captureProcessCacheSnapshot: Bool = true,
+        admissionController: SubagentAdmission = .shared,
+        postAdmissionLocalCapacityOverride:
+            (@Sendable (PreparedSubagentRun, ResidencyPlan) async -> Int)? = nil
+    ) async -> String {
         if let active = activeKindId {
             return ToolEnvelope.failure(
                 kind: .rejected,
@@ -517,6 +566,73 @@ public enum SubagentSession {
                 retryable: false,
                 metadata: ["recursion": true]
             )
+        }
+
+        // A real delegated chat clears activeKindId, but still owns its
+        // launcher's admission. Yield that exact lease around a nested local
+        // handoff; the inner host keeps ordinary peer admission/revalidation.
+        if !skipAdmission, prepared.admissionClass == .localExclusive,
+            let ancestor = SubagentAdmissionContext.current,
+            await ancestor.belongs(to: admissionController)
+        {
+            let nestedPresentation = suppliedPresentation ?? SubagentRunPresentation(
+                feed: SubagentFeed(
+                    toolCallId: prepared.scope.toolCallId,
+                    kindId: prepared.kind.capability.id,
+                    title: prepared.kind.feedTitle,
+                    agentId: prepared.scope.agentId,
+                    parentSessionId: prepared.scope.sessionId,
+                    suppressActivityMirror: prepared.kind.suppressActivityMirror
+                ),
+                interrupt: InterruptToken(),
+                registerWithUI: true
+            )
+            if nestedPresentation.registerWithUI {
+                SubagentFeedRegistry.shared.register(nestedPresentation.feed)
+                SubagentInterruptCenter.shared.register(nestedPresentation.interrupt, for: prepared.scope.toolCallId)
+            }
+            defer {
+                if nestedPresentation.registerWithUI {
+                    SubagentInterruptCenter.shared.unregister(prepared.scope.toolCallId)
+                    SubagentFeedRegistry.shared.unregister(toolCallId: prepared.scope.toolCallId)
+                }
+            }
+            do {
+                return try await ancestor.suspending(
+                    cancellationRequested: { nestedPresentation.interrupt.isInterrupted },
+                    onWait: { nestedPresentation.feed.emitPhase("waiting for local GPU", detail: "another subagent") }
+                ) {
+                    await SubagentAdmissionContext.$current.withValue(nil) {
+                        await runPreparedHost(
+                            prepared,
+                            presentation: SubagentRunPresentation(
+                                feed: nestedPresentation.feed,
+                                interrupt: nestedPresentation.interrupt,
+                                registerWithUI: false,
+                                finishFeed: nestedPresentation.finishFeed
+                            ),
+                            handoffOverride: handoffOverride,
+                            captureProcessCacheSnapshot: captureProcessCacheSnapshot,
+                            admissionController: admissionController,
+                            postAdmissionLocalCapacityOverride: postAdmissionLocalCapacityOverride
+                        )
+                    }
+                }
+            } catch {
+                let envelope = ToolEnvelope.failure(
+                    kind: nestedPresentation.interrupt.isInterrupted ? .userDenied : .executionError,
+                    message: nestedPresentation.interrupt.isInterrupted
+                        ? "Run was stopped by the user before execution began."
+                        : "Run was cancelled before execution began.",
+                    tool: prepared.tool,
+                    retryable: false,
+                    metadata: ["cancelled": true]
+                )
+                if nestedPresentation.finishFeed {
+                    nestedPresentation.feed.finish(success: false, summary: ToolEnvelope.failureMessage(envelope))
+                }
+                return envelope
+            }
         }
 
         let presentation =
@@ -1092,7 +1208,7 @@ public enum SubagentSession {
                         + "check. Do not retry this turn — tell the user the "
                         + "delegation could not run; it may succeed after memory or "
                         + "settings change. The user can disable Check memory before "
-                        + "delegating in Settings → Orchestrator → Local Models & Memory "
+                        + "delegating in Settings → Agents → Delegation → Local Models & Memory "
                         + "to bypass the delegation RAM check, accepting possible allocation "
                         + "failure or a crash. Separate Server Memory Safety load budgets "
                         + "and explicit concurrency limits still apply."
@@ -1117,6 +1233,12 @@ public enum SubagentSession {
                 effectiveHandoff = prepared.kind.makeHandoff()
             }
         }
+        let ownedAdmission = admissionHeld && admissionClass != .remote
+            ? SubagentAdmissionLease(
+                gate: admissionController, admissionClass: admissionClass,
+                modelKey: admissionModelKey, slots: admissionHeldSlots,
+                requiresCleanupAdmission: effectiveHandoff.requiresAdmissionForCleanup
+            ) : nil
         let started = Date()
 
         // Run under the recursion guard, wrapped by the optional handoff. Bind
@@ -1124,44 +1246,65 @@ public enum SubagentSession {
         // tool-call ids even though one visible parent call owns the feed.
         do {
             let cacheCapture = PostRunCacheCapture()
-            let result = try await ChatExecutionContext.$currentSessionId.withValue(
-                prepared.scope.sessionId
-            ) {
+            let result = try await SubagentAdmissionContext.$current.withValue(ownedAdmission) {
+                try await ChatExecutionContext.$currentSessionId.withValue(
+                    prepared.scope.sessionId
+                ) {
                 try await ChatExecutionContext.$currentAgentId.withValue(prepared.scope.agentId) {
-                    try await ChatExecutionContext.$currentEnableThinking.withValue(
-                        prepared.scope.enableThinking
-                    ) {
-                        try await ChatExecutionContext.$currentToolCallId.withValue(
-                            prepared.scope.toolCallId
+                    try await ChatExecutionContext.$currentReasoningEffort.withValue(prepared.scope.reasoningEffort) {
+                        try await ChatExecutionContext.$currentEnableThinking.withValue(
+                            prepared.scope.enableThinking
                         ) {
-                            try await SubagentSession.$activeKindId.withValue(
-                                prepared.kind.capability.id
+                            try await ChatExecutionContext.$currentToolCallId.withValue(
+                                prepared.scope.toolCallId
                             ) {
-                                try await effectiveHandoff.around(
-                                    scope: prepared.scope,
-                                    resolved: prepared.resolved,
-                                    feed: feed
+                                try await ChatExecutionContext.$workflowGrantedToolNames.withValue(
+                                    prepared.scope.workflowGrantedToolNames
                                 ) {
-                                    let result = try await prepared.kind.run(
-                                        prepared.scope,
-                                        prepared.resolved,
-                                        feed: feed,
-                                        interrupt: interrupt
-                                    )
-                                    if captureProcessCacheSnapshot,
-                                        prepared.resolved.isLocal
-                                    {
-                                        cacheCapture.value =
-                                            await ModelRuntime.batchDiagnosticsSnapshot()
+                                try await SubagentSession.$activeKindId.withValue(
+                                    prepared.kind.capability.id
+                                ) {
+                                    try await effectiveHandoff.around(
+                                        scope: prepared.scope,
+                                        resolved: prepared.resolved,
+                                        feed: feed
+                                    ) {
+                                        do {
+                                            let result = try await prepared.kind.run(
+                                                prepared.scope,
+                                                prepared.resolved,
+                                                feed: feed,
+                                                interrupt: interrupt
+                                            )
+                                            await ownedAdmission?.prepareForCleanup {
+                                                feed.emitPhase("waiting for local GPU", detail: "another subagent")
+                                            }
+                                            if captureProcessCacheSnapshot,
+                                                prepared.resolved.isLocal
+                                            {
+                                                cacheCapture.value =
+                                                    await ModelRuntime.batchDiagnosticsSnapshot()
+                                            }
+                                            return result
+                                        } catch {
+                                            await ownedAdmission?.prepareForCleanup {
+                                                feed.emitPhase("waiting for local GPU", detail: "another subagent")
+                                            }
+                                            throw error
+                                        }
                                     }
-                                    return result
+                                }
                                 }
                             }
                         }
                     }
                 }
+                }
             }
-            if admissionHeld {
+            if let ownedAdmission {
+                await ownedAdmission.finish()
+                admissionHeld = false
+            } else if admissionHeld {
                 if admissionHeldSlots > 0 {
                     await admissionController.releaseLocalInPlace(
                         modelKey: admissionModelKey,
@@ -1189,9 +1332,7 @@ public enum SubagentSession {
                 endedAt: Date()
             )
             if !phases.isEmpty {
-                residency["phases"] = Dictionary(
-                    uniqueKeysWithValues: phases.map { ($0.phase, ($0.seconds * 100).rounded() / 100) }
-                )
+                residency["phases"] = Self.phaseTotals(phases)
                 residency["phase_order"] = phases.map(\.phase)
                 let summary = phases.map { String(format: "%@ %.1fs", $0.phase, $0.seconds) }
                     .joined(separator: " · ")
@@ -1224,7 +1365,10 @@ public enum SubagentSession {
             )
             return ToolEnvelope.success(tool: prepared.tool, result: payload)
         } catch {
-            if admissionHeld {
+            if let ownedAdmission {
+                await ownedAdmission.finish()
+                admissionHeld = false
+            } else if admissionHeld {
                 if admissionHeldSlots > 0 {
                     await admissionController.releaseLocalInPlace(
                         modelKey: admissionModelKey,
@@ -1313,11 +1457,31 @@ public enum SubagentSession {
         }
         if requested == 1, !rejectUnsafeSingleRun { return .init(capacity: 1) }
 
-        let memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
+        var memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
             for: prepared.resolved.name,
             residencyPlan: residencyPlan,
             requestEstimate: prepared.kind.admissionRequestEstimate()
         )
+        // A large lifetime tool budget is a ceiling on work, not a promise
+        // that all 24 maximum-size rounds remain in KV simultaneously. When
+        // even one resident child would be refused, tighten its actual history
+        // window to available memory. Keep the output/turn limits intact, and
+        // preserve all cold-load, pressure, allocator and model-budget gates.
+        if residencyPlan.ramSafetyEnabled,
+            let adaptive = prepared.kind as? any SubagentContextAdmission,
+            let minimum = adaptive.minimumAdmissionContextPositions,
+            let requested = prepared.kind.admissionRequestEstimate()?.boundedPositionBudget(),
+            let memory = memoryFacts,
+            let fitted = await ModelRuntime.shared.affordableSubagentContext(
+                for: prepared.resolved.name, requested: requested,
+                minimum: minimum, memory: memory
+            ), adaptive.tightenAdmissionContextPositions(to: fitted.positions)
+        {
+            memoryFacts = fitted.facts
+            subagentLog.info(
+                "[admission-context] model=\(prepared.resolved.name, privacy: .public) requested_positions=\(requested) enforced_positions=\(fitted.positions) minimum_positions=\(minimum) per_child_bytes=\(fitted.facts.effectiveChildHeadroomBytes ?? 0)"
+            )
+        }
         var plan = SpawnFanOutPolicy.makeLocalAdmissionPlan(
             localJobCount: requested,
             remoteJobCount: 0,
@@ -1331,6 +1495,14 @@ public enum SubagentSession {
         )
         plan.engineOccupancy = engineSnapshot
         plan.engineQueuedAtAdmission = engineWindow.queued
+        // A fitted window rescues one child, never increases fan-out. Keep
+        // this run serialized even if a stepped/fixed estimator or a later
+        // host sample would otherwise report more than one slot.
+        if (prepared.kind as? any SubagentContextAdmission)?.admissionContextWasMemoryFitted == true,
+            let positions = prepared.kind.admissionRequestEstimate()?.boundedPositionBudget()
+        {
+            plan.serializeMemoryFittedContext(jobCount: requested, positions: positions)
+        }
         if case .admitted = plan.verdict {
             return .init(capacity: max(1, plan.localCapacity), plan: plan)
         }
@@ -1388,6 +1560,13 @@ public enum SubagentSession {
             timings.append((phase: event.title, seconds: seconds))
         }
         return timings
+    }
+
+    /// Seconds per phase title, rounded to centiseconds. A phase can recur
+    /// (a worker waits for the GPU more than once), so repeats add up.
+    static func phaseTotals(_ timings: [(phase: String, seconds: Double)]) -> [String: Double] {
+        Dictionary(timings.map { ($0.phase, $0.seconds) }, uniquingKeysWith: +)
+            .mapValues { ($0 * 100).rounded() / 100 }
     }
 
     /// Map a thrown error to the canonical failure envelope. `SubagentError`

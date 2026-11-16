@@ -153,14 +153,35 @@ public actor ToolSearchService {
     private var pendingIndexEntries: [String: PendingIndexEntry] = [:]
     private var isProcessingPendingIndexEntries = false
 
-    private init() {}
+    private var pendingIndexRetryTask: Task<Void, Never>?
+    private var pendingIndexRetryID: UUID?
+    private var pendingIndexRetryDelay: Duration = .seconds(1)
+    private let retrySleep: @Sendable (Duration) async throws -> Void
+
+    init(
+        vectorDB: VecturaKit? = nil,
+        retrySleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) {
+        self.vectorDB = vectorDB
+        self.isInitialized = vectorDB != nil
+        self.retrySleep = retrySleep
+    }
+
+    deinit { pendingIndexRetryTask?.cancel() }
 
     // MARK: - Initialization
 
     public func initialize() async {
         guard !isInitialized else { return }
+        guard EmbeddingService.vectorIndexesAvailable else {
+            ToolIndexLogger.search.error(
+                "Tool vector index closed: \(EmbeddingService.launchError?.localizedDescription ?? "embedding model unavailable")"
+            )
+            return
+        }
 
-        let storageDir = OsaurusPaths.toolIndex().appendingPathComponent("vectura", isDirectory: true)
+        let storageDir = OsaurusPaths.toolIndex().appendingPathComponent(
+            EmbeddingService.indexDirectoryName, isDirectory: true)
 
         for attempt in 1 ... 2 {
             do {
@@ -242,6 +263,10 @@ public actor ToolSearchService {
 
     private func processPendingIndexEntries() async {
         guard let db = vectorDB else { return }
+        // INVARIANT: registrations share one failed drain and one retry. A
+        // missing embedder must not cause every newly registered tool to retry
+        // the same failed document, or require another registration to recover.
+        guard pendingIndexRetryTask == nil else { return }
         guard !isProcessingPendingIndexEntries else { return }
         isProcessingPendingIndexEntries = true
         defer { isProcessingPendingIndexEntries = false }
@@ -254,7 +279,9 @@ public actor ToolSearchService {
                     description: pending.entry.description,
                     parameters: pending.parameters
                 )
-                _ = try await db.addDocument(text: text, id: id)
+                _ = try await MediaActivityLogger.withEmbedding(purpose: "tool_index", role: .document) {
+                    try await db.addDocument(text: text, id: id)
+                }
 
                 if pendingIndexEntries[pending.entry.id]?.generation == pending.generation {
                     pendingIndexEntries.removeValue(forKey: pending.entry.id)
@@ -265,20 +292,54 @@ public actor ToolSearchService {
                     try await db.deleteDocuments(ids: [id])
                     reverseIdMap.removeValue(forKey: id.uuidString)
                 }
+                pendingIndexRetryDelay = .seconds(1)
                 // A newer generation remains queued and is processed next.
             } catch {
                 ToolIndexLogger.search.error(
                     "Failed to index tool \(pending.entry.id): \(error)"
                 )
-                // Keep the failed entry queued for the next registration or
-                // initialization attempt, without spinning in a tight loop.
+                // Preserve the newest queued registrations and retry without
+                // spinning or repeatedly retrying during a registration burst.
+                schedulePendingIndexRetry()
                 break
             }
         }
     }
 
+    private func schedulePendingIndexRetry() {
+        guard !pendingIndexEntries.isEmpty, pendingIndexRetryTask == nil else { return }
+        let retryID = UUID()
+        let delay = pendingIndexRetryDelay
+        pendingIndexRetryDelay = min(delay * 2, .seconds(30))
+        pendingIndexRetryID = retryID
+        let sleep = retrySleep
+        pendingIndexRetryTask = Task { [weak self] in
+            do { try await sleep(delay) } catch { return }
+            guard !Task.isCancelled else { return }
+            await self?.retryPendingIndexEntries(id: retryID)
+        }
+    }
+
+    private func retryPendingIndexEntries(id: UUID) async {
+        guard pendingIndexRetryID == id else { return }
+        pendingIndexRetryTask = nil
+        pendingIndexRetryID = nil
+        await processPendingIndexEntries()
+    }
+
+    private func cancelPendingIndexRetryIfEmpty() {
+        guard pendingIndexEntries.isEmpty else { return }
+        pendingIndexRetryTask?.cancel()
+        pendingIndexRetryTask = nil
+        pendingIndexRetryID = nil
+        pendingIndexRetryDelay = .seconds(1)
+    }
+
+    var pendingIndexEntryCount: Int { pendingIndexEntries.count }
+
     public func removeEntry(id: String) async {
         pendingIndexEntries.removeValue(forKey: id)
+        cancelPendingIndexRetryIfEmpty()
         guard let db = vectorDB else { return }
         do {
             let uuid = deterministicUUID(for: id)
@@ -304,11 +365,13 @@ public actor ToolSearchService {
         guard let db = vectorDB else { return [] }
         do {
             let fetchCount = topK * 3
-            let results = try await db.search(
-                query: .text(query),
-                numResults: fetchCount,
-                threshold: threshold ?? Self.defaultSearchThreshold
-            )
+            let results = try await MediaActivityLogger.withEmbedding(purpose: "tool_search", role: .query) {
+                try await db.search(
+                    query: .text(query),
+                    numResults: fetchCount,
+                    threshold: threshold ?? Self.defaultSearchThreshold
+                )
+            }
 
             let scoreMap = Dictionary(
                 results.map { ($0.id.uuidString, Float($0.score)) },
@@ -768,8 +831,10 @@ public actor ToolSearchService {
 
     // MARK: - Rebuild
 
-    public func rebuildIndex() async {
-        guard let db = vectorDB else { return }
+    /// Returns whether every entry was embedded into the index.
+    @discardableResult
+    public func rebuildIndex() async -> Bool {
+        guard let db = vectorDB else { return false }
         do {
             try await db.reset()
             reverseIdMap.removeAll()
@@ -799,11 +864,15 @@ public actor ToolSearchService {
                 ids.append(id)
             }
             if !texts.isEmpty {
-                _ = try await db.addDocuments(texts: texts, ids: ids)
+                _ = try await MediaActivityLogger.withEmbedding(purpose: "tool_index", role: .document) {
+                    try await db.addDocuments(texts: texts, ids: ids)
+                }
             }
             ToolIndexLogger.search.info("Tool index rebuilt with \(entries.count) entries")
+            return true
         } catch {
             ToolIndexLogger.search.error("Failed to rebuild tool index: \(error)")
+            return false
         }
     }
 

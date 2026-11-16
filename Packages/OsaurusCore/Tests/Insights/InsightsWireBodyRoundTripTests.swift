@@ -112,6 +112,81 @@ struct InsightsWireBodyRoundTripTests {
         #expect(InsightsService.shared.focus(requestId: "missing") == false)
     }
 
+    @Test func truncationMetadataSurvivesLoggingStorageAndExport() async throws {
+        let model = uniqueModel("capture-status")
+        let body = String(repeating: "🙂", count: InsightsBodyCapture.maximumBytes / 4 + 1)
+        InsightsService.logInference(
+            source: .chatUI,
+            model: model,
+            inputTokens: 1,
+            outputTokens: 1,
+            durationMs: 1,
+            temperature: nil,
+            maxTokens: 1,
+            requestBody: body,
+            responseBody: "complete",
+            wireRequestBody: Data("{}".utf8),
+            // A probe cap can split a multi-byte UTF-8 scalar.
+            wireResponseBody: Data([0x61, 0xF0, 0x9F]),
+            wireResponseTruncated: true,
+            egress: EgressInfo(details: ["query": "exercise boundedDetails copy"])
+        )
+        await settle()
+        let log = try #require(findLog(model: model))
+        #expect(log.requestBody!.utf8.count <= InsightsBodyCapture.maximumBytes)
+        #expect(log.wireResponseBody?.hasPrefix("a") == true)
+        let status = [
+            "requestBody": true, "responseBody": false,
+            "wireRequestBody": false, "wireResponseBody": true,
+        ]
+        #expect(log.bodyTruncation == status)
+        let store = ActivityLogStore()
+        try store.openInMemory()
+        let stored = try store.append(log)
+        #expect(try store.verify().isIntact)
+        let persisted = try #require(store.fetch(filter: .empty).first)
+        #expect(persisted.bodyTruncation == status)
+        for includeContent in [true, false] {
+            let data = try ActivityExportService.render(
+                logs: [persisted],
+                options: .init(format: .jsonl, includeContent: includeContent),
+                filterDescription: "test",
+                verification: try store.verify()
+            )
+            let line = try #require(String(decoding: data, as: UTF8.self).split(separator: "\n").last)
+            let exported = try ActivityLogStore.decoder.decode(RequestLog.self, from: Data(line.utf8))
+            #expect(exported.bodyTruncation == status)
+            #expect(exported.hash == stored.hash)
+            if !includeContent { #expect(RequestLog.isWithheldContent(exported.requestBody)) }
+        }
+    }
+
+    @Test func missingProbeStatusAndLegacyRowsRemainUnknown() async throws {
+        let model = uniqueModel("unknown-capture")
+        InsightsService.logRequest(
+            source: .chatUI,
+            method: "POST",
+            path: "/chat/completions",
+            statusCode: 200,
+            durationMs: 1,
+            model: model,
+            wireResponseBody: Data("complete-looking".utf8)
+        )
+        await settle()
+        #expect(try #require(findLog(model: model)).bodyTruncation == nil)
+        let legacy = RequestLog(
+            source: .chatUI,
+            method: "POST",
+            path: "/chat/completions",
+            statusCode: 200,
+            durationMs: 1,
+            responseBody: "…[truncated]"
+        )
+        let encoded = try ActivityLogStore.canonicalEncoder.encode(legacy)
+        #expect(!String(decoding: encoded, as: UTF8.self).contains("bodyTruncation"))
+        #expect(try ActivityLogStore.decoder.decode(RequestLog.self, from: encoded).bodyTruncation == nil)
+    }
+
     @Test func logInference_propagatesWireBodies() async {
         let model = uniqueModel("wirebody-propagate")
         let reqJSON = #"{"model":"gpt-4o","messages":[]}"#

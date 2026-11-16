@@ -20,17 +20,19 @@ struct ConfigManifestDerivationTests {
 
     @Test
     func knownKeysMatchManifestSections() {
-        // Root must know every section plus `version`.
+        // Root must know every section plus `version`, and still accept the
+        // pre-events sections that are translated into `events`.
         let root = ConfigManifest.knownKeys[""]
-        #expect(root == Set(ConfigSectionID.allNames + ["version"]))
+        #expect(root == Set(ConfigSectionID.allNames + ["version"] + ConfigManifest.legacySections.map(\.name)))
         // Spot-check derived paths exist.
         for path in ["memory", "delegation", "agents[]", "agents[].capabilities",
-            "search_providers.providers[]"]
+            "search_providers.providers[]", "harness_runtimes[]", "agents[].claude_code",
+            "default_agent.claude_code"]
         {
             #expect(ConfigManifest.knownKeys[path] != nil, "missing knownKeys path `\(path)`")
         }
-        // Scope reduction 2: the removed sections must not resurface.
-        for removed in ["server", "chat", "app"] {
+        // Scope reduction 2: the removed section must not resurface.
+        for removed in ["server"] {
             #expect(ConfigManifest.knownKeys[removed] == nil, "`\(removed)` crept back")
         }
     }

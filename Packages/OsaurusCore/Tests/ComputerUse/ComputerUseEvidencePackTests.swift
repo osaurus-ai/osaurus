@@ -694,7 +694,7 @@ final class ComputerUseEvidencePackTests: XCTestCase {
         XCTAssertFalse(transcript.contains(secret), "Secure field value leaked into the loop transcript.")
     }
 
-    func testCloudVisionRequiresConsentAndScrubbedFrameRoute() async {
+    func testCloudVisionRequiresConsentAndScrubbedFrameRoute() async throws {
         let rawFrame = renderEvidenceCUImage(text: "Visible account number 1234")
         let noConsent = VisionContext(
             modelAcceptsImages: true,
@@ -722,10 +722,7 @@ final class ComputerUseEvidencePackTests: XCTestCase {
             .needsScrubForCloud(rawFrame)
         )
 
-        let scrubbed = await FrameScrubber.scrub(rawFrame, mode: .allText)
-        guard let scrubbed else {
-            return XCTFail("Expected a valid rendered image to produce a ScrubbedFrame.")
-        }
+        let scrubbed = try await FrameScrubber.scrub(rawFrame, mode: .allText)
         XCTAssertNil(
             CaptureRouter.cloudRoute(
                 scrubbed: scrubbed,

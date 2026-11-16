@@ -1,0 +1,15 @@
+{
+  "client_id": "https://osaurus.ai/oauth/mcp-client-metadata.json",
+  "client_name": "Osaurus",
+  "client_uri": "https://osaurus.ai",
+  "tos_uri": "https://osaurus.ai/terms",
+  "policy_uri": "https://osaurus.ai/privacy",
+  "redirect_uris": [
+    "http://127.0.0.1/callback",
+    "http://localhost/callback"
+  ],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none",
+  "application_type": "native"
+}

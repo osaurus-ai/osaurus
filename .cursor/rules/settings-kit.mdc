@@ -1,0 +1,87 @@
+---
+description: Management window views are built only from the settings kit in Views/DesignSystem; SettingsKitLintTests enforces it at zero.
+globs: Packages/OsaurusCore/Views/**/*.swift,Packages/OsaurusCore/PrivacyFilter/Views/**/*.swift
+alwaysApply: false
+---
+
+# Settings kit
+
+Every Management page uses the components in
+`Packages/OsaurusCore/Views/DesignSystem`. `SettingsKitGallery` (Debug:
+Developer Tools → Server → Settings Kit Gallery, or its `#Preview`) shows each
+one in every state. Pick from there before writing UI.
+
+| Need | Use |
+| --- | --- |
+| Page | `SettingsPage { SettingsPageHeader(…) } content: { … }` |
+| Group of rows | `SettingsSection` (Title Case title, one flat group; direct children become rows) |
+| Row | `SettingsToggle`, `SettingsPickerRow`, `SettingsValueRow`, `SettingsLinkRow`, `SettingsNavigationRow`, `SettingsRow`, `SettingsAbilityRow`, `SettingsDestructiveRow`, `SettingsPermissionRow` |
+| Value control in a row | `SettingsMenuPicker` (native pop-up), `SettingsSearchablePicker` (long lists: search, groups, keyboard), `SettingsPopUpButton` (opens a popover picker), `SettingsStepper` / `SettingsStepperRow`, `SettingsSliderRow` |
+| Text input | `SettingsFieldRow` + `SettingsTextField` / `SettingsTextEditor`; `SearchField` for search |
+| Button | `SettingsButton`, `SettingsIconButton`, or `.buttonStyle(.settings(role, size:))` |
+| Menu of actions | `SettingsOverflowMenu` (icon only, ⋯ by default), `SettingsMenuButton` (titled, Import ▾) |
+| Page notice | `SettingsCallout` |
+| Metrics / status | `SettingsStatStrip` (`.divided` headline numbers, `.tiles` live readings), `SettingsStatusHero` (the page's one live value + state + action) |
+| Explainer | `SettingsFeatureCards` (`.leading` above a page; `.centered` is the hero empty state's examples) |
+| Check results | `SettingsFindingRow` (preflight, doctor, inspector rows: severity glyph, title, code/value, detail, fix) |
+| Label / count | `StatusChip`, `CountBadge` |
+| Filter | `FilterChipRow`, `FilterChip`, `FilterTokenChip` |
+| Grid / list item | `LibraryCard`, `LibraryRow`, `LibraryIcon` |
+| Comparable collection (sortable columns, row opens a detail panel) | `SettingsDataTable` + `SettingsDataTableColumn` (width, sort key, hide priority) |
+| Pushed page | `SettingsBackBar` / `SettingsSubPageBar` + `SettingsDetailHeader` |
+| Empty / loading | `SettingsEmptyState` (hero, `inline:`, `loading:`), `SettingsSkeletonBar` + `.settingsShimmer()`, `SettingsProgressBar` |
+| Surface | `.settingsChrome(.card / .control / .inset / .selected / …)` |
+| Type | `SettingsFont.*` (add `.weight` / `.italic()` / `.monospacedDigit()` as needed) |
+
+Rules:
+
+- No hand-drawn chrome: no `RoundedRectangle(...).fill(theme…)`, no
+  `Capsule().fill` pills, no padded plain-style buttons, no raw `TextField` /
+  `SecureField` / `TextEditor`, no `.font(.system(size:))` on text, no
+  uppercased or tracked titles. Every `Toggle` carries `.settingsSwitch()` or
+  `.settingsCheckbox()`.
+- One-of-few choices are a segmented `Picker` (or `SettingsPickerRow`), not a
+  row of custom buttons. A value picked from a list is `SettingsMenuPicker`;
+  never a custom-label `Menu` with a hand-drawn chevron.
+- Never `.menuStyle(.borderlessButton)` with a custom label: macOS drops the
+  label's background and tint, leaving a bare accent glyph. Menus go through
+  `SettingsOverflowMenu` / `SettingsMenuButton` (`.menuStyle(.button)` with a
+  kit button style).
+- Rows inside any card or surface draw flat (`.settingsChrome` sets
+  `settingsInGroup`), so never wrap a row in its own card inside a group.
+- Section and row titles are Title Case ("Swap Local Models for Subagents");
+  descriptions, captions and button labels are sentence case. Header refresh is
+  `SettingsIconButton("arrow.clockwise")`, never a text "Refresh" button.
+- Inner navigation is one of two kinds, never both on a page:
+  - `SettingsTabsRow` in the header when the views are peers over one
+    collection (scopes or kinds of the same list: Local Models kinds,
+    Plugins, Skills, Insights).
+  - `SettingsDrillInHost` + `SettingsDrillInRows` when the children are
+    different kinds of page (Memory, Voice, Privacy, Server, Computer &
+    Browser Use). Drill-in ids are stable deep-link keys.
+- Animation respects `accessibilityReduceMotion`.
+- Need a variant the kit lacks? Extend the kit component, add it to the
+  gallery, and migrate callers. Do not fork a private copy.
+- Kit text parameters are catalog keys unless the parameter says it is
+  already localized or a `verbatim` flag is set.
+
+`SettingsKitLintTests` scans every non-chat view. Component rules are at zero;
+a new violation fails the test. The token rules (`rawPadding`, `rawRadius`,
+`rawFixedWidth`: literal numbers where a `theme.space` / `theme.radius`
+token or kit component belongs) carry per-file counts that only go down:
+adding a literal fails, and removing one fails until you lower the baseline
+with `SETTINGS_KIT_LINT_WRITE_BASELINE=1 swift test --filter SettingsKitLintTests`.
+`SettingsKitLintBaseline.allowlist` exempts specific
+rules for surfaces that are not settings rows (chat-shared views, sidebar,
+tables, artwork) and must only shrink. Do not add a file to it to silence a
+new violation.
+
+```swift
+// BAD
+Text(status).font(.system(size: 10, weight: .semibold))
+    .padding(.horizontal, 6).padding(.vertical, 2)
+    .background(Capsule().fill(Color.green.opacity(0.15)))
+
+// GOOD
+StatusChip(status, tone: .success)
+```

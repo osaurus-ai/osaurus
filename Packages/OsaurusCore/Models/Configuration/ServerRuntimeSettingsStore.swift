@@ -22,6 +22,8 @@ import os
 
 /// Centralized persistence for `VMLXServerRuntimeSettings`.
 public enum ServerRuntimeSettingsStore {
+    /// Fingerprint of the previously shipped default, not today's Automatic policy.
+    private static let legacyDefaultDiskCachePercent: Double = 10
     /// Emitted after `server-runtime.json` and the hot snapshot have both been
     /// updated successfully. `ServerController` observes this so non-UI
     /// writers (notably `/admin/runtime-settings`) publish the same live value
@@ -30,12 +32,26 @@ public enum ServerRuntimeSettingsStore {
         "ai.osaurus.serverRuntimeSettings.didSave"
     )
 
-    /// When set, configuration reads/writes use this directory instead
-    /// of the default. Used by tests.
-    /// Note: nonisolated(unsafe) since this is only set during test
-    /// setup before any concurrent access, matching the pattern used
-    /// by `OsaurusPaths.overrideRoot`.
-    public nonisolated(unsafe) static var overrideDirectory: URL?
+    /// Serializes disk publication and migration decisions. Cold reads capture
+    /// a revision before releasing this lock; a newer save or fixture-directory
+    /// change invalidates that read before it can normalize or publish anything.
+    /// The hot snapshot still uses its short, independent lock below.
+    private static let persistenceLock = NSRecursiveLock()
+    private nonisolated(unsafe) static var storageRevision: UInt64 = 0
+    private nonisolated(unsafe) static var directoryOverride: URL?
+
+    /// Tests may select a fixture directory. Changing it also invalidates any
+    /// in-flight cold read, so an outgoing fixture cannot write into the next.
+    public nonisolated static var overrideDirectory: URL? {
+        get { persistenceLock.withLock { directoryOverride } }
+        set {
+            persistenceLock.withLock {
+                directoryOverride = newValue
+                storageRevision &+= 1
+                cachedSnapshot = nil
+            }
+        }
+    }
 
     /// Hot snapshot accessed by non-MainActor runtime code paths
     /// (`ModelRuntime.buildCacheCoordinatorConfig`, `MLXBatchAdapter`).
@@ -74,21 +90,104 @@ public enum ServerRuntimeSettingsStore {
     /// and no migration source is present (caller should fall back to
     /// `migratedFromLegacy(...)`).
     public nonisolated static func load() -> VMLXServerRuntimeSettings? {
+        readSettings(useCachedSnapshot: false, afterReading: nil)
+    }
+
+    /// Per-call read barrier for deterministic concurrent-reader regressions.
+    /// No process-global hook or timing-dependent scheduling is required.
+    nonisolated static func load(
+        afterReading: @escaping @Sendable () -> Void
+    ) -> VMLXServerRuntimeSettings? {
+        readSettings(useCachedSnapshot: false, afterReading: afterReading)
+    }
+
+    private struct DiskRead {
+        let url: URL
+        let revision: UInt64
+        let settings: VMLXServerRuntimeSettings?
+    }
+
+    private struct ReadOutcome {
+        let settings: VMLXServerRuntimeSettings?
+        let didPersist: Bool
+    }
+
+    private nonisolated static func captureDiskRead() -> DiskRead {
         let url = fileURL()
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        do {
-            let raw = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: url))
-            let decoded = normalizeLoadedSettings(raw)
-            if decoded != raw {
-                persist(decoded, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
+        let settings: VMLXServerRuntimeSettings?
+        if FileManager.default.fileExists(atPath: url.path) {
+            do {
+                settings = try JSONDecoder().decode(
+                    VMLXServerRuntimeSettings.self,
+                    from: Data(contentsOf: url)
+                )
+            } catch {
+                print("[Osaurus] Failed to load ServerRuntimeSettings: \(error)")
+                settings = nil
             }
-            writeLegacyConcurrencyMigrationMarker()
-            cachedSnapshot = decoded
-            return decoded
-        } catch {
-            print("[Osaurus] Failed to load ServerRuntimeSettings: \(error)")
-            return nil
+        } else {
+            settings = nil
         }
+        return DiskRead(url: url, revision: storageRevision, settings: settings)
+    }
+
+    private nonisolated static func readSettings(
+        useCachedSnapshot: Bool,
+        afterReading: (@Sendable () -> Void)?
+    ) -> VMLXServerRuntimeSettings? {
+        if useCachedSnapshot, afterReading == nil, let cached = cachedSnapshot { return cached }
+        let captured = persistenceLock.withLock { captureDiskRead() }
+        afterReading?()
+        let outcome = persistenceLock.withLock {
+            // INVARIANT: a read may never normalize, rewrite, or publish a value
+            // captured before a newer save, snapshot override, or directory
+            // change. Atomic file replacement alone does not prevent that lost
+            // update. Check under the same lock that owns all publications.
+            if captured.revision != storageRevision || captured.url != fileURL() {
+                if let current = cachedSnapshot {
+                    return ReadOutcome(settings: current, didPersist: false)
+                }
+                return resolveDiskRead(captureDiskRead(), useFallback: useCachedSnapshot)
+            }
+            return resolveDiskRead(captured, useFallback: useCachedSnapshot)
+        }
+        postSaveNotification(if: outcome.didPersist)
+        return outcome.settings
+    }
+
+    /// Called only with persistenceLock held. All migration marker decisions
+    /// and the full settings publication belong to this same transaction.
+    private nonisolated static func resolveDiskRead(
+        _ read: DiskRead,
+        useFallback: Bool
+    ) -> ReadOutcome {
+        if let raw = read.settings {
+            let normalized = normalizeLoadedSettings(raw)
+            let didPersist =
+                normalized != raw
+                && persistLocked(normalized, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
+            if !useFallback { writeLegacyConcurrencyMigrationMarker() }
+            if !didPersist {
+                cachedSnapshot = normalized
+                storageRevision &+= 1
+            }
+            return ReadOutcome(settings: normalized, didPersist: didPersist)
+        }
+        guard useFallback else { return ReadOutcome(settings: nil, didPersist: false) }
+        let serverConfiguration = diskBackedServerConfiguration() ?? .default
+        let fallback =
+            legacyConcurrencyMigrationCompleted
+            ? resetDefaults(serverConfiguration: serverConfiguration)
+            : migratedFromLegacy(serverConfiguration: serverConfiguration, userDefaults: .standard)
+        cachedSnapshot = fallback
+        storageRevision &+= 1
+        return ReadOutcome(settings: fallback, didPersist: false)
+    }
+
+    /// Observers may synchronously read settings from another thread. Never
+    /// post while holding the disk/publication transaction lock.
+    private nonisolated static func postSaveNotification(if didPersist: Bool) {
+        if didPersist { NotificationCenter.default.post(name: didSaveNotification, object: nil) }
     }
 
     /// Loads or builds the settings, performing one-time migration from
@@ -99,22 +198,24 @@ public enum ServerRuntimeSettingsStore {
     public static func loadOrMigrate(
         userDefaults: UserDefaults = .standard
     ) -> VMLXServerRuntimeSettings {
-        if let existing = load() { return existing }
-        // Brand-new install (no settings file): run the freshly-migrated
-        // settings through the same normalization as a loaded file so the
-        // product defaults (q6 tied head, diffusion denoising budget, cache
-        // repairs) are seeded on the very first launch, not only on reload.
-        let serverConfiguration = ServerConfigurationStore.load() ?? .default
-        let migrated = normalizeLoadedSettings(
-            legacyConcurrencyMigrationCompleted
-                ? resetDefaults(serverConfiguration: serverConfiguration)
-                : migratedFromLegacy(
-                    serverConfiguration: serverConfiguration,
-                    userDefaults: userDefaults
-                )
-        )
-        persist(migrated, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
-        return migrated
+        let outcome = persistenceLock.withLock {
+            let loaded = resolveDiskRead(captureDiskRead(), useFallback: false)
+            if loaded.settings != nil { return loaded }
+            let serverConfiguration = ServerConfigurationStore.load() ?? .default
+            let migrated = normalizeLoadedSettings(
+                legacyConcurrencyMigrationCompleted
+                    ? resetDefaults(serverConfiguration: serverConfiguration)
+                    : migratedFromLegacy(serverConfiguration: serverConfiguration, userDefaults: userDefaults)
+            )
+            let didPersist = persistLocked(
+                migrated,
+                mtpSelectionIsFamilyDefault: false,
+                recordMTPChoice: false
+            )
+            return ReadOutcome(settings: migrated, didPersist: didPersist)
+        }
+        postSaveNotification(if: outcome.didPersist)
+        return outcome.settings!
     }
 
     /// Persists the settings to disk and updates the nonisolated
@@ -134,6 +235,21 @@ public enum ServerRuntimeSettingsStore {
         mtpSelectionIsFamilyDefault: Bool,
         recordMTPChoice: Bool = true
     ) {
+        let didPersist = persistenceLock.withLock {
+            persistLocked(
+                settings,
+                mtpSelectionIsFamilyDefault: mtpSelectionIsFamilyDefault,
+                recordMTPChoice: recordMTPChoice
+            )
+        }
+        postSaveNotification(if: didPersist)
+    }
+
+    private nonisolated static func persistLocked(
+        _ settings: VMLXServerRuntimeSettings,
+        mtpSelectionIsFamilyDefault: Bool,
+        recordMTPChoice: Bool = true
+    ) -> Bool {
         // Do not call snapshot(): its normalization path can itself save.
         let previousMTP =
             cachedSnapshot?.mtp
@@ -142,6 +258,7 @@ public enum ServerRuntimeSettingsStore {
             }?.mtp
             ?? VMLXServerMTPSettings()
         var settings = canonicalizedContextAndKVPolicy(settings)
+        settings.mtp = NativeMTPSelectionDefault.adaptiveSelection(settings.mtp)
         // Anything we write is by definition current-schema, so stamp it.
         //
         // Without this a saved value could carry a stale (or absent)
@@ -158,19 +275,21 @@ public enum ServerRuntimeSettingsStore {
             try encoder.encode(settings).write(to: url, options: [.atomic])
             if recordMTPChoice {
                 NativeMTPSelectionDefault.recordSavedChoice(
-                    previous: previousMTP,
+                    // A cold save may read the legacy representation directly
+                    // from disk. Compare the same representation on both sides
+                    // so an unrelated edit does not become an explicit MTP choice.
+                    previous: NativeMTPSelectionDefault.adaptiveSelection(previousMTP),
                     next: settings.mtp,
                     isFamilyDefault: mtpSelectionIsFamilyDefault
                 )
             }
             writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = settings
-            NotificationCenter.default.post(
-                name: didSaveNotification,
-                object: nil
-            )
+            storageRevision &+= 1
+            return true
         } catch {
             print("[Osaurus] Failed to save ServerRuntimeSettings: \(error)")
+            return false
         }
     }
 
@@ -180,38 +299,22 @@ public enum ServerRuntimeSettingsStore {
     /// is updated on every `save(_:)` so the runtime always sees the
     /// last persisted configuration without a MainActor hop.
     public nonisolated static func snapshot() -> VMLXServerRuntimeSettings {
-        if let cached = cachedSnapshot { return cached }
-        // Cold path: read from disk synchronously the first time the
-        // runtime needs the snapshot before any `MainActor` consumer
-        // has loaded it. JSON decode is cheap enough to do off-actor.
-        let url = directoryURL().appendingPathComponent(fileName)
-        if FileManager.default.fileExists(atPath: url.path),
-            let data = try? Data(contentsOf: url),
-            let raw = try? JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
-        {
-            let normalized = normalizeLoadedSettings(raw)
-            if normalized != raw {
-                persist(normalized, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
-            }
-            cachedSnapshot = normalized
-            return normalized
-        }
-        let serverConfiguration = diskBackedServerConfiguration() ?? .default
-        let fallback =
-            legacyConcurrencyMigrationCompleted
-            ? resetDefaults(serverConfiguration: serverConfiguration)
-            : migratedFromLegacy(
-                serverConfiguration: serverConfiguration,
-                userDefaults: .standard
-            )
-        cachedSnapshot = fallback
-        return fallback
+        readSettings(useCachedSnapshot: true, afterReading: nil)!
+    }
+
+    nonisolated static func snapshot(
+        afterReading: @escaping @Sendable () -> Void
+    ) -> VMLXServerRuntimeSettings {
+        readSettings(useCachedSnapshot: true, afterReading: afterReading)!
     }
 
     /// Reset the in-memory snapshot. Tests use this to force the next
     /// call to re-read from disk.
     public nonisolated static func invalidateSnapshot() {
-        cachedSnapshot = nil
+        persistenceLock.withLock {
+            cachedSnapshot = nil
+            storageRevision &+= 1
+        }
     }
 
     /// Pin the in-memory snapshot for THIS PROCESS ONLY, WITHOUT persisting to
@@ -221,7 +324,10 @@ public enum ServerRuntimeSettingsStore {
     /// self-declared `OSAURUS_EVALS_KV_REGIME` provenance matches the actual
     /// runtime instead of silently inheriting the persisted/default config.
     public nonisolated static func overrideSnapshotInMemory(_ settings: VMLXServerRuntimeSettings) {
-        cachedSnapshot = settings
+        persistenceLock.withLock {
+            cachedSnapshot = settings
+            storageRevision &+= 1
+        }
     }
 
     /// Whether the user explicitly selected the dangerous profile with no
@@ -260,14 +366,24 @@ public enum ServerRuntimeSettingsStore {
         baseLoadConfiguration: LoadConfiguration = .default,
         bundleFacts: LoadBundleFacts? = nil,
         host: MemoryStatus? = nil,
-        request: VMLXMemoryRequestEstimate? = nil
+        request: VMLXMemoryRequestEstimate? = nil,
+        sandboxVMBytes: UInt64 = SandboxMemoryReservation.currentBytes
     ) -> VMLXResolvedMemorySafetyPlan {
         let settings = canonicalizedContextAndKVPolicy(settings)
+        // The running sandbox VM holds its guest RAM out of the same unified
+        // memory, so a request has to fit alongside it. The diagnostic mode
+        // promises no automatic caps and is left alone.
+        let sandboxShare = settings.memorySafety.mode == .diagnosticDangerous ? 0 : sandboxVMBytes
+        var admittedRequest = request
+        if sandboxShare > 0, let estimate = request?.workingSetBytes {
+            let (sum, overflow) = estimate.addingReportingOverflow(sandboxShare)
+            admittedRequest?.workingSetBytes = overflow ? UInt64.max : sum
+        }
         var plan = settings.resolvedMemorySafetyPlan(
             baseLoadConfiguration: baseLoadConfiguration,
             bundleFacts: bundleFacts,
             host: host,
-            request: request
+            request: admittedRequest
         )
         if settings.memorySafety.mode == .diagnosticDangerous {
             if settings.memorySafety.customPhysicalMemoryFraction == nil {
@@ -286,6 +402,15 @@ public enum ServerRuntimeSettingsStore {
             plan.resolvedLoadBudgetBytes = plan.loadConfiguration.memoryLimit.resolve(
                 physicalMemory: plan.resolvedPhysicalMemoryBytes
             )
+            if sandboxShare > 0, let budget = plan.resolvedLoadBudgetBytes {
+                plan.resolvedLoadBudgetBytes = budget > sandboxShare ? budget - sandboxShare : 0
+                let gb = Double(sandboxShare) / Double(1 << 30)
+                plan.warnings.append(
+                    String(
+                        format:
+                            "The running sandbox VM holds ~%.1f GB, so it is taken out of the model load budget. Lower Sandbox → Memory or stop the sandbox to give models more room.",
+                        gb))
+            }
         }
         plan.displaySummary = memorySafetyDisplaySummary(settings: settings, plan: plan)
         return plan
@@ -360,8 +485,13 @@ public enum ServerRuntimeSettingsStore {
     ) -> String {
         let concurrency = plan.concurrency.maxConcurrentSequences.map(String.init) ?? "default"
         let kv = plan.cache.defaultMaxKVSize.map(String.init) ?? "unlimited"
+        // This is a configured load plan, not a sample of the process-wide
+        // inference allocator. Its actual limit is memory_status.cache_limit.
+        let inferenceAllocator = settings.memorySafety.customAllocatorCacheBytes.map {
+            "custom_max:\($0)"
+        } ?? "runtime_managed"
         return
-            "mode=\(settings.memorySafety.mode.rawValue) slider=\(settings.memorySafety.slider) load_cap=\(residentCapSummary(plan.loadConfiguration.memoryLimit)) allocator_cap=\(residentCapSummary(plan.loadConfiguration.maxResidentBytes)) max_concurrent=\(concurrency) kv_cap=\(kv)"
+            "mode=\(settings.memorySafety.mode.rawValue) keep_model_in_memory=\(settings.memorySafety.keepModelInMemory) slider=\(settings.memorySafety.slider) load_cap=\(residentCapSummary(plan.loadConfiguration.memoryLimit)) load_allocator_cap=\(residentCapSummary(plan.loadConfiguration.maxResidentBytes)) inference_allocator=\(inferenceAllocator) max_concurrent=\(concurrency) kv_cap=\(kv)"
     }
 
     private nonisolated static func residentCapSummary(_ cap: ResidentCap) -> String {
@@ -379,24 +509,14 @@ public enum ServerRuntimeSettingsStore {
         _ settings: VMLXServerRuntimeSettings
     ) -> VMLXServerRuntimeSettings {
         var normalized = canonicalizedContextAndKVPolicy(settings)
-        // Run vmlx's schema migrations.
-        //
-        // These were DEAD CODE: `migrateToCurrentSchema()` had no call site in
-        // either repo, so every version-gated repair it defines silently never
-        // happened. The v2 repair (a persisted flat 10 GB disk cap becoming
-        // auto) therefore never reached a single updating install — only fresh
-        // installs benefited, because their value was nil to begin with and the
-        // resolver handled nil. A live launch is what surfaced it: the config
-        // the app wrote back had no `schemaVersion` at all.
-        //
-        // This is the right home for it. Both `load()` and `loadOrMigrate()`
-        // funnel through here, and `load()` persists whenever normalization
-        // changes the value, so the migration runs once and is written back.
+        // Run and persist engine schema migrations. Current migrations preserve
+        // explicit percentages and legacy GB; only an unset size is Automatic.
         normalized.migrateToCurrentSchema()
-        // Native MTP now requires opt-in. Never repair an explicit Off to Auto.
+        // Family defaults apply only to unset choices. Never replace a stored Off.
         // Retire only defaults whose provenance was recorded by the old family
         // selector, including API-only launches with no chat view present.
-        normalized.mtp = NativeMTPSelectionDefault.retiringOwnedDefault(normalized.mtp)
+        normalized.mtp = NativeMTPSelectionDefault.adaptiveSelection(
+            NativeMTPSelectionDefault.retiringOwnedDefault(normalized.mtp))
         // Osaurus product default for block-diffusion models: 16 denoising
         // steps (~74 tok/s on diffusiongemma-26B-A4B MXFP4, coherent) vs the
         // bundle's 48 (~37 tok/s). Seeded exactly once; afterwards a blank
@@ -512,14 +632,11 @@ public enum ServerRuntimeSettingsStore {
             && cache.legacyDisk.maxSizeGB == nil
             && cache.blockDisk.enabled
             && cache.blockDisk.maxSizeGB == nil
-            // The cap is a share of the disk now, and schema v3 stamps the
-            // shipped 10% onto every install. Testing only `maxSizeGB == nil`
-            // would call a deliberate 40% "untouched" — because that field is
-            // nil for everyone after migration — and let a later defaults
-            // migration overwrite a choice the user made.
+            // Recognize the historical shipped profile without treating an
+            // arbitrary explicit percentage as an untouched cache default.
             && (cache.blockDisk.maxSizePercent == nil
                 || cache.blockDisk.maxSizePercent
-                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+                    == legacyDefaultDiskCachePercent)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive == false
     }
@@ -554,14 +671,11 @@ public enum ServerRuntimeSettingsStore {
             && cache.legacyDisk.maxSizeGB == nil
             && cache.blockDisk.enabled
             && cache.blockDisk.maxSizeGB == nil
-            // The cap is a share of the disk now, and schema v3 stamps the
-            // shipped 10% onto every install. Testing only `maxSizeGB == nil`
-            // would call a deliberate 40% "untouched" — because that field is
-            // nil for everyone after migration — and let a later defaults
-            // migration overwrite a choice the user made.
+            // Recognize the historical shipped profile without treating an
+            // arbitrary explicit percentage as an untouched cache default.
             && (cache.blockDisk.maxSizePercent == nil
                 || cache.blockDisk.maxSizePercent
-                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+                    == legacyDefaultDiskCachePercent)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive
     }

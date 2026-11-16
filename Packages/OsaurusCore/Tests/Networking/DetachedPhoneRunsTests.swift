@@ -1,0 +1,178 @@
+//
+//  DetachedPhoneRunsTests.swift
+//  OsaurusCoreTests
+//
+//  Phone runs that outlive their connection (docs/MOBILE_PROTOCOL.md §6.4):
+//  replay from an index, live following, stop, and retention.
+//
+
+import Foundation
+import Testing
+
+@testable import OsaurusCore
+
+private final class Received: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _frames: [String] = []
+    private var _ended = false
+
+    var frames: [String] { lock.withLock { _frames } }
+    var ended: Bool { lock.withLock { _ended } }
+
+    var follower: DetachedPhoneRun.Follower {
+        DetachedPhoneRun.Follower(
+            frames: { frames in self.lock.withLock { self._frames += frames } },
+            end: { self.lock.withLock { self._ended = true } }
+        )
+    }
+}
+
+struct DetachedPhoneRunsTests {
+    @Test func rejoiningReplaysWhatWasMissedThenFollowsLive() {
+        let run = DetachedPhoneRun(id: "r1")
+        run.record("data: a\n\n")
+        run.record("data: b\n\n")
+        let received = Received()
+        #expect(run.follow(after: 1, received.follower) != .gone)
+        #expect(received.frames == ["data: b\n\n"])
+
+        run.record("data: c\n\n")
+        #expect(received.frames == ["data: b\n\n", "data: c\n\n"])
+        #expect(!received.ended)
+        run.finish()
+        #expect(received.ended)
+    }
+
+    @Test func rejoiningAFinishedRunReplaysAndEnds() {
+        let run = DetachedPhoneRun(id: "r2")
+        run.record("data: a\n\n")
+        run.finish()
+        run.record("data: late\n\n")
+        let received = Received()
+        #expect(run.follow(after: 0, received.follower) != .gone)
+        #expect(received.frames == ["data: a\n\n"])
+        #expect(received.ended)
+    }
+
+    /// An image job's previews (§12.5): live followers get each one, a
+    /// rejoin only the newest, and none of them count towards `after`.
+    @Test func previewsAreTransient() {
+        let job = DetachedPhoneRun(id: "img1")
+        let live = Received()
+        _ = job.follow(after: 0, live.follower)
+        job.record("data: queued\n\n")
+        job.recordTransient("data: preview1\n\n")
+        job.record("data: step\n\n")
+        job.recordTransient("data: preview2\n\n")
+        #expect(live.frames.count == 4)
+        #expect(job.frameCount == 2)
+
+        let rejoined = Received()
+        #expect(job.follow(after: 1, rejoined.follower) != .gone)
+        #expect(rejoined.frames == ["data: step\n\n", "data: preview2\n\n"])
+
+        job.finish()
+        let late = Received()
+        _ = job.follow(after: 2, late.follower)
+        #expect(late.frames.isEmpty, "a finished job's preview is no use")
+        #expect(late.ended)
+    }
+
+    /// The same job id after its job ended replays that job: a second run
+    /// of a cloud model would bill twice for one image.
+    @Test func aFinishedImageJobIsFollowedNotRunAgain() {
+        let store = DetachedPhoneRuns()
+        let (job, isNew) = store.begin(id: "img-done", followFinished: true)
+        #expect(isNew)
+        job.record("data: completed\n\n")
+        job.finish()
+        let (again, isNewAgain) = store.begin(id: "img-done", followFinished: true)
+        #expect(!isNewAgain)
+        #expect(again === job)
+        // Runs keep starting afresh once finished.
+        _ = store.begin(id: "run-done").run.finish()
+        #expect(store.begin(id: "run-done").isNew)
+    }
+
+    @Test func imageJobsAndRunsAreKeptApart() {
+        _ = DetachedPhoneRuns.images.begin(id: "shared-id-test")
+        #expect(DetachedPhoneRuns.shared.run(id: "shared-id-test") == nil)
+        #expect(DetachedPhoneRuns.images.run(id: "shared-id-test") != nil)
+    }
+
+    @Test func theImageRequestCarriesItsJobId() throws {
+        let body = #"{"model":"m","prompt":"p","stream":true,"osaurus_job_id":"job-1"}"#
+        let req = try JSONDecoder().decode(ImageGenerationRequestDTO.self, from: Data(body.utf8))
+        #expect(req.osaurus_job_id == "job-1")
+    }
+
+    @Test func anIndexPastTheEndIsGone() {
+        let run = DetachedPhoneRun(id: "r3")
+        run.record("data: a\n\n")
+        #expect(run.follow(after: 2, Received().follower) == .gone)
+        #expect(run.follow(after: -1, Received().follower) == .gone)
+    }
+
+    @Test func anUnfollowedClientHearsNothingMore() {
+        let run = DetachedPhoneRun(id: "r4")
+        let received = Received()
+        guard case .following(let token) = run.follow(after: 0, received.follower) else {
+            Issue.record("expected to follow")
+            return
+        }
+        run.unfollow(token)
+        run.record("data: a\n\n")
+        run.finish()
+        #expect(received.frames.isEmpty)
+        #expect(!received.ended)
+    }
+
+    @Test func stopRunsTheHandlerEvenWhenItArrivesFirst() {
+        let run = DetachedPhoneRun(id: "r5")
+        #expect(run.stop())
+        let stopped = Received()
+        run.onStop { stopped.follower.end() }
+        #expect(stopped.ended)
+
+        run.finish()
+        #expect(!run.stop())
+    }
+
+    @Test func theSameIdWhileLiveJoinsTheRunningOne() {
+        let runs = DetachedPhoneRuns()
+        let first = runs.begin(id: "same")
+        #expect(first.isNew)
+        let again = runs.begin(id: "same")
+        #expect(!again.isNew)
+        #expect(again.run === first.run)
+
+        first.run.finish()
+        let after = runs.begin(id: "same")
+        #expect(after.isNew)
+        #expect(after.run !== first.run)
+    }
+
+    @Test func finishedRunsAreForgottenAfterTheRetention() {
+        let runs = DetachedPhoneRuns()
+        let run = runs.begin(id: "old").run
+        run.finish()
+        #expect(runs.run(id: "old") != nil)
+        let later = Date().addingTimeInterval(DetachedPhoneRuns.retention + 1)
+        #expect(runs.run(id: "old", now: later) == nil)
+    }
+
+    @Test func theRunRequestCarriesItsId() throws {
+        let json = #"{"messages":[],"model":"","osaurus_run_id":"r-1"}"#
+        let request = try JSONDecoder().decode(ChatCompletionRequest.self, from: Data(json.utf8))
+        #expect(request.osaurus_run_id == "r-1")
+        let encoded = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+        #expect(!encoded.contains("osaurus_run_id"))
+    }
+
+    @Test func runIdsArePlain() {
+        #expect(DetachedPhoneRuns.isValidId(UUID().uuidString))
+        #expect(!DetachedPhoneRuns.isValidId(""))
+        #expect(!DetachedPhoneRuns.isValidId("../etc"))
+        #expect(!DetachedPhoneRuns.isValidId(String(repeating: "a", count: 129)))
+    }
+}

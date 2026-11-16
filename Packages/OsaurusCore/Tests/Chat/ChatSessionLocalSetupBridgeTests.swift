@@ -28,7 +28,7 @@ struct ChatSessionLocalSetupBridgeTests {
     }
 
     private func makeRouterItem(
-        id: String = "osaurus/deepseek-ai/deepseek-v4-flash",
+        id: String = "osaurus/deepseek-v4-1-flash",
         inputPrice: Int64 = 100_000,
         outputPrice: Int64 = 300_000,
         contextLength: Int = 65_536,
@@ -97,7 +97,7 @@ struct ChatSessionLocalSetupBridgeTests {
         ])
 
         #expect(session.selectedModel == router.id)
-        #expect(session.temporaryCloudModelDisplayName == "DeepSeek V4 Flash")
+        #expect(session.temporaryCloudModelDisplayName == "DeepSeek V4.1 Flash")
         #expect(AgentManager.shared.effectiveModel(for: session.agentId!) == localModelId)
         // Progress must remain addressable while Cloud is selected so the
         // empty state keeps rendering the local download.
@@ -157,8 +157,8 @@ struct ChatSessionLocalSetupBridgeTests {
     }
 
     /// Product policy outranks generic value sorting for first-run: DeepSeek
-    /// V4 Flash wins even when another capable Router model is cheaper.
-    @Test func valueCandidatePinsDeepSeekV4FlashForFirstRun() {
+    /// V4.1 Flash wins even when another capable Router model is cheaper.
+    @Test func valueCandidatePinsDeepSeekV41FlashForFirstRun() {
         let cheaper = makeRouterItem(
             id: "osaurus/provider/cheaper-capable",
             inputPrice: 1,
@@ -173,6 +173,27 @@ struct ChatSessionLocalSetupBridgeTests {
             ChatSession.osaurusRouterValueCandidate(in: [cheaper, deepSeek])?.id
                 == deepSeek.id
         )
+    }
+
+    /// The retired V4 Flash (0423) id is no longer the product pick: it falls
+    /// back into ordinary value sorting and loses to a cheaper capable model.
+    @Test func valueCandidateNoLongerPinsLegacyDeepSeekV4Flash() {
+        let cheaper = makeRouterItem(
+            id: "osaurus/provider/cheaper-capable",
+            inputPrice: 1,
+            outputPrice: 1
+        )
+        let legacy = makeRouterItem(
+            id: "osaurus/deepseek-v4-flash",
+            inputPrice: 500,
+            outputPrice: 1_000
+        )
+
+        #expect(
+            ChatSession.osaurusRouterValueCandidate(in: [legacy, cheaper])?.id
+                == cheaper.id
+        )
+        #expect(!RemoteProviderManager.isFirstRunOsaurusModelId(legacy.id))
     }
 
     /// The recovery adoption path selects the Router model for the session
@@ -277,5 +298,54 @@ struct ChatSessionLocalSetupBridgeTests {
         #expect(session.selectedModel == localModelId)
         #expect(session.pendingLocalSetupModelId == nil)
         await cleanup()
+    }
+
+    // MARK: - Architect model guidance
+
+    /// "Use DeepSeek V4.1 Flash" in the Architect's model notice: with the
+    /// Router already in the picker, the Router model is selected and kept
+    /// as the Architect's model, and the notice no longer applies.
+    @Test func architectGuidanceSelectsAndKeepsTheRouterModel() async throws {
+        try await StoragePathsTestLock.shared.run { @MainActor in
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-architect-guidance-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+            let previous = ArchitectConfigurationStore.overrideDirectory
+            ArchitectConfigurationStore.overrideDirectory = tmp
+            ArchitectConfigurationStore.resetCacheForTests()
+            defer {
+                ArchitectConfigurationStore.overrideDirectory = previous
+                ArchitectConfigurationStore.resetCacheForTests()
+                try? FileManager.default.removeItem(at: tmp)
+            }
+
+            let session = ChatSession()
+            session.agentId = Agent.architectId
+            await drainInitialCacheSnapshot()
+            let local = ModelPickerItem(id: "mlx-test/architect-local", displayName: "Local", source: .local)
+            let router = makeRouterItem()
+            session.applyPickerItems([local, router])
+            session.selectedModel = local.id
+            #expect(session.architectModelGuidanceApplies)
+            #expect(session.architectCloudModelDisplayName == "DeepSeek V4.1 Flash")
+
+            let switched = await session.useOsaurusCloudForArchitect(maxConnectAttempts: 1)
+            #expect(switched)
+            #expect(session.selectedModel == router.id)
+            #expect(ArchitectConfigurationStore.load().model == router.id)
+            #expect(!session.architectModelGuidanceApplies)
+        }
+    }
+
+    /// The switch belongs to the Architect's chat only.
+    @Test func architectGuidanceSwitchIgnoresOtherAgents() async {
+        let session = ChatSession()
+        session.agentId = Agent.defaultId
+        await drainInitialCacheSnapshot()
+        session.applyPickerItems([makeRouterItem()])
+        let before = session.selectedModel
+        #expect(!session.architectModelGuidanceApplies)
+        #expect(await session.useOsaurusCloudForArchitect(maxConnectAttempts: 1) == false)
+        #expect(session.selectedModel == before)
     }
 }

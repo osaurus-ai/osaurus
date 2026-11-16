@@ -78,15 +78,31 @@ struct SeatbeltExecutorProcessTests {
     }
 
     @Test func pythonShimReturnsRealOutputAndExitStatus() async throws {
-        let result = try await execute("/usr/bin/python3 -c \"print('executor-python-ok')\"")
+        // The /usr/bin/python3 shim's first launch on a fresh CI runner takes 4-6 s.
+        let result = try await execute("/usr/bin/python3 -c \"print('executor-python-ok')\"", timeout: 30)
         #expect(result.exitCode == 0, "\(result.stderr)")
         #expect(result.stdout == "executor-python-ok\n")
     }
 
+    @Test func nulInCommandOrEnvironmentFailsAsSandboxErrorWithoutLaunching() async throws {
+        let started = Output()
+        for (command, env) in [("printf a\u{0}b", [String: String]()), ("printf ok", ["KEY": "v\u{0}"])] {
+            do {
+                _ = try await execute(command, env: env, onStarted: { _ in started.append(Data("x".utf8)) })
+                Issue.record("Expected a NUL rejection")
+            } catch SandboxError.execFailed(let message) {
+                #expect(message.contains("NUL character"))
+            }
+        }
+        #expect(started.text.isEmpty)
+    }
+
     private func execute(
         _ command: String,
+        env: [String: String] = [:],
         timeout: TimeInterval = 5,
-        stdout: (any Writer)? = nil
+        stdout: (any Writer)? = nil,
+        onStarted: (@Sendable (ProcessHandle) -> Void)? = nil
     ) async throws -> ContainerExecResult {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-executor-process-\(UUID().uuidString)")
@@ -101,13 +117,13 @@ struct SeatbeltExecutorProcessTests {
         return try await SeatbeltExecutor.run(
             .init(
                 command: command,
-                env: [:],
+                env: env,
                 cwd: root.path,
                 timeout: timeout,
                 profile: profile,
                 stdoutTee: stdout,
                 stderrTee: nil,
-                onProcessStarted: nil
+                onProcessStarted: onStarted
             )
         )
     }

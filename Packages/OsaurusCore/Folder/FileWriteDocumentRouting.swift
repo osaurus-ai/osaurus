@@ -3,11 +3,11 @@
 //  osaurus
 //
 //  `file_write` document generation by extension: `.xlsx` from CSV/TSV
-//  text or JSON rows, `.docx` / `.pdf` from Markdown or HTML. Builds the
+//  text or JSON rows, `.docx` / `.pdf` from Markdown or HTML, `.pptx` from
+//  Markdown (one slide per heading). Builds the
 //  `StructuredDocument`, runs it through the registered emitters, and
 //  reports the shape the tool envelope needs (format, counts, bytes).
-//  Sandbox containment, undo logging, and the envelope itself stay in
-//  `FileWriteTool`.
+//  Sandbox containment and the envelope itself stay in `FileWriteTool`.
 //
 
 import CoreGraphics
@@ -18,6 +18,7 @@ enum FileWriteDocumentRouting {
         case xlsx
         case docx
         case pdf
+        case pptx
 
         var formatId: String { rawValue }
 
@@ -28,6 +29,8 @@ enum FileWriteDocumentRouting {
                     "CSV or TSV text (one sheet; delimiter sniffed) or JSON `{\"sheets\":[{\"name\":\"Q1\",\"rows\":[[\"Region\",\"Revenue\"],[\"West\",1200]]}]}`"
             case .docx, .pdf:
                 return "Markdown (headings, lists, tables, code) or HTML"
+            case .pptx:
+                return "Markdown: each `#`/`##` heading starts a slide (its title); lines below are the slide's bullets"
             }
         }
     }
@@ -103,7 +106,7 @@ enum FileWriteDocumentRouting {
                 security: .notInspected(formatId: "xlsx", fileExtension: "xlsx", sourceTrust: .generatedArtifact),
                 textFallback: ""
             )
-            let issues = WorkbookWorkflowService.validationIssues(for: workbook)
+            let issues = WorkbookWorkflowService.validationIssues(for: workbook, policy: .xlsxExportWithFormulas)
             let blocking = issues.filter { $0.severity == .error }
             if !blocking.isEmpty { throw RoutingError.validation(blocking) }
             return Plan(
@@ -143,6 +146,23 @@ enum FileWriteDocumentRouting {
                 summary["estimated_pages"] = max(1, Int((Double(content.count) / 3_000).rounded(.up)))
             }
             return Plan(target: target, document: document, summary: summary)
+        case .pptx:
+            let title = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+            let source = RichTextSourceDocument(markup: content, syntax: .markdown, title: title)
+            let document = StructuredDocument(
+                formatId: "pptx",
+                filename: filename,
+                fileSize: 0,
+                representation: AnyStructuredRepresentation(formatId: "pptx", underlying: source),
+                security: .notInspected(formatId: "pptx", fileExtension: "pptx", sourceTrust: .generatedArtifact),
+                textFallback: content
+            )
+            let slides = PPTXEmitter.slides(fromMarkdown: content, fallbackTitle: title)
+            return Plan(
+                target: target,
+                document: document,
+                summary: ["input": "markdown", "slides": slides.count, "slide_titles": slides.prefix(30).map(\.title)]
+            )
         }
     }
 
@@ -165,9 +185,10 @@ enum FileWriteDocumentRouting {
         )
         switch plan.target {
         case .xlsx:
-            let result = try await WorkbookWorkflowService.export(plan.document, to: url, registry: registry)
+            let result = try await WorkbookWorkflowService.export(
+                plan.document, to: url, registry: registry, policy: .xlsxExportWithFormulas)
             return Written(bytesWritten: result.bytesWritten)
-        case .docx, .pdf:
+        case .docx, .pdf, .pptx:
             guard let emitter = registry.emitter(for: plan.document) else {
                 throw RoutingError.missingEmitter(plan.target.rawValue)
             }
@@ -231,7 +252,7 @@ enum FileWriteDocumentRouting {
         // Drop a trailing empty row produced by a final newline.
         let trimmedRows = trimTrailingEmptyRows(rows)
         guard !trimmedRows.isEmpty else { throw RoutingError.noRows }
-        return try workbook(sheets: [("Sheet1", trimmedRows)])
+        return try workbook(sheets: [("Sheet1", trimmedRows)], formulas: true)
     }
 
     private static func workbook(fromJSON text: String) throws -> Workbook {
@@ -247,41 +268,59 @@ enum FileWriteDocumentRouting {
             if let sheetList = dict["sheets"] as? [[String: Any]] {
                 for (index, sheet) in sheetList.enumerated() {
                     let name = (sheet["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Sheet\(index + 1)"
-                    guard let rows = sheet["rows"] as? [[Any]] else {
-                        throw RoutingError.invalidJSON("sheet \(index + 1) has no `rows` array of arrays")
+                    guard let rows = rowsFromJSON(sheet["rows"]) else {
+                        throw RoutingError.invalidJSON("sheet \(index + 1) has no `rows` array (of arrays, or of objects)")
                     }
                     sheets.append((name, rows))
                 }
-            } else if let rows = dict["rows"] as? [[Any]] {
+            } else if let rows = rowsFromJSON(dict["rows"]) {
                 let name = (dict["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Sheet1"
                 sheets.append((name, rows))
             } else {
                 throw RoutingError.invalidJSON("top-level object needs `sheets` or `rows`")
             }
-        } else if let rows = object as? [[Any]] {
-            sheets.append(("Sheet1", rows))
-        } else if let records = object as? [[String: Any]], !records.isEmpty {
-            // Array of objects: header from the union of keys (first-seen order).
-            var headers: [String] = []
-            for record in records {
-                for key in record.keys.sorted() where !headers.contains(key) { headers.append(key) }
-            }
-            var rows: [[Any]] = [headers]
-            for record in records {
-                rows.append(headers.map { record[$0] ?? "" })
-            }
+        } else if let rows = rowsFromJSON(object) {
             sheets.append(("Sheet1", rows))
         } else {
             throw RoutingError.invalidJSON(
                 "expected an object with `sheets`/`rows`, an array of rows, or an array of objects"
             )
         }
-        return try workbook(sheets: sheets)
+        return try workbook(sheets: sheets, formulas: true)
+    }
+
+    /// Rows from a JSON value at any level (`sheets[].rows`, top-level
+    /// `rows`, or the bare top-level array): an array of arrays as-is, or an
+    /// array of objects (records) turned into a header row from the union of
+    /// keys plus one row per record. Models write `{"Item": "Rent",
+    /// "Amount": 1200}` records as naturally as positional rows (Raptor
+    /// no-think `write-xlsx-by-extension` did, and got an error for it);
+    /// both shapes describe the same sheet. A record whose values repeat its
+    /// keys (`{"Item": "Item", "Amount": "Amount"}` — a header spelled as a
+    /// record) is dropped so the header isn't written twice.
+    static func rowsFromJSON(_ value: Any?) -> [[Any]]? {
+        if let rows = value as? [[Any]] { return rows }
+        guard let records = value as? [[String: Any]], !records.isEmpty else { return nil }
+        var headers: [String] = []
+        for record in records {
+            for key in record.keys.sorted() where !headers.contains(key) { headers.append(key) }
+        }
+        var rows: [[Any]] = [headers]
+        for record in records {
+            let isHeaderEcho = record.allSatisfy { key, value in (value as? String) == key }
+            if isHeaderEcho { continue }
+            rows.append(headers.map { record[$0] ?? "" })
+        }
+        return rows
     }
 
     /// Build a typed `Workbook` from raw rows (`String` / numeric / `Bool` /
     /// `nil` cells) — shared by the `.xlsx` write route and `db_export`.
-    static func workbook(sheets: [(String, [[Any]])]) throws -> Workbook {
+    ///
+    /// `formulas`: a string cell starting with `=` becomes a formula cell (the text after `=`), and a leading
+    /// apostrophe (`'=…`) keeps the rest as literal text, as spreadsheet apps do. Only `file_write` turns this
+    /// on; `db_export` writes stored text verbatim (formula injection from database values).
+    static func workbook(sheets: [(String, [[Any]])], formulas: Bool = false) throws -> Workbook {
         guard !sheets.isEmpty else { throw RoutingError.noRows }
         if sheets.count > maxSheets { throw RoutingError.tooManySheets(sheets.count, max: maxSheets) }
         var built: [Workbook.Sheet] = []
@@ -298,8 +337,17 @@ enum FileWriteDocumentRouting {
                 let rowNumber = rowOffset + 1
                 var cells: [Workbook.Cell] = []
                 for (columnOffset, rawValue) in rawRow.enumerated() {
-                    let value = cellValue(rawValue)
-                    if case .empty = value { continue }
+                    var value = cellValue(rawValue)
+                    var formula: String?
+                    if formulas, case .string(let text) = value {
+                        if text.count > 1, text.hasPrefix("=") {
+                            formula = String(text.dropFirst())
+                            value = .empty
+                        } else if text.hasPrefix("'=") {
+                            value = .string(String(text.dropFirst()))
+                        }
+                    }
+                    if case .empty = value, formula == nil { continue }
                     let columnNumber = columnOffset + 1
                     let reference = "\(columnLetters(columnNumber))\(rowNumber)"
                     cells.append(
@@ -308,7 +356,7 @@ enum FileWriteDocumentRouting {
                             rowNumber: rowNumber,
                             columnNumber: columnNumber,
                             value: value,
-                            formula: nil,
+                            formula: formula,
                             anchor: DocumentAnchor(
                                 kind: .cell,
                                 path: [

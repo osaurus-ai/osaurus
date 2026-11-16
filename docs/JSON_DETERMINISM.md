@@ -60,6 +60,19 @@ The single source of truth for the helpers is
 `Packages/OsaurusCore/Models/API/JSONDeterminism.swift`. Grep for
 `osaurusCanonical` to find every call site.
 
+One deliberate exception rides on top of the canonical bytes: tool
+schemas on the provider wire. Constrained decoders only let a model emit
+optional properties in *declared* order, so alphabetized `properties`
+made `new_string` (sorting before `old_string`) unreachable for
+`file_edit`. `ToolWirePropertyOrder.apply(to:)` rewrites the encoded
+request body just before send so tools that declare `parameterOrder` keep
+their authored key order inside `properties` (top level and nested
+`items` / `anyOf` branches) while every other object stays sorted. The
+rewrite is itself deterministic — same input bytes, same output bytes —
+so prompt-cache keys and router signatures (computed after the rewrite)
+still hold. See `docs/TOOL_CONTRACT.md` → "Schema shape on the provider
+wire" for the measured evidence.
+
 ## Tool-schema stability contract
 
 Canonical encoding only guarantees stable bytes for stable content. Tool

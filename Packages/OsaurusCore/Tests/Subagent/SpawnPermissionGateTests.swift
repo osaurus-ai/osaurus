@@ -798,7 +798,7 @@ struct SpawnPermissionGateTests {
             var permissions = SubagentPermissionDefaults()
             permissions.setPolicy(.ask, for: SubagentCapabilityRegistry.spawn.id)
             settings.subagentPermissions = permissions
-            let target = Agent(name: "SpawnPermissionTarget", autonomousExec: AutonomousExecConfig(enabled: false))
+            let target = Agent(name: "SpawnPermissionTarget", description: "Handles bounded permission test tasks.", autonomousExec: AutonomousExecConfig(enabled: false))
             settings.spawnDelegationEnabled = true
             settings.spawnableAgentIDs = [target.id]
             let agent = Agent(

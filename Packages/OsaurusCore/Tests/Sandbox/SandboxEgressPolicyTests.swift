@@ -9,6 +9,8 @@
 //
 
 import Foundation
+import NIOCore
+import NIOEmbedded
 import NIOHTTP1
 import Testing
 
@@ -44,39 +46,22 @@ struct SandboxEgressPolicyTests {
         #expect(mode == .allowlist(["api.github.com", "*.example.com"]))
     }
 
-    @Test func vmConfigMapping_failsClosedOnEmptyProxyList() {
-        // "proxy" persisted with a broken/empty allowlist must not
-        // silently open full egress.
-        let broken = SandboxConfiguration(network: "proxy", allowedDomains: [])
-        #expect(SandboxManager.egressMode(from: broken) == .none)
-
-        let valid = SandboxConfiguration(network: "proxy", allowedDomains: ["example.com"])
-        #expect(SandboxManager.egressMode(from: valid) == .allowlist(["example.com"]))
-
-        #expect(SandboxManager.egressMode(from: SandboxConfiguration(network: "outbound")) == .open)
-        #expect(SandboxManager.egressMode(from: SandboxConfiguration(network: "none")) == .none)
+    @Test func proxyGrant_followsTheCallersOwnPolicy() {
+        #expect(SandboxEgressPolicy.proxyGrant(for: .none, pluginNetworkPermissions: ["a.com"]) == nil)
+        #expect(SandboxEgressPolicy.proxyGrant(for: .open, pluginNetworkPermissions: []) == .anyPublicHost)
+        #expect(
+            SandboxEgressPolicy.proxyGrant(for: .allowlist(["api.github.com"]), pluginNetworkPermissions: ["pypi.org", "outbound"])
+                == .domains(["api.github.com", "pypi.org"]))
     }
 
-    @Test func reconciledSettingsRoundTrip() {
-        let proxy = SandboxManager.reconciledNetworkSettings(
-            agentNetworkEnabled: true,
-            allowedDomains: ["api.github.com"]
-        )
-        #expect(proxy.network == "proxy")
-        #expect(proxy.allowedDomains == ["api.github.com"])
-
-        let open = SandboxManager.reconciledNetworkSettings(
-            agentNetworkEnabled: true,
-            allowedDomains: nil
-        )
-        #expect(open.network == "outbound")
-        #expect(open.allowedDomains == nil)
-
-        let off = SandboxManager.reconciledNetworkSettings(
-            agentNetworkEnabled: false,
-            allowedDomains: ["api.github.com"]
-        )
-        #expect(off.network == "none")
+    @Test func anyPublicHostGrant_stillRefusesIPLiterals() {
+        #expect(SandboxEgressPolicy.hostAllowed("example.com", grant: .anyPublicHost))
+        #expect(SandboxEgressPolicy.hostAllowed("Example.COM.", grant: .anyPublicHost))
+        #expect(!SandboxEgressPolicy.hostAllowed("10.0.0.1", grant: .anyPublicHost))
+        #expect(!SandboxEgressPolicy.hostAllowed("::1", grant: .anyPublicHost))
+        #expect(!SandboxEgressPolicy.hostAllowed("", grant: .anyPublicHost))
+        #expect(SandboxEgressPolicy.hostAllowed("a.com", grant: .domains(["a.com"])))
+        #expect(!SandboxEgressPolicy.hostAllowed("b.com", grant: .domains(["a.com"])))
     }
 
     // MARK: - Host matching
@@ -225,6 +210,31 @@ struct SandboxEgressPolicyTests {
             value: "Basic \(Data(":".utf8).base64EncodedString())"
         )
         #expect(SandboxEgressProxyHandler.extractProxyToken(headers: emptyBasic) == nil)
+    }
+
+    /// A refusal is a complete, length-framed response: no chunked body
+    /// for the client to misread.
+    @Test func refusedConnectReplyIsLengthFramed() throws {
+        let channel = EmbeddedChannel()
+        try channel.pipeline.syncOperations.addHandler(
+            ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes))
+        )
+        try channel.pipeline.syncOperations.addHandler(HTTPResponseEncoder())
+        try channel.pipeline.syncOperations.addHandler(SandboxEgressProxyHandler(resolver: { _ in nil }))
+
+        try channel.writeInbound(
+            ByteBuffer(string: "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+        )
+        var reply = ""
+        while var part = try channel.readOutbound(as: ByteBuffer.self) {
+            reply += part.readString(length: part.readableBytes) ?? ""
+        }
+        let lowered = reply.lowercased()
+        #expect(reply.hasPrefix("HTTP/1.1 407"))
+        #expect(lowered.contains("content-length: 0\r\n"))
+        #expect(!lowered.contains("transfer-encoding"))
+        #expect(reply.hasSuffix("\r\n\r\n") && !reply.hasSuffix("0\r\n\r\n"))
+        _ = try? channel.finish()
     }
 
     // MARK: - Plugin URL validation parity

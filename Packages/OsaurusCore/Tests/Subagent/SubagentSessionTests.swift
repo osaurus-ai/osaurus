@@ -96,6 +96,20 @@ private func decode(_ envelope: String) -> [String: Any] {
 @Suite("SubagentSession host")
 struct SubagentSessionTests {
 
+    @Test("the prepared child host retains its explicit effort across scope reconstruction")
+    func subagentHostCarriesEffortChoice() async {
+        let kind = ScriptedKind(body: { scope, _, _, _ in
+            #expect(scope.reasoningEffort == "none")
+            #expect(ChatExecutionContext.currentReasoningEffort == "none")
+            #expect(SubagentScope.current().reasoningEffort == "none")
+            return SubagentResult(payload: ["summary": "done"], summary: "done")
+        })
+        await ChatExecutionContext.$currentReasoningEffort.withValue("none") {
+            let envelope = await SubagentSession.run(kind, tool: "scripted")
+            #expect(ToolEnvelope.isSuccess(envelope))
+        }
+    }
+
     @Test("subagent scope carries explicit Thinking on, off, and unset")
     func subagentScopeCarriesParentThinkingChoice() async {
         await ChatExecutionContext.$currentEnableThinking.withValue(true) {
@@ -232,6 +246,16 @@ struct SubagentSessionTests {
         #expect(abs(timings[2].seconds - 8.0) < 0.001)
         // Kind-specific phases ("running") and progress rows are not timed.
         #expect(!timings.contains { $0.phase == "running" })
+    }
+
+    @Test("a phase that recurs adds up instead of trapping on a duplicate key")
+    func repeatedPhaseTotals() {
+        let totals = SubagentSession.phaseTotals([
+            (phase: "waiting for local GPU", seconds: 1.234),
+            (phase: "coexisting", seconds: 2),
+            (phase: "waiting for local GPU", seconds: 0.5),
+        ])
+        #expect(totals == ["waiting for local GPU": 1.73, "coexisting": 2])
     }
 
     @Test("a handoff-wrapped run reports residency phases in its payload")

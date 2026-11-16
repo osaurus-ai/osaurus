@@ -47,6 +47,55 @@ struct CompactionModelConfigurationTests {
         #expect(decoded.compactionModelIdentifier == "anthropic/claude-haiku")
     }
 
+    @Test("effective model prefers the configured compaction model")
+    @MainActor
+    func effectiveModelPrefersConfigured() {
+        #expect(
+            ContextCompactionService.effectiveModelIdentifier(
+                configured: "openai/gpt-4o-mini", fallback: "qwen3-4b"
+            ) == "openai/gpt-4o-mini"
+        )
+    }
+
+    @Test("effective model falls back to the chat model when unset or blank")
+    @MainActor
+    func effectiveModelFallsBackToChatModel() {
+        #expect(
+            ContextCompactionService.effectiveModelIdentifier(configured: nil, fallback: "qwen3-4b")
+                == "qwen3-4b"
+        )
+        #expect(
+            ContextCompactionService.effectiveModelIdentifier(configured: "  ", fallback: "qwen3-4b")
+                == "qwen3-4b"
+        )
+    }
+
+    @Test("effective model is nil only when neither source is known")
+    @MainActor
+    func effectiveModelNilWhenNothingKnown() {
+        #expect(ContextCompactionService.effectiveModelIdentifier(configured: nil, fallback: nil) == nil)
+        #expect(ContextCompactionService.effectiveModelIdentifier(configured: "", fallback: "") == nil)
+    }
+
+    @Test("chat-model fallback flag tracks whether a compaction model is configured")
+    @MainActor
+    func usesChatModelFallbackFlag() {
+        #expect(ContextCompactionService.usesChatModelFallback(configured: nil))
+        #expect(ContextCompactionService.usesChatModelFallback(configured: ""))
+        #expect(!ContextCompactionService.usesChatModelFallback(configured: "qwen3-4b"))
+    }
+
+    @Test("request failures name the compaction model that ran")
+    func requestFailureNamesModel() {
+        let error = ContextCompactionError.requestFailed(
+            model: "chatgpt/gpt-sol-6",
+            message: "Request failed: HTTP 400: {\"detail\":\"Stream must be set to true\"}"
+        )
+        let description = error.localizedDescription
+        #expect(description.contains("'chatgpt/gpt-sol-6'"))
+        #expect(description.contains("HTTP 400"))
+    }
+
     @Test("legacy JSON without compaction keys decodes to unset")
     func legacyDecode() throws {
         let data = try JSONEncoder().encode(ChatConfiguration.default)
@@ -67,6 +116,91 @@ struct CompactionModelConfigurationTests {
 @Suite("Compaction cut index")
 @MainActor
 struct CompactionCutIndexTests {
+
+    private func toolBatch(ids: [String], content: String = "result") -> [ChatTurn] {
+        let assistant = ChatTurn(role: .assistant, content: "")
+        assistant.toolCalls = ids.map {
+            ToolCall(id: $0, type: "function", function: .init(name: "read", arguments: "{}"))
+        }
+        return [assistant] + ids.map {
+            let result = ChatTurn(role: .tool, content: content)
+            result.toolCallId = $0
+            return result
+        }
+    }
+
+    @Test("a long single tool loop can compact without splitting the newest parallel batch")
+    func longToolLoopCutPreservesNewestBatch() {
+        let turns = [ChatTurn(role: .user, content: "finish the task")]
+            + toolBatch(ids: ["old"], content: String(repeating: "data ", count: 5_000))
+            + toolBatch(ids: ["a", "b"])
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: turns, existingSummary: nil) == nil)
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: turns, existingSummary: nil, afterToolBatch: true) == 3)
+        #expect(ContextCompactionService.completedToolBatchStart(in: turns) == 3)
+        #expect(turns[3].toolCalls?.map(\.id) == ["a", "b"])
+    }
+
+    @Test("partial, duplicate, foreign and missing result slots cannot trigger compaction")
+    func unsafeToolBatchCannotCompact() {
+        let prefix = [ChatTurn(role: .user, content: String(repeating: "data ", count: 5_000))]
+        let full = prefix + toolBatch(ids: ["a", "b"])
+        let partial = Array(full.dropLast())
+        let duplicate = prefix + toolBatch(ids: ["a", "a"])
+        let foreign = prefix + toolBatch(ids: ["a", "b"])
+        foreign.last?.toolCallId = "foreign"
+        let missing = prefix + toolBatch(ids: ["a", "b"])
+        missing.last?.toolCallId = nil
+        for turns in [partial, duplicate, foreign, missing] {
+            #expect(ContextCompactionService.compactionCutIndex(
+                turns: turns, existingSummary: nil, afterToolBatch: true) == nil)
+        }
+    }
+
+    @Test("a first heavy completed batch can be covered whole before the next request")
+    func firstHeavyToolBatchCanBeCompacted() {
+        let turns = [ChatTurn(role: .user, content: "follow the next file link")]
+            + toolBatch(ids: ["a", "b"], content: String(repeating: "data ", count: 5_000))
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: turns, existingSummary: nil, afterToolBatch: true) == turns.count)
+        // Ordinary pre-send/manual selection never assumes a running batch
+        // has drained. The caller must opt in at the checked loop boundary.
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: turns, existingSummary: nil) == nil)
+    }
+
+    @Test("whole-batch compaction can grow an earlier summary only after new bulk results")
+    func wholeToolBatchSummaryCanGrow() {
+        let first = [ChatTurn(role: .user, content: "task")]
+            + toolBatch(ids: ["old"], content: String(repeating: "data ", count: 5_000))
+        let existing = ConversationSummary(
+            summaryText: "goal and saved progress", coveredTurnIds: first.map(\.id),
+            modelIdentifier: "m", savedTokensEstimate: 100)
+        let grown = first + toolBatch(ids: ["new"], content: String(repeating: "data ", count: 5_000))
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: grown, existingSummary: existing, afterToolBatch: true) == grown.count)
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: first, existingSummary: existing, afterToolBatch: true) == nil)
+    }
+
+    @Test("a tool-loop summary must grow by a token-heavy span")
+    func toolLoopSummaryDoesNotRepeatOrCoverOutputPlaceholder() {
+        let turns = [ChatTurn(role: .user, content: "task")]
+            + toolBatch(ids: ["old"], content: String(repeating: "data ", count: 5_000))
+            + toolBatch(ids: ["new"])
+        let existing = ConversationSummary(
+            summaryText: "saved progress", coveredTurnIds: turns.prefix(3).map(\.id),
+            modelIdentifier: "m", savedTokensEstimate: 100)
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: turns, existingSummary: existing, afterToolBatch: true) == nil)
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: turns + [ChatTurn(role: .assistant, content: "")],
+            existingSummary: nil, afterToolBatch: true) == nil)
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: [ChatTurn(role: .user, content: "task")] + toolBatch(ids: ["short"]),
+            existingSummary: nil, afterToolBatch: true) == nil)
+    }
 
     /// Alternating user/assistant conversation with `pairs` exchanges.
     private func conversation(pairs: Int) -> [ChatTurn] {

@@ -2,24 +2,17 @@
 //  AttachmentBlobStore.swift
 //  osaurus
 //
-//  Content-addressed encrypted blob storage for chat attachments that
-//  would otherwise bloat `chat-history/history.sqlite`.
+//  Content-addressed blob files for chat attachments, in
+//  `~/.osaurus/chat-history/blobs/`. Plaintext by default, or AES-GCM
+//  encrypted with the `StorageKeyManager` key when at-rest encryption is
+//  on. The same bytes attached to several turns share one file.
 //
-//  Until now, every `Attachment.image(Data)` and large
-//  `Attachment.document(content:)` was JSON-encoded directly into the
-//  `turns.attachments` TEXT column (see `ChatHistoryDatabase.bindTurn`,
-//  lines 543–545). Sessions with screenshots and PDFs ballooned the DB
-//  file, slowed full-session loads, and forced every save to rewrite
-//  every attachment byte.
-//
-//  Now: we spill any image or document payload above
-//  `Self.spillThreshold` to `~/.osaurus/chat-history/blobs/<sha256>.osec`,
-//  AES-GCM encrypted with the same `StorageKeyManager` key SQLCipher
-//  uses for the DB. SQLite stores only `{ "ref": "<sha256>", ... }`.
-//
-//  Content-addressed = same image attached to multiple turns lives in
-//  one blob on disk. GC happens when sessions are deleted (see
-//  `ChatHistoryDatabase.deleteSession` for the hook).
+//  The sync store keeps attachments as sync blobs and caches the large ones
+//  here, deleting them with the chat (`SyncConversationStore`). Tools
+//  (`FolderTools`, `MCPProviderTool`) write media here directly. The
+//  read-only pre-sync database still references blobs it spilled;
+//  `ChatHistoryDatabase.deleteSession` removes the ones no surviving turn
+//  references.
 //
 
 import CryptoKit
@@ -39,8 +32,8 @@ public enum AttachmentBlobError: LocalizedError {
 }
 
 public enum AttachmentBlobStore {
-    /// Bytes above which we spill image data or document content out of
-    /// the JSON-in-TEXT column into a separate encrypted blob file.
+    /// Bytes above which image data or document content is kept in a blob
+    /// file instead of inline.
     /// 16 KB chosen to keep tiny inline icons / short snippets fast and
     /// to spill almost every screenshot or non-trivial document.
     public static let spillThreshold: Int = 16 * 1024

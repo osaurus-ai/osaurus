@@ -189,12 +189,13 @@ struct ContextBudgetPreviewTests {
     /// the registry's full tool definitions. Loading a tool by name upgrades
     /// that compact placeholder back to the full schema for subsequent tool
     /// iterations.
-    @Test("preview: always-loaded tools use compact bootstrap schemas")
+    @Test("preview: always-loaded tools use compact bootstrap schemas on a compact-prompt model")
     func toolsOn_auto_usesCompactBootstrapSchemas() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
-                executionMode: .none
+                executionMode: .none,
+                model: "qwen3-8b"
             )
             let fullBaseline = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
             let fullBaselineTokens = ToolRegistry.shared.totalEstimatedTokens(for: fullBaseline)
@@ -216,6 +217,21 @@ struct ContextBudgetPreviewTests {
             let upgradedTodo = upgraded.first { $0.function.name == "todo" }
             #expect(upgradedTodo?.function.description == fullTodo.function.description)
             #expect(upgradedTodo?.function.parameters == fullTodo.function.parameters)
+        }
+    }
+
+    @Test("preview: a custom agent on a large model keeps full always-loaded schemas")
+    func toolsOn_auto_largeModelKeepsFullSchemas() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "anthropic/claude-x"
+            )
+            let previewTodo = preview.tools.first { $0.function.name == "todo" }
+            let fullTodo = TodoTool().asOpenAITool()
+            #expect(previewTodo?.function.description == fullTodo.function.description)
+            #expect(previewTodo?.function.parameters == fullTodo.function.parameters)
         }
     }
 

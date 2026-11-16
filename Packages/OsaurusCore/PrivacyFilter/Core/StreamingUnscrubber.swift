@@ -72,6 +72,7 @@ public final class StreamingUnscrubber {
     private static let safetyMargin: Int = 16
 
     private let map: RedactionMap
+    private let jsonStringEscaping: Bool
 
     /// Snapshot of `map.maxTokenLength` captured at construction time.
     /// Re-reading every push would require an `await` per chunk; the
@@ -80,6 +81,11 @@ public final class StreamingUnscrubber {
     private let maxTokenLength: Int
 
     private var buffer: String = ""
+
+    /// The current rail has an ambiguous trailing placeholder fragment.
+    /// Read by its stream owner to preserve native event order while holding
+    /// only the frames needed to resolve that fragment.
+    public var hasPendingFragment: Bool { !buffer.isEmpty }
 
     /// Character offset (from `buffer.startIndex`) up to which the
     /// buffer has already been scanned for complete placeholder
@@ -100,17 +106,18 @@ public final class StreamingUnscrubber {
     /// See the file header for the policy choice (keep as-is).
     public private(set) var unknownPlaceholderCount: Int = 0
 
-    public init(map: RedactionMap, maxTokenLength: Int) {
+    public init(map: RedactionMap, maxTokenLength: Int, jsonStringEscaping: Bool = false) {
         self.map = map
         self.maxTokenLength = maxTokenLength
+        self.jsonStringEscaping = jsonStringEscaping
     }
 
     /// Convenience initializer that reads `maxTokenLength` from the
     /// map. Use the explicit-length init when you want to avoid the
     /// awaitable property read at the per-stream hot path.
-    public static func make(for map: RedactionMap) async -> StreamingUnscrubber {
+    public static func make(for map: RedactionMap, jsonStringEscaping: Bool = false) async -> StreamingUnscrubber {
         let max = await map.maxTokenLength
-        return StreamingUnscrubber(map: map, maxTokenLength: max)
+        return StreamingUnscrubber(map: map, maxTokenLength: max, jsonStringEscaping: jsonStringEscaping)
     }
 
     /// Append a streamed chunk and return the prefix safe to emit.
@@ -158,12 +165,13 @@ public final class StreamingUnscrubber {
             let token = String(buffer[tokenRange])
             if Self.looksLikePlaceholder(token) {
                 if let original = await map.resolve(token: token) {
-                    buffer.replaceSubrange(tokenRange, with: original)
+                    let replacement = jsonStringEscaping ? Self.jsonStringInterior(original) : original
+                    buffer.replaceSubrange(tokenRange, with: replacement)
                     // Advance past the substituted original. Compute
                     // a fresh index — replaceSubrange invalidates
                     // every index past the replacement point.
                     search =
-                        buffer.index(openIdx.lowerBound, offsetBy: original.count, limitedBy: buffer.endIndex)
+                        buffer.index(openIdx.lowerBound, offsetBy: replacement.count, limitedBy: buffer.endIndex)
                         ?? buffer.endIndex
                     continue
                 }
@@ -224,6 +232,26 @@ public final class StreamingUnscrubber {
         buffer = String(buffer[lastOpen...])
         cleanOffset = max(0, cleanOffset - dropped)
         return prefix
+    }
+
+    /// Escape only the inserted string's JSON interior; the surrounding
+    /// argument syntax already comes from the provider's delta stream.
+    private static func jsonStringInterior(_ text: String) -> String {
+        var result = ""
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            case 0x22: result += "\\\""
+            case 0x5c: result += "\\\\"
+            case 0x08: result += "\\b"
+            case 0x0c: result += "\\f"
+            case 0x0a: result += "\\n"
+            case 0x0d: result += "\\r"
+            case 0x09: result += "\\t"
+            case 0..<0x20: result += String(format: "\\u%04x", scalar.value)
+            default: result.unicodeScalars.append(scalar)
+            }
+        }
+        return result
     }
 
     /// Cheap shape check: starts with `[`, ends with `]`, contains a

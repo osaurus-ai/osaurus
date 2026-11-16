@@ -55,21 +55,30 @@ import Foundation
         /// Containerization release we link against. ~64 MiB compressed
         /// (versus the 256 MiB raw ext4 blob it replaces) and pulled with
         /// the SDK's concurrent layer downloader. The digest is the
-        /// multi-arch index digest of `vminit:0.41.0`; rotate it together
+        /// multi-arch index digest of `vminit:0.54.0`; rotate it together
         /// with the `containerization` pin in Package.swift.
         public static let initfsReference =
-            "ghcr.io/apple/containerization/vminit@sha256:6fcbd92d5ddea27486416ac4006a2ead149f7ff3257d105128289339d8c31c7f"
+            "ghcr.io/apple/containerization/vminit@sha256:ab76bf71fbedcbf67a54dc5f37b0acefd68b1ba090d93f752f8e27c9961a685c"
 
         // MARK: - Runtime format version
 
         /// Compatibility stamp for the (Containerization SDK, initfs)
         /// pair persisted in `SandboxConfiguration.lastRuntimeFormatVersion`.
         /// When the stamp on disk doesn't match, the cached initfs is
-        /// rebuilt and the warm rootfs path is skipped once, so a rootfs
-        /// produced under an older runtime can never enter a failed warm
-        /// boot before rebuilding. Bump whenever the SDK pin or the
-        /// initfs delivery format changes incompatibly.
-        public static let runtimeFormatVersion = "cz-0.41/vminit-oci-2-kata-3.32"
+        /// rebuilt. Bump whenever the SDK pin or the initfs delivery format
+        /// changes. It does not key the rootfs: see `rootfsFormatVersion`.
+        public static let runtimeFormatVersion = "cz-0.54/vminit-oci-2-kata-3.32"
+
+        /// Compatibility stamp for the unpacked `rootfs.ext4` (warm rootfs,
+        /// base template, per-agent clones). Changes only when the
+        /// unpacker's output changes, so an SDK bump re-pulls the ~64 MiB
+        /// initfs instead of forcing every user through an 8 GiB unpack.
+        /// The value is frozen at the stamp the current ext4 layout was
+        /// first produced under, which keeps existing warm rootfs files and
+        /// template keys valid; bump it to a new value only when the
+        /// unpacked filesystem itself becomes incompatible. A warm boot that
+        /// still fails falls back to one cold rebuild.
+        public static let rootfsFormatVersion = "cz-0.41/vminit-oci-2-kata-3.32"
 
         // MARK: - Bundled kernel resolution
 

@@ -301,6 +301,10 @@ public actor MetalGate {
         release("unload:\(model)")
     }
 
+    /// Decision forwards are a separate exclusive GPU producer, including load and teardown.
+    public func enterDecision() async throws { try await acquireCancellable("decision", shared: false) }
+    public func exitDecision() { release("decision") }
+
     // MARK: - Image generation (vMLXFlux engine) — exclusive
 
     /// The native image engine (vMLXFlux) is a second MLX graph on the same Metal

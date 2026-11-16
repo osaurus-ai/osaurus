@@ -28,20 +28,17 @@ struct LiveActivitySection: View {
             status: .engineReady,
             blurb:
                 "Aggregated BatchEngine readout across every model loaded right now. Refreshes every 2 seconds.",
-            spacing: 16
+            spacing: theme.space.s16
         ) {
             BatchDiagnosticsView(snapshot: snapshot)
 
-            SettingsDivider()
             inferenceActivityReadout
 
             if !effectiveGeneration.isEmpty {
-                SettingsDivider()
                 effectiveSamplerReadout
             }
 
             if !lastMTP.isEmpty {
-                SettingsDivider()
                 mtpRuntimeReadout
             }
         }
@@ -50,30 +47,30 @@ struct LiveActivitySection: View {
     }
 
     private var inferenceActivityReadout: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             Text(L("Inference now"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
             if inferenceActivities.isEmpty {
                 Text(L("Idle — no active or queued inference"))
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             ForEach(inferenceActivities) { activity in
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .top, spacing: theme.space.s10) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(activity.modelName)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(
                             "\(activity.phase.displayName) · \(activity.source.displayName) · "
                                 + "\(Self.shortID(activity.id))"
                         )
-                        .font(.system(size: 10).monospacedDigit())
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote.monospacedDigit())
+                        .foregroundColor(theme.text.tertiary)
                         .textSelection(.enabled)
                     }
                     Spacer(minLength: 8)
@@ -108,21 +105,21 @@ struct LiveActivitySection: View {
     /// upstream by `shouldRecordAsLastEffectiveGeneration`, so this describes
     /// a real turn.
     private var effectiveSamplerReadout: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(L("Sampler last used"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
             ForEach(effectiveGeneration.keys.sorted(), id: \.self) { model in
                 if let effective = effectiveGeneration[model] {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(model)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(Self.describe(effective))
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription.monospacedDigit())
+                            .foregroundColor(theme.text.tertiary)
                             .textSelection(.enabled)
                     }
                 }
@@ -141,21 +138,21 @@ struct LiveActivitySection: View {
     /// behaviour looks like the control is ignored. Shown per model, populated
     /// only for turns that actually ran native MTP.
     private var mtpRuntimeReadout: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(L("Speculative decoding last run"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
             ForEach(lastMTP.keys.sorted(), id: \.self) { model in
                 if let stats = lastMTP[model] {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(model)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(Self.describeMTP(stats))
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription.monospacedDigit())
+                            .foregroundColor(theme.text.tertiary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -229,12 +226,10 @@ struct LiveActivitySection: View {
         // `output_equivalent` cannot run speculative decoding even on Force-On.
         // Without this line the picker looks inert on exactly those models, and
         // the reason — already computed, already logged — reaches nobody.
-        // Whether the compiled batch-decode path ran. Native MTP uses its own
-        // iterator, which does not take `enableCompiledBatchDecode` at all —
-        // so speculation and compilation are mutually exclusive today, and a
-        // tok/s comparison that does not say which one was active cannot be
-        // attributed. Printed for both legs so the difference is visible.
-        parts.append(effective.compiledBatchDecode ? "compiled" : "uncompiled")
+        // This flag requests an eligible engine path; it does not confirm a
+        // compiled forward ran. The global compile gate and cache promotion
+        // can still refuse it. Do not present eligibility as execution evidence.
+        parts.append(effective.compiledBatchDecode ? "compile requested" : "compile not requested")
         if let strategy = effective.draftStrategy {
             parts.append("draft \(strategy)")
         } else if let reason = effective.mtpFallbackReason {

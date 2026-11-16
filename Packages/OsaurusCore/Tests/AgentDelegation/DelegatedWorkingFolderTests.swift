@@ -49,13 +49,20 @@ struct DelegatedWorkingFolderTests {
     /// the pool assertions in `OrchestratorSpawnDefaultsTests`. Cleanup is
     /// AWAITED (not a fire-and-forget `defer { Task {…} }`) for the same
     /// reason.
+    ///
+    /// Lock order is the canonical Storage → Sandbox (both taken by
+    /// `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking the
+    /// store lease outermost deadlocked the whole suite against
+    /// `OrchestratorSpawnDefaultsTests` / `SpawnPermissionGateTests`, which
+    /// nest it canonically: each side held one lock and waited on the other,
+    /// and every later storage-locked test queued behind them forever.
     private func withAgents(
         _ count: Int,
         _ body: @MainActor ([Agent]) async throws -> Void
     ) async throws {
-        let lease = await acquireSubagentStoreSandbox("delegated-working-folder")
-        defer { lease.release() }
         try await ChatHistoryTestStorage.run {
+            let lease = await acquireSubagentStoreSandbox("delegated-working-folder")
+            defer { lease.release() }
             let agents = (0..<count).map { _ in makeAgent() }
             for agent in agents { AgentManager.shared.add(agent) }
             var thrown: Error?
@@ -260,6 +267,89 @@ struct DelegatedWorkingFolderTests {
         let empty = AgentDelegationDispatcher.resolveChildWorkingFolder(
             targetFolder: DelegatedWorkingFolder(bookmark: nil, path: ""), launcherFolder: nil)
         #expect(empty.folder == nil)
+    }
+
+    // MARK: - Workflow agent steps (`run_workflow` wrappers)
+
+    @Test("a workflow agent step hands the launcher's folder to the dispatcher")
+    func agentStepSourcePassesLauncherFolder() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // AgentDelegation/
+                .deletingLastPathComponent()  // Tests/
+                .deletingLastPathComponent()  // OsaurusCore/
+                .appendingPathComponent("Services/Workflow/AgentNodeExecutor.swift"),
+            encoding: .utf8
+        )
+        #expect(source.contains("launcherWorkingFolder(for: context.caller)"))
+        #expect(source.contains("launcherWorkingFolder: launcherFolder)"))
+    }
+
+    @Test("an agent step's launcher folder: agent record, else chat folder, never for someone else's run")
+    func agentStepLauncherFolderResolution() {
+        let agentID = UUID()
+        let bookmark = Data([0x1])
+        let records: [UUID: (bookmark: Data?, path: String?)] = [
+            agentID: (bookmark, "/tmp/agent"),
+            Agent.defaultId: (nil, "/tmp/orchestrator"),
+        ]
+        let lookup: (UUID) -> (bookmark: Data?, path: String?)? = { records[$0] }
+
+        var caller = WorkflowCaller(kind: .agent, agentID: agentID, folderPath: "/tmp/chat")
+        #expect(
+            AgentNodeExecutor.launcherWorkingFolder(for: caller, agentFolder: lookup)
+                == DelegatedWorkingFolder(bookmark: bookmark, path: "/tmp/agent"))
+
+        let orchestrator = WorkflowCaller(kind: .orchestrator)
+        #expect(
+            AgentNodeExecutor.launcherWorkingFolder(for: orchestrator, agentFolder: lookup)
+                == DelegatedWorkingFolder(bookmark: nil, path: "/tmp/orchestrator"))
+
+        let chatOnly = WorkflowCaller(kind: .agent, agentID: UUID(), folderPath: "/tmp/chat")
+        #expect(
+            AgentNodeExecutor.launcherWorkingFolder(for: chatOnly, agentFolder: lookup)
+                == DelegatedWorkingFolder(bookmark: nil, path: "/tmp/chat"))
+
+        let blank = WorkflowCaller(kind: .agent, agentID: UUID(), folderPath: "")
+        #expect(AgentNodeExecutor.launcherWorkingFolder(for: blank, agentFolder: { _ in (nil, "") }) == nil)
+
+        caller.onBehalfOf = Participant(kind: .teammate, handle: "rex-42", wallet: "0xabc")
+        #expect(AgentNodeExecutor.launcherWorkingFolder(for: caller, agentFolder: lookup) == nil)
+    }
+
+    @Test("a folder-less agent handed the Orchestrator's folder can write there")
+    func inheritedOrchestratorFolderMountsWithWriteTools() async throws {
+        let dir = try makeFolder("inherited")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try await withAgents(1) { agents in
+            let agent = agents[0]
+            let launcher = AgentNodeExecutor.launcherWorkingFolder(
+                for: WorkflowCaller(kind: .orchestrator), agentFolder: { _ in (nil, dir.path) })
+            let child = AgentDelegationDispatcher.resolveChildWorkingFolder(
+                targetFolder: AgentManager.shared.workingFolder(for: agent.id).map {
+                    DelegatedWorkingFolder(bookmark: $0.bookmark, path: $0.path)
+                },
+                launcherFolder: launcher)
+            #expect(child.inherited)
+
+            let request = DispatchRequest(
+                prompt: "save the report", agentId: agent.id, folderPath: child.folder?.path,
+                folderBookmark: child.folder?.bookmark, source: .delegation)
+            let context = BackgroundTaskManager.shared.makeContextForTesting(request)
+            let failure = await context.activateFolderContextIfNeeded()
+            #expect(failure == nil)
+            let session = context.chatSession
+            defer { session.folderState.clearFolder() }
+            #expect(sameFolder(session.folderState.rootPath, dir))
+
+            let mode = session.resolveExecutionModeForSend(agentId: agent.id, autonomousEnabled: true)
+            #expect(mode.usesHostFolderTools, "the inherited folder wins over a sandbox-default agent")
+            let tools = await ChatExecutionContext.$currentSessionSource.withValue(.delegation) {
+                SystemPromptComposer.resolveTools(agentId: agent.id, executionMode: mode)
+            }
+            let names = Set(tools.map { $0.function.name })
+            #expect(names.isSuperset(of: Self.hostWriteTools), "missing: \(Self.hostWriteTools.subtracting(names))")
+        }
     }
 
     // MARK: - Orchestrator-side guidance

@@ -43,6 +43,19 @@ struct DiscordConnectionTests {
         }
     }
 
+    /// Regression for Sentry APPLE-MACOS-38B: the config URL is built on the
+    /// MainActor prompt-preview path, so it must be declared a regular file
+    /// up front instead of letting Foundation stat the disk to infer it.
+    @Test func configurationFileURLIsDeclaredRegularFileWithoutDiskLookup() async throws {
+        try await withIsolatedDiscordStores { _ in
+            let url = DiscordConnectionConfigurationStore.configurationFileURL()
+            #expect(url.lastPathComponent == "discord.json")
+            #expect(!url.hasDirectoryPath)
+            #expect(!FileManager.default.fileExists(atPath: url.path))
+            #expect(DiscordConnectionConfigurationStore.configurationFileURL() == url)
+        }
+    }
+
     @Test func diagnosticsRedactsTokenEchoedByTransportError() async throws {
         try await withIsolatedDiscordStores { credentials in
             let token = "discord-bot-token-super-secret"
@@ -187,7 +200,7 @@ struct DiscordConnectionTests {
             let suppressed = events.first {
                 $0.providerEventId == "discord:90002" && $0.stage == .dispatchSuppressed
             }
-            #expect(suppressed?.reason == "inbound_dispatch_not_configured")
+            #expect(suppressed?.reason == "no_event_configured")
 
             // Unauthorized sender is rejected with the boundary reason.
             let rejectedStages = events
@@ -211,6 +224,13 @@ struct DiscordConnectionTests {
                 client: fake,
                 credentialStore: credentials,
                 inboundAgentAvailability: { $0 == liveAgent },
+                channelListeners: {
+                    EventTestFixtures.listeners(
+                        agents: [(liveAgent, []), (missingAgent, ["222222222222222222"])],
+                        kind: .discord,
+                        connectionId: AgentChannelConnection.nativeDiscordConnectionId
+                    )
+                },
                 runningInstanceCount: { 1 }
             )
             try service.saveBotToken("discord-bot-token-super-secret")
@@ -225,16 +245,7 @@ struct DiscordConnectionTests {
                 DiscordConnectionConfiguration(
                     configuredGuildIds: ["111111111111111111"],
                     readableChannelIds: ["222222222222222222"],
-                    senderAllowlist: ["555555555555555555"],
-                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                        enabled: true,
-                        targetAgentId: liveAgent,
-                        routes: [
-                            AgentChannelDispatchRoute(
-                                roomId: "222222222222222222", agentId: missingAgent
-                            )
-                        ]
-                    )
+                    senderAllowlist: ["555555555555555555"]
                 )
             )
             let diagnostics = await service.diagnostics()
@@ -244,7 +255,7 @@ struct DiscordConnectionTests {
 
             let report = AgentChannelLiveProofReadiness.discord(diagnostics)
             #expect(report.status == .blocked)
-            #expect(report.blockers.contains { $0.contains("routed agent no longer exists") })
+            #expect(report.blockers.contains { $0.contains("runs an agent that no longer exists") })
         }
     }
 

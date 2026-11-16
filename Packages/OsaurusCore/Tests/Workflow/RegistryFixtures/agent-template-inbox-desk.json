@@ -1,0 +1,280 @@
+{
+  "actions": [
+    {
+      "icon": "tray",
+      "prompt": "Sort today's unread mail into reply / read / ignore.",
+      "text": "Triage today"
+    },
+    {
+      "prompt": "Draft a reply to the email I paste next.",
+      "text": "Draft a reply"
+    }
+  ],
+  "agent": {
+    "capabilities": {
+      "memory_enabled": true,
+      "tools_enabled": true,
+      "web_search_enabled": false
+    },
+    "description": "Reads the inbox, sorts what matters, and drafts replies — never sends.",
+    "max_tokens": 4096,
+    "mcp_servers": {
+      "enabled": [
+        "Gmail"
+      ]
+    },
+    "model": "mlx-community/Qwen3-8B-4bit",
+    "name": "Inbox Desk",
+    "plugin_instructions": {
+      "osaurus.notes": "File notes by date."
+    },
+    "sandbox": {
+      "enabled": false
+    },
+    "source_template": "Cloud Agent",
+    "subagents": {
+      "agents": [],
+      "enabled": false
+    },
+    "system_prompt": "You triage email.\n\nUse workflow_email-reply for drafts. Paths look like ~/Notes/inbox/2026-10-12.md; never send mail.\tKeep \"quotes\" and émoji 🦖 intact.",
+    "temperature": 0.7,
+    "tools": {
+      "enabled": [
+        "file_read",
+        "file_write"
+      ],
+      "mode": "manual"
+    },
+    "workflows": [
+      "Email Reply"
+    ],
+    "working_folder": "~/Notes/inbox"
+  },
+  "author": {
+    "name": "@tester"
+  },
+  "available_to_orchestrator": false,
+  "bundled": [
+    {
+      "available_to_orchestrator": true,
+      "changelog": "Built-in template",
+      "content_hash": "sha256:0b740f7357aacf9e07b5ca4a7b1fb03e7e8d30d08e7ca0ae65ad497e518687c7",
+      "created_at": "2026-10-06T00:00:00Z",
+      "format": "osaurus.template",
+      "format_version": 1,
+      "id": "0f5c1a4e-6b7d-4c1a-9a01-000000000103",
+      "kind": "workflow",
+      "name": "Email Reply",
+      "summary": "Paste an email and say what you want to tell them; get a reply in your tone that answers every question.",
+      "version": 1,
+      "workflow": {
+        "edges": [
+          {
+            "from": "read",
+            "to": "reply"
+          }
+        ],
+        "examples": [
+          {
+            "input": {
+              "email": "Hi! Could we move our call to next week? Tuesday or Wednesday afternoon would work for me. Also, could you send the deck beforehand? Thanks, Sam",
+              "goal": "Tuesday at 2pm works; I'll send the deck Monday.",
+              "sign_off": "Alex",
+              "tone": "Warm"
+            },
+            "name": "Scheduling"
+          }
+        ],
+        "input_schema": {
+          "properties": {
+            "email": {
+              "description": "Paste the whole message.",
+              "maxLength": 20000,
+              "title": "Email you received",
+              "type": "string"
+            },
+            "goal": {
+              "description": "For example: yes to Tuesday, but no later than 3pm.",
+              "title": "What you want to say",
+              "type": "string"
+            },
+            "sign_off": {
+              "description": "Your name for the sign-off. Leave empty to skip it.",
+              "title": "Sign as",
+              "type": "string"
+            },
+            "tone": {
+              "default": "Warm",
+              "enum": [
+                "Warm",
+                "Neutral",
+                "Formal"
+              ],
+              "title": "Tone",
+              "type": "string"
+            }
+          },
+          "required": [
+            "email",
+            "goal",
+            "tone"
+          ],
+          "type": "object",
+          "x-order": [
+            "email",
+            "goal",
+            "tone",
+            "sign_off"
+          ]
+        },
+        "model_slots": [
+          {
+            "locality": "cloud_allowed",
+            "preferred": "foundation",
+            "slot": "writer",
+            "strictness": "preferred"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "read",
+            "inference": {
+              "instructions": "Read the email. In one sentence, say what the sender wants. List each question or request in it that a reply should address.",
+              "mode": "generate",
+              "model_slot": "writer"
+            },
+            "input": {
+              "email": "{{input.email}}"
+            },
+            "kind": "inference",
+            "name": "Read the email",
+            "output_schema": {
+              "properties": {
+                "gist": {
+                  "title": "What they're asking",
+                  "type": "string"
+                },
+                "questions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Questions to answer",
+                  "type": "array"
+                }
+              },
+              "required": [
+                "gist",
+                "questions"
+              ],
+              "type": "object"
+            },
+            "retry": {
+              "backoff_seconds": 1,
+              "max_attempts": 2
+            },
+            "timeout": 120
+          },
+          {
+            "id": "reply",
+            "inference": {
+              "instructions": "Write a reply email in the given tone that says what the user wants to say and addresses every listed question. Keep it brief. Do not promise anything the user did not say. End with the sign-off name when one is given. Return a subject line starting with 'Re: ' and the reply body.",
+              "mode": "generate",
+              "model_slot": "writer"
+            },
+            "input": {
+              "email": "{{input.email}}",
+              "questions": "{{nodes.read.output.questions}}",
+              "sign_off": "{{input.sign_off}}",
+              "tone": "{{input.tone}}",
+              "what_to_say": "{{input.goal}}"
+            },
+            "kind": "inference",
+            "name": "Write the reply",
+            "output_schema": {
+              "properties": {
+                "reply": {
+                  "title": "Reply",
+                  "type": "string"
+                },
+                "subject": {
+                  "title": "Subject",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "subject",
+                "reply"
+              ],
+              "type": "object"
+            },
+            "retry": {
+              "backoff_seconds": 1,
+              "max_attempts": 2
+            },
+            "timeout": 120
+          }
+        ],
+        "output": {
+          "gist": "{{nodes.read.output.gist}}",
+          "reply": "{{nodes.reply.output.reply}}",
+          "subject": "{{nodes.reply.output.subject}}"
+        },
+        "output_schema": {
+          "properties": {
+            "gist": {
+              "title": "What they asked",
+              "type": "string"
+            },
+            "reply": {
+              "title": "Reply",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "reply",
+            "gist"
+          ],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      }
+    }
+  ],
+  "changelog": "Tuned the prompt; bundles Email Reply",
+  "content_hash": "sha256:8cea5a03b72ce1a46f1cd9b933d4871ee3215490a00ce46ba4fb094efa927abe",
+  "created_at": "2026-10-12T09:30:00Z",
+  "format": "osaurus.template",
+  "format_version": 1,
+  "id": "6d1f4c2a-8e3b-4a7d-9c10-0000000000a1",
+  "kind": "agent",
+  "name": "Inbox Desk",
+  "requirements": {
+    "mcp_servers": [
+      "Gmail"
+    ],
+    "models": [
+      {
+        "preferred": "mlx-community/Qwen3-8B-4bit",
+        "slot": "main",
+        "strictness": "preferred"
+      }
+    ],
+    "working_folder": {
+      "path": "~/Notes/inbox"
+    }
+  },
+  "summary": "Triages mail, drafts replies with the bundled Email Reply workflow, and keeps notes in ~/Notes/inbox.",
+  "version": 3,
+  "workflows": [
+    {
+      "id": "0f5c1a4e-6b7d-4c1a-9a01-000000000103",
+      "min_version": 1
+    }
+  ]
+}

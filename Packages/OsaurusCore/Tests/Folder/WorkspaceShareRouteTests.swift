@@ -6,8 +6,8 @@
 //  so `file_read` / `file_write` (and the `sandbox_*` twins) get the same
 //  format coverage in the VM as in a trusted folder. Containment must hold
 //  (no `..` escape), plain text must stay on the bridge, and a generated
-//  document written to the share must be logged relative to the share root
-//  so `file_undo` can revert it.
+//  document written to the share must be recorded in the agent's file
+//  history so `file_undo` can revert it.
 //
 
 import Foundation
@@ -63,25 +63,26 @@ struct WorkspaceShareRouteTests {
         #expect(WorkspaceShareRoute.servesWrite(extension: "xlsx"))
         #expect(WorkspaceShareRoute.servesWrite(extension: "docx"))
         #expect(WorkspaceShareRoute.servesWrite(extension: "pdf"))
-        #expect(!WorkspaceShareRoute.servesWrite(extension: "pptx"))
+        #expect(WorkspaceShareRoute.servesWrite(extension: "pptx"))
         #expect(!WorkspaceShareRoute.servesWrite(extension: "md"))
     }
 
-    @Test func hostURLStaysInsideTheShare() async throws {
-        try await withHome { _ in
-            let root = WorkspaceShareRoute.shareRoot.standardizedFileURL.path
-            let ok = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace/agents/x/report.pdf")
-            #expect(ok.standardizedFileURL.path.hasPrefix(root))
+    @Test func hostURLStaysInsideTheAgentsScope() async throws {
+        try await withHome { host in
+            let home = Self.home
+            let ok = try WorkspaceShareRoute.hostURL(forSandboxPath: "\(home)/report.pdf", home: home)
+            #expect(ok.standardizedFileURL.path.hasPrefix(host.standardizedFileURL.path + "/"))
             #expect(ok.lastPathComponent == "report.pdf")
+            _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace/shared/a.pdf", home: home)
 
-            #expect(throws: (any Error).self) {
-                _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace/../../etc/passwd")
-            }
-            #expect(throws: (any Error).self) {
-                _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace")
-            }
-            #expect(throws: (any Error).self) {
-                _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/etc/passwd")
+            for outside in [
+                "/workspace/../../etc/passwd", "/workspace", "/etc/passwd",
+                // Another agent's home, a sibling-prefix home, and the share root.
+                "/workspace/agents/other/secret.pdf", "\(home)x/secret.pdf", "/workspace/root.pdf",
+            ] {
+                #expect(throws: (any Error).self, "\(outside)") {
+                    _ = try WorkspaceShareRoute.hostURL(forSandboxPath: outside, home: home)
+                }
             }
             #expect(WorkspaceShareRoute.shareRelativePath(forSandboxPath: "/workspaces/x") == nil)
             #expect(
@@ -126,6 +127,56 @@ struct WorkspaceShareRouteTests {
             #expect(EnvelopeAssertions.failureField(envelope) == "path")
             #expect(ToolEnvelope.failureMessage(envelope).contains("generated host-side"))
             #expect(!FileManager.default.fileExists(atPath: host.appendingPathComponent("escape.docx").path))
+        }
+    }
+
+    /// A formatted workbook under `/workspace` is edited in place (the share is a host directory), and
+    /// replacing it with `content` is refused, so the sandbox route has no dead end between the two.
+    @Test func formattedWorkbookUnderTheShareIsEditedInPlaceNotRegenerated() async throws {
+        try await withHome { host in
+            let written = try await FileWriteTool.writeDocumentToWorkspaceShare(
+                path: "ops.xlsx", home: Self.home, content: "Item,Amount\nRent,1200\n", mode: "overwrite", dryRun: false)
+            #expect(ToolEnvelope.isSuccess(try #require(written)))
+            let url = host.appendingPathComponent("ops.xlsx")
+            let package = try OOXMLPackage(data: try Data(contentsOf: url))
+            let sheet = String(decoding: try package.data("xl/worksheets/sheet1.xml"), as: UTF8.self)
+            package.setData(
+                "xl/worksheets/sheet1.xml",
+                Data(sheet.replacingOccurrences(
+                    of: "<sheetData", with: #"<cols><col min="1" max="1" width="22" customWidth="1"/></cols><sheetData"#).utf8))
+            let formatted = try package.serialize()
+            try formatted.write(to: url)
+
+            let tool = SandboxWriteFileTool(agentName: Self.agentName, home: Self.home)
+            let refused = try await tool.execute(argumentsJSON: try json(["path": "ops.xlsx", "content": "Item,Amount\nRent,1500\n"]))
+            #expect(ToolEnvelope.isError(refused))
+            #expect(EnvelopeAssertions.failureKind(refused) == "invalid_args", "a correction, not a turn-ending refusal")
+            let message = ToolEnvelope.failureMessage(refused)
+            #expect(message.contains("column widths") && message.contains("`sandbox_write_file` `operations`"), Comment(rawValue: message))
+            #expect(try Data(contentsOf: url) == formatted, "file untouched")
+
+            let edited = try await tool.execute(argumentsJSON: try json([
+                "path": "ops.xlsx", "operations": [["op": "set_cells", "cells": ["B2": 1500, "C2": "=B2*2"]]],
+            ]))
+            #expect(ToolEnvelope.isSuccess(edited), "sandbox edit failed: \(edited)")
+            let after = try Data(contentsOf: url)
+            #expect(XLSXPreservation.featuresLostByRegeneration(after) == ["column widths"], "layout kept")
+            let afterSheet = String(decoding: try OOXMLPackage(data: after).data("xl/worksheets/sheet1.xml"), as: UTF8.self)
+            #expect(afterSheet.contains("<f>B2*2</f>") && afterSheet.contains("1500"), Comment(rawValue: afterSheet))
+
+            // file_edit's share route (combined mode) uses the same editor.
+            let viaFileEdit = try await FileEditTool.editDocumentInWorkspaceShare(
+                path: "\(Self.home)/ops.xlsx", home: Self.home,
+                args: ["operations": [["op": "set_cells", "cells": ["B2": 1600]]]],
+                ext: "xlsx", dryRun: false, replaceAll: false, tool: "file_edit")
+            #expect(ToolEnvelope.isSuccess(viaFileEdit), "file_edit share edit failed: \(viaFileEdit)")
+            #expect(XLSXPreservation.featuresLostByRegeneration(try Data(contentsOf: url)) == ["column widths"])
+
+            let escape = try await FileEditTool.editDocumentInWorkspaceShare(
+                path: "../../outside/ops.xlsx", home: Self.home,
+                args: ["operations": [["op": "set_cells", "cells": ["B2": 1]]]],
+                ext: "xlsx", dryRun: false, replaceAll: false, tool: "file_edit")
+            #expect(EnvelopeAssertions.failureKind(escape) == "rejected")
         }
     }
 
@@ -180,39 +231,49 @@ struct WorkspaceShareRouteTests {
         }
     }
 
-    @Test func shareDocumentWriteIsLoggedRelativeToShareRootAndUndoable() async throws {
+    @Test func shareDocumentWriteIsRecordedInAgentHomeAndUndoable() async throws {
         DocumentAdaptersBootstrap.registerBuiltIns()
         let sessionId = "share-route-undo-\(UUID().uuidString)"
         try await withHome { host in
-            try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                let original = Data("not a real xlsx".utf8)
-                let target = host.appendingPathComponent("data.xlsx")
-                try original.write(to: target)
-
-                let written = try await FileWriteTool.writeDocumentToWorkspaceShare(
-                    path: "/workspace/agents/\(Self.agentName)/data.xlsx",
-                    home: Self.home,
-                    content: "a,b\n1,2\n",
-                    mode: "overwrite",
-                    dryRun: false
-                )
-                let envelope = try #require(written)
-                #expect(ToolEnvelope.isSuccess(envelope), "\(envelope)")
-                let payload = try #require(EnvelopeAssertions.successPayload(envelope))
-                let opId = try #require(UUID(uuidString: payload["operation_id"] as? String ?? ""))
-                #expect(try Data(contentsOf: target) != original)
-
-                let ops = await FileOperationLog.shared.operations(for: sessionId)
-                let entry = try #require(ops.first { $0.id == opId })
-                #expect(entry.path == "agents/\(Self.agentName)/data.xlsx")
-                #expect(entry.rootPath == WorkspaceShareRoute.shareRoot.standardizedFileURL.path)
-                #expect(entry.previousContentEncoding == .utf8)
-
-                _ = try await FileOperationLog.shared.undo(sessionId: sessionId, operationId: opId)
-                #expect(try Data(contentsOf: target) == original)
+            let env = try FileHistoryTestEnv.make { name, kind in
+                kind == .agentHome
+                    ? OsaurusPaths.containerAgentDir(name) : WorkspaceShareRoute.shareRoot
             }
+            defer { env.cleanup() }
+            let original = Data("not a real xlsx".utf8)
+            let target = host.appendingPathComponent("data.xlsx")
+            try original.write(to: target)
+
+            let token = await env.journal.beginCapture(
+                sessionId: sessionId, toolName: "file_write",
+                targets: [.init(kind: .agentHome, rootId: Self.agentName, declaredPaths: ["data.xlsx"])])
+            #expect(token.isFullyTracked)
+            let written = try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                try await ChatExecutionContext.$currentChangeSetId.withValue(token.setId) {
+                    try await FileWriteTool.writeDocumentToWorkspaceShare(
+                        path: "/workspace/agents/\(Self.agentName)/data.xlsx",
+                        home: Self.home,
+                        content: "a,b\n1,2\n",
+                        mode: "overwrite",
+                        dryRun: false
+                    )
+                }
+            }
+            _ = await env.journal.endCapture(token)
+            let envelope = try #require(written)
+            #expect(ToolEnvelope.isSuccess(envelope), "\(envelope)")
+            let payload = try #require(EnvelopeAssertions.successPayload(envelope))
+            #expect(payload["operation_id"] as? String == token.setId.uuidString)
+            #expect(try Data(contentsOf: target) != original)
+
+            let set = try #require(await env.journal.changeSet(id: token.setId, sessionId: sessionId))
+            #expect(set.entries.map(\.path) == ["data.xlsx"])
+            #expect(set.entries.first?.rootKind == .agentHome)
+
+            let summary = await env.journal.revert(.set(token.setId), sessionId: sessionId)
+            #expect(summary.isClean, "\(summary)")
+            #expect(try Data(contentsOf: target) == original)
         }
-        await FileOperationLog.shared.clear(sessionId: sessionId)
     }
 
     @Test func shareDryRunAndAppendFollowDocumentSemantics() async throws {

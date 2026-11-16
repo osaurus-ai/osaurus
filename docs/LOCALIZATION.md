@@ -26,9 +26,12 @@ All SwiftUI and `String` UI text in **OsaurusCore** must resolve against the **p
 
 All of the above are listed in the Xcode project's `knownRegions`, so the
 "help wanted" locales already have empty columns ready in the String Catalog
-editor. We're actively seeking contributors for them -- see
-**[TRANSLATORS.md](TRANSLATORS.md)** for the call to action and the contributor
-leaderboard. Add any further locales to `knownRegions` when expanding support.
+editor. "Required" means CI enforces that maintained keys have a value. It
+does not mean every screen is translated: new features often ship English-only
+and are filled in later. Live per-language coverage, the review backlog, and
+the call for contributors are in **[TRANSLATORS.md](TRANSLATORS.md)**
+(regenerate the table with `python3 scripts/i18n/coverage.py`). Add any
+further locales to `knownRegions` when expanding support.
 
 ## Swift API
 
@@ -47,9 +50,21 @@ Helpers live in `Packages/OsaurusCore/Utils/`:
 Text(LocalizedStringKey(title), bundle: .module)
 ```
 
-After adding a key in code, add **de**, **zh-Hans**, **ko**, and **ru** in `Localizable.xcstrings` (Xcode String Catalog editor). Add **zh-Hant** too when you can — it is community-maintained and nearly complete, but not yet enforced by CI.
+After adding a key in code, add **de**, **zh-Hans**, **ko**, and **ru** in `Localizable.xcstrings` (Xcode String Catalog editor). Add **zh-Hant** too when you can — it is community-maintained and not yet enforced by CI.
 
 Avoid raw `Text("…")`, `.help("…")`, `Button("…")`, `panel.title = "…"`, and `UNMutableNotificationContent.title = "…"` in `Packages/OsaurusCore`. CI flags these because they usually resolve against the wrong bundle.
+
+## Translation state
+
+Each localized value carries a state, and it is the only review signal the catalog has:
+
+| State | Meaning |
+| ----- | ------- |
+| `translated` | A fluent speaker wrote or checked it in context. |
+| `needs_review` | Usable, but machine/AI-assisted or written by a non-native speaker. Shipped as-is; queued for native review. |
+| `new` / missing | Falls back to English at runtime. |
+
+Mark machine- or AI-assisted output `needs_review` (Xcode: right-click → **Mark for Review**; JSON flow: `apply-ko.py --state needs_review`), and never bulk-promote `needs_review` to `translated` without a native reviewer. Never copy the English text into a locale to make it "complete"; leaving it untranslated keeps it visible in the backlog. Contributor-facing guidelines are in [TRANSLATORS.md](TRANSLATORS.md#translation-guidelines).
 
 ## Adding a new language
 
@@ -76,6 +91,16 @@ bash scripts/i18n/check.sh
 
 CI runs this on every pull request. It validates catalog coverage, checks that Swift localization literals exist in the catalog, and runs a Swift literal lint. Keys with **no** `de`/`zh-Hans` yet (including Xcode `en`-only auto-extractions and empty stubs the catalog editor injects for raw `Text("…")` literals) are ignored — the catalog is allowed to grow without breaking CI. Run the pruner manually when you want to clean it up (see `scripts/i18n/prune-catalog.py` below).
 
+Because those keys are ignored, a string that is referenced from Swift but only has an `en` stub silently ships in English. CI therefore also runs a **non-blocking** report that lists such strings per UI surface in the job summary:
+
+```bash
+python3 scripts/i18n/report-untranslated-referenced.py \
+  --catalog Packages/OsaurusCore/Resources/Localizable.xcstrings \
+  --swift-root Packages/OsaurusCore
+```
+
+It always exits 0, so it never blocks a PR; it only makes the translation backlog visible. Add `--annotations 10` to also surface the first ten as inline warnings, or `--json out.json` for tooling.
+
 ## Export for external translators
 
 In Xcode: **Product → Export Localizations…** / **Import Localizations…** (XLIFF).
@@ -91,12 +116,14 @@ In Xcode: **Product → Export Localizations…** / **Import Localizations…** 
 | ------ | ------- |
 | `scripts/i18n/check.sh` | Validate core + InfoPlist catalogs, lint risky Swift literals, and dry-run pruning |
 | `scripts/i18n/check-swift-catalog-keys.py` | Ensure Swift localization references exist in the core catalog |
+| `scripts/i18n/report-untranslated-referenced.py` | Non-blocking report of referenced keys that still fall back to English per required locale, grouped by UI surface (CI job summary) |
 | `scripts/i18n/lint-swift-literals.py` | Flag Swift literals that bypass package-bundle localization |
 | `scripts/i18n/merge-locale.py` | Copy one locale from another catalog (existing keys only) |
 | `scripts/i18n/fill-zh-hans.py` | Optional machine-translation backfill (`pip install deep-translator`) |
-| `scripts/i18n/export-untranslated.py` | Export keys missing a locale into batched JSON for (LLM/human) translators |
-| `scripts/i18n/apply-ko.py` | Apply translated JSON maps back into a catalog with placeholder/coverage validation and Xcode-exact formatting (`--locale` is configurable) |
+| `scripts/i18n/export-untranslated.py` | Export non-stale keys missing a locale into batched JSON for (LLM/human) translators |
+| `scripts/i18n/apply-ko.py` | Apply translated JSON maps back into a catalog with placeholder/coverage validation and Xcode-exact formatting (`--locale` is configurable; `--partial` lands one batch at a time) |
 | `scripts/i18n/prune-catalog.py` | Remove en-only / empty Xcode auto-extraction stubs and stale keys |
+| `scripts/i18n/coverage.py` | Generate the per-language status table in `TRANSLATORS.md` (coverage over Swift-referenced keys, review backlog, largest untranslated areas) |
 | `scripts/i18n/leaderboard.py` | Generate the translator leaderboard in `TRANSLATORS.md` from merged PRs (needs `gh`) |
 
 Shared logic: `scripts/i18n/xcstrings_util.py`.

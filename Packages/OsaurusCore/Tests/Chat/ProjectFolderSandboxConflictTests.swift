@@ -108,7 +108,61 @@ struct ProjectFolderSandboxConflictTests {
         }
     }
 
-    @Test("⌘N in project with folder → same sandbox opt-out as the project page")
+    @Test("new chat in project from another agent's window → folder marked in flight until the sandbox is off")
+    func startNewChatInProject_fromOtherAgent_adoptsFolder() async throws {
+        try await ChatHistoryTestStorage.run {
+            let folder = try makeFolder()
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let agent = makeAgent(sandboxEnabled: true)
+            AgentManager.shared.add(agent)
+            defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
+            let bookmark = try folder.bookmarkData(
+                options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+            let project = ProjectManager.shared.create(name: "Cross Agent")
+            defer { ProjectManager.shared.delete(id: project.id) }
+            var withFolder = project
+            withFolder.defaultAgentId = agent.id
+            withFolder.folderPath = folder.path
+            withFolder.folderBookmark = bookmark
+            ProjectManager.shared.update(withFolder)
+
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            window.startNewChat(in: withFolder)
+            #expect(window.agentId == agent.id)
+            // The composer sees a sandboxed agent here; the flag is what
+            // keeps its sandbox-on ⇒ no-folder rule off this folder.
+            #expect(window.session.folderState.isAdoptingHostFolder)
+            let context = await window.session.folderState.contextWaitingForRestore()
+            #expect(sameFolder(context?.rootPath, folder))
+            try await waitUntil(timeout: .seconds(5)) {
+                persistedSandboxEnabled(for: agent.id) == false
+                    && !window.session.folderState.isAdoptingHostFolder
+            }
+            #expect(window.session.folderState.hasActiveFolder)
+            #expect(window.session.projectId == project.id)
+            for tab in window.tabs { tab.session.folderState.clearFolder() }
+        }
+    }
+
+    @Test("a clear or pick during a default-folder adoption ends the in-flight mark")
+    func hostFolderAdoption_supersededByUserMutation() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let state = ChatFolderState()
+        let token = state.beginHostFolderAdoption(bookmark: nil, path: folder.path)
+        #expect(state.isAdoptingHostFolder)
+        state.clearFolder()
+        #expect(!state.isAdoptingHostFolder)
+        // A stale token from the superseded adoption can't end a newer one.
+        let newer = state.beginHostFolderAdoption(bookmark: nil, path: folder.path)
+        state.endHostFolderAdoption(token)
+        #expect(state.isAdoptingHostFolder)
+        state.endHostFolderAdoption(newer)
+        #expect(!state.isAdoptingHostFolder)
+        state.clearFolder()
+    }
+
+    @Test("⌘N in a project chat with folder → same sandbox opt-out as New Chat in the project")
     func newTabInCurrentProject_disablesSandbox() async throws {
         try await ChatHistoryTestStorage.run {
             let folder = try makeFolder()
@@ -123,7 +177,7 @@ struct ProjectFolderSandboxConflictTests {
             ProjectManager.shared.update(withFolder)
 
             let window = ChatWindowState(windowId: UUID(), agentId: agent.id)
-            window.openProjectId = project.id
+            window.session.projectId = project.id
             window.newTabInCurrentProject()
 
             #expect(window.session.projectId == project.id)

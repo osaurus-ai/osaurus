@@ -67,6 +67,7 @@ enum SafeDiskCachePurge {
                 }
                 companionRoots.append(companionRoot)
             }
+            var removedCompanionKeys = Set<String>()
             let companionFiles = try companionRoots.flatMap {
                 try fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: [.isSymbolicLinkKey])
             }
@@ -86,6 +87,7 @@ enum SafeDiskCachePurge {
                 guard stem.dropFirst(4).allSatisfy({ "0123456789abcdef".contains($0) }) else { continue }
                 targets.append(url)
                 targets.append(url.deletingLastPathComponent().appendingPathComponent(stem + ".safetensors"))
+                removedCompanionKeys.insert(String(stem.dropFirst(4)))
             }
             // Validate every target before deleting any. Never follow a link.
             for url in targets where fm.fileExists(atPath: url.path) {
@@ -101,6 +103,7 @@ enum SafeDiskCachePurge {
                 result.removedFiles += 1
             }
             guard sqlite3_exec(db, "DELETE FROM cache_entries", nil, nil, nil) == SQLITE_OK,
+                forgetLegacyCompanions(db, keys: removedCompanionKeys),
                 sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK
             else { throw failure("Cache index update failed; some payloads may already have been removed.") }
             committed = true
@@ -108,6 +111,41 @@ enum SafeDiskCachePurge {
             result.error = error.localizedDescription
         }
         return result
+    }
+
+    /// A newer index also counts companions that have no KV row, in
+    /// `legacy_companions`. Forget the ones whose files this purge removed: a
+    /// row left behind keeps counting bytes that are gone. Rows for companions
+    /// that are still on disk stay, because those bytes are still there. An
+    /// older index has no such table, and there is nothing to do.
+    private static func forgetLegacyCompanions(_ db: OpaquePointer?, keys: Set<String>) -> Bool {
+        guard !keys.isEmpty else { return true }
+        var statement: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                db,
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='legacy_companions'",
+                -1,
+                &statement,
+                nil
+            ) == SQLITE_OK
+        else { return false }
+        let code = sqlite3_step(statement)
+        sqlite3_finalize(statement)
+        if code == SQLITE_DONE { return true }
+        guard code == SQLITE_ROW else { return false }
+        guard sqlite3_prepare_v2(
+            db, "DELETE FROM legacy_companions WHERE key = ?", -1, &statement, nil
+        ) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(statement) }
+        for key in keys.sorted() {
+            sqlite3_reset(statement)
+            let bound = key.withCString {
+                sqlite3_bind_text(statement, 1, $0, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            }
+            guard bound == SQLITE_OK, sqlite3_step(statement) == SQLITE_DONE else { return false }
+        }
+        return true
     }
 
     private static func failure(_ message: String) -> NSError {

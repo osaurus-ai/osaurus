@@ -66,8 +66,11 @@ public final class MemoryPressureResponder: @unchecked Sendable {
         LaTeXRenderer.shared.clearCache()
         SymbolImageCache.clear()
         NativeHeaderView.clearMonogramCache()
+        AvatarBitmapRenderer.shared.removeAll()
+        clearCodeHighlightCache()
+        WorkflowMediaThumbnailCache.removeAll()
+        OsaurusDatabaseHandle.releaseCachedPages()
         Task {
-            await ThemePreviewImageCache.shared.removeAll()
             await ModelRuntime.shared.trimFreedBufferCacheUnderMemoryPressure()
         }
     }
@@ -76,6 +79,15 @@ public final class MemoryPressureResponder: @unchecked Sendable {
     /// through the normal unload path and purge detection memo caches.
     private func respondToCritical() {
         LocalReasoningCapability.invalidate()
+        Task { @MainActor in
+            SpeechService.shared.unloadIfIdle()
+            TTSService.shared.unloadIfIdle()
+        }
+        Task {
+            if let image = await ImageGenerationService.shared.unloadIfIdle() {
+                Self.log.warning("critical memory pressure: unloaded image model \(image, privacy: .public)")
+            }
+        }
         Task {
             let unloaded = await ModelRuntime.shared.unloadIdleModelsUnderMemoryPressure()
             if unloaded.isEmpty {

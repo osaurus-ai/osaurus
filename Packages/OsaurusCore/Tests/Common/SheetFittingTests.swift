@@ -59,6 +59,19 @@ struct SheetFittingTests {
         #expect(fitted == SheetFitting.minimumSize)
     }
 
+    /// A sheet is cut off at the edges of the window presenting it: the
+    /// 680pt Published sheet over a 600pt window lost its header and its
+    /// Done button on a roomy screen.
+    @Test func clampsToThePresentingWindow() {
+        let fitted = SheetFitting.fittedSize(
+            desired: CGSize(width: 640, height: 680),
+            visibleSize: CGSize(width: 1512, height: 944),
+            windowSize: CGSize(width: 960, height: 600)
+        )
+
+        #expect(fitted == CGSize(width: 640, height: 600 - SheetFitting.windowInset))
+    }
+
     /// A sheet already smaller than the screen is never grown to fill it.
     @Test func smallSheetIsNotStretched() {
         let fitted = SheetFitting.fittedSize(

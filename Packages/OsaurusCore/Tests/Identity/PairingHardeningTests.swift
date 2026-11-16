@@ -2,9 +2,9 @@
 //  PairingHardeningTests.swift
 //  OsaurusCoreTests
 //
-//  Covers the Bonjour + Relay P2P hardening work: server-issued pairing
-//  challenges, per-IP rate limiting, HPKE key envelopes, the multi-agent
-//  audience validator, and route-level agent scoping.
+//  Covers the pairing and relay hardening work: per-IP rate limiting, HPKE
+//  key envelopes, the multi-agent audience validator, and route-level agent
+//  scoping.
 //
 
 import CryptoKit
@@ -12,30 +12,6 @@ import Foundation
 import Testing
 
 @testable import OsaurusCore
-
-// MARK: - PairingChallengeStore
-
-struct PairingChallengeStoreTests {
-    @Test func issuedNonce_consumesExactlyOnce() {
-        let nonce = PairingChallengeStore.shared.issue()
-        #expect(!nonce.isEmpty)
-        #expect(PairingChallengeStore.shared.consume(nonce))
-        // Single-use: a replayed nonce must be rejected.
-        #expect(!PairingChallengeStore.shared.consume(nonce))
-    }
-
-    @Test func unknownNonce_rejected() {
-        #expect(!PairingChallengeStore.shared.consume("never-issued-nonce"))
-    }
-
-    @Test func issuedNonces_areUnique() {
-        let a = PairingChallengeStore.shared.issue()
-        let b = PairingChallengeStore.shared.issue()
-        #expect(a != b)
-        #expect(PairingChallengeStore.shared.consume(a))
-        #expect(PairingChallengeStore.shared.consume(b))
-    }
-}
 
 // MARK: - PairingRateLimiter
 
@@ -136,7 +112,7 @@ struct PairingKeyEnvelopeTests {
 
 struct MultiAgentValidatorTests {
     /// Production shape: the server validator is built with EVERY agent's
-    /// address, so a key minted by `/pair` for agent 1 must validate even
+    /// address, so a key minted by `/pair-invite` for agent 1 must validate even
     /// though the validator wasn't built "for" agent 1 specifically.
     @Test func pairedAgentKey_validatesAgainstMultiAgentValidator() throws {
         let agent0 = try AgentKey.deriveAddress(masterKey: TestKeys.alicePrivateKey, index: 0)
@@ -305,31 +281,5 @@ struct RelayStreamChunkingTests {
         let event = "event: ping\ndata: line1\ndata: line2\n\n"
         var data = Data(event.utf8)
         #expect(RelayTunnelManager.takeUTF8Prefix(&data) == event)
-    }
-}
-
-// MARK: - Advertiser Name Limits
-
-@MainActor
-struct BonjourAdvertiserNameTests {
-    @Test func instanceName_fitsDNSSDLimit_andKeepsUUID() {
-        let agent = Agent(name: String(repeating: "🦖", count: 40), autonomousExec: AutonomousExecConfig(enabled: false))
-        let name = BonjourAdvertiser.instanceName(for: agent)
-        #expect(name.utf8.count <= BonjourAdvertiser.maxInstanceNameBytes)
-        #expect(name.hasSuffix("@\(agent.id.uuidString)"))
-    }
-
-    @Test func instanceName_shortNameUnchanged() {
-        let agent = Agent(name: "Osaurus", autonomousExec: AutonomousExecConfig(enabled: false))
-        let name = BonjourAdvertiser.instanceName(for: agent)
-        #expect(name == "Osaurus@\(agent.id.uuidString)")
-    }
-
-    @Test func truncateUTF8_neverSplitsCharacters() {
-        // Each 🦖 is 4 bytes; a 6-byte budget must keep exactly one.
-        let truncated = BonjourAdvertiser.truncateUTF8("🦖🦖🦖", maxBytes: 6)
-        #expect(truncated == "🦖")
-        #expect(BonjourAdvertiser.truncateUTF8("abc", maxBytes: 10) == "abc")
-        #expect(BonjourAdvertiser.truncateUTF8("abc", maxBytes: 0) == "")
     }
 }

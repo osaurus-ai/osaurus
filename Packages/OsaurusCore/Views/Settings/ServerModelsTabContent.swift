@@ -51,7 +51,7 @@ struct ServerModelsTabContent: View {
     /// store so bindings stay cheap.
     @State private var exposedState: [String: Bool] = [:]
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -63,8 +63,8 @@ struct ServerModelsTabContent: View {
                 return rows.isEmpty && !query.isEmpty ? nil : (group, rows)
             }
 
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20) {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: theme.settingsSectionGap) {
                 introBanner
 
                 // Local models
@@ -80,14 +80,13 @@ struct ServerModelsTabContent: View {
                     if !hasLoadedLocalRows {
                         loadingRow
                     } else if localRows.isEmpty {
-                        emptyStateRow(
-                            icon: "arrow.down.circle",
-                            message: L(
-                                "No local models installed yet. Download models from the Models manager and they will be exposed here automatically."
-                            )
+                        SettingsEmptyState(
+                            inline: "arrow.down.circle",
+                            title: "No local models installed yet",
+                            hint: "Download models from the Models manager and they will be exposed here automatically."
                         )
                     } else if filteredLocal.isEmpty {
-                        emptyStateRow(icon: "magnifyingglass", message: L("No local models match your search."))
+                        SettingsEmptyState(inline: "magnifyingglass", title: "No local models match your search.")
                     } else {
                         ForEach(filteredLocal) { row in
                             exposureToggleRow(row)
@@ -106,11 +105,10 @@ struct ServerModelsTabContent: View {
                         totalCount: nil,
                         bulkAction: nil
                     ) {
-                        emptyStateRow(
-                            icon: "antenna.radiowaves.left.and.right",
-                            message: L(
-                                "No remote providers connected. Models from Osaurus Router and your own providers appear here once connected."
-                            )
+                        SettingsEmptyState(
+                            inline: "antenna.radiowaves.left.and.right",
+                            title: "No remote providers connected",
+                            hint: "Models from Osaurus Router and your own providers appear here once connected."
                         )
                     }
                 } else {
@@ -123,10 +121,7 @@ struct ServerModelsTabContent: View {
                             bulkAction: { exposed in setAll(entry.group.rows, exposed: exposed) }
                         ) {
                             if entry.rows.isEmpty {
-                                emptyStateRow(
-                                    icon: "magnifyingglass",
-                                    message: L("No models match your search.")
-                                )
+                                SettingsEmptyState(inline: "magnifyingglass", title: "No models match your search.")
                             } else {
                                 ForEach(entry.rows) { row in
                                     exposureToggleRow(row)
@@ -136,8 +131,8 @@ struct ServerModelsTabContent: View {
                     }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.vertical, theme.space.s24)
             .frame(maxWidth: .infinity)
         }
         .task {
@@ -161,111 +156,61 @@ struct ServerModelsTabContent: View {
     // MARK: - Subviews
 
     private var introBanner: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "list.bullet.rectangle")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .padding(.top, 1)
+                .glyphSize(.label, weight: .medium)
+                .foregroundColor(theme.text.link)
+                .padding(.top, theme.space.s2)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(L("Choose which models the API lists"))
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     L(
                         "Controls the models returned by /models and /tags. Hidden models can still be used by requesting them directly. Changes apply immediately."
                     )
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .componentInspectionText(47, role: .caption, fallback: .caption, theme: theme)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.accentColor.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.accentColor.opacity(0.18), lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+        .settingsChrome(.selected)
     }
 
     private var remoteModelsHeader: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(L("Remote Models"))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                .foregroundColor(theme.text.primary)
             Text(L("Hidden by default. Enable the remote models you want the API to list."))
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
         }
-        .padding(.top, 4)
+        .padding(.top, theme.space.s4)
     }
 
     private var loadingRow: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
+        HStack(spacing: theme.space.s8) {
+            SettingsSpinner()
             Text(L("Scanning installed models…"))
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 12)
-    }
-
-    private func emptyStateRow(icon: String, message: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 13))
-                .foregroundColor(theme.tertiaryText)
-            Text(message)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 4)
+        .padding(.vertical, theme.space.s12)
     }
 
     private func exposureToggleRow(_ row: ExposureModelRow) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if row.subtitle != row.title {
-                    Text(row.subtitle)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-
-            Spacer()
-
-            Toggle("", isOn: exposureBinding(for: row))
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
-                .controlSize(.small)
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
+        SettingsToggle(
+            title: row.title,
+            description: row.subtitle == row.title ? "" : row.subtitle,
+            verbatim: true,
+            isOn: exposureBinding(for: row)
         )
     }
 
@@ -387,70 +332,45 @@ private struct ModelExposureSection<Content: View>: View {
     let bulkAction: ((Bool) -> Void)?
     @ViewBuilder let content: () -> Content
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundColor(theme.text.link)
 
                 Text(title)
-                    .textCase(.uppercase)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(0.5)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.secondary)
 
                 if let exposedCount, let totalCount, totalCount > 0 {
-                    Text(L("\(exposedCount) of \(totalCount) exposed"))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule().fill(theme.inputBackground)
-                        )
+                    StatusChip(L("\(exposedCount) of \(totalCount) exposed"))
                 }
 
                 Spacer()
 
                 if let bulkAction {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         bulkButton(L("Expose all")) { bulkAction(true) }
                         bulkButton(L("Hide all")) { bulkAction(false) }
                     }
                 }
             }
 
-            LazyVStack(alignment: .leading, spacing: 8) {
+            LazyVStack(alignment: .leading, spacing: theme.space.s8) {
                 content()
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
+        .settingsChrome(.card)
     }
 
     private func bulkButton(_ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(theme.inputBackground)
-                        .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 1))
-                )
         }
-        .buttonStyle(.plain)
+        .assignedSettingsButtonStyle(.secondary, size: .compact)
     }
 }

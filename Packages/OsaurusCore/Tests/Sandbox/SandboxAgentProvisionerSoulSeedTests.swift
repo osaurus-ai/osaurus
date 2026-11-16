@@ -175,8 +175,13 @@ struct SandboxAgentProvisionerSoulSeedTests {
         let script = makeScript()
         #expect(script.hasPrefix("set -e"))
         #expect(script.contains("if ! id agent-abc >/dev/null 2>&1; then"))
-        #expect(script.contains("adduser -D -h '/home/agents/abc' agent-abc"))
-        #expect(script.contains("chmod 700 '/home/agents/abc'"))
+        // A member's home is a VirtioFS mount root (no chown/chmod), so the
+        // user is created without touching it; mode is set only off-mount.
+        #expect(script.contains("adduser -D -H -h '/home/agents/abc' agent-abc"))
+        #expect(
+            script.contains(
+                "mountpoint -q '/home/agents/abc' || { chown agent-abc:agent-abc '/home/agents/abc'; chmod 700 '/home/agents/abc'; }"
+            ))
     }
 
     /// Token file must be created under `umask 0077` (mode 0600 with no

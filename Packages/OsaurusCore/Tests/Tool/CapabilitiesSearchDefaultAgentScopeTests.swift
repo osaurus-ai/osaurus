@@ -4,12 +4,13 @@
 //
 //  Composer-level schema scope for the Default (configuration) agent.
 //
-//  The Default agent no longer reaches capability search at all — it loads
-//  its consolidated configure tools DIRECTLY. So the contract worth pinning
-//  here is the composed schema itself: regardless of what the user asks,
-//  `composeChatContext(agentId: Agent.defaultId)` resolves exactly the
-//  consolidated configure surface + agent-loop tools, and never the
-//  capability-search gateway or any non-baseline tool.
+//  The Default agent never reaches capability search: it hands Osaurus
+//  questions and changes to the Configurator through `configurator_handoff`,
+//  loaded DIRECTLY. So the contract worth pinning here is the composed schema
+//  itself: regardless of what the user asks,
+//  `composeChatContext(agentId: Agent.defaultId)` resolves only the
+//  Orchestrator's fixed surface, never the configure tools themselves, the
+//  capability-search gateway, or any non-baseline tool.
 //
 
 import Foundation
@@ -53,11 +54,12 @@ struct DefaultAgentSchemaScopeTests {
         }
     }
 
-    /// End-to-end through `composeChatContext`: the declarative write loads
-    /// directly, and the capability-search gateway is never present for the
-    /// Default agent (it stays available to custom agents).
+    /// End-to-end through `composeChatContext`: the Configurator handoff
+    /// loads directly, the declarative write stays with the Configurator, and
+    /// the capability-search gateway is never present for the Default agent
+    /// (it stays available to custom agents).
     @Test
-    func defaultAgent_loadsConsolidatedWritesDirectlyNotViaSearch() async {
+    func defaultAgent_loadsTheConfiguratorHandoffDirectlyNotViaSearch() async {
         Self.ensureBootstrapped()
         let lease = await acquireSubagentStoreSandbox("default-agent-schema-consolidated")
         defer { lease.release() }
@@ -67,8 +69,10 @@ struct DefaultAgentSchemaScopeTests {
             query: "connect my Anthropic account and download a small model"
         )
         let names = Set(context.tools.map { $0.function.name })
-        // The declarative write is present without any discover/load step.
-        #expect(names.contains("osaurus_config"))
+        // The handoff is present without any discover/load step; the write
+        // it leads to is not.
+        #expect(names.contains(ConfiguratorHandoffTool.toolName))
+        #expect(!names.contains("osaurus_config"))
         // The capability-search gateway is absent.
         #expect(!names.contains("capabilities_discover"))
         #expect(!names.contains("capabilities_load"))

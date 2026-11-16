@@ -21,6 +21,7 @@
 //
 
 import Foundation
+import MLX
 @preconcurrency import MLXLMCommon
 import os.log
 
@@ -28,6 +29,32 @@ private let mapperSignposter = OSSignposter(subsystem: "ai.osaurus", category: "
 private let mapperLog = Logger(subsystem: "ai.osaurus", category: "Generation")
 
 enum GenerationEventMapper {
+
+    /// Per-request facts the mapper cannot observe from the event stream
+    /// but a handled GPU failure report needs: the decode path the request
+    /// was resolved to, and where the model bundle lives. Identifiers only.
+    struct FailureRequestContext: Sendable {
+        /// `ModelRuntime.describeDraftStrategy` of the request's strategy.
+        var decodePath: String? = nil
+        /// The native-MTP depth the request asked for, when it is one.
+        var configuredDepth: Int? = nil
+        /// `HandledGPUFailureReport.volumeKind(of:)` of the bundle directory.
+        var modelVolumeKind: String? = nil
+        /// Request-correlated disk-fetch figures, if available. A process-wide
+        /// latest sample cannot be assigned to this request without identity.
+        var diskRestoreSample: (@Sendable () -> (bytes: Int64, ms: Double)?)? = nil
+
+        init(
+            decodePath: String? = nil, configuredDepth: Int? = nil,
+            modelVolumeKind: String? = nil,
+            diskRestoreSample: (@Sendable () -> (bytes: Int64, ms: Double)?)? = nil
+        ) {
+            self.decodePath = decodePath
+            self.configuredDepth = configuredDepth
+            self.modelVolumeKind = modelVolumeKind
+            self.diskRestoreSample = diskRestoreSample
+        }
+    }
 
     /// Map a `Generation` stream into the typed `ModelRuntimeEvent` stream
     /// callers (HTTP handlers, ChatView, plugin runners) consume.
@@ -50,15 +77,30 @@ enum GenerationEventMapper {
         /// seconds after the user's real turn and would silently overwrite
         /// the exact adaptive-downshift readout the panel exists to show.
         recordMTPLastRun: Bool = true,
+        /// What a failure report should say about this request beyond what
+        /// the event stream shows (decode path, model volume).
+        failureRequestContext: FailureRequestContext = FailureRequestContext(),
         onConsumerCancellation: @escaping @Sendable () -> Void = {},
         /// Fired exactly once, at the FIRST real output event (chunk,
         /// reasoning, tool call, or tool-call progress). This is the
         /// boundary the swap-attribution window closes on: prefill and
         /// TTFT work happen before it, decode after.
         onFirstModelOutput: @escaping @Sendable () -> Void = {},
-        /// Fired when vmlx emits its authoritative terminal stats. Cache
-        /// persistence may still be draining after this boundary.
-        onCompletionInfo: @escaping @Sendable () -> Void = {}
+        /// Fired when this mapper consumes authoritative terminal stats. The
+        /// MLX adapter holds them until producer drain; direct streams may differ.
+        onCompletionInfo: @escaping @Sendable () -> Void = {},
+        /// Injectable diagnostic sink. The default writes only this model's
+        /// actual stats (or removes its stale value when stats are unavailable).
+        /// Awaited before the terminal is surfaced; no global test observer.
+        recordMTPStats: @escaping @Sendable (String, MTPStatsSummary?) async -> Void = {
+            await MLXBatchAdapter.recordLastMTPStats(modelName: $0, stats: $1)
+        },
+        /// Injectable sink; the default reports only whitelisted native GPU
+        /// failures and obeys the existing crash-reporting consent gate.
+        reportFailure: @escaping @Sendable (GenerationFailure, String, Int, Int, HandledGPUFailureContext) -> Void = {
+            CrashReportingService.recordHandledGPUFailure(
+                $0, modelName: $1, promptTokens: $2, generatedTokens: $3, context: $4)
+        }
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
@@ -71,8 +113,9 @@ enum GenerationEventMapper {
             )
             let startedAt = CFAbsoluteTimeGetCurrent()
             var firstChunk = true
-            var finalTokenCount = 0
+            var finalTokenCount: Int?
             var sawCompletionInfo = false
+            var reportedFailure = false
             var sawReasoning = false
             var estimatedTextTokens = 0
             var markedFirstModelOutput = false
@@ -81,16 +124,74 @@ enum GenerationEventMapper {
             // cacheRestore→prefill split (how many tokens were restored from
             // cache vs freshly processed) without a line per progress tick.
             var lastPrefillStage: String?
+            var lastPrefillOperation: String?
+            // The last progress figures and the restore's wall time, for a
+            // handled GPU failure report: the same preparation-stage facts a
+            // Sentry event could not say (`HandledGPUFailureContext`).
+            var lastPrefillCompleted: Int?
+            var lastPrefillTotal: Int?
+            var cacheLookupAt: CFAbsoluteTime?
+            var cacheRestoreMs: Int?
             // Decode diagnostics: first-output wall-clock + whether this step
             // ended in a tool call. Tool-call steps tear down the stream before
             // vmlx emits `.info`, so STEP-STATS never fires for them — the
             // STEP-DECODE line at stream end covers those steps instead.
             var firstOutputAt: CFAbsoluteTime?
             var sawToolCall = false
+            // What the runtime's `.cacheRestore` event reported for this
+            // request. Zero restored tokens is a cold request.
+            var cacheRestoredTokens = 0
+            var cacheRestoreCountKnown = false
+            var cacheRestoreDetail: String?
+            var prefillPromptTokens = max(0, promptTokenCount ?? 0)
+            var recordedCacheRestore = false
+
+            // Everything the handled-failure report can say about this
+            // request at the moment the failure arrives. Counts and
+            // identifiers only; a figure that was never observed is nil.
+            func failureContext() -> HandledGPUFailureContext {
+                let sample = failureRequestContext.diskRestoreSample?()
+                return HandledGPUFailureContext(
+                    decodePath: failureRequestContext.decodePath,
+                    configuredDepth: failureRequestContext.configuredDepth,
+                    lastPrefillStage: lastPrefillStage,
+                    lastPrefillOperation: lastPrefillOperation,
+                    prefillCompletedUnits: lastPrefillCompleted,
+                    prefillTotalUnits: lastPrefillTotal,
+                    // Lookup start does not distinguish an eventual cold miss
+                    // from a failure inside restore. Only a restore report or
+                    // the initial cold-prefill event establishes the count.
+                    restoredTokens: cacheRestoreCountKnown ? cacheRestoredTokens : nil,
+                    restoreDetail: cacheRestoredTokens > 0 ? cacheRestoreDetail : nil,
+                    cacheRestoreMs: cacheRestoreMs,
+                    diskRestoreBytes: sample?.bytes,
+                    diskRestoreMs: sample.map { Int($0.ms.rounded()) },
+                    modelVolumeKind: failureRequestContext.modelVolumeKind,
+                    promptTokens: promptTokenCount.flatMap { $0 >= 0 ? $0 : nil })
+            }
+
+            // Park the restore where a Settings poll can read it, once per
+            // request: at the first output, when prefill is over and the
+            // figure is final, or at stream end for a request that produced
+            // none. Same gate as the MTP readout, so warm-up prefills and
+            // background housekeeping do not overwrite the user's turn.
+            func recordCacheRestoreOnce() {
+                guard !recordedCacheRestore else { return }
+                recordedCacheRestore = true
+                guard recordMTPLastRun, !suppressProgressUI else { return }
+                let summary = CacheRestoreSummary(
+                    modelName: modelName,
+                    restoredTokens: cacheRestoredTokens,
+                    promptTokens: prefillPromptTokens,
+                    detail: cacheRestoredTokens > 0 ? cacheRestoreDetail : nil
+                )
+                Task { await MLXBatchAdapter.recordLastCacheRestore(summary) }
+            }
 
             func markFirstModelOutput() {
                 guard !markedFirstModelOutput else { return }
                 markedFirstModelOutput = true
+                recordCacheRestoreOnce()
                 firstOutputAt = CFAbsoluteTimeGetCurrent()
                 let ms = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
                 trace?.set("first_token_ms", ms)
@@ -112,25 +213,47 @@ enum GenerationEventMapper {
             for await event in events {
                 if case .info(let info) = event {
                     onCompletionInfo()
+                    let firstCompletionInfo = !sawCompletionInfo
                     sawCompletionInfo = true
                     terminalInfoAt = CFAbsoluteTimeGetCurrent()
                     finalTokenCount = info.generationTokenCount
                     logCompletionInfo(info)
                     let mtp = Self.mtpSummary(from: info)
+                    // Record this request's actual partial stats before surfacing
+                    // a failure. Missing stats on failure/cancellation invalidate
+                    // only this model's previous readout; they are not evidence
+                    // that its earlier successful MTP run describes this one.
+                    // Await the actor write so a surfaced terminal cannot race
+                    // an unstructured diagnostic update. Late cleanup info must
+                    // not replace the first terminal's diagnostic.
+                    if firstCompletionInfo, recordMTPLastRun, !suppressProgressUI,
+                        mtp != nil || info.generationFailure != nil || info.stopReason == .cancelled
+                    {
+                        await recordMTPStats(modelName, mtp)
+                    }
+                    if let failure = info.generationFailure {
+                        if !reportedFailure {
+                            reportedFailure = true
+                            reportFailure(
+                                failure, modelName, info.promptTokenCount, info.generationTokenCount,
+                                failureContext())
+                        }
+                        // Preserve the engine's originating diagnostic. A
+                        // preparation error is not an empty user cancellation.
+                        continuation.finish(throwing: failure)
+                        continue
+                    }
                     if info.promptTokenCount >= 0, info.promptTokenCount != promptTokenCount {
                         continuation.yield(.inputTokenCount(info.promptTokenCount))
                     }
-                    // Park the ADAPTIVE result where a Settings poll can read it.
-                    // Completion-time, so it shows what the controller settled on
-                    // (e.g. asked depth 3, ran depth 1 on low acceptance) rather
-                    // than the load-time request. Only real interactive turns that
-                    // actually ran native MTP — warm-up prefills, background
-                    // housekeeping (follow-ups/titles), and every non-MTP decode
-                    // path leave the readout untouched. Proven live: without the
-                    // background gate, the follow-up-suggestions turn overwrote a
-                    // depth 3→1 downshift readout within seconds.
-                    if recordMTPLastRun, !suppressProgressUI, let mtp {
-                        Task { await MLXBatchAdapter.recordLastMTPStats(modelName: modelName, stats: mtp) }
+                    // Prefix-cache reuse for the usage block: what `.cacheRestore`
+                    // reported, never more than the prompt itself.
+                    if cacheRestoredTokens > 0 {
+                        let promptTokens = info.promptTokenCount > 0
+                            ? info.promptTokenCount : prefillPromptTokens
+                        let cached = promptTokens > 0
+                            ? min(cacheRestoredTokens, promptTokens) : cacheRestoredTokens
+                        continuation.yield(.cachedInputTokenCount(cached))
                     }
                     continuation.yield(
                         .completionInfo(
@@ -195,6 +318,28 @@ enum GenerationEventMapper {
                     } else {
                         WarmupProgressHub.shared.prefillDidUpdate(model: modelName, state: state)
                     }
+                    prefillPromptTokens = max(prefillPromptTokens, state.totalUnitCount)
+                    lastPrefillCompleted = state.completedUnitCount
+                    lastPrefillTotal = state.totalUnitCount
+                    lastPrefillOperation = HandledGPUFailureReport.whitelistedPrefillOperation(state.detail)
+                    if state.stage == .cacheLookup, cacheLookupAt == nil {
+                        cacheLookupAt = CFAbsoluteTimeGetCurrent()
+                    }
+                    if state.stage == .cacheRestore {
+                        cacheRestoreCountKnown = true
+                        cacheRestoredTokens = max(cacheRestoredTokens, state.completedUnitCount)
+                        // Preserve the normal cache readout. The failure
+                        // report applies its own export-only allowlist.
+                        cacheRestoreDetail = state.detail
+                        // The runtime reports the restore AFTER its eval, so
+                        // lookup -> restore is the read plus the restore.
+                        if cacheRestoreMs == nil, let cacheLookupAt {
+                            cacheRestoreMs = Int(((CFAbsoluteTimeGetCurrent() - cacheLookupAt) * 1000).rounded())
+                        }
+                    }
+                    if state.stage == .prefill, state.completedUnitCount == 0, !cacheRestoreCountKnown {
+                        cacheRestoreCountKnown = true
+                    }
                     if state.stage.rawValue != lastPrefillStage {
                         lastPrefillStage = state.stage.rawValue
                         PrefillDebugLog.shared.log(
@@ -245,58 +390,59 @@ enum GenerationEventMapper {
             }
 
             if !sawCompletionInfo {
-                finalTokenCount = estimatedTextTokens
                 mapperLog.notice(
-                    "generation stream ended without vmlx completion info; synthesizing stats model=\(modelName, privacy: .public) estimatedTokens=\(estimatedTextTokens, privacy: .public) unclosedReasoning=\(sawReasoning, privacy: .public)"
+                    "generation stream ended without vmlx completion info; terminal usage unknown model=\(modelName, privacy: .public) cancelled=\(Task.isCancelled, privacy: .public) diagnosticEstimatedTokens=\(estimatedTextTokens, privacy: .public) unclosedReasoning=\(sawReasoning, privacy: .public)"
                 )
-                continuation.yield(
-                    .completionInfo(
-                        tokenCount: estimatedTextTokens,
-                        tokensPerSecond: 0,
-                        unclosedReasoning: sawReasoning,
-                        stopReason: nil,
-                        promptTokensPerSecond: 0,
-                        mtp: nil
-                    )
-                )
+                // EOF is not a model stop or measured usage. The typed
+                // Responses adapter rejects EOF without logical completion;
+                // an explicitly cancelled mapper retains cancellation instead.
+                if Task.isCancelled {
+                    if recordMTPLastRun, !suppressProgressUI {
+                        await recordMTPStats(modelName, nil)
+                    }
+                    continuation.finish(throwing: CancellationError())
+                }
             }
 
             let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
             mapperSignposter.endInterval(
                 "generation",
                 interval,
-                "\(finalTokenCount, privacy: .public) tokens"
+                "\(finalTokenCount.map(String.init) ?? "unknown", privacy: .public) tokens"
             )
             mapperLog.info(
-                "[perf] generation durationMs=\(durationMs, privacy: .public) tokenCount=\(finalTokenCount, privacy: .public)"
+                "[perf] generation durationMs=\(durationMs, privacy: .public) tokenCount=\(finalTokenCount.map(String.init) ?? "unknown", privacy: .public)"
             )
 
             // Decode diagnostics: per-step decode timing for EVERY step,
             // including tool-call steps that never reach `.info`. ttftMs is
             // prefill+queue time to first output; decodeMs/decodeTps cover the
-            // generation itself. genTokens is exact when vmlx info arrived,
-            // otherwise an estimate (text/reasoning only — tool-call arg tokens
-            // are not counted).
+            // generation itself. A missing terminal event leaves both token
+            // count and decode rate unknown; chunk estimates are diagnostic only.
             let nowEnd = CFAbsoluteTimeGetCurrent()
             let logicalEnd = terminalInfoAt ?? nowEnd
             let ttftMs = firstOutputAt.map { Int(($0 - startedAt) * 1000) }
             let decodeMs = firstOutputAt.map { Int((logicalEnd - $0) * 1000) }
-            let decodeTps =
-                (firstOutputAt != nil && decodeMs! > 0)
-                ? Double(finalTokenCount) / (Double(decodeMs!) / 1000.0)
-                : 0
+            let decodeTps: Double? = finalTokenCount.flatMap { count in
+                guard let decodeMs, decodeMs > 0 else { return nil }
+                return Double(count) / (Double(decodeMs) / 1000.0)
+            }
+            if let decodeTps, let finalTokenCount {
+                ModelThroughputLedger.record(model: modelName, tokensPerSecond: decodeTps, tokens: finalTokenCount)
+            }
             let logicalTotalMs = Int((logicalEnd - startedAt) * 1000)
             let cleanupDrainMs = max(0, Int((nowEnd - logicalEnd) * 1000))
             PrefillDebugLog.shared.log(
                 "     STEP-DECODE endedInToolCall=\(sawToolCall) "
                     + "ttftMs=\(ttftMs.map(String.init) ?? "?") decodeMs=\(decodeMs.map(String.init) ?? "?") "
-                    + "genTokens=\(finalTokenCount)\(sawCompletionInfo ? "" : "(est)") "
-                    + "decodeTps=\(String(format: "%.1f", decodeTps)) totalMs=\(durationMs)"
+                    + "genTokens=\(finalTokenCount.map(String.init) ?? "unknown") "
+                    + "decodeTps=\(decodeTps.map { String(format: "%.1f", $0) } ?? "unknown") totalMs=\(durationMs)"
             )
 
             PrefillDebugLog.shared.log(
                 "     STEP-DRAIN logicalTotalMs=\(logicalTotalMs) cleanupDrainMs=\(cleanupDrainMs)"
             )
+            recordCacheRestoreOnce()
             reportPrefillFinished()
             continuation.finish()
         }
@@ -345,7 +491,7 @@ enum GenerationEventMapper {
             "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public) stop=\(String(describing: info.stopReason), privacy: .public) unclosedReasoning=\(info.unclosedReasoning, privacy: .public)"
         )
 
-        // Which decode path actually ran. vmlx populates `nativeMTPStats` ONLY
+        // Whether native MTP actually ran. vmlx populates `nativeMTPStats` ONLY
         // when the native-MTP iterator was the one that produced these tokens;
         // every other path (plain AR, dFlash-2) leaves it nil. Nothing in the
         // app read this field, so a turn that requested MTP and was silently
@@ -355,7 +501,7 @@ enum GenerationEventMapper {
         // Both just showed a tok/s number. That made every MTP measurement
         // unfalsifiable, so it is logged before anything else is measured.
         //
-        // `mtp=off` here does NOT by itself mean the gate rejected the turn —
+        // `nativeMTP=off` does NOT by itself mean the gate rejected the turn —
         // it means native MTP did not produce these tokens, which also covers
         // "not requested". Distinguishing REQUESTED-but-excluded from
         // not-requested needs the gate itself to report its reason, and the
@@ -376,8 +522,9 @@ enum GenerationEventMapper {
                     + "verifier=\(mtp.verifierMode) cacheMode=\(mtp.cacheMode)"
             )
         } else {
-            mapperLog.info("[perf] decodePath=plain mtp=off")
-            PrefillDebugLog.shared.log("     STEP-MTP   decodePath=plain mtp=off")
+            // Nil native-MTP statistics cannot distinguish AR from DFlash2.
+            mapperLog.info("[perf] nativeMTP=off decodePath=unreported")
+            PrefillDebugLog.shared.log("     STEP-MTP   nativeMTP=off decodePath=unreported")
         }
 
         // Prefill diagnostics: vmlx's actual processed-prompt count + prefill
@@ -389,10 +536,20 @@ enum GenerationEventMapper {
         let promptMs = Int(info.promptTime * 1000)
         let genTokens = info.generationTokenCount
         let genTps = info.tokensPerSecond
+        // Kernel wire-limit rejections since the previous step (rootless sysctl). Non-zero means the model's
+        // GPU working set did not fit macOS's wired-memory budget during this step — the Allosaurus-on-48GB
+        // failure (0.2 tok/s with plenty of free RAM and a green pressure graph). See vmlx-swift #608.
+        let wireRejections = WireRejectionTracker.delta()
+        if let wireRejections, wireRejections > 0 {
+            mapperLog.warning(
+                "[perf] wire-limit rejections=\(wireRejections, privacy: .public) this step: the model's GPU working set exceeds the macOS wired-memory budget"
+            )
+        }
         PrefillDebugLog.shared.log(
             "     STEP-STATS promptTokens=\(promptTokens) promptMs=\(promptMs) "
                 + "promptTps=\(String(format: "%.1f", promptTps)) genTokens=\(genTokens) "
-                + "genTps=\(String(format: "%.1f", genTps)) stop=\(String(describing: info.stopReason))"
+                + "genTps=\(String(format: "%.1f", genTps)) stop=\(String(describing: info.stopReason)) "
+                + "wireRejections=\(wireRejections.map(String.init) ?? "unknown")"
         )
         if PrefillDebugLog.shared.isEnabled {
             Task.detached {
@@ -505,5 +662,21 @@ enum GenerationEventMapper {
     /// looking for the `_error` field — `MCPProviderTool` already does so.
     private static func errorEnvelope(toolName: String) -> String {
         "{\"_error\":\"argument_serialization_failed\",\"_tool\":\"\(toolName)\"}"
+    }
+}
+
+
+/// Process-wide delta of `vm.add_wire_count_over_global_limit` between generation steps.
+enum WireRejectionTracker {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var last: Int?
+
+    /// Rejections since the previous call; `nil` when the counter cannot be read (unknown, never a limit).
+    static func delta() -> Int? {
+        guard let now = SystemWireBudget.snapshot().wireLimitRejections else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        defer { last = now }
+        guard let last else { return 0 }
+        return max(0, now - last)
     }
 }

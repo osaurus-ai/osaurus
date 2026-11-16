@@ -1,4 +1,6 @@
 import Foundation
+import MLXLLM
+import MLXLMCommon
 import MLXVLM
 
 /// Installed-checkpoint evidence, not a claim about inference quality. Names are
@@ -10,6 +12,26 @@ enum LocalVisionEvidence {
         let hasVision: Bool
         let reason: String
         let tensorNames: Set<String>
+        /// Derived once here because `Result` is memoized per directory while
+        /// the composer reads capabilities from several SwiftUI getters per
+        /// body pass. Re-running substring matches over every tensor name of a
+        /// large checkpoint on each of those reads stalled the main thread.
+        let hasAudioTensors: Bool
+        let hasNativeVideo: Bool
+
+        init(modelType: String, hasVision: Bool, reason: String, tensorNames: Set<String>,
+             hasNativeAudio: Bool = false, hasNativeVideo: Bool = false) {
+            self.modelType = modelType
+            self.hasVision = hasVision
+            self.reason = reason
+            self.tensorNames = tensorNames
+            self.hasNativeVideo = hasVision && hasNativeVideo
+            hasAudioTensors = hasNativeAudio || tensorNames.contains {
+                $0.contains("embed_audio.embedding_projection.") && $0.hasSuffix(".weight")
+            } || (modelType.lowercased().contains("omni") && tensorNames.contains {
+                $0.contains("sound_projection.") && $0.hasSuffix(".weight")
+            })
+        }
     }
 
     private static let lock = NSLock()
@@ -28,7 +50,7 @@ enum LocalVisionEvidence {
 
     static func inspect(_ directory: URL, refresh: Bool = false) -> Result {
         _ = observer
-        let key = directory.standardizedFileURL.path
+        let key = directory.path
         let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
         lock.lock()
         let version = generation
@@ -46,6 +68,64 @@ enum LocalVisionEvidence {
         return result
     }
 
+    /// Posted on the main queue when a background `cachedOrWarm` read lands, so
+    /// SwiftUI getters that saw `nil` re-evaluate against the cached result.
+    static let evidenceReady = Notification.Name("localVisionEvidenceReady")
+
+    private nonisolated(unsafe) static var inFlight: Set<String> = []
+    private static let warmQueue = DispatchQueue(
+        label: "ai.osaurus.local-vision-evidence", qos: .utility)
+
+    /// Non-blocking variant for SwiftUI getters. A miss used to run `read` on
+    /// the main thread (config JSON plus every safetensors header of the
+    /// bundle), which hung the composer on first selection of a model and
+    /// again after each `.localModelsChanged` invalidation. Returns the cached
+    /// result or nil; on nil a single background read per directory fills the
+    /// cache through `inspect`, which keeps the generation check, then posts
+    /// `evidenceReady`. Send and load paths keep calling `inspect`, so the
+    /// authoritative gate never sees a pending nil.
+    static func cachedOrWarm(_ directory: URL) -> Result? {
+        _ = observer
+        let key = directory.path
+        let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
+        lock.lock()
+        if let cached = cache[key], cached.processorVersion == processorVersion {
+            lock.unlock()
+            return cached.result
+        }
+        let shouldStart = inFlight.insert(key).inserted
+        lock.unlock()
+        if shouldStart {
+            warmQueue.async {
+                _ = inspect(directory)
+                lock.lock()
+                inFlight.remove(key)
+                lock.unlock()
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: evidenceReady, object: nil)
+                }
+            }
+        }
+        return nil
+    }
+
+    /// True when the linked vMLX builds the DeepSeek-V4.1 vision tower: its `DeepseekV4Model`
+    /// reports its lanes through `ModalityBearing` (the load-time tower check reads it), and the
+    /// tower is not switched off with vMLX's `VMLX_DSV41_VL=0`. Otherwise a V4.1 bundle stays
+    /// text-only instead of being refused at load.
+    static var deepseekV41VisionRuntimeAvailable: Bool {
+        let type: Any.Type = DeepseekV4Model.self
+        guard type is ModalityBearing.Type else { return false }
+        return DeepseekV41VisionConfiguration.enabled()
+    }
+
+    /// True when the linked vMLX builds the MiniMax-M3 / M3.1 vision stack: its `MiniMaxM3Model` reports its lanes
+    /// through `ModalityBearing` (the load-time tower check reads it). Otherwise an M3.1 bundle stays text-only.
+    static var miniMaxM3VisionRuntimeAvailable: Bool {
+        let type: Any.Type = MiniMaxM3Model.self
+        return type is ModalityBearing.Type
+    }
+
     private static func object(_ url: URL) -> [String: Any]? {
         guard let data = try? Data(contentsOf: url),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -56,14 +136,99 @@ enum LocalVisionEvidence {
     private static func read(_ directory: URL) -> Result {
         var modelType = ""
         var names = Set<String>()
+        var nativeAudio = false
+        var nativeVideo = false
         func result(_ supported: Bool, _ reason: String) -> Result {
-            Result(modelType: modelType, hasVision: supported, reason: reason, tensorNames: names)
+            Result(modelType: modelType, hasVision: supported, reason: reason, tensorNames: names,
+                   hasNativeAudio: nativeAudio, hasNativeVideo: nativeVideo)
         }
         guard let config = object(directory.appendingPathComponent("config.json")) else {
             return result(false, "The installed bundle has no readable config.json.")
         }
         let omni = object(directory.appendingPathComponent("config_omni.json"))
         modelType = (omni?["model_type"] ?? config["model_type"]) as? String ?? ""
+        let mimo = (try? JSONSerialization.data(withJSONObject: config)).map(MiMoV26Contract.matches) ?? false
+        if modelType == "mimo_v2", !mimo {
+            return result(false, "The configured MiMo representation has no registered multimodal runtime.")
+        }
+        if modelType == "deepseek_v41" {
+            guard deepseekV41VisionRuntimeAvailable else {
+                return result(false, "The linked vMLX runtime has no DeepSeek-V4.1 vision lane.")
+            }
+            // DeepSeek-V4.1-Flash loads through vMLX's LLM factory (`DeepseekV4Model`), which builds
+            // the vision tower from `vision_config` inside the text bundle and reports `.vision`
+            // through `ModalityBearing`. The bundle ships no processor file: the runtime places the
+            // image placeholders itself. Require the declared encoder depth, the aligner, the
+            // learned delimiters and the placeholder token.
+            guard let vision = config["vision_config"] as? [String: Any],
+                let depth = (vision["num_hidden_layers"] as? NSNumber)?.intValue, (1...1024).contains(depth),
+                ((config["image_token_id"] as? NSNumber)?.intValue ?? -1) >= 0
+            else {
+                return result(false, "The DeepSeek-V4.1 bundle has no vision configuration or image token.")
+            }
+            do {
+                names = try tensorNames(directory)
+            } catch {
+                return result(false, "Cannot verify the installed vision weights: \(error.localizedDescription)")
+            }
+            guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
+                return result(false, "The installed weight format is rejected by the local runtime preflight.")
+            }
+            let required = ["vision.patch_embed.proj.weight", "vision.norm.weight", "aligner.w1.weight",
+                "aligner.w2.weight", "image_start", "image_end", "image_newline"]
+            guard required.allSatisfy(names.contains),
+                (0..<depth).allSatisfy({ i in
+                    names.contains("vision.blocks.\(i).attn.wqkv.weight")
+                        && names.contains("vision.blocks.\(i).mlp.w1.weight")
+                })
+            else {
+                return result(false, "The DeepSeek-V4.1 vision tower is missing encoder, aligner or delimiter weights.")
+            }
+            return result(true, "Image input is backed by the DeepSeek-V4.1 vision tower, aligner and delimiter weights in the bundle.")
+        }
+        if modelType == "minimax_m3_vl" {
+            guard miniMaxM3VisionRuntimeAvailable else {
+                return result(false, "The linked vMLX runtime has no MiniMax-M3 vision lane.")
+            }
+            // MiniMax-M3.1 loads through vMLX's LLM factory (`MiniMaxM3Model`), which builds the vision stack from
+            // `vision_config` and reports `.vision` through `ModalityBearing`; vMLX prepares images the way the
+            // bundle's own processor does (`preprocessor_config.json`). Require the declared encoder depth, the image
+            // token, the processor configuration, the patch embedding, every encoder layer, the projector and the
+            // patch-merge MLP.
+            guard let vision = config["vision_config"] as? [String: Any],
+                let depth = (vision["num_hidden_layers"] as? NSNumber)?.intValue, (1...1024).contains(depth),
+                ((config["image_token_index"] as? NSNumber)?.intValue ?? -1) >= 0
+            else {
+                return result(false, "The MiniMax-M3 bundle has no vision configuration or image token.")
+            }
+            guard let processor = object(directory.appendingPathComponent("preprocessor_config.json")),
+                !processor.isEmpty
+            else {
+                return result(false, "The MiniMax-M3 bundle has no readable preprocessor_config.json, so images cannot be prepared for it.")
+            }
+            do {
+                names = try tensorNames(directory)
+            } catch {
+                return result(false, "Cannot verify the installed vision weights: \(error.localizedDescription)")
+            }
+            guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
+                return result(false, "The installed weight format is rejected by the local runtime preflight.")
+            }
+            let tower = "vision_tower.vision_model."
+            let required = [tower + "embeddings.patch_embedding.weight", tower + "pre_layrnorm.weight",
+                "multi_modal_projector.linear_1.weight", "multi_modal_projector.linear_2.weight",
+                "patch_merge_mlp.linear_1.weight", "patch_merge_mlp.linear_2.weight"]
+            guard required.allSatisfy(names.contains),
+                (0..<depth).allSatisfy({ i in
+                    let layer = tower + "encoder.layers.\(i)."
+                    return ["self_attn.q_proj.weight", "self_attn.out_proj.weight", "mlp.fc1.weight", "mlp.fc2.weight"]
+                        .allSatisfy { names.contains(layer + $0) }
+                })
+            else {
+                return result(false, "The MiniMax-M3 vision stack is missing encoder, projector or patch-merge weights.")
+            }
+            return result(true, "Image input is backed by the MiniMax-M3 vision tower, projector and patch-merge weights in the bundle.")
+        }
         guard VLMTypeRegistry.supportedModelTypes.contains(modelType) else {
             return result(false, "The configured architecture has no local vision runtime.")
         }
@@ -73,8 +238,19 @@ enum LocalVisionEvidence {
             "audio_preprocessor/preprocessor_config.json"]
             .map { directory.appendingPathComponent($0) }
             .first { FileManager.default.fileExists(atPath: $0.path) }
-        guard let processorURL, let processor = object(processorURL), !processor.isEmpty else {
-            return result(false, "The installed bundle has no readable processor configuration.")
+        let processor: [String: Any]
+        if mimo {
+            // Match vMLX's factory: this representation uses the nested native
+            // configuration, even when an older Qwen sidecar is present.
+            guard let native = config["processor_config"] as? [String: Any], !native.isEmpty else {
+                return result(false, "The MiMo bundle has no native processor configuration.")
+            }
+            processor = native.merging(["processor_class": "MiMoV26Processor"]) { _, new in new }
+        } else {
+            guard let processorURL, let selected = object(processorURL), !selected.isEmpty else {
+                return result(false, "The installed bundle has vision settings but no readable processor configuration (preprocessor_config.json or processor_config.json), so images cannot be prepared for it.")
+            }
+            processor = selected
         }
         let processorClass = processor["processor_class"] as? String ?? ""
         let processorType = VLMProcessorTypeRegistry.processorType(
@@ -90,6 +266,35 @@ enum LocalVisionEvidence {
         guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
             return result(false, "The installed weight format is rejected by the local runtime preflight.")
         }
+        if ["nemotron_h_omni", "nemotronh_nano_omni_reasoning_v3"].contains(modelType.lowercased()) {
+            // Super/Bolt share the Omni architecture but declare a null video
+            // token. Nano-Omni has a token and a separate temporal embedder.
+            // A family name or the generic vision patch size cannot establish
+            // video support for an installed checkpoint.
+            nativeVideo = (omni?["video_context_token_id"] as? Int ?? -1) >= 0
+                && names.contains {
+                    $0.hasSuffix("patch_generator.video_embedder.weight")
+                }
+        }
+        if mimo {
+            nativeAudio = mimoAudioEvidence(directory: directory, config: config,
+                                            processor: processor, names: names)
+            nativeVideo = (config["video_token_id"] as? Int).map {
+                $0 >= 0 && $0 == (processor["video_token_id"] as? Int)
+            } ?? false
+            nativeVideo = nativeVideo && (processor["fps"] as? Double ?? 0) > 0
+                && (processor["video_start_token_id"] as? Int ?? -1) >= 0
+                && (processor["video_end_token_id"] as? Int ?? -1) >= 0
+                && ((config["vision_config"] as? [String: Any])?["temporal_patch_size"] as? Int ?? 0) > 0
+        }
+        if modelType == "lfm3_audio" || modelType == "lfm3_omni" {
+            // LFM3 speech input: the mel downsampler, its LFM2 trunk and the projector into the
+            // decoder. The speech generator (depth decoder) is not part of the input lane.
+            nativeAudio = ["audio_tower.downsample.conv_in.weight",
+                "audio_tower.downsample.lin_out.weight", "audio_tower.lfm.embedding_norm.weight",
+                "audio_projector.linear_1.weight", "audio_projector.linear_2.weight"]
+                .allSatisfy(names.contains)
+        }
         // Retain independent audio tensor evidence even when this configured
         // multimodal architecture has no vision tower. Gemma supports optional
         // vision and audio components; one missing modality must not hide another.
@@ -99,6 +304,16 @@ enum LocalVisionEvidence {
             !vision.isEmpty
         else {
             return result(false, "The installed bundle has no nonempty vision configuration.")
+        }
+        if mimo {
+            guard let depth = vision["depth"] as? Int, (1...1024).contains(depth),
+                names.contains("visual.patch_embed.proj.weight"),
+                names.contains("visual.merger.mlp.0.weight"),
+                names.contains("visual.merger.mlp.2.weight"),
+                (0..<depth).allSatisfy({ names.contains("visual.blocks.\($0).attn.qkv.weight") }) else {
+                return result(false, "The MiMo vision configuration is missing encoder or projection weights.")
+            }
+            return result(true, "Media input is backed by the native MiMo processor and installed component weights.")
         }
         if modelType == "apertus1p5" {
             let required = ["vision_tokenizer.encoder.conv_in.weight",
@@ -128,6 +343,20 @@ enum LocalVisionEvidence {
                 return result(false, "The unified vision embedder is missing configured component weights.")
             }
             return result(true, "Image input is backed by the installed unified vision configuration and embedder weights.")
+        }
+        if modelType == "lfm3_vl" || modelType == "lfm3_omni" {
+            // LFM3's tower embeds patches with `patchifier` (no patch_embed), which the generic
+            // input check below does not recognise: require the patch embedding, every declared
+            // tower layer and both projector layers instead.
+            guard let depth = (vision["num_hidden_layers"] as? NSNumber)?.intValue, (1...1024).contains(depth),
+                ["vision_tower.patchifier.weight", "vision_tower.embedding_norm.weight",
+                    "multi_modal_projector.linear_1.weight", "multi_modal_projector.linear_2.weight"]
+                    .allSatisfy(names.contains),
+                (0..<depth).allSatisfy({ names.contains("vision_tower.layers.\($0).feed_forward.w1.weight") })
+            else {
+                return result(false, "The LFM3 vision tower is missing patch, layer or projector weights.")
+            }
+            return result(true, "Image input is backed by the installed LFM3 vision tower and projector weights.")
         }
         let weights = names.filter { $0.hasSuffix(".weight") || $0.hasSuffix(".weights") }
         let visionWeights = weights.filter { key in
@@ -172,7 +401,62 @@ enum LocalVisionEvidence {
         var errorDescription: String? { detail }
     }
 
+    private static func mimoAudioEvidence(
+        directory: URL, config: [String: Any], processor: [String: Any], names: Set<String>
+    ) -> Bool {
+        let sidecar = directory.appendingPathComponent("audio_tokenizer")
+        guard let audio = config["audio_config"] as? [String: Any],
+            let tokenizer = object(sidecar.appendingPathComponent("config.json")),
+            let channels = audio["audio_channels"] as? Int, (1...1024).contains(channels),
+            let layers = audio["input_local_layers"] as? Int, (1...1024).contains(layers),
+            let encoderLayers = tokenizer["encoder_layers"] as? Int, (1...1024).contains(encoderLayers),
+            channels == (tokenizer["num_quantizers"] as? Int),
+            let inputDimension = audio["input_local_dim"] as? Int, inputDimension > 0,
+            inputDimension == (tokenizer["d_model"] as? Int),
+            (processor["audio_sampling_rate"] as? Int) == (tokenizer["sampling_rate"] as? Int),
+            (processor["audio_sampling_rate"] as? Int ?? 0) > 0,
+            let token = config["audio_token_id"] as? Int, token >= 0,
+            token == (processor["audio_token_id"] as? Int),
+            names.contains("audio_encoder.projection.mlp.0.weight"),
+            names.contains("audio_encoder.projection.mlp.2.weight"),
+            (0..<channels).allSatisfy({ names.contains("speech_embeddings.\($0).weight") }),
+            (0..<layers).allSatisfy({ names.contains("audio_encoder.input_local_transformer.layers.\($0).self_attn.q_proj.weight") }),
+            let encoder = try? tensorNames(sidecar) else { return false }
+        return ["encoder.conv1.weight", "encoder.conv2.weight", "encoder.down_sample_layer.0.weight"]
+            .allSatisfy(encoder.contains)
+            && (0..<encoderLayers).allSatisfy { encoder.contains("encoder.layers.\($0).self_attn.q_proj.weight") }
+            && (0..<channels).allSatisfy { encoder.contains("encoder.quantizer.vq.layers.\($0)._codebook.embed") }
+    }
+
+    /// Budget every auxiliary tower too, although the runtime loads them lazily.
+    /// MTP and a separate draft directory are not part of this AR-only runtime.
+    static func residentMiMoPayloadBytes(_ directory: URL) -> UInt64? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
+            MiMoV26Contract.matches(data),
+            let tensors = try? tensorPayloadSizes(directory) else { return nil }
+        var total: UInt64 = 0
+        for (name, bytes) in tensors where !name.hasPrefix("model.mtp") {
+            let sum = total.addingReportingOverflow(bytes)
+            guard !sum.overflow else { return nil }
+            total = sum.partialValue
+        }
+        let audio = directory.appendingPathComponent("audio_tokenizer")
+        if FileManager.default.fileExists(atPath: audio.path) {
+            guard let tensors = try? tensorPayloadSizes(audio) else { return nil }
+            for bytes in tensors.values {
+                let sum = total.addingReportingOverflow(bytes)
+                guard !sum.overflow else { return nil }
+                total = sum.partialValue
+            }
+        }
+        return total > 0 ? total : nil
+    }
+
     private static func tensorNames(_ directory: URL) throws -> Set<String> {
+        Set(try tensorPayloadSizes(directory).keys)
+    }
+
+    private static func tensorPayloadSizes(_ directory: URL) throws -> [String: UInt64] {
         let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
         let indexExists = FileManager.default.fileExists(atPath: indexURL.path)
         let index = object(indexURL)?["weight_map"] as? [String: String]
@@ -192,7 +476,7 @@ enum LocalVisionEvidence {
                 .filter { $0.pathExtension == "safetensors" && !$0.lastPathComponent.hasPrefix("jangtq_runtime") }
         }
         guard !files.isEmpty else { throw InvalidWeights(detail: "no safetensors weight files") }
-        var keys = Set<String>()
+        var sizes: [String: UInt64] = [:]
         for file in files {
             let handle = try FileHandle(forReadingFrom: file)
             defer { try? handle.close() }
@@ -216,6 +500,9 @@ enum LocalVisionEvidence {
                     SafetensorsPayloadSize.matches(dtype: dtype, shape: shape, byteCount: offsets[1] - offsets[0])
                 else { throw InvalidWeights(detail: "invalid tensor metadata: \(name)") }
                 fileKeys.insert(name)
+                guard sizes.updateValue(offsets[1] - offsets[0], forKey: name) == nil else {
+                    throw InvalidWeights(detail: "duplicate tensor: \(name)")
+                }
             }
             if let index {
                 let declared = Set(index.filter { $0.value == file.lastPathComponent }.keys)
@@ -225,8 +512,7 @@ enum LocalVisionEvidence {
                 // Use the selected shard's actual header, including legitimate
                 // preserved tensors omitted by an older index.
             }
-            keys.formUnion(fileKeys)
         }
-        return keys
+        return sizes
     }
 }

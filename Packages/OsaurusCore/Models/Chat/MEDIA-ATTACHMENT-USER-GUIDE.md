@@ -124,34 +124,38 @@ Files exceeding the cap show a toast and don't attach.
 
 ### Spillover to the blob store
 
-After the user sends a turn, `AttachmentBlobStore.spillIfNeeded`
-walks the attachments and writes inline bytes that exceed the
-modality threshold to the content-addressed blob store. The bytes
-follow the app-wide storage posture: plaintext by default (protected
-by FileVault), or AES-GCM-encrypted with the at-rest key from
-`StorageKeyManager` when the user has opted in to encryption (see
+When a turn is saved, the conversation store (`SyncConversationStore`)
+stores each attachment as a sync blob, so it travels with the chat to
+your other devices. When the chat loads again, bytes above the
+modality threshold are cached in the content-addressed blob store
+(`AttachmentBlobStore`) and the turn carries only a reference. The
+cache follows the app-wide storage posture: plaintext by default
+(protected by FileVault), or AES-GCM-encrypted with the at-rest key
+from `StorageKeyManager` when the user has opted in to encryption (see
 [STORAGE.md](../../../../docs/STORAGE.md)):
 
-| Attachment kind | Spill threshold |
+| Attachment kind | Threshold |
 |---|---|
-| Image | `spillThreshold` (existing — 64 KB) |
+| Image | `AttachmentBlobStore.spillThreshold` = **16 KB** |
 | Document | same `spillThreshold` |
 | Audio | `Attachment.audioSpillThresholdBytes` = **256 KB** |
 | Video | `Attachment.videoSpillThresholdBytes` = **64 KB** |
 
-Audio uses a higher threshold because chat history reads are frequent
-and small audio clips (< 256 KB ≈ 8 s wav) keep the SQLite page
-cache warm. Video uses an aggressive 64 KB threshold — virtually
-all real video attachments spill; the inline path exists only for
-in-memory request lifetimes.
+Audio uses a higher threshold because small clips (< 256 KB ≈ 8 s wav)
+are cheap to keep inline on loaded turns. Video uses an aggressive
+64 KB threshold — virtually all real video attachments become
+references; the inline path exists only for in-memory request
+lifetimes.
 
-After spillover the chat-history JSON column carries:
+A loaded turn carries:
 
-- `audio_ref { hash, byteCount, format, filename }` (for audio)
-- `video_ref { hash, byteCount, filename }` (for video)
+- `imageRef { hash, byteCount }` (for images)
+- `documentRef { filename, hash, fileSize }` (for documents)
+- `audioRef { hash, byteCount, format, filename }` (for audio)
+- `videoRef { hash, byteCount, filename }` (for video)
 
-Hydration on next read goes through `AttachmentBlobStore.read(hash)`,
-same code path images already use.
+Hydration goes through `AttachmentBlobStore.read(hash)`. Deleting a
+chat removes its cached blobs.
 
 ### KV cache + media salt
 
@@ -325,8 +329,9 @@ When vmlx adds video/audio support to a new family:
    for the new family + boundary case (e.g. bare-name without `-vl`
    suffix that should NOT match)
 4. Update this doc's matrix in §2 + §3
-5. Verify `AttachmentBlobStore.spillIfNeeded` switch is exhaustive
-   (Swift will catch this at compile time anyway)
+5. Verify `SyncConversationMapper`'s attachment encode and decode
+   switches cover any new attachment kind (Swift will catch this at
+   compile time anyway)
 
 ---
 

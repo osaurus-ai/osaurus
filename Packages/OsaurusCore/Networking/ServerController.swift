@@ -131,14 +131,7 @@ final class ServerController: ObservableObject {
     // MARK: - Private Properties
 
     private var serverActor: OsaurusServer?
-    private var agentsCancellable: AnyCancellable?
     private var runtimeSettingsCancellable: AnyCancellable?
-
-    /// Flipped once `applicationDidFinishLaunching` finishes its server
-    /// wiring. The Bonjour-expose Combine sink consults this so it never
-    /// triggers a `restartServer()` while the launch sequence is still
-    /// bringing the server up (mid-launch server churn — see hang audit).
-    private var isLaunchComplete = false
 
     // Singleton holder to allow async access to the current controller instance when injected as EnvironmentObject
     @MainActor
@@ -167,13 +160,6 @@ final class ServerController: ObservableObject {
 
     // MARK: - Public Methods
 
-    /// Marks launch as complete. Called by the AppDelegate at the end of
-    /// `applicationDidFinishLaunching` so the Bonjour-expose Combine sink may
-    /// begin honoring live config changes with a restart.
-    func markLaunchComplete() {
-        isLaunchComplete = true
-    }
-
     /// Brings the embedded HTTP server up on the live controller instance if it
     /// is not already running. Used by the App Intents surface to provide a
     /// fast, headless server-up path before issuing a localhost request. No-op
@@ -184,6 +170,13 @@ final class ServerController: ObservableObject {
         if !controller.isRunning {
             await controller.startServer()
         }
+    }
+
+    /// Why the server isn't taking requests, or nil while it is (or before
+    /// a controller is wired, when there is nothing to tell yet).
+    static func notRunningReason() -> String? {
+        guard let controller = ServerControllerHolder.shared.controller, !controller.isRunning else { return nil }
+        return controller.lastErrorMessage ?? L("The server isn't running.")
     }
 
     /// Starts the server with current configuration
@@ -203,15 +196,34 @@ final class ServerController: ObservableObject {
                 configuration.exposeToNetwork ? self.getLocalIPAddress() : "127.0.0.1"
 
             print("[Osaurus] Starting NIO server on \(bindHost):\(configuration.port)")
+            MobileConnectLog.write(
+                "server: starting on \(bindHost):\(configuration.port) exposeToNetwork=\(configuration.exposeToNetwork) lan=\(localNetworkAddress)"
+            )
 
             // Ensure any previous instance is shut down
             try await stopServerIfNeeded()
 
-            let server = OsaurusServer()
-            try await server.start(
-                .init(host: bindHost, port: configuration.port, trustLoopback: !configuration.exposeToNetwork),
-                serverConfiguration: self.configuration
-            )
+            // A port still held, most often by an Osaurus that is quitting
+            // as this one launches, is retried for a few seconds before
+            // giving up: otherwise the survivor runs with no server at all.
+            var attempt = 1
+            var server = OsaurusServer()
+            while true {
+                do {
+                    try await server.start(
+                        .init(host: bindHost, port: configuration.port, trustLoopback: !configuration.exposeToNetwork),
+                        serverConfiguration: self.configuration
+                    )
+                    break
+                } catch where Self.isAddressInUse(error) && attempt < Self.bindAttempts {
+                    MobileConnectLog.write(
+                        "server: port \(configuration.port) busy, retrying (\(attempt)/\(Self.bindAttempts))"
+                    )
+                    attempt += 1
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                    server = OsaurusServer()
+                }
+            }
             self.serverActor = server
 
             // Update state
@@ -219,6 +231,7 @@ final class ServerController: ObservableObject {
             serverHealth = .running
             lastErrorMessage = nil
             FeatureTelemetry.serverStarted()
+            MobileConnectLog.write("server: listening on \(bindHost):\(configuration.port)")
             print("[Osaurus] NIO server started successfully on port \(configuration.port)")
             // One-line record of the effective inference policy so any
             // benchmark or bug report can state exactly which knobs were in
@@ -236,10 +249,12 @@ final class ServerController: ObservableObject {
                     + "idleResidency=\(idleResidency)"
             )
 
-            if configuration.exposeToNetwork {
-                BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
+            // The 6-digit pairing, kept for one release beside Sync.
+            if configuration.exposeToNetwork, !MobileConnectMigration.isRetired() {
+                MobileConnectAdvertiser.shared.startAdvertising(port: configuration.port)
             } else {
-                BonjourAdvertiser.shared.stopAdvertising()
+                MobileConnectLog.write("server: not exposed to the network or pairing retired, nothing advertised")
+                MobileConnectAdvertiser.shared.stopAdvertising()
             }
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
         } catch {
@@ -260,17 +275,13 @@ final class ServerController: ObservableObject {
 
     /// Stops the running server
     func stopServer() async {
-        // Bridge grants authenticate against this server instance. Never let
-        // one survive a stop/restart boundary, even if the server already
-        // finished closing by the time this call arrives.
-        await ClaudeCodeBridgeGrantStore.shared.revokeAll()
         // If nothing to stop, return
         guard serverActor != nil else { return }
         if !isRestarting { serverHealth = .stopping }
         print("[Osaurus] Stopping NIO server...")
 
         RelayTunnelManager.shared.disconnectAll()
-        BonjourAdvertiser.shared.stopAdvertising()
+        MobileConnectAdvertiser.shared.stopAdvertising()
         isRunning = false
 
         // Stop the actor-backed server if present. The event-loop group is
@@ -289,7 +300,7 @@ final class ServerController: ObservableObject {
 
     /// Ensures the server is properly shut down before app termination
     func ensureShutdown() async {
-        await ClaudeCodeBridgeGrantStore.shared.revokeAll()
+        HarnessGrantStore.shared.revokeAll()
         guard serverActor != nil else { return }
 
         print("[Osaurus] Ensuring NIO server shutdown before app termination")
@@ -297,7 +308,7 @@ final class ServerController: ObservableObject {
         // Stop mDNS on the quit path too — `stopServer` does this, but
         // `ensureShutdown` is the only teardown the AppDelegate calls, so
         // without this an advertised service could linger past quit.
-        BonjourAdvertiser.shared.stopAdvertising()
+        MobileConnectAdvertiser.shared.stopAdvertising()
         isRunning = false
         serverHealth = .stopping
 
@@ -349,37 +360,12 @@ final class ServerController: ObservableObject {
                     self.runtimeSettings = latest
                 }
                 self.synchronizeSpawnBatchLimit(from: latest)
+                await ModelRuntime.shared.refreshDiskCacheCaps()
             }
         }
         if let existingRuntimeSettings {
             synchronizeSpawnBatchLimit(from: existingRuntimeSettings)
         }
-        // Keep exposeToNetwork in sync with Bonjour-enabled agents.
-        // Only turn ON when a Bonjour agent requires it — never force
-        // it OFF, so the user's manual "expose to local network" setting
-        // is preserved across launches.
-        agentsCancellable = AgentManager.shared.$agents
-            .sink { agents in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    let shouldExpose = agents.contains { $0.bonjourEnabled }
-                    // Only act when an agent is forcing exposure ON.
-                    // If no agent requires it, leave the user's setting alone.
-                    guard shouldExpose, !self.configuration.exposeToNetwork else { return }
-                    self.configuration.exposeToNetwork = true
-                    self.runtimeSettings.network.host = "0.0.0.0"
-                    self.saveConfiguration()
-                    ServerRuntimeSettingsStore.save(self.runtimeSettings)
-                    // Only restart for a live config change *after* launch has
-                    // settled. During launch the initial auto-start already
-                    // reads the updated config, so restarting here would be
-                    // redundant server churn racing the launch sequence — the
-                    // mid-launch restart the hang audit flagged.
-                    if self.isRunning && self.isLaunchComplete {
-                        await self.restartServer()
-                    }
-                }
-            }
     }
 
     /// Runs the one-shot legacy → vmlx runtime-settings migration and
@@ -489,10 +475,11 @@ final class ServerController: ObservableObject {
         _ requestedSettings: VMLXServerRuntimeSettings,
         mtpSelectionIsFamilyDefault: Bool = false
     ) async -> RuntimeSettingsApplyEffects {
-        let settings =
+        var settings =
             ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
                 requestedSettings
             )
+        settings.mtp = NativeMTPSelectionDefault.adaptiveSelection(settings.mtp)
         let previousRuntimeSettings = runtimeSettings
         let previousConfig = configuration
         let projected = ServerRuntimeSettingsStore.projectIntoLegacy(
@@ -530,12 +517,19 @@ final class ServerController: ObservableObject {
             saveConfiguration()
         }
 
-        let unloadedModelCount =
-            loadedModelRefreshNeeded
-            ? await ModelRuntime.shared.cachedModelSummaries().count
-            : 0
-        if loadedModelRefreshNeeded {
+        // A change of ONLY the speculative load inputs (the Speculative Decoding row) is judged per resident
+        // model: one whose loaded graph already serves the new selection stays resident (MiniMax-M3.1's DSpark
+        // Off <-> On: no 95 GB reload). Any other load input still clears every resident model.
+        let unloadedModelCount: Int
+        if Self.onlySpeculativeLoadInputsChanged(previous: previousRuntimeSettings, next: settings) {
+            unloadedModelCount = await ModelRuntime.shared.applySpeculativeLoadChange(settings: settings)
+            await ModelRuntime.shared.refreshDiskCacheCaps()
+        } else if loadedModelRefreshNeeded {
+            unloadedModelCount = await ModelRuntime.shared.cachedModelSummaries().count
             await ModelRuntime.shared.clearAll()
+        } else {
+            unloadedModelCount = 0
+            await ModelRuntime.shared.refreshDiskCacheCaps()
         }
         if restartWasRequested {
             await restartServer()
@@ -557,13 +551,35 @@ final class ServerController: ObservableObject {
         previous: VMLXServerRuntimeSettings,
         next: VMLXServerRuntimeSettings
     ) -> Bool {
-        previous.cache != next.cache
+        // Only the MTP fields that change what gets LOADED force a reload.
+        // Comparing the whole `mtp` struct meant changing the draft-token
+        // depth — a per-request value — evicted every resident model, so a
+        // quick depth switch cost a full 27B reload on the next turn. Even
+        // these MAY not change a given bundle's load: `saveRuntimeSettings`
+        // judges a speculative-only change per resident model
+        // (`ModelRuntime.applySpeculativeLoadChange`).
+        mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
+            || nonSpeculativeLoadInputsRequireRefresh(previous: previous, next: next)
+    }
+
+    /// The change touches load inputs, but only speculative-decoding ones: `saveRuntimeSettings` then asks each
+    /// resident model whether its own load changes (`ModelRuntime.applySpeculativeLoadChange`) instead of clearing
+    /// every resident model.
+    nonisolated static func onlySpeculativeLoadInputsChanged(
+        previous: VMLXServerRuntimeSettings,
+        next: VMLXServerRuntimeSettings
+    ) -> Bool {
+        mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
+            && !nonSpeculativeLoadInputsRequireRefresh(previous: previous, next: next)
+    }
+
+    /// Every load input except the speculative-decoding ones.
+    nonisolated static func nonSpeculativeLoadInputsRequireRefresh(
+        previous: VMLXServerRuntimeSettings,
+        next: VMLXServerRuntimeSettings
+    ) -> Bool {
+        previous.cache.requiresModelReload(comparedTo: next.cache)
             || previous.multimodal != next.multimodal
-            // Only the MTP fields that change what gets LOADED force a reload.
-            // Comparing the whole `mtp` struct meant changing the draft-token
-            // depth — a per-request value — evicted every resident model, so a
-            // quick depth switch cost a full 27B reload on the next turn.
-            || mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
             // These values are consumed while constructing the model graph.
             // Compare effective settings so nil versus an explicit default
             // does not unload a resident model unnecessarily.
@@ -587,12 +603,17 @@ final class ServerController: ObservableObject {
     /// The DEPTH does not. `draftTokenLimit` only clamps the recommended depth
     /// downward, and the depth is applied per request — so it is re-resolved
     /// from current settings on each generate instead of being frozen at load.
-    /// Auto vs Force-On likewise selects between already-loaded weights.
+    /// Auto vs Force-On admission is re-evaluated against immutable bundle
+    /// evidence on every request, without reloading already-present weights.
     nonisolated static func mtpLoadInputsChanged(
         previous: VMLXServerMTPSettings,
         next: VMLXServerMTPSettings
     ) -> Bool {
         (previous.mode == .off) != (next.mode == .off)
+            // The family default loads without the MTP head for every family except Qwen3.8 Flash-Next
+            // (`resolvedMTPLaunch`), so leaving or entering it can change what the load must contain. Without a
+            // reload, choosing On (Adaptive) for such a bundle kept a head-less resident model and never speculated.
+            || (previous.mode == .familyDefault) != (next.mode == .familyDefault)
             || previous.dflash2DrafterPath != next.dflash2DrafterPath
             || previous.dflash2BlockSize != next.dflash2BlockSize
             || previous.keepDraftCacheSeparate != next.keepDraftCacheSeparate
@@ -616,9 +637,10 @@ final class ServerController: ObservableObject {
     /// Handles server startup errors
     private func handleServerError(_ error: Error) {
         print("[Osaurus] Failed to start server: \(error)")
+        MobileConnectLog.write("server: FAILED to start on port \(configuration.port): \(error)")
         isRunning = false
         let desc = error.localizedDescription.lowercased()
-        if desc.contains("address already in use") || desc.contains("eaddrinuse") {
+        if Self.isAddressInUse(error) {
             lastErrorMessage =
                 "Port \(configuration.port) is already in use. Choose a different port in Settings."
         } else if desc.contains("permission denied") || desc.contains("eacces") {
@@ -627,6 +649,14 @@ final class ServerController: ObservableObject {
             lastErrorMessage = error.localizedDescription
         }
         serverHealth = .error(lastErrorMessage ?? error.localizedDescription)
+    }
+
+    /// Binds tried, a second apart, while the port is in use.
+    private static let bindAttempts = 6
+
+    private static func isAddressInUse(_ error: Error) -> Bool {
+        let desc = "\(error) \(error.localizedDescription)".lowercased()
+        return desc.contains("address already in use") || desc.contains("eaddrinuse") || desc.contains("errno: 48")
     }
 
     private func stopServerIfNeeded() async throws {

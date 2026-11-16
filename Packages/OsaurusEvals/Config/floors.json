@@ -12,7 +12,13 @@
     "ComputerUseLoop": 1.0,
     "ScreenContext": 1.0,
     "RAMAdmission": 1.0,
-    "WorkspaceDelegation": 1.0
+    "WorkspaceDelegation": 1.0,
+    "ArchitectInline": 1.0,
+    "Onboarding": 1.0
+  },
+  "modelSuitePassRates": {
+    "_comment": "Model-driven suites gated by --fail-on-floor like suitePassRates, but never run by evals-deterministic. FirstRun is every walkthrough ask and the common typed first questions on a fresh install: a new user hits each one, so any miss is a release blocker on both the local and frontier lanes (make evals-firstrun).",
+    "FirstRun": 1.0
   },
   "caseFloors": {
     "capability_search": {

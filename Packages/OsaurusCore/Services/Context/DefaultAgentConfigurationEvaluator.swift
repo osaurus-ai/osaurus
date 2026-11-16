@@ -54,7 +54,8 @@ public enum DefaultAgentConfigurationEvaluator {
     public static func run(
         query: String,
         maxIterations: Int = 6,
-        model: String? = nil
+        model: String? = nil,
+        workingFolder: URL? = nil
     ) async -> CapabilityClaimsTranscript {
         // The configure tools (`osaurus_config` + the reads) are registered
         // into `ToolRegistry` lazily by the domain bootstrap, not as static
@@ -82,8 +83,39 @@ public enum DefaultAgentConfigurationEvaluator {
             maxIterations: maxIterations,
             model: model,
             toolExecutionTimeout: toolExecutionTimeout,
-            autoApproveToolPrompts: true
+            autoApproveToolPrompts: true,
+            workingFolder: workingFolder
         )
+    }
+
+    /// Run `queries` as one Orchestrator chat, one transcript per turn.
+    /// Each turn sees the earlier exchanges the Orchestrator context policy
+    /// keeps and the session state the previous turn committed. Stops after
+    /// a turn that errors.
+    public static func runTurns(
+        queries: [String],
+        maxIterations: Int = 6,
+        model: String? = nil,
+        workingFolder: URL? = nil
+    ) async -> [CapabilityClaimsTranscript] {
+        ConfigurationDomainBootstrap.registerBuiltIns()
+        let conversation = OrchestratorEvalConversation()
+        var transcripts: [CapabilityClaimsTranscript] = []
+        for query in queries {
+            let transcript = await CapabilityClaimsEvaluator.run(
+                query: query,
+                agentId: Agent.defaultId,
+                maxIterations: maxIterations,
+                model: model,
+                toolExecutionTimeout: toolExecutionTimeout,
+                autoApproveToolPrompts: true,
+                conversation: conversation,
+                workingFolder: workingFolder
+            )
+            transcripts.append(transcript)
+            if transcript.error != nil { break }
+        }
+        return transcripts
     }
 
     /// Grade `finalText` against each rubric `condition` with a single

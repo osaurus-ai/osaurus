@@ -8,8 +8,43 @@
 
 import Combine
 import Foundation
+import os
+
+/// Why observation of an active remote tool stopped. This says nothing
+/// about whether its remote side effects succeeded or failed.
+enum RemoteToolStreamEnd: String, Sendable, Equatable {
+    case completed, failed, cancelled
+
+    var localizedUnobservedResult: String {
+        switch self {
+        case .completed: return L("The remote stream ended without a tool result. Its outcome is unknown.")
+        case .failed: return L("The remote connection failed before a tool result was received. Its outcome is unknown.")
+        case .cancelled: return L("Stopped waiting before a remote tool result was received. Its outcome is unknown.")
+        }
+    }
+}
 
 final class ChatTurn: ObservableObject, Identifiable {
+    // MARK: - Token-estimate revision
+
+    /// Process-wide counter bumped whenever any turn mutates a field that
+    /// feeds `ContextBudgetManager`'s token estimates (content, thinking,
+    /// tool calls/results, attachments). `ChatSession` keys its cached
+    /// transcript token totals on this value so the context-budget readout
+    /// rendered from the chat view body doesn't re-walk every turn per render
+    /// — while still picking up in-place turn edits that never reassign the
+    /// session's `turns` array.
+    private static let _tokenEstimateRevision = OSAllocatedUnfairLock<UInt64>(initialState: 0)
+
+    /// Current value of the process-wide token-estimate revision.
+    static var tokenEstimateRevision: UInt64 {
+        _tokenEstimateRevision.withLock { $0 }
+    }
+
+    private static func bumpTokenEstimateRevision() {
+        _tokenEstimateRevision.withLock { $0 &+= 1 }
+    }
+
     let id: UUID
     let role: MessageRole
     /// Wall-clock when the turn was created. Used by the chat-export
@@ -38,6 +73,22 @@ final class ChatTurn: ObservableObject, Identifiable {
     private var _cachedContent: String?
     /// Cached content length - updated on append/set without joining
     private var _contentLength: Int = 0
+    /// O(1) render-cache key for replacements as well as streamed appends.
+    /// Equal-length status updates (e.g. 10/16 → 11/16) still change the text.
+    private(set) var contentRevision: UInt64 = 0
+
+    /// A reply another device is streaming into this chat, shown until its
+    /// message arrives. Never saved.
+    var isRemotePreview = false
+    /// Cached `visibleContent` — the display cleaners (leaked action JSON,
+    /// Gemini metadata, channel label) are O(n·braces) and the property is
+    /// read several times per block build on the main thread. Invalidated
+    /// wherever `contentChunks` changes.
+    private var _cachedVisibleContent: String?
+    /// Memoized `contentIsBlank`. Trimming copies the whole message, and
+    /// visible-block rebuilds read this for every assistant turn on every
+    /// streaming sync (APPLE-MACOS-3KF). Invalidated with the content.
+    private var _cachedContentIsBlank: Bool?
 
     /// The message content. Uses lazy joining for efficient streaming.
     var content: String {
@@ -54,12 +105,46 @@ final class ChatTurn: ObservableObject, Identifiable {
             contentChunks = newValue.isEmpty ? [] : [newValue]
             _cachedContent = newValue
             _contentLength = newValue.count
+            contentRevision &+= 1
+            _cachedEnvelope = nil
+            _cachedVisibleContent = nil
+            _cachedContentIsBlank = nil
+            Self.bumpTokenEstimateRevision()
             objectWillChange.send()
         }
     }
 
     /// Cached content length - O(1) access without forcing lazy join
     var contentLength: Int { _contentLength }
+
+    // MARK: - Dispatch envelope (memoized)
+
+    /// Memoized `DispatchEnvelope.parse` result for this turn, keyed by the
+    /// session source it was parsed under. Invalidated whenever `content`
+    /// changes. Read from block generation, the find bar, the minimap, copy
+    /// and title derivation — all on the streaming path — so the parse runs
+    /// once per turn per session load, not once per consumer per tick.
+    private var _cachedEnvelope: (source: SessionSource, value: DispatchEnvelope?)?
+
+    /// The machine-generated dispatch envelope wrapping this user turn's
+    /// content, if any. Nil for non-user turns and ordinary typed messages.
+    func dispatchEnvelope(sessionSource: SessionSource) -> DispatchEnvelope? {
+        guard role == .user, !contentIsEmpty else { return nil }
+        if let cached = _cachedEnvelope, cached.source == sessionSource {
+            return cached.value
+        }
+        let parsed = DispatchEnvelope.parse(content, sessionSource: sessionSource)
+        _cachedEnvelope = (sessionSource, parsed)
+        return parsed
+    }
+
+    /// The text the chat should present for this turn: the envelope's
+    /// human-authored text when one wraps the content, else the raw content.
+    /// Every user-facing consumer (bubble, find bar, minimap, copy, title)
+    /// reads this so what is counted and copied matches what is painted.
+    func displayContent(sessionSource: SessionSource) -> String {
+        dispatchEnvelope(sessionSource: sessionSource)?.displayText ?? content
+    }
 
     /// Whether content is empty - O(1) access without forcing lazy join
     var contentIsEmpty: Bool { _contentLength == 0 }
@@ -68,7 +153,11 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// treats streamed newline-only completions as blank for rendering and
     /// follow-up prompt construction.
     var contentIsBlank: Bool {
-        content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if _contentLength == 0 { return true }
+        if let cached = _cachedContentIsBlank { return cached }
+        let blank = content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        _cachedContentIsBlank = blank
+        return blank
     }
 
     /// Efficiently append content without triggering immediate UI update.
@@ -79,7 +168,12 @@ final class ChatTurn: ObservableObject, Identifiable {
         finalizeThinkingDuration()
         contentChunks.append(s)
         _contentLength += s.count
+        contentRevision &+= 1
         _cachedContent = nil  // Invalidate cache
+        _cachedEnvelope = nil
+        _cachedVisibleContent = nil
+        _cachedContentIsBlank = nil
+        Self.bumpTokenEstimateRevision()
     }
 
     /// Append content and immediately notify observers (triggers UI update)
@@ -101,7 +195,12 @@ final class ChatTurn: ObservableObject, Identifiable {
         if cleanedContent != originalContent {
             contentChunks = cleanedContent.isEmpty ? [] : [cleanedContent]
             _contentLength = cleanedContent.count
+            contentRevision &+= 1
             _cachedContent = cleanedContent
+            _cachedEnvelope = nil
+            _cachedVisibleContent = nil
+            _cachedContentIsBlank = nil
+            Self.bumpTokenEstimateRevision()
         }
     }
 
@@ -113,6 +212,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     private var _cachedThinking: String?
     /// Cached thinking length - updated on append/set without joining
     private var _thinkingLength: Int = 0
+    /// Memoized `thinkingIsBlank` (see `_cachedContentIsBlank`).
+    private var _cachedThinkingIsBlank: Bool?
 
     /// Thinking/reasoning content from models that support extended thinking (e.g., DeepSeek, QwQ)
     var thinking: String {
@@ -128,6 +229,8 @@ final class ChatTurn: ObservableObject, Identifiable {
             thinkingChunks = newValue.isEmpty ? [] : [newValue]
             _cachedThinking = newValue
             _thinkingLength = newValue.count
+            _cachedThinkingIsBlank = nil
+            Self.bumpTokenEstimateRevision()
             objectWillChange.send()
         }
     }
@@ -157,9 +260,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// `hasRenderableThinking` — so no entry point (cell, activity group,
     /// subagent feed) can reach the bug independently.
     var thinkingIsBlank: Bool {
+        if _thinkingLength == 0 { return true }
+        if let cached = _cachedThinkingIsBlank { return cached }
         let trimmed = thinking.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return true }
-        return Self.isBareChannelIdentifier(trimmed)
+        let blank = trimmed.isEmpty || Self.isBareChannelIdentifier(trimmed)
+        _cachedThinkingIsBlank = blank
+        return blank
     }
 
     /// A payload that is nothing but a channel label — one short bare
@@ -175,12 +281,14 @@ final class ChatTurn: ObservableObject, Identifiable {
     }
 
     /// Efficiently append thinking without triggering immediate UI update.
-    func appendThinking(_ s: String) {
+    func appendThinking(_ s: String, at: Date = Date()) {
         guard !s.isEmpty else { return }
-        if thinkingStartedAt == nil { thinkingStartedAt = Date() }
+        if thinkingStartedAt == nil { thinkingStartedAt = at }
         thinkingChunks.append(s)
         _thinkingLength += s.count
         _cachedThinking = nil  // Invalidate cache
+        _cachedThinkingIsBlank = nil
+        Self.bumpTokenEstimateRevision()
     }
 
     /// Append thinking and immediately notify observers (triggers UI update)
@@ -213,12 +321,23 @@ final class ChatTurn: ObservableObject, Identifiable {
     // MARK: - Other Published Properties
 
     /// File attachments (images and documents) for this turn
-    @Published var attachments: [Attachment] = []
+    @Published var attachments: [Attachment] = [] {
+        didSet { Self.bumpTokenEstimateRevision() }
+    }
     /// Chat-local artifacts rendered in the transcript without being sent as
     /// model-visible tool calls.
     @Published var sharedArtifacts: [SharedArtifact] = []
     /// Assistant-issued tool calls attached to this turn (OpenAI compatible)
-    @Published var toolCalls: [ToolCall]? = nil
+    @Published var toolCalls: [ToolCall]? = nil {
+        didSet {
+            Self.bumpTokenEstimateRevision()
+            toolStateRevision &+= 1
+        }
+    }
+    /// Bumped whenever `toolCalls`, `toolResults`, `toolCallDurations` or
+    /// `toolCallApprovalSkips` change, so per-sync tool-state checks can skip
+    /// comparing their values.
+    private(set) var toolStateRevision: UInt64 = 0
     /// OpenAI Responses reasoning item captured for this assistant turn: the
     /// opaque `id` and `encrypted_content`. Re-emitted before the turn's
     /// function_call(s) next request so a reasoning model resumes its chain.
@@ -230,6 +349,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// the flattened ChatTurn fields cannot represent (notably assistant
     /// commentary/final phase and future typed item fields).
     var responsesOutputItems: [JSONValue] = []
+    /// Exact provider-tagged signed/redacted Anthropic blocks for history.
+    var anthropicThinkingBlocks: [JSONValue] = []
     /// Provider-reported prompt usage for this assistant response, including
     /// the subset served from OpenAI's prompt cache when available.
     var inputTokenCount: Int? = nil
@@ -251,7 +372,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// replaying the abandoned reasoning beside the successful retry.
     var modelContextExcluded: Bool = false
     /// For role==.tool messages, associates this result with the originating call id
-    var toolCallId: String? = nil
+    var toolCallId: String? = nil {
+        didSet { Self.bumpTokenEstimateRevision() }
+    }
     /// Frozen memory / screen-context block this USER turn was originally
     /// sent with, INCLUDING the trailing separator (see
     /// `SystemPromptComposer.composeInjectedUserPrefix`). Recorded once at
@@ -263,15 +386,42 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// prefix cache. Nil on assistant/tool turns and on turns sent before
     /// this field existed.
     var injectedContextPrefix: String? = nil
+    /// Who wrote this turn in a multi-party conversation (teammate, remote
+    /// agent, channel sender, the owner in a hosted chat). Nil for ordinary
+    /// one-person chats. See `ChatTurnData.author`.
+    var author: ParticipantRef? = nil
+    /// Id of the host's `osaurus_participant_message` this turn shows, so a
+    /// replayed stream doesn't show it twice. Not persisted.
+    var remoteParticipantMessageId: String? = nil
+    /// On a user turn sent to an agent hosted on another device: the run
+    /// request. See `ChatTurnData.hostRun`.
+    var hostRun: HostRunRequest? = nil
+    /// See `ChatTurnData.origin`.
+    var origin: ChatTurnOrigin? = nil
+    /// See `ChatTurnData.runLocation`.
+    var runLocation: ChatRunLocation? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn
-    @Published var toolResults: [String: String] = [:]
+    @Published var toolResults: [String: String] = [:] {
+        didSet {
+            Self.bumpTokenEstimateRevision()
+            toolStateRevision &+= 1
+        }
+    }
     /// Wall-clock duration (seconds) each tool call took to finish, keyed by call
     /// id. Recorded by `setToolResult(_:for:)` and persisted so a reloaded chat
     /// still shows "· 1.2s" next to the tool title.
-    @Published var toolCallDurations: [String: TimeInterval] = [:]
+    @Published var toolCallDurations: [String: TimeInterval] = [:] {
+        didSet { toolStateRevision &+= 1 }
+    }
     /// Finished Computer Use / AppleScript step logs by call id, captured
     /// when the result lands (the live feed is dropped seconds later).
     var toolCallLogs: [String: SubagentRunLog] = [:]
+    /// Why a call ran without its approval card, by call id: the tool row's
+    /// "Ran without asking" marker. Absent for calls that asked or never
+    /// needed to.
+    @Published var toolCallApprovalSkips: [String: ToolApprovalSkipReason] = [:] {
+        didSet { toolStateRevision &+= 1 }
+    }
 
     // MARK: - Remote-agent (Mode 2) tool activity — display only
 
@@ -292,6 +442,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// (renders the live shimmer); a failure envelope ⇒ red node; any other
     /// non-error string ⇒ green/done node.
     @Published var remoteToolResults: [String: String] = [:]
+    /// Terminal display state when no result was observed. Separate from
+    /// results so transport end can never manufacture success/failure.
+    private(set) var remoteToolUnobservedResults: [String: RemoteToolStreamEnd] = [:]
     /// Bumped on every `remoteToolActivity` / `remoteToolResults` mutation so
     /// `BlockMemoizer`'s streaming fast-path can't short-circuit a trace that
     /// changed neither visible content nor thinking. Read-only to callers;
@@ -305,6 +458,16 @@ final class ChatTurn: ObservableObject, Identifiable {
     @Published var thinkingDuration: TimeInterval?
     /// First reasoning-token time (ephemeral), used to compute `thinkingDuration`.
     private var thinkingStartedAt: Date?
+    private var accumulatedThinkingDuration: TimeInterval = 0
+    /// Ephemeral phase, separate from whether this turn contains reasoning.
+    /// Later reasoning can resume after a confirmed content/tool boundary.
+    var isReasoningActive: Bool { thinkingStartedAt != nil }
+    /// Request-owned prompt progress; never restored as a live phase.
+    var prefillProgress: PrefillProgressState?
+    /// True while this turn's request waits on a cold model load; never saved.
+    var isLoadingModel = false
+    /// The diffusion step an on-device image run is on; never saved.
+    var imageStep: (step: Int, total: Int)?
     /// Tool name detected during streaming before the full invocation is ready.
     var pendingToolName: String? = nil {
         didSet {
@@ -342,26 +505,26 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     // MARK: - Generation Benchmarks
 
-    /// Time from request start to first visible token, EXCLUDING any cold
-    /// model load that happened inside that window.
-    /// Persisted with the turn for billing / latency reporting.
-    ///
-    /// The exclusion matters. Loading a container happens between the send and
-    /// the first token, so it used to be billed here: a 64 GB M3 Max reported
-    /// "TTFT 215.61s" for a ~1.8k-token prompt, which is not a prefill rate any
-    /// machine produces — it was a 27 GB bundle loading. Reporting the sum made
-    /// a healthy engine look broken. The load is now carried separately in
-    /// `modelLoadSeconds`; neither number is hidden.
+    /// Request-step start to first generated text, reasoning or tool syntax.
+    /// Includes this request's queue/setup/load/prefill waits. New turns do
+    /// not subtract process-wide model-load intervals: those may belong to
+    /// another window. Older persisted turns may use load-excluded semantics.
     var timeToFirstToken: TimeInterval?
 
-    /// Seconds of cold model loading that fell inside this turn's
-    /// time-to-first-token window, or nil when the model was already resident
-    /// (the overwhelmingly common case, and the one that must look unchanged).
+    /// Separately attributed model load, when known for this request. New
+    /// typed UI streams leave this nil until runtime supplies correlation;
+    /// historical persisted rows may contain globally derived values.
     var modelLoadSeconds: TimeInterval?
+    /// When the user pressed Enter (or Regenerate / Save & Regenerate) for the
+    /// run this turn opened. Earlier than `createdAt` by the pre-send warm-up
+    /// (model load) and setup awaits. Set only on a run's first assistant turn;
+    /// anchors the footer's total response time.
+    var requestedAt: Date?
     /// Tokens generated per second (GPU-timed for MLX, UI-estimated for
-    /// remote APIs). Ephemeral — not persisted. The exporter recomputes
-    /// it from token count and stream duration when needed, which
-    /// avoids storing a number whose precision varies by provider.
+    /// remote APIs). Persisted as displayed; do not recompute it from a
+    /// wall-clock interval that includes prefill or cache finalization.
+    /// Frozen request controls owned by this user turn; used for regenerate/retry.
+    var generationControls: ChatTurnGenerationControls?
     var generationTokensPerSecond: Double?
     /// Total tokens generated in this turn. Persisted with the turn.
     var generationTokenCount: Int?
@@ -379,12 +542,6 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// The agent loop uses it to avoid treating a reasoning-only `length`
     /// completion as a successful final response.
     var terminalStopReason: String?
-    /// Set when the stream consumer cut this turn short because the model
-    /// collapsed into a phrase-repetition loop; carries the repeated phrase
-    /// for the model-facing notice. Nil for every normally-completed turn.
-    /// Transient run state — not persisted, like `unclosedReasoning`.
-    var repetitionLoopPhrase: String?
-
     /// Osaurus Router billing snapshot captured from the in-stream summary
     /// frame (cost, token counts, status). Persisted so a reloaded chat still
     /// shows a billed-but-empty turn (and its "you were charged" notice)
@@ -417,11 +574,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Record the thinking duration once, at the first content/tool that follows
     /// reasoning. No-op for turns without thinking, after it's measured, or below
     /// the display threshold.
-    private func finalizeThinkingDuration() {
-        guard thinkingDuration == nil, let start = thinkingStartedAt else { return }
-        let elapsed = Date().timeIntervalSince(start)
-        if elapsed >= Self.minDisplayableToolDuration {
-            thinkingDuration = elapsed
+    func finalizeThinkingDuration(at: Date = Date()) {
+        guard let start = thinkingStartedAt else { return }
+        accumulatedThinkingDuration += max(0, at.timeIntervalSince(start))
+        thinkingStartedAt = nil
+        if accumulatedThinkingDuration >= Self.minDisplayableToolDuration {
+            thinkingDuration = accumulatedThinkingDuration
         }
     }
 
@@ -429,6 +587,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Use this instead of assigning `toolResults` directly so durations persist.
     func setToolResult(_ result: String, for callId: String) {
         toolResults[callId] = result
+        if let skip = ToolApprovalAudit.take(callId: callId) {
+            toolCallApprovalSkips[callId] = skip
+        }
         // The run has finished by the time its result lands, and the feed
         // registry keeps it for a short grace window. Keep the log.
         if toolCallLogs[callId] == nil,
@@ -471,9 +632,10 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// saw its "started" (some peers may only emit terminal traces) and stamps a
     /// sanitized success/failure result so the chip flips to done/failed. The
     /// failure case uses a `ToolEnvelope` error so the row renders red without
-    /// ever exposing the remote's raw tool output.
+    /// ever exposing the remote's raw tool output. A `failureMessage` marks a
+    /// policy refusal the caller has already put into Osaurus's own words.
     @MainActor
-    func noteRemoteToolFinished(callId: String, name: String, isError: Bool) {
+    func noteRemoteToolFinished(callId: String, name: String, isError: Bool, failureMessage: String? = nil) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !remoteToolActivity.contains(where: { $0.id == callId }) {
             remoteToolActivity.append(
@@ -484,26 +646,72 @@ final class ChatTurn: ObservableObject, Identifiable {
                 )
             )
         }
+        remoteToolUnobservedResults.removeValue(forKey: callId)
         remoteToolResults[callId] =
             isError
             ? ToolEnvelope.failure(
-                kind: .executionError,
-                message: "The remote agent reported this tool call failed.",
+                kind: failureMessage == nil ? .executionError : .rejected,
+                message: failureMessage ?? "The remote agent reported this tool call failed.",
                 tool: trimmed.isEmpty ? nil : trimmed
             )
             : Self.remoteToolSuccessResult
         remoteToolActivityTick &+= 1
     }
 
-    /// Flip any still-"running" remote tool rows to a neutral completed state.
-    /// Called when a Mode 2 stream ends (or is cancelled) so a missing terminal
-    /// trace can't leave a row shimmering forever.
+    /// The remote host's owner is deciding on one of its tool calls
+    /// (`osaurus_owner_approval`): a row that shimmers "Waiting for @owner to
+    /// approve <tool>" and settles to approved / declined.
     @MainActor
-    func finalizeRemoteToolActivity() {
+    func noteRemoteOwnerApproval(_ status: StreamingOwnerApprovalHint.Status) {
+        let rowId = "owner-approval-\(status.approvalId)"
+        var fields = ["owner": status.owner, "tool": status.name]
+        if status.phase != "waiting" { fields["phase"] = status.phase }
+        let arguments =
+            (try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let call = ToolCall(
+            id: rowId,
+            type: "function",
+            function: ToolCallFunction(name: ToolDisplayName.ownerApprovalRowName, arguments: arguments)
+        )
+        if let index = remoteToolActivity.firstIndex(where: { $0.id == rowId }) {
+            remoteToolActivity[index] = call
+        } else {
+            remoteToolActivity.append(call)
+        }
+        switch status.phase {
+        case "waiting":
+            remoteToolResults.removeValue(forKey: rowId)
+        case "approved":
+            remoteToolResults[rowId] = L("Allowed by \(status.owner).")
+        default:
+            remoteToolResults[rowId] = ToolEnvelope.failure(
+                kind: .executionError,
+                message: status.phase == "timed_out"
+                    ? "The owner didn't answer in time." : "The owner denied this tool call.",
+                tool: status.name
+            )
+        }
+        remoteToolActivityTick &+= 1
+    }
+
+    /// Settle observation of still-running remote tools as explicitly unknown.
+    /// Called when a Mode 2 stream ends (or is cancelled) so a missing terminal
+    /// trace can't leave a row shimmering forever. Missing completion is
+    /// unknown, never proof the remote tool succeeded.
+    @MainActor
+    func finalizeRemoteToolActivity(endedBy reason: RemoteToolStreamEnd = .completed) {
         guard !remoteToolActivity.isEmpty else { return }
         var changed = false
-        for call in remoteToolActivity where remoteToolResults[call.id] == nil {
-            remoteToolResults[call.id] = Self.remoteToolSuccessResult
+        for call in remoteToolActivity
+            where remoteToolResults[call.id] == nil && remoteToolUnobservedResults[call.id] == nil
+        {
+            if call.function.name == ToolDisplayName.ownerApprovalRowName {
+                remoteToolResults[call.id] = ToolEnvelope.failure(
+                    kind: .executionError, message: "The run ended before the owner answered.", tool: nil)
+            } else {
+                remoteToolUnobservedResults[call.id] = reason
+            }
             changed = true
         }
         if changed { remoteToolActivityTick &+= 1 }
@@ -578,14 +786,19 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// structured call.
     var visibleContent: String {
         guard role == .assistant else { return content }
+        if let cached = _cachedVisibleContent { return cached }
         // Channel-label strip runs first: the label arrives on the leading line
         // ahead of anything the other two cleaners look for, so removing it
         // early keeps their inputs shaped the way they expect.
-        return StringCleaning.stripLeakedActionJSON(
-            StringCleaning.stripGeminiDisplayMetadata(
-                StringCleaning.stripLeakedChannelLabel(content)
+        let cleaned = StringCleaning.stripCallEndMarker(
+            StringCleaning.stripLeakedActionJSON(
+                StringCleaning.stripGeminiDisplayMetadata(
+                    StringCleaning.stripLeakedChannelLabel(content)
+                )
             )
         )
+        _cachedVisibleContent = cleaned
+        return cleaned
     }
 
     /// Whether this turn has any thinking/reasoning content
@@ -602,7 +815,8 @@ final class ChatTurn: ObservableObject, Identifiable {
 // MARK: - Persistence
 
 extension ChatTurn {
-    /// Lightweight Codable representation for database persistence
+    /// Lightweight Codable snapshot. Production SQLite persistence uses
+    /// `ChatTurnData` and `ChatHistoryDatabase`'s explicit column codec.
     struct Persisted: Codable {
         let id: String
         let role: String
@@ -613,6 +827,15 @@ extension ChatTurn {
         let toolCallId: String?
         var injectedContextPrefix: String? = nil
         var modelContextExcluded: Bool? = nil
+        var author: ParticipantRef? = nil
+        var remoteParticipantMessageId: String? = nil
+        var reasoningItemId: String? = nil
+        var reasoningEncrypted: String? = nil
+        var responsesOutputItems: [JSONValue]? = nil
+        var anthropicThinkingBlocks: [JSONValue]? = nil
+        var inputTokenCount: Int? = nil
+        var cachedInputTokenCount: Int? = nil
+        var generationControls: ChatTurnGenerationControls? = nil
     }
 
     /// Converts this turn to a persistable representation
@@ -626,7 +849,16 @@ extension ChatTurn {
             toolResults: toolResults.isEmpty ? nil : toolResults,
             toolCallId: toolCallId,
             injectedContextPrefix: injectedContextPrefix,
-            modelContextExcluded: modelContextExcluded ? true : nil
+            modelContextExcluded: modelContextExcluded ? true : nil,
+            author: author,
+            remoteParticipantMessageId: remoteParticipantMessageId,
+            reasoningItemId: reasoningItemId,
+            reasoningEncrypted: reasoningEncrypted,
+            responsesOutputItems: responsesOutputItems.isEmpty ? nil : responsesOutputItems,
+            anthropicThinkingBlocks: anthropicThinkingBlocks.isEmpty ? nil : anthropicThinkingBlocks,
+            inputTokenCount: inputTokenCount,
+            cachedInputTokenCount: cachedInputTokenCount,
+            generationControls: generationControls
         )
     }
 
@@ -649,6 +881,15 @@ extension ChatTurn {
         turn.toolCallId = p.toolCallId
         turn.injectedContextPrefix = p.injectedContextPrefix
         turn.modelContextExcluded = p.modelContextExcluded ?? false
+        turn.author = p.author
+        turn.remoteParticipantMessageId = p.remoteParticipantMessageId
+        turn.reasoningItemId = p.reasoningItemId
+        turn.reasoningEncrypted = p.reasoningEncrypted
+        turn.responsesOutputItems = p.responsesOutputItems ?? []
+        turn.anthropicThinkingBlocks = p.anthropicThinkingBlocks ?? []
+        turn.inputTokenCount = p.inputTokenCount
+        turn.cachedInputTokenCount = p.cachedInputTokenCount
+        turn.generationControls = p.generationControls
 
         return turn
     }

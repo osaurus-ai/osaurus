@@ -40,6 +40,25 @@ struct SandboxPackageRequestTests {
     }
 
     @Test
+    func rejectsURLGitAndPathSpecifiers() {
+        let refused = [
+            "git+https://github.com/x/y.git", "https://example.com/pkg.tar.gz", "http://e.com/a", "file:./local",
+            "github:user/repo", "user/repo", "./vendor/pkg", "/tmp/pkg", "~/pkg", "pkg.whl", "thing-1.0.tgz",
+            "name @ https://example.com/name.zip", "foo@npm:bar", "@scope/name/extra", "@/name", "./x.apk",
+        ]
+        for spec in refused {
+            #expect(throws: SandboxPackageRequestError.nonRegistrySource(index: 0), "\(spec)") {
+                try SandboxPackageRequest.normalize([spec])
+            }
+        }
+        for spec in ["yt-dlp", "numpy>=2", "requests[security]>=2.32", "@scope/pkg@^3", "ffmpeg", "py3-pip=24.0-r2"] {
+            #expect(throws: Never.self, "\(spec)") { try SandboxPackageRequest.normalize([spec]) }
+        }
+        let dependency = WorkflowDependency(manager: .pip, packages: ["git+https://github.com/x/y.git"])
+        #expect(dependency.issues.contains { $0.contains("URL, git repository, or file path") })
+    }
+
+    @Test
     func enforcesCountAndLengthBounds() {
         #expect(
             throws: SandboxPackageRequestError.tooMany(

@@ -50,9 +50,9 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     public var routeCounts: [InputRoute: Int] = [:]
     /// Highest capture tier reached during the run.
     public var maxTier: CaptureTier = .ax
-    /// Total model tokens (prompt + completion) consumed across all model
-    /// steps, summed from each response's usage. `0` when the loop is driven by
-    /// a scripted provider (no model call).
+    /// Reported prompt + completion token subtotal. Steps with incomplete
+    /// usage are omitted, not estimated, so this can be a partial subtotal.
+    /// Scripted providers make no model call and contribute zero.
     public var modelTokens = 0
     /// Running sum + count of per-step decode speeds (tok/s) reported by the
     /// model responses, used to derive `meanDecodeTokensPerSecond`. Each CU

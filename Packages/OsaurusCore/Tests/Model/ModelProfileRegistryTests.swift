@@ -555,6 +555,61 @@ struct ModelProfileRegistryTests {
         }
     }
 
+    @Test("DeepSeek-V4.1 bundles expose off plus the full low…max effort ladder")
+    func dsv41_matchesFullEffortLadder() {
+        for id in [
+            "DeepSeek-V4.1-Flash-1017-JANG",
+            "JANGQ-AI/DeepSeek-V4.1-Flash-JANG",
+            "dsv41-flash",
+            "dsv4.1-flash",
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(profile?.displayName == DSV41ReasoningProfile.displayName, "\(id)")
+            #expect(ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)["reasoningEffort"] == nil)
+            #expect(ModelProfileRegistry.defaults(for: id)["reasoningEffort"] == .string("low"))
+            guard case .segmented(let segments)? = ModelProfileRegistry.options(for: id).first?.kind else {
+                Issue.record("V4.1 should expose segmented reasoning modes: \(id)")
+                continue
+            }
+            #expect(segments.map(\.id) == ["instruct", "low", "medium", "high", "xhigh", "max"])
+            for effort in ["medium", "xhigh"] {
+                let kept = ModelProfileRegistry.normalizedOptions(
+                    for: id, persisted: ["reasoningEffort": .string(effort)])
+                #expect(kept["reasoningEffort"]?.stringValue == effort)
+            }
+        }
+        // 0731 keeps its own options.
+        #expect(
+            ModelProfileRegistry.profile(for: "DeepSeek-V4-Flash-0731-JANG")?.displayName
+                == DSV4ReasoningProfile.displayName)
+
+        #expect(DSV41ReasoningProfile.normalizedEffort(" XHigh ") == "xhigh")
+        #expect(DSV41ReasoningProfile.normalizedEffort("none") == "instruct")
+        #expect(DSV41ReasoningProfile.normalizedEffort("off") == "instruct")
+        #expect(DSV41ReasoningProfile.normalizedEffort("minimal") == nil)
+        #expect(DSV4ReasoningProfile.normalizedEffort("medium") == nil)
+    }
+
+    @Test("DeepSeek-V4.1 medium/xhigh render the thinking rail with that effort; none stays off")
+    func dsv41_adapterForwardsLadderEfforts() {
+        let model = "DeepSeek-V4.1-Flash-1017-JANG"
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let context = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil, maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string(effort)]),
+                modelName: model)
+            #expect(context["enable_thinking"] as? Bool == true)
+            #expect(context["reasoning_effort"] as? String == effort)
+        }
+        let off = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil, maxTokens: 16, modelOptions: ["reasoningEffort": .string("none")]),
+            modelName: model)
+        #expect(off["enable_thinking"] as? Bool == false)
+        #expect(off["reasoning_effort"] == nil)
+    }
+
     // MARK: - Dynamic (catalog-driven) reasoning capabilities
 
     /// Provider-published capabilities must outrank the static
@@ -810,9 +865,45 @@ struct ModelProfileRegistryTests {
 
         // The umbrella predicate (wire behavior: max_completion_tokens,
         // temperature stripping) still spans every OpenAI reasoning id.
-        for id in ["o3-mini", "gpt-5", "gpt-5.1", "gpt-5.5", "gpt-5.6-sol"] {
+        for id in ["o3-mini", "gpt-5", "gpt-5.1", "gpt-5.5", "gpt-5.6-sol", "gpt-6-astra"] {
             #expect(OpenAIReasoningProfile.matches(modelId: id), "umbrella must match \(id)")
         }
+    }
+
+    /// GPT-6 Astra (`gpt-6-astra`) rejects `none` and, off the official
+    /// route, `max` is never assumed — the static profile offers `low`
+    /// through `xhigh` (default `medium`). It must not fall through to the
+    /// original gpt-5 `minimal` set or the 5.2+ `none` set.
+    @Test func openAIGPT6_matchesDocumentedEffortSet() {
+        for id in ["gpt-6-astra", "openai/gpt-6-astra", "proxy/gpt-6-astra", "gpt-6-astra-2026-09-03", "gpt-6"] {
+            #expect(reasoningSegmentIds(for: id) == ["low", "medium", "high", "xhigh"], "id: \(id)")
+            #expect(
+                ModelProfileRegistry.defaults(for: id)["reasoningEffort"]?.stringValue == "medium",
+                "id: \(id)"
+            )
+        }
+
+        let staleNone = ModelProfileRegistry.normalizedOptions(
+            for: "gpt-6-astra",
+            persisted: ["reasoningEffort": .string("none")]
+        )
+        #expect(staleNone["reasoningEffort"] == nil)
+        let validXhigh = ModelProfileRegistry.normalizedOptions(
+            for: "gpt-6-astra",
+            persisted: ["reasoningEffort": .string("xhigh")]
+        )
+        #expect(validXhigh["reasoningEffort"]?.stringValue == "xhigh")
+
+        // The documented official-route profile adds `max` and still no `none`.
+        #expect(
+            ModelReasoningCapabilities.officialOpenAIGPT6Astra.levels.map(\.id)
+                == ["low", "medium", "high", "xhigh", "max"]
+        )
+        #expect(ModelReasoningCapabilities.officialOpenAIGPT6Astra.defaultLevelId == "medium")
+
+        // A fused suffix is not the GPT-6 family.
+        #expect(!OpenAIGPT6ReasoningProfile.matches(modelId: "gpt-60-turbo"))
+        #expect(!OpenAIReasoningProfile.matches(modelId: "gpt-60-turbo"))
     }
 
     /// Adjustable reasoning exists only on mistral-small-* and
@@ -842,13 +933,56 @@ struct ModelProfileRegistryTests {
 
     /// Gemini 3.1 Flash *Lite* Image supports only 1K output; it must not
     /// inherit the full 3.1 Flash resolution set (512px/2K/4K would be
-    /// rejected on the wire). The non-Lite id keeps the extended profile.
+    /// rejected on the wire). It gets its own profile with no resolution
+    /// control. The non-Lite id keeps the extended profile.
     @Test func gemini31FlashLiteImage_isExcludedFromResolutionProfile() {
         #expect(
             !Gemini31FlashImageProfile.matches(modelId: "google/gemini-3.1-flash-lite-image")
         )
-        #expect(ModelProfileRegistry.profile(for: "gemini-3.1-flash-lite-image") == nil)
+        let lite = ModelProfileRegistry.profile(for: "gemini-3.1-flash-lite-image")
+        #expect(lite?.displayName == GeminiFlashLiteImageProfile.displayName)
+        #expect(lite?.options.contains { $0.id == "imageSize" } == false)
         #expect(Gemini31FlashImageProfile.matches(modelId: "google/gemini-3.1-flash-image"))
+    }
+
+    /// Each current Gemini image id resolves to the profile that carries its
+    /// documented aspect-ratio and resolution set.
+    @Test func geminiImageModels_resolveToTheirOwnProfiles() {
+        let cases: [(String, String)] = [
+            ("gemini-nano-banana-2.1", GeminiNanoBanana21ImageProfile.displayName),
+            ("google/gemini-3.1-flash-lite-image", GeminiFlashLiteImageProfile.displayName),
+            ("gemini-3.1-flash-image", Gemini31FlashImageProfile.displayName),
+            ("gemini-3-pro-image", GeminiProImageProfile.displayName),
+            ("gemini-2.5-flash-image", GeminiFlashImageProfile.displayName),
+        ]
+        for (modelId, displayName) in cases {
+            #expect(ModelProfileRegistry.profile(for: modelId)?.displayName == displayName, "\(modelId)")
+        }
+
+        // Nano Banana 2.1: extended ratios at 1K/2K/4K, no 512px tier.
+        let banana = ModelProfileRegistry.profile(for: "gemini-nano-banana-2.1")
+        let segmentIds: (String) -> [String]? = { optionId in
+            guard let option = banana?.options.first(where: { $0.id == optionId }),
+                case .segmented(let segments) = option.kind
+            else { return nil }
+            return segments.map(\.id)
+        }
+        #expect(segmentIds("aspectRatio")?.contains("1:8") == true)
+        #expect(segmentIds("imageSize") == ["auto", "1K", "2K", "4K"])
+    }
+
+    /// Matching an image profile is what routes a model as an image model on
+    /// the wire, so every current image id must count and text models must not.
+    @Test func geminiImageModels_routeAsImageModels() {
+        for modelId in [
+            "gemini-nano-banana-2.1", "gemini-3.1-flash-lite-image", "gemini-3.1-flash-image",
+            "gemini-3-pro-image", "gemini-2.5-flash-image",
+        ] {
+            #expect(GeminiImageModels.isImageModel(modelId), "\(modelId)")
+        }
+        for modelId in ["gemini-4-argon", "gemini-4-carbon", "gemini-3.8-flash", "gemini-3.1-flash-lite"] {
+            #expect(!GeminiImageModels.isImageModel(modelId), "\(modelId)")
+        }
     }
 
     // MARK: - Inline reasoning suffix (model chip "· Effort" label)

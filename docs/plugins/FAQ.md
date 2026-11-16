@@ -10,6 +10,12 @@ Yes. The Plugin ABI is **frozen** — the `osr_host_api` struct layout never cha
 
 You only need to rebuild to pick up new callbacks (`complete_cancel` in v3, `get_active_agent_id` in v4, `log_structured` in v5). There is no forced migration. See [ABI_VERSIONS.md](ABI_VERSIONS.md) for the per-version evolution and the `host->version >= N` defensive-check pattern.
 
+### What happened to the Apple app plugins (`osaurus.calendar`, `osaurus.mail`, …)?
+
+They are superseded. Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps, and Music (plus Shortcuts) are now built into Osaurus as per-agent tool families — see [APPLE_APPS.md](../APPLE_APPS.md). If you had one installed, a one-time migration removes its legacy tool names from your agents' manual allowlists and turns the matching app on for those agents; the marketplace card shows a "Built into Osaurus" banner and points at Agents → Abilities → Tools. Installed copies are skipped at load (never dlopen'd); uninstall them whenever you like.
+
+Two consequences for plugin authors: a plugin or MCP provider cannot register a tool whose name collides with a built-in Apple tool (`calendar_events`, `notes_create`, `messages_send`, …) — the registration is logged and dropped — and generic names from *other* plugins (`play`, `send_message`, `create_note`) are never touched by the migration; it only considers plugins actually present in `Tools/`.
+
 ### What's the difference between native plugins and sandbox plugins?
 
 | | **Native plugin** | **Sandbox plugin** |
@@ -106,7 +112,7 @@ No — the web mount would shadow the route, and the manifest validation will re
 
 ### How do I cancel a streaming completion?
 
-Pass a `stream_id` UUID in the `complete_stream` request body, then call `complete_cancel(stream_id)` from anywhere — the `on_chunk` callback, a separate worker, etc. The host emits a final chunk with `finish_reason: "cancelled"` and the `complete_stream` return envelope is `{"error": "cancelled", "partial_content": "...", ...}`. The cancel call is non-blocking — the streaming task observes the flag between deltas and unwinds. See [HOST_API.md `complete_cancel`](HOST_API.md#complete_cancelstream_id---void) for the full envelope shape.
+Pass a `stream_id` UUID in the `complete_stream` request body, then call `complete_cancel(stream_id)` from anywhere — the `on_chunk` callback, a separate worker, etc. The host emits a final chunk with `finish_reason: "cancelled"` and the `complete_stream` return envelope is `{"error": "cancelled", "partial_content": "...", ...}`. The cancel call is non-blocking and cancels the active host task without waiting for another model event. Downstream cleanup still requires cooperative cancellation. See [HOST_API.md `complete_cancel`](HOST_API.md#complete_cancelstream_id---void) for the full envelope shape.
 
 ### Why does my streaming response not include `usage`?
 

@@ -1,0 +1,69 @@
+{
+  "id": "agent_loop.edit-docx-in-place",
+  "domain": "agent_loop",
+  "label": "agent loop \u2022 change two paragraphs in an existing .docx with file_edit (no regenerate, no shell)",
+  "query": "In memo.docx, change the status line from Draft to Final and move the go-live date from April 14 to April 21. Leave every other paragraph exactly as it is.",
+  "notes": "file_edit on a .docx replaces paragraph text in place (old_string/new_string or a replace_text operation). Regenerating with file_write would drop the memo's heading and list styles; the command assertions prove both edits landed, the old values are gone, and untouched paragraphs plus the ListParagraph style survive.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "memo.docx",
+        "contentsFromFixture": "Documents/memo.docx"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "maxToolCalls": 6,
+      "mustCallTools": [
+        "file_edit"
+      ],
+      "mustNotCallTools": [
+        "shell_run",
+        "file_write"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_edit",
+          "minCalls": 1,
+          "maxCalls": 4,
+          "maxErrors": 1,
+          "argsMustContain": "memo.docx"
+        }
+      ],
+      "files": [
+        {
+          "path": "memo.docx",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "unzip -p memo.docx word/document.xml | grep -q 'Status: Final'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -p memo.docx word/document.xml | grep -q 'Status: Draft'",
+          "expectExitCode": 1
+        },
+        {
+          "command": "unzip -p memo.docx word/document.xml | grep -q 'April 21'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -p memo.docx word/document.xml | grep -q 'April 14'",
+          "expectExitCode": 1
+        },
+        {
+          "command": "unzip -p memo.docx word/document.xml | grep -q 'Support staffing during cutover.'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -p memo.docx word/document.xml | grep -q 'w:val=\"ListParagraph\"'",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

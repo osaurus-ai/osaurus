@@ -99,6 +99,7 @@ extension ChatSession: ChatWarmupSessionContext {
     }
 
     func warmupTurnToMessage(_ turn: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
+        guard Self.isModelVisible(turn) else { return nil }
         switch turn.role {
         case .assistant:
             // Warm-up and the real request must serialize one identical

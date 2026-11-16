@@ -237,10 +237,16 @@ public final class SwapPressureMonitor: @unchecked Sendable {
 
     /// Unload teardown: end the episode once nothing is resident and no
     /// load remains in flight.
-    public func endEpisodeIfIdle(residentCount: Int) {
+    /// `unloaded` drops that model's finished records, so an episode kept
+    /// open by another resident model doesn't gain a record per reload.
+    public func endEpisodeIfIdle(residentCount: Int, unloaded model: String? = nil) {
         lock.lock()
         defer { lock.unlock() }
-        guard let current = episode else { return }
+        guard var current = episode else { return }
+        if let model {
+            current.loads.removeAll { $0.model == model && $0.phase == .resident }
+            episode = current
+        }
         if residentCount == 0 && !current.anyLoading { episode = nil }
     }
 

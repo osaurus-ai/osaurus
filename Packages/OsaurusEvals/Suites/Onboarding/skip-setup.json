@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.skip-setup",
+  "domain": "onboarding",
+  "label": "onboarding • Skip setup ends the walkthrough from any step",
+  "query": "skip_setup",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "skip_setup"
+    }
+  }
+}

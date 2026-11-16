@@ -53,6 +53,15 @@ import Testing
         #expect(VLMDetection.isVLM(modelType: "NemotronH_Nano_Omni_Reasoning_V3"))
     }
 
+    @Test func isVLMDeepseekV41_modelTypeAndInstalledBundle() throws {
+        #expect(LocalVisionEvidence.deepseekV41VisionRuntimeAvailable)
+        #expect(VLMDetection.isVLM(modelType: "deepseek_v41"))
+        #expect(!VLMDetection.isVLM(modelType: "deepseek_v4"))
+        let root = try VisionBundleFixture.makeDeepseekV41()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(VLMDetection.isVLM(at: root))
+    }
+
     @Test func isVLMModelType_rejectsUnknownArchitecture() {
         #expect(!VLMDetection.isVLM(modelType: "totally_made_up_arch_xyz"))
     }

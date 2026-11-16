@@ -107,6 +107,10 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
     /// `web_search`, `applescript`) rather than generic persona advice, so
     /// enabling a skill teaches the agent a concrete workflow it could not
     /// otherwise know.
+    ///
+    /// Names are localized; `directoryName` is the stable English slug so an
+    /// agent's skill allow-list (`agents[].skills`) names a built-in the same
+    /// way in every language.
     public static var builtInSkills: [Skill] {
         [
             // Web Researcher
@@ -149,7 +153,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "web-researcher"
             ),
 
             // Content Summarizer
@@ -194,7 +199,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "content-summarizer"
             ),
 
             // Mac Automator
@@ -226,12 +232,14 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
 
                     ## When automation fails
                     - Check whether the target app is running and whether Osaurus has Automation permission (System Settings → Privacy & Security → Automation)
+                    - Scripts that click or type through System Events (UI scripting) also need Accessibility permission (System Settings → Privacy & Security → Accessibility)
                     - Retry once with a simpler, more explicit goal before giving up
                     - Fall back to step-by-step instructions the user can follow manually
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "mac-automator"
             ),
 
             // Personal Organizer
@@ -249,13 +257,13 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 instructions: """
                     When helping manage calendar, reminders, email, or messages:
 
-                    ## Available tools (from plugins)
-                    - **Calendar**: `get_events`, `search_events`, `create_event`, `open_event`
-                    - **Reminders**: `get_reminders`, `search_reminders`, `create_reminder`, `get_lists`
-                    - **Mail**: `list_messages`, `read_message`, `search_messages`, `compose_message`, `reply_to_message`
-                    - **Messages**: `send_message`, `read_messages`, `get_unread_messages`
+                    ## Available tools (built into Osaurus, per-agent opt-in)
+                    - **Calendar**: `calendar_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_open_event`
+                    - **Reminders**: `reminders_lists`, `reminders_fetch`, `reminders_create`, `reminders_update`, `reminders_complete`
+                    - **Mail**: `mail_list`, `mail_read`, `mail_search`, `mail_compose`, `mail_reply`
+                    - **Messages**: `messages_conversations`, `messages_read`, `messages_unread`, `messages_send`
 
-                    These come from installable plugins. If a tool is missing, use `capabilities_discover` to check what is available, and tell the user which plugin to install from Management → Plugins (osaurus.calendar, osaurus.reminders, osaurus.mail, osaurus.messages).
+                    These are built into Osaurus but OFF until the app is enabled for this agent. Apple app tools are never found by `capabilities_discover` and cannot be loaded with `capabilities_load` — if one you need is not in your tool list, do not search for it: tell the user to turn the app on for this agent under Settings… (⌘,) → Agents → this agent → Abilities → Tools (each Apple app is a group there; or ask the Orchestrator to enable it), then continue once it appears. Calendar and Reminders ask macOS for Full Access on first use; Mail and Messages ask to allow automation (reading Messages also needs Full Disk Access). Contacts is a separate Apple app (`contacts_*`) — it is not part of this skill's tool list and needs its own group turned on.
 
                     ## Working with dates
                     - Call `get_current_time` before computing any relative date ("tomorrow", "next Tuesday") — never guess today's date
@@ -268,7 +276,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "personal-organizer"
             ),
 
             // Document Builder
@@ -289,7 +298,10 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     ## Spreadsheets (osaurus.xlsx plugin)
                     - `create_xlsx` to start a workbook, `write_cells` to fill in data
                     - `csv_to_xlsx` when the data already exists as CSV
-                    - `read_xlsx` to inspect an existing workbook before modifying it
+                    - To change an EXISTING workbook, use `file_edit` with `operations` (`set_cells`, `insert_rows`, …;
+                      `file_read` with `mode: "structure"` lists sheets and cells). It edits the file in place and keeps
+                      its formatting, column widths, filters, validation and formulas. The plugin's `save_xlsx` writes a
+                      minimal workbook, so never save over an existing workbook with it; `read_xlsx` is for reading only.
                     - Put headers in the first row; keep one dataset per sheet
 
                     ## Presentations (osaurus.pptx plugin)
@@ -297,10 +309,10 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     - One idea per slide; start with a title slide; keep bullets short
 
                     ## Missing tools
-                    These tools come from plugins. If they are unavailable, use `capabilities_discover` to check, and tell the user to install osaurus.xlsx or osaurus.pptx from Management → Plugins.
+                    These tools come from plugins. If they are unavailable, use `capabilities_discover` to check, and tell the user to install osaurus.xlsx or osaurus.pptx from Settings… (⌘,) → Tools & MCP → Plugins.
 
                     ## Delivering files
-                    Always surface the finished file with `share_artifact` — it is the only way a file appears in chat as a downloadable card. A file written to disk without `share_artifact` is invisible to the user.
+                    Always surface the finished file with `share_artifact` — that is what adds the downloadable card in chat. A file only written to disk gets no card, so the user may never find it.
 
                     ## Quality
                     - Confirm the desired structure (columns, slide outline) before building anything large
@@ -308,7 +320,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "document-builder"
             ),
 
             // Workspace Assistant
@@ -327,7 +340,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     When a working folder is mounted, use the folder tools:
 
                     ## Orientation first
-                    - `file_tree` to see the project layout before anything else
+                    - `file_read` on a directory to see the project layout before anything else
                     - `file_search` to locate relevant files by name or content
                     - `file_read` before editing — never edit a file you have not read
 
@@ -346,13 +359,14 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     - Never write commit messages that overstate what changed
 
                     ## Boundaries
-                    - Only use the tools above that are actually in your tool list. In sandbox mode the folder may be read-only and shell/git run in the sandbox instead — the `## Files` rules in your system prompt win over this skill
-                    - If none of these tools are present, ask the user to attach a working folder
+                    - Only use the tools above that are actually in your tool list. When the agent's Working Folder is set to Read Only, the write, edit, copy, undo, shell, and commit tools are removed — read and search instead, and tell the user what you would change
+                    - If none of these tools are present, call `prompt_working_folder` so the user can pick a working folder (if that tool is missing too, ask them to attach one via the Folder chip)
                     - Stay inside the mounted folder; do not attempt paths outside it
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "workspace-assistant"
             ),
 
             // Data Keeper
@@ -395,7 +409,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "data-keeper"
             ),
 
             // Autonomous Scheduler
@@ -432,7 +447,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "autonomous-scheduler"
             ),
 
             // Data Visualization
@@ -497,13 +513,14 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     ## Quality guidelines
                     - Always set a meaningful `title`
                     - Set `tooltipSuffix` when data has units (USD, %, ms, kg, etc.)
-                    - Use `stacking: "percent"` for part-to-whole comparisons across categories
+                    - In a ```chart block, use `stacking: "percent"` for part-to-whole comparisons across categories (`render_chart` has no stacking option)
                     - Keep series count ≤ 8 for readability
                     - For time series, put dates/times as `categories` on the x-axis
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
-                updatedAt: Date.distantPast
+                updatedAt: Date.distantPast,
+                directoryName: "data-visualizer"
             ),
         ]
     }

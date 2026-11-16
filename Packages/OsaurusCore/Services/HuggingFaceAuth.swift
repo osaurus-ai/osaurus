@@ -79,7 +79,7 @@ enum HuggingFaceAuth {
     /// cache is still cold — WITHOUT performing a synchronous
     /// `SecItemCopyMatching`, which can block the main thread for seconds
     /// under securityd/first-unlock contention. UI seeds from this and then
-    /// resolves the cold case off-main (see `HuggingFaceTokenCard`).
+    /// resolves the cold case off-main (see `HuggingFaceTokenBanner`).
     static var cachedTokenPresence: Bool? {
         cachedToken.withLock { (state: inout String??) -> Bool? in
             if case .some(let loaded) = state { return loaded != nil }

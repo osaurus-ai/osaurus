@@ -244,6 +244,24 @@ public final class MemoryDatabase: @unchecked Sendable {
             // owns its own (trivial) statement and stamps the version itself.
             try migrateToV10()
         }
+        try ensureDelegatedConversationsTable()
+    }
+
+    /// Conversations buffered by `MemoryService.bufferDelegatedTurn`, whose
+    /// "user" turns are another agent's instructions, not the user's words.
+    /// A side table created idempotently on every open, deliberately not a
+    /// schema version: a version bump would make every older build refuse
+    /// this database (`databaseFromNewerVersion`), while an extra table is
+    /// invisible to them. `pending_signals` is not touched (see v7-v9).
+    private func ensureDelegatedConversationsTable() throws {
+        try executeRaw(
+            """
+            CREATE TABLE IF NOT EXISTS delegated_conversations (
+                conversation_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -1484,7 +1502,10 @@ public final class MemoryDatabase: @unchecked Sendable {
                 WHERE pinned_facts.status = 'active' AND fts_pinned MATCH ?1
                 """
             if agentId != nil { sql += " AND pinned_facts.agent_id = ?2" }
-            sql += " ORDER BY pinned_facts.salience DESC LIMIT ?\(agentId != nil ? 3 : 2)"
+            // FTS OR-prefix recall can match common words in unrelated facts.
+            // Rank the actual query relevance first; salience only resolves
+            // equal relevance, with a stable ID as the final tie breaker.
+            sql += " ORDER BY bm25(fts_pinned) ASC, pinned_facts.salience DESC, pinned_facts.id ASC LIMIT ?\(agentId != nil ? 3 : 2)"
             try prepareAndExecute(
                 sql,
                 bind: { stmt in
@@ -2504,7 +2525,8 @@ public final class MemoryDatabase: @unchecked Sendable {
     /// so a multi-word recall query almost never matches. OR keeps recall
     /// (BM25 still ranks rows matching more terms first), and the prefix
     /// aligns singular/plural forms under the non-stemming `unicode61`
-    /// tokenizer.
+    /// tokenizer. Function words are dropped first (`FTSQueryTerms`): under
+    /// OR they match nearly every row, so they only add unrelated hits.
     static func ftsMatchQuery(_ raw: String) -> String? {
         let allowed = CharacterSet.alphanumerics.union(.whitespaces).union(CharacterSet(charactersIn: "-_"))
         let scrubbed = String(raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : " " })
@@ -2514,7 +2536,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             .map { String($0) }
             .filter { !$0.isEmpty }
         guard !words.isEmpty else { return nil }
-        return words.map { "\"\($0)\"*" }.joined(separator: " OR ")
+        return FTSQueryTerms.droppingStopwords(words).map { "\"\($0)\"*" }.joined(separator: " OR ")
     }
 
     public func pruneTranscript(olderThanDays days: Int) throws -> Int {
@@ -2630,6 +2652,26 @@ public final class MemoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 4, value: signal.assistantMessage)
             Self.bindText(stmt, index: 5, value: signal.status)
         }
+    }
+
+    public func markDelegatedConversation(_ conversationId: String) throws {
+        _ = try executeUpdate(
+            "INSERT OR IGNORE INTO delegated_conversations (conversation_id) VALUES (?1)"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: conversationId)
+        }
+    }
+
+    public func isDelegatedConversation(_ conversationId: String) throws -> Bool {
+        var found = false
+        try prepareAndExecute(
+            "SELECT 1 FROM delegated_conversations WHERE conversation_id = ?1 LIMIT 1",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: conversationId) },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW { found = true }
+            }
+        )
+        return found
     }
 
     public func loadPendingSignals(conversationId: String) throws -> [PendingSignal] {

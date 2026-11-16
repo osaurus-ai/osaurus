@@ -1,0 +1,103 @@
+{
+  "id": "workflow.map-fans-out-code-step",
+  "domain": "workflow",
+  "label": "workflow • map runs its code step once per item and collects the results in order",
+  "query": "map runs its code step once per item and collects the results in order",
+  "notes": "No model. A map step fans a JavaScript code step out over three items (two at a time) and collects `items`, `count`, and `failed`; a later code step sums the per-item results. Skips with a typed reason when osaurus-js-host is not reachable (set OSAURUS_JS_HOST_PATH).",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [
+          { "from": "each", "to": "total" }
+        ],
+        "examples": [],
+        "input_schema": {
+          "properties": {
+            "orders": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": { "sku": { "type": "string" }, "qty": { "type": "number" }, "price": { "type": "number" } },
+                "required": ["sku", "qty", "price"]
+              }
+            }
+          },
+          "required": ["orders"],
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "each",
+            "kind": "map",
+            "name": "Price Each",
+            "timeout": 120,
+            "map": {
+              "items": "{{input.orders}}",
+              "concurrency": 2,
+              "on_item_error": "fail",
+              "step": {
+                "kind": "code",
+                "name": "Price One",
+                "input": { "order": "{{item}}", "index": "{{index}}" },
+                "code": {
+                  "network": [],
+                  "secrets": [],
+                  "timeout": 10,
+                  "source": "async function run(input, ctx) {\n  const o = input.order;\n  return { sku: o.sku, index: input.index, line: o.qty * o.price };\n}"
+                },
+                "output_schema": {
+                  "type": "object",
+                  "properties": { "sku": { "type": "string" }, "index": { "type": "number" }, "line": { "type": "number" } },
+                  "required": ["sku", "index", "line"]
+                }
+              }
+            },
+            "output_schema": {}
+          },
+          {
+            "id": "total",
+            "kind": "code",
+            "name": "Total",
+            "input": { "lines": "{{nodes.each.output.items}}", "count": "{{nodes.each.output.count}}" },
+            "timeout": 60,
+            "code": {
+              "network": [],
+              "secrets": [],
+              "timeout": 10,
+              "source": "async function run(input, ctx) {\n  const skus = input.lines.map(l => l.sku).join(',');\n  const total = input.lines.reduce((s, l) => s + l.line, 0);\n  return { total, count: input.count, skus };\n}"
+            },
+            "output_schema": {
+              "type": "object",
+              "properties": { "total": { "type": "number" }, "count": { "type": "number" }, "skus": { "type": "string" } },
+              "required": ["total", "count", "skus"]
+            }
+          }
+        ],
+        "output": "{{nodes.total.output}}",
+        "output_schema": {
+          "properties": { "total": { "type": "number" }, "count": { "type": "number" }, "skus": { "type": "string" } },
+          "required": ["total", "count", "skus"],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {
+        "orders": [
+          { "sku": "A", "qty": 2, "price": 10 },
+          { "sku": "B", "qty": 1, "price": 22 },
+          { "sku": "C", "qty": 3, "price": 1.5 }
+        ]
+      },
+      "status": "completed",
+      "nodeStatuses": { "each": "done", "total": "done" },
+      "outputValues": {
+        "total": [46.5],
+        "count": [3],
+        "skus": ["A,B,C"]
+      }
+    }
+  }
+}

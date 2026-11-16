@@ -17,23 +17,18 @@ struct ManagementBadgeStoreTests {
     private func counts(
         customAgents: Int = 0,
         remoteAgents: Int = 0,
-        installedThemes: Int = 0,
         workspaces: Int = 0,
         observedChannelCount: Int? = nil
     ) -> [ManagementTab: Int] {
         ManagementBadgeStore.mainActorCounts(
             connectedInferenceProviders: 3,
-            sandboxPlugins: 1,
             tools: 12,
             skills: 4,
             customCommands: 2,
             customAgents: customAgents,
             remoteAgents: remoteAgents,
-            schedules: 5,
-            watchers: 6,
+            events: 5,
             knowledgeCollections: 7,
-            downloadedSpeechModels: 1,
-            installedThemes: installedThemes,
             workspaces: workspaces,
             observedChannelCount: observedChannelCount
         )
@@ -53,11 +48,6 @@ struct ManagementBadgeStoreTests {
         #expect(counts(customAgents: 0, remoteAgents: 1)[.agents] == 1)
     }
 
-    @Test("Themes badge matches the Themes page header: every installed theme")
-    func themesCount() {
-        #expect(counts(installedThemes: 5)[.themes] == 5)
-    }
-
     @Test("Channels badge is only present once the page has reported a count")
     func channelsCount() {
         #expect(counts(observedChannelCount: nil)[.agentChannels] == nil)
@@ -68,18 +58,18 @@ struct ManagementBadgeStoreTests {
     func passThrough() {
         let c = counts()
         #expect(c[.providers] == 3)
-        #expect(c[.sandbox] == 1)
         #expect(c[.tools] == 12)
         #expect(c[.skills] == 4)
         #expect(c[.commands] == 2)
-        #expect(c[.schedules] == 5)
-        #expect(c[.watchers] == 6)
+        #expect(c[.automations] == 5)
         #expect(c[.knowledge] == 7)
-        #expect(c[.voice] == 1)
         // Resolved off-main; never part of the synchronous map.
         #expect(c[.models] == nil)
-        #expect(c[.imageGeneration] == nil)
         #expect(c[.memory] == nil)
+        // Status pages list no items of the user's, so they carry no badge.
+        #expect(c[.voice] == nil)
+        #expect(c[.imageGeneration] == nil)
+        #expect(c[.sandbox] == nil)
         // Nothing ever computes an Identity count.
         #expect(c[.identity] == nil)
     }
@@ -87,7 +77,7 @@ struct ManagementBadgeStoreTests {
     @Test("background-resolved tabs are the ones carried between recomputes")
     func backgroundResolvedTabs() {
         #expect(
-            Set(ManagementBadgeStore.backgroundResolvedTabs) == [.models, .imageGeneration, .memory]
+            Set(ManagementBadgeStore.backgroundResolvedTabs) == [.models, .memory]
         )
     }
 
@@ -102,7 +92,7 @@ struct ManagementBadgeStoreTests {
             } else {
                 UserDefaults.standard.removeObject(forKey: key)
             }
-            ManagementBadgeStore.shared.refreshNow()
+            ManagementBadgeStore.shared.reloadObservedCountsFromDefaults()
         }
 
         ManagementBadgeStore.shared.setObservedCount(4, for: .agentChannels)
@@ -111,5 +101,32 @@ struct ManagementBadgeStoreTests {
 
         ManagementBadgeStore.shared.setObservedCount(0, for: .agentChannels)
         #expect(ManagementBadgeStore.shared.snapshot.counts[.agentChannels] == 0)
+    }
+
+    @Test("recompute serves observed counts from memory, not UserDefaults")
+    @MainActor
+    func observedCountServedFromCache() async throws {
+        let key = ManagementBadgeStore.observedCountDefaultsKey(for: .agentChannels)
+        let previous = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let previous {
+                UserDefaults.standard.set(previous, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            ManagementBadgeStore.shared.reloadObservedCountsFromDefaults()
+        }
+
+        ManagementBadgeStore.shared.setObservedCount(3, for: .agentChannels)
+        // An out-of-band defaults write must not be re-read on the main-actor
+        // recompute path (that read is what hung the main thread).
+        UserDefaults.standard.set(9, forKey: key)
+        ManagementBadgeStore.shared.refreshNow()
+        #expect(ManagementBadgeStore.shared.snapshot.counts[.agentChannels] == 3)
+
+        // Pushing a new count still persists it for the next launch.
+        ManagementBadgeStore.shared.setObservedCount(5, for: .agentChannels)
+        #expect(UserDefaults.standard.integer(forKey: key) == 5)
+        #expect(ManagementBadgeStore.shared.snapshot.counts[.agentChannels] == 5)
     }
 }

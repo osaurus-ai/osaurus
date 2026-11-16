@@ -62,6 +62,9 @@ public struct DocumentSecurityFinding: Codable, Equatable, Hashable, Sendable {
         case script
         case formula
         case malformedContent
+        /// Text present in the file but not visible to a human reader
+        /// (drawn off-page or at an invisible size).
+        case hiddenContent
         case truncatedContent
         case unsupportedFeature
         case integrityUnavailable

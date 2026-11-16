@@ -253,7 +253,7 @@ When you want Osaurus to execute tools on your behalf (manage the iteration budg
 
 - Each pending `tool_call` is executed against the registered `ToolRegistry` (sandbox, folder, MCP, plugin tools — everything the agent has access to).
 - Independent tool calls within a single model turn run **in parallel**.
-- The loop is capped at 30 iterations; if the budget is exhausted while still requesting tools, a notice is appended to the stream so the client sees a clear reason rather than a silent stop.
+- The loop runs up to 30 iterations by default (Chat → Advanced → **Max Tool Attempts**, clamped to 120); if the budget is exhausted while still requesting tools, a notice is appended to the stream so the client sees a clear reason rather than a silent stop.
 - Honors client-supplied `tools` (merged with the agent's always-loaded set) and `tool_choice` (defaults to `"auto"` when tools are present).
 - **Authenticated remote callers** (Osaurus [Secure Channel](SECURE_CHANNEL.md), agent-scoped) that drive an agent whose owner granted a **host workspace folder** also get host file tools (`file_read` / `file_write` / `file_edit`) confined to that folder. `shell_run` / `git_commit` / `file_undo` stay denied (see the deny list below), and loopback callers never mount it.
 
@@ -270,7 +270,9 @@ Combine `/chat/completions` (your harness's own tool loop) with `/mcp/tools` + `
 
 Folder write and shell tools are **denied to external surfaces by default** — neither `/mcp/call` nor the `/agents/{id}/run` loop will execute `file_write`, `file_edit`, `file_undo`, `shell_run`, or `git_commit`, even while a working folder is open in the app and those tools are registered process-wide. `/mcp/call` returns `403` with `{"error": "tool_not_exposable"}`, the agent loop hands the model a structured `rejected` envelope, and the denied names are hidden from `GET /mcp/tools` listings. Rationale: loopback connections skip Bearer auth, so an external caller could otherwise rewrite the user's files or run arbitrary shell commands through the open folder session. Write access from outside the app otherwise goes through the sandbox (`sandbox_*` tools on sandboxed agents), which is isolated by construction.
 
-**One narrow exception — per-agent host workspace.** When an **authenticated remote** caller (Osaurus [Secure Channel](SECURE_CHANNEL.md), agent-scoped key — never loopback, plaintext, `/mcp/call`, or a cross-agent key) drives an agent that has a **working folder** (Agent → Configure → Features → Working Folder, or picked with the chat Folder chip), the `/agents/{id}/run` loop may execute `file_write` and `file_edit`, confined to that folder by the folder tools' own root. `file_read` is always permitted; `shell_run`, `git_commit`, and `file_undo` stay denied even then. The folder root is bound (as a task-local) only after the secure-transport, built-in, and agent-scope gates pass, so the relaxation is unreachable from any untrusted surface.
+The same deny list covers the knowledge/skill mutation tools (`write_knowledge`, `edit_knowledge`, `delete_knowledge`, `update_skill`), every `agent_channel_*` tool, and every built-in Apple app tool (`calendar_*`, `reminders_*`, `contacts_*`, `notes_*`, `mail_*`, `messages_*`, `location_*`, `maps_*`, `music_*`, `shortcuts_*`). The Apple tools are per-agent, approval-gated, and backed by the user's TCC grants, none of which an external caller can be shown; drive them through an agent in the app instead. See [APPLE_APPS.md](APPLE_APPS.md).
+
+**One narrow exception — per-agent host workspace.** When an **authenticated remote** caller (Osaurus [Secure Channel](SECURE_CHANNEL.md), agent-scoped key — never loopback, plaintext, `/mcp/call`, or a cross-agent key) drives an agent that has a **working folder** (Agent → Abilities → Overview → Working Folder, or picked with the chat Folder chip), the `/agents/{id}/run` loop may execute `file_write` and `file_edit`, confined to that folder by the folder tools' own root. `file_read` is always permitted; `shell_run`, `git_commit`, and `file_undo` stay denied even then. The folder root is bound (as a task-local) only after the secure-transport, built-in, and agent-scope gates pass, so the relaxation is unreachable from any untrusted surface.
 
 ### Session Grouping (`session_id`)
 
@@ -552,6 +554,16 @@ curl http://127.0.0.1:1337/v1/responses \
 | `temperature` | float | Sampling temperature |
 | `max_output_tokens` | integer | Maximum tokens to generate |
 | `top_p` | float | Top-p sampling parameter |
+| `top_k` | integer | Optional Osaurus extension; 0 disables this filter |
+| `min_p` | float | Optional Osaurus extension for minimum-probability sampling |
+| `seed` | integer | Optional Osaurus/compatible-endpoint extension; 0 is explicit |
+| `repetition_penalty` | float | Optional Osaurus extension; finite and greater than 0, independent of additive frequency/presence penalties |
+| `enable_thinking` | boolean | Optional explicit model-template thinking control |
+| `chat_template_kwargs` | object | Model-defined JSON variables passed to its own chat template |
+
+Omitted extensions preserve the existing model and request defaults. These extensions are not promises that an upstream Responses provider supports them: compatible routes forward supported values, and routes without a representation reject explicit unsupported controls before inference. Chat Completions also accepts `seed`, `repetition_penalty`, and `chat_template_kwargs`.
+
+Template variables preserve nested objects, arrays, `null`, `false`, and zero. Explicit typed thinking/reasoning options take precedence over their template aliases. Request-owned `messages`, `tools`, and `add_generation_prompt`, tokenizer-owned special-token variables, and internal transport markers cannot be overridden at the top level. Template errors are returned rather than replaced with a generic chat prompt.
 
 ---
 
@@ -666,13 +678,37 @@ Example response:
 
 ---
 
+## Credits API
+
+### Credit Balance — `GET /credits/balance` (also available at `GET /v1/credits/balance`)
+
+Read-only Osaurus Router credit balance for local tools. Requires a valid master access key (`Authorization: Bearer <key>`), or "Allow local API access without a key" enabled on the Credits screen. Agent-scoped keys are refused, and requests with an `Origin` header (browsers) always need a key.
+
+```bash
+curl http://127.0.0.1:1337/v1/credits/balance -H "Authorization: Bearer $OSAURUS_KEY"
+```
+
+```json
+{
+  "balance_credits": "72500.00",
+  "balance_micro": "7250000",
+  "frozen": false,
+  "fetched_at": "2026-09-21T10:00:00Z",
+  "stale": false
+}
+```
+
+The balance is cached for 30 seconds and always reflects a value fetched from the Router. `stale: true` means the refresh failed and the last known value was returned. Errors: `403 credits_access_not_authorized`, `409 router_disabled`, `409 no_account`, `503 router_unavailable`, `502 router_error`.
+
+---
+
 ## Notes
 
 1. **Model Availability**: Only models that have been downloaded through the Osaurus UI will be available via the API.
 
 2. **Performance**: The first request to a model loads it; subsequent requests skip this step. Concurrent same-model requests share a single forward pass via vmlx-swift's `BatchEngine` continuous batching. Multi-turn KV cache reuse is automatic and content-addressed via vmlx's `CacheCoordinator` — repeated prefixes (system prompt, tools, prior turns) are matched without any client opt-in. The `prefix_hash` response field is informational; `session_id` groups history but is not a cache key.
 
-3. **Memory Management**: Models are loaded into memory on demand and governed by Settings > Local Inference > Model Management. The eviction policy controls strict one-model versus flexible multi-model residency; "Keep model loaded after use" controls idle unload timing after the final request/window lease drops. Idle unload releases weights and runtime buffers only — downloaded models and disk KV cache entries remain intact. `/health` keeps `loaded`, `current_model`, and `inflight`, and adds `resident_models[]` entries with `idle_unload_at` and `idle_seconds_remaining`. KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for hybrid models) is owned by vmlx-swift's `CacheCoordinator`, which sizes each tier per model.
+3. **Memory Management**: Models are loaded into memory on demand and governed by Server → Server Settings → Model Memory. **Eviction Policy** controls strict one-model versus flexible multi-model residency; **Model Residency** (Keep Model Loaded, or Unload After 30 seconds by default) controls idle unload timing after the final request/window lease drops. Idle unload releases weights and runtime buffers only — downloaded models and disk KV cache entries remain intact. `/health` keeps `loaded`, `current_model`, and `inflight`, and adds `resident_models[]` entries with `idle_unload_at` and `idle_seconds_remaining`. KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for hybrid models) is owned by vmlx-swift's `CacheCoordinator`, which sizes each tier per model.
 
 4. **GPU Acceleration**: MLX uses Apple Silicon unified memory for GPU-accelerated inference.
 

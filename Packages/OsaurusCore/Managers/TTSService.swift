@@ -204,6 +204,8 @@ public final class TTSService: ObservableObject {
     private var manager: PocketTtsManager?
     private var playbackTask: Task<Void, Never>?
     private var initTask: Task<Void, Never>?
+    /// Playback requested before the model was resident; runs once it is.
+    private var pendingPlayback: (() -> Void)?
 
     /// All AVAudioEngine work lives here, serialized on the pipeline's own
     /// queue, because engine construction and `start()` block on coreaudiod
@@ -259,17 +261,12 @@ public final class TTSService: ObservableObject {
             return
         }
 
+        let plain = MarkdownStripper.plainText(from: text)
         guard isModelReady else {
-            if Self.pocketTtsModelsExistOnDisk() {
-                // Models already downloaded; just load them into memory.
-                ensureModelLoaded()
-            } else {
-                NotificationCenter.default.post(name: .openTTSSettingsRequested, object: nil)
-            }
+            guard !plain.isEmpty else { return }
+            loadThenPlay(text: plain, messageId: messageId, callId: nil, voiceOverride: voiceOverride)
             return
         }
-
-        let plain = MarkdownStripper.plainText(from: text)
         guard !plain.isEmpty else { return }
 
         stop()
@@ -277,18 +274,54 @@ public final class TTSService: ObservableObject {
         startPlayback(text: plain, messageId: messageId, voiceOverride: voiceOverride)
     }
 
+    /// True when playback can start without a download: the model is
+    /// resident, or its files are on disk and load on first use.
+    public var canSpeakWithoutDownload: Bool {
+        isModelReady || Self.pocketTtsModelsExistOnDisk()
+    }
+
+    /// Whether the PocketTTS files are downloaded, as of the last
+    /// `probeModelFiles()`. Lets settings show voice as available without
+    /// loading the model into memory.
+    @Published public private(set) var modelFilesOnDisk = false
+
+    public func probeModelFiles() {
+        Task.detached(priority: .utility) {
+            let exists = Self.pocketTtsModelsExistOnDisk()
+            await MainActor.run { TTSService.shared.modelFilesOnDisk = exists }
+        }
+    }
+
+    /// The model loads on first use, not at launch. Marks the message as
+    /// playing right away (so the speaker shows Stop, and Stop cancels the
+    /// wait), then starts audio once the model is ready. Returns false and
+    /// opens TTS settings when the model has never been downloaded.
+    @discardableResult
+    private func loadThenPlay(text: String, messageId: UUID, callId: String?, voiceOverride: String?) -> Bool {
+        guard Self.pocketTtsModelsExistOnDisk() else {
+            NotificationCenter.default.post(name: .openTTSSettingsRequested, object: nil)
+            return false
+        }
+        stop()
+        playingMessageId = messageId
+        activeSpeakCallId = callId
+        pendingPlayback = { [weak self] in
+            self?.startPlayback(text: text, messageId: messageId, voiceOverride: voiceOverride)
+        }
+        ensureModelLoaded()
+        return true
+    }
+
     /// Fire-and-forget playback for the `speak` tool. Sets
     /// `activeSpeakCallId` so the row spinner runs until audio drains
     public func startToolPlayback(text: String, messageId: UUID, callId: String, voiceOverride: String? = nil) throws {
-        guard isModelReady else {
-            if Self.pocketTtsModelsExistOnDisk() {
-                ensureModelLoaded()
-            } else {
-                NotificationCenter.default.post(name: .openTTSSettingsRequested, object: nil)
-            }
-            throw TTSPlaybackError.modelNotReady
-        }
         let plain = MarkdownStripper.plainText(from: text)
+        guard isModelReady else {
+            guard !plain.isEmpty else { return }
+            guard loadThenPlay(text: plain, messageId: messageId, callId: callId, voiceOverride: voiceOverride)
+            else { throw TTSPlaybackError.modelNotReady }
+            return
+        }
         guard !plain.isEmpty else { return }
 
         stop()
@@ -299,6 +332,7 @@ public final class TTSService: ObservableObject {
 
     /// Stop any in-flight synthesis and clear playback state.
     public func stop() {
+        pendingPlayback = nil
         playbackTask?.cancel()
         playbackTask = nil
         streamFinished = true
@@ -338,7 +372,9 @@ public final class TTSService: ObservableObject {
 
         modelState = .downloading(fraction: nil)
         let voice = TTSConfigurationStore.load().voice
+        CoreMLLoadSentinel.begin(.tts, modelId: "pocket-tts")
         initTask = Task { [weak self] in
+            defer { CoreMLLoadSentinel.end(.tts) }
             do {
                 // Route through the downloader explicitly so we get progress callbacks.
                 // When models are already cached this returns nearly instantly.
@@ -365,42 +401,35 @@ public final class TTSService: ObservableObject {
                     guard let self else { return }
                     self.manager = mgr
                     self.modelState = .ready
+                    self.modelFilesOnDisk = true
                     self.initTask = nil
+                    if let play = self.pendingPlayback {
+                        self.pendingPlayback = nil
+                        play()
+                    }
                 }
             } catch {
                 await MainActor.run {
                     guard let self else { return }
                     self.modelState = .failed(error.localizedDescription)
                     self.initTask = nil
+                    if self.pendingPlayback != nil {
+                        self.pendingPlayback = nil
+                        self.playingMessageId = nil
+                        self.reportPlaybackFailure(error.localizedDescription)
+                    }
                 }
             }
         }
     }
 
-    /// Refresh `modelState` by checking the PocketTTS cache on disk.
-    /// Call this on app launch and when returning to the settings tab.
-    /// If models are already present, transitions to `.ready` after a fast local load.
-    public func refreshModelState() {
-        if case .ready = modelState { return }
-        if initTask != nil { return }
-
-        // The on-disk probe stats several files (`getattrlist` over XPC), which
-        // can block for seconds under filesystem pressure. This runs during
-        // `applicationDidFinishLaunching`, so do the probe off the main thread
-        // and hop back to update state, keeping launch off the critical path.
-        Task.detached(priority: .utility) {
-            let exists = Self.pocketTtsModelsExistOnDisk()
-            await MainActor.run {
-                let service = TTSService.shared
-                if case .ready = service.modelState { return }
-                if service.initTask != nil { return }
-                if exists {
-                    service.ensureModelLoaded()
-                } else {
-                    service.modelState = .notReady
-                }
-            }
-        }
+    /// Frees the PocketTTS model when nothing is speaking or loading. The next
+    /// speak loads it again. Called under critical memory pressure.
+    public func unloadIfIdle() {
+        guard case .ready = modelState, initTask == nil, playingMessageId == nil, let mgr = manager else { return }
+        manager = nil
+        modelState = .notReady
+        Task { await mgr.cleanup() }
     }
 
     nonisolated private static func pocketTtsModelsExistOnDisk() -> Bool {
@@ -450,6 +479,15 @@ public final class TTSService: ObservableObject {
             PocketTTSVoiceCatalog.availableVoices.contains(requestedVoice)
             ? requestedVoice : TTSConfiguration.defaultVoice
         let temperature = Float(config.temperature)
+        // Activity log: local synthesis, one row per utterance.
+        let activity = MediaActivityLogger.beginSpeech(
+            text: text,
+            model: "kyutai/pocket-tts",
+            voice: voice,
+            provider: "PocketTTS",
+            endpoint: nil,
+            trigger: activeSpeakCallId != nil ? .speakTool : .readAloud
+        )
 
         playbackTask = Task { [weak self] in
             // Engine configure + start makes synchronous XPC round-trips to
@@ -460,9 +498,15 @@ public final class TTSService: ObservableObject {
             } catch {
                 self?.modelState = .failed(error.localizedDescription)
                 self?.playingMessageId = nil
+                self?.reportPlaybackFailure(error.localizedDescription)
+                activity.finish(audioSeconds: nil, error: error.localizedDescription)
                 return
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                activity.finish(audioSeconds: nil, error: nil, cancelled: true)
+                return
+            }
+            var totalAudioSec = 0.0
             do {
                 // Synthesize one utterance at a time instead of handing the
                 // whole paste to a single streaming call. PocketTTS keeps a
@@ -506,6 +550,7 @@ public final class TTSService: ObservableObject {
                     // keep up and the player node will starve between chunks.
                     let synthSec = Date().timeIntervalSince(chunkStart)
                     let audioSec = Double(sampleCount) / 24_000.0
+                    totalAudioSec += audioSec
                     let rtf = audioSec > 0 ? synthSec / audioSec : 0
                     TTSDebugLog.log(
                         "  chunk \(index + 1)/\(chunks.count) done frames=\(frameCount) "
@@ -519,9 +564,12 @@ public final class TTSService: ObservableObject {
                         format: "playback synthesis complete id=%@ totalWallSec=%.2f",
                         messageId.uuidString, Date().timeIntervalSince(playbackStart)))
                 self?.markStreamFinished(for: messageId)
+                activity.finish(audioSeconds: totalAudioSec, error: nil, cancelled: Task.isCancelled)
             } catch is CancellationError {
                 // stop() already cleared state
+                activity.finish(audioSeconds: totalAudioSec, error: nil, cancelled: true)
             } catch {
+                activity.finish(audioSeconds: totalAudioSec, error: error.localizedDescription)
                 self?.handleStreamError(error, for: messageId)
             }
         }
@@ -536,6 +584,16 @@ public final class TTSService: ObservableObject {
 
         let trimmedOverride = voiceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
         let voice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.remoteVoice)
+        // Activity log: the text is about to leave this Mac for the TTS
+        // provider. One Cloud row per utterance with the destination host.
+        let activity = MediaActivityLogger.beginSpeech(
+            text: text,
+            model: config.remoteModel,
+            voice: voice,
+            provider: EgressInfo.host(from: config.remoteEndpoint) ?? L("OpenAI-compatible TTS"),
+            endpoint: OpenAICompatibleTTSClient.resolvedEndpoint(config.remoteEndpoint),
+            trigger: activeSpeakCallId != nil ? .speakTool : .readAloud
+        )
 
         playbackTask = Task { [weak self] in
             // Keychain read is blocking XPC; a detached task keeps it off the
@@ -543,7 +601,10 @@ public final class TTSService: ObservableObject {
             let apiKey = await Task.detached(priority: .userInitiated) {
                 TTSRemoteAPIKeyStore.loadSync()
             }.value
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                activity.finish(audioSeconds: nil, error: nil, cancelled: true)
+                return
+            }
             let client = OpenAICompatibleTTSClient(
                 endpoint: config.remoteEndpoint,
                 model: config.remoteModel,
@@ -556,19 +617,29 @@ public final class TTSService: ObservableObject {
             } catch {
                 self?.lastRemoteError = error.localizedDescription
                 self?.playingMessageId = nil
+                self?.reportPlaybackFailure(error.localizedDescription)
+                activity.finish(audioSeconds: nil, error: error.localizedDescription)
                 return
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                activity.finish(audioSeconds: nil, error: nil, cancelled: true)
+                return
+            }
+            var sampleCount = 0
             do {
                 let stream = try client.synthesizeStreaming(text: text)
                 for try await samples in stream {
                     if Task.isCancelled { break }
+                    sampleCount += samples.count
                     self?.schedule(samples: samples)
                 }
                 self?.markStreamFinished(for: messageId)
+                activity.finish(audioSeconds: Double(sampleCount) / 24_000.0, error: nil, cancelled: Task.isCancelled)
             } catch is CancellationError {
                 // stop() already cleared state
+                activity.finish(audioSeconds: Double(sampleCount) / 24_000.0, error: nil, cancelled: true)
             } catch {
+                activity.finish(audioSeconds: Double(sampleCount) / 24_000.0, error: error.localizedDescription)
                 self?.handleRemoteStreamError(error, for: messageId)
             }
         }
@@ -582,6 +653,7 @@ public final class TTSService: ObservableObject {
         lastRemoteError = error.localizedDescription
         if playingMessageId == messageId {
             stop()
+            reportPlaybackFailure(error.localizedDescription)
         }
     }
 
@@ -626,7 +698,13 @@ public final class TTSService: ObservableObject {
         TTSDebugLog.log("playback error id=\(messageId) error=\(error.localizedDescription)")
         if playingMessageId == messageId {
             stop()
+            reportPlaybackFailure(error.localizedDescription)
         }
+    }
+
+    /// The speaker icon just turning off reads as "ignored"; say why.
+    private func reportPlaybackFailure(_ reason: String) {
+        _ = ToastManager.shared.error(L("Couldn't read the reply aloud"), message: reason)
     }
 
 }

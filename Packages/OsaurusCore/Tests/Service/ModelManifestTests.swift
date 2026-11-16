@@ -4,6 +4,86 @@ import Testing
 @testable import OsaurusCore
 
 struct ModelManifestTests {
+    /// The SwiftPM test/eval process has no Info.plist. Without an explicit
+    /// stand-in version the gate must stay closed (`unknownOsaurusVersion`);
+    /// with `OSAURUS_HOST_VERSION` set it compares against that version; a
+    /// real bundle version always wins over the environment.
+    @Test func hostVersionFallsBackToExplicitEnvironmentOnlyOutsideABundle() throws {
+        let manifest = try ModelManifest.decode(
+            Data(#"{"required_osaurus_version":"0.25.0","model_version":"1"}"#.utf8))
+
+        let none = ModelManifest.resolveHostVersion(bundled: nil, environment: [:])
+        #expect(none == "")
+        #expect(manifest.compatibilityFailure(hostVersion: none)?.reason == .unknownOsaurusVersion)
+        #expect(ModelManifest.resolveHostVersion(bundled: "", environment: [:]) == "")
+
+        let standIn = ModelManifest.resolveHostVersion(bundled: nil, environment: ["OSAURUS_HOST_VERSION": "0.25.13"])
+        #expect(standIn == "0.25.13")
+        #expect(manifest.compatibilityFailure(hostVersion: standIn) == nil)
+
+        let older = ModelManifest.resolveHostVersion(bundled: "", environment: ["OSAURUS_HOST_VERSION": "0.24.9"])
+        #expect(manifest.compatibilityFailure(hostVersion: older)?.reason == .requiresOsaurusUpdate)
+
+        // Inside the app the bundle's version is authoritative.
+        #expect(
+            ModelManifest.resolveHostVersion(bundled: "0.26.0", environment: ["OSAURUS_HOST_VERSION": "0.24.9"])
+                == "0.26.0")
+    }
+
+    @Test func legacyAutomaticChecksRequireRegisteredOfficialRepository() {
+        let registered: Set<String> = ["osaurusai/model", "other/model", "osaurusai.evil/model", "osaurusai/model/extra"]
+        #expect(ModelManager.isRegisteredOfficialUpdateRepository("OsaurusAI/model", registered: registered))
+        for id in ["OsaurusAI/unknown", "other/model", "osaurusai.evil/model", "OsaurusAI/model/extra", "OsaurusAI/"] {
+            #expect(!ModelManager.isRegisteredOfficialUpdateRepository(id, registered: registered))
+        }
+    }
+
+    @Test func legacyUpdateStatusDoesNotInventAnInstalledRevision() {
+        let available = ModelManifest(requiredOsaurusVersion: "0.25.0", modelVersion: "10")
+        let check = ModelManifestCheck(
+            local: .absent,
+            remote: .init(revision: String(repeating: "a", count: 40), manifest: available),
+            error: nil, checkedAt: Date()
+        )
+        #expect(check.status == .verificationRequired)
+        #expect(check.verificationRequired)
+        #expect(!check.updateAvailable)
+        let legacy = ModelManifestCheck(
+            local: .absent,
+            remote: .init(revision: String(repeating: "a", count: 40), manifest: nil),
+            error: nil, checkedAt: Date()
+        )
+        #expect(legacy.status == .unversionedPublisher)
+        #expect(!legacy.updateAvailable)
+    }
+
+    @Test func failedAndMalformedChecksCannotReportCurrent() {
+        let manifest = ModelManifest(requiredOsaurusVersion: "0.25.0", modelVersion: "1")
+        let remote = HuggingFaceService.ManifestSnapshot(revision: String(repeating: "a", count: 40), manifest: manifest)
+        let failed = ModelManifestCheck(local: .present(manifest), remote: remote, error: "offline", checkedAt: Date())
+        #expect(failed.status == .unavailable)
+        let invalid = ModelManifestCheck(
+            local: .invalid(ModelManifest.invalid("broken file")), remote: remote, error: nil, checkedAt: Date()
+        )
+        #expect(invalid.status == .invalidLocal)
+        #expect(!invalid.updateAvailable)
+    }
+
+    @Test(arguments: ["1", "01", "2", "10"])
+    func updateStatusComparesNumericRevisions(installed: String) {
+        let check = ModelManifestCheck(
+            local: .present(ModelManifest(requiredOsaurusVersion: "0.25.0", modelVersion: installed)),
+            remote: .init(
+                revision: String(repeating: "a", count: 40),
+                manifest: ModelManifest(requiredOsaurusVersion: "0.25.0", modelVersion: "2")
+            ),
+            error: nil, checkedAt: Date()
+        )
+        let expected: ModelManifestCheck.Status =
+            installed == "2" ? .current : installed == "10" ? .installedNewer : .updateAvailable
+        #expect(check.status == expected)
+    }
+
     @Test(arguments: ["0.25.0", "0.25.1", "1.0", "1", "0.25.0+build.7"])
     func compatibleHosts(host: String) throws {
         let manifest = try ModelManifest.decode(

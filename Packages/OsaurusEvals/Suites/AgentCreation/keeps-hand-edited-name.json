@@ -1,0 +1,18 @@
+{
+  "id": "agent_creation.keeps-hand-edited-name",
+  "domain": "agent_creation",
+  "label": "agent creation • a name typed in the panel survives the Configurator's draft",
+  "query": "Make me a budgeting helper that totals my monthly spending by category.",
+  "notes": "The person named the agent \"Penny\" in the panel before sending. The turn carries the panel note; the Configurator drafts the rest, turns on the calculator for the arithmetic, and must not replace the name (the store keeps it either way, so a rename attempt shows up as `kept_user_edits`, not a changed name).",
+  "fixtures": {},
+  "expect": {
+    "agentCreation": {
+      "maxIterations": 10,
+      "replies": ["Just a monthly total per category from what I paste in."],
+      "capabilitiesOn": ["calculator_enabled"],
+      "toolMode": "auto",
+      "maxClarifications": 1,
+      "handEditedName": "Penny"
+    }
+  }
+}

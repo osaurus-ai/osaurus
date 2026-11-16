@@ -15,25 +15,15 @@ struct ToolAvailabilityBadge: View {
     private var tint: Color {
         switch availability.primaryReason {
         case .available, .alreadyLoaded, .loadableViaCapabilitiesLoad:
-            return theme.accentColor
+            return theme.action.primary.default.background
         case .disabled, .hiddenByAgentScope, .hiddenByExecutionMode, .notSelectedByPreflight:
-            return theme.secondaryText
+            return theme.text.secondary
         case .permissionBlocked, .missingPermission, .notInstalled, .notRegistered, .pluginConfigRequired:
-            return theme.warningColor
+            return theme.status.warning.foreground
         }
     }
 
     var body: some View {
-        Text(availability.displayLabel)
-            .font(.system(size: 8, weight: .medium))
-            .foregroundColor(tint)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                Capsule()
-                    .fill(tint.opacity(0.12))
-                    .overlay(Capsule().strokeBorder(tint.opacity(0.18), lineWidth: 1))
-            )
-            .help(availability.compactSummary)
+        StatusChip(availability.displayLabel, tint: tint, help: availability.compactSummary)
     }
 }

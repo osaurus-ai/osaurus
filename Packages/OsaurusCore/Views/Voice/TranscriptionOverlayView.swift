@@ -29,18 +29,14 @@ public struct TranscriptionOverlayView: View {
     /// Callback when user presses Cancel
     var onCancel: (() -> Void)?
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     // MARK: - State
 
     /// Entrance animation state
     @State private var isAppeared = false
-
-    /// Hover state for close button
-    @State private var isCloseHovered = false
-
-    /// Hover state for stop button
-    @State private var isStopHovered = false
 
     /// Pulsing state for the status dot
     @State private var dotPulse = false
@@ -49,7 +45,7 @@ public struct TranscriptionOverlayView: View {
 
     private let cornerRadius: CGFloat = 14
 
-    private var statusColor: Color { isProcessing ? theme.warningColor : theme.accentColor }
+    private var statusColor: Color { isProcessing ? theme.status.warning.foreground : theme.status.info.foreground }
     private var statusText: LocalizedStringKey { isProcessing ? "Processing" : "Listening" }
 
     public init(
@@ -68,38 +64,41 @@ public struct TranscriptionOverlayView: View {
         self.onCancel = onCancel
     }
 
-    private let badgeHeight: CGFloat = 28
+    private var badgeHeight: CGFloat { max(NativeComponentInspectionStyle.metric(45, "height", 28, theme), theme.lineHeight(.caption) + 2 * NativeComponentInspectionStyle.metric(45, "padding", theme.space.s4, theme)) }
 
     public var body: some View {
-        ZStack {
-            // Live audio spectrum — the single waveform, centered in the card.
-            WaveformView(
-                level: audioLevel,
-                style: .bars,
-                barCount: 22,
-                primaryColor: .white,
-                isActive: isActive && !isProcessing
-            )
-            .frame(width: 240, height: 26)
-            .opacity(isProcessing ? 0 : 1)
+        Group {
 
-            // Stop / Cancel controls share the waveform's horizontal axis,
-            // pinned to the card's left and right edges.
-            HStack(spacing: 0) {
-                cancelButton
+        ZStack {
+            if isProcessing {
+                SettingsSpinner(tint: theme.text.primary)
+                    .accessibilityHidden(true)
+            } else {
+                WaveformView(
+                    level: audioLevel,
+                    style: .bars,
+                    barCount: 22,
+                    primaryColor: theme.assignedColor("component.library.45.accent", fallback: FixedPalette.onMedia),
+                    isActive: isActive
+                )
+                .frame(width: 240, height: 26)
+            }
+
+            HStack(spacing: theme.space.s0) {
+                VoiceOverlayIconButton(icon: "xmark", label: "Cancel (Esc)") { onCancel?() }
                 Spacer(minLength: 0)
                 if showsStopButton && !isProcessing {
-                    stopButton
+                    VoiceOverlayIconButton(icon: "stop.fill", label: "Stop and insert") { onDone?() }
                 }
             }
         }
         .frame(height: 30)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionOverlayView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionOverlayView.body.paddingX")
         // Push the row below the badge that straddles the top border.
         .padding(.top, badgeHeight / 2 + 14)
-        .padding(.bottom, 16)
+        .padding(.bottom, theme.space.s16)
         .frame(width: 320)
-        .modifier(OverlayGlassBackground(cornerRadius: cornerRadius))
+        .modifier(OverlayBackground(cornerRadius: cornerRadius))
         // The status badge straddles the top border like a notch.
         .overlay(alignment: .top) {
             statusBadge
@@ -111,132 +110,76 @@ public struct TranscriptionOverlayView: View {
         .scaleEffect(isAppeared ? 1.0 : 0.95)
         .opacity(isAppeared ? 1.0 : 0)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(theme.motion.quick) {
                 isAppeared = true
             }
             dotPulse = true
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     // MARK: - Subviews
 
     /// Pulsing dot + status label, rendered as an opaque pill so it reads
     /// cleanly where it cuts through the card's top border.
     private var statusBadge: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s6, theme))) {
             Circle()
                 .fill(statusColor)
                 .frame(width: 7, height: 7)
                 .scaleEffect(dotPulse ? 1.3 : 0.85)
                 .opacity(dotPulse ? 1.0 : 0.55)
-                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: dotPulse)
+                .animation(theme.motion.loop(.easeInOut, duration: 0.8, autoreverses: true), value: dotPulse)
 
             Text(statusText, bundle: .module)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white)
-        }
-        .padding(.horizontal, 14)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.smallLabel)
+                .foregroundColor(theme.assignedColor("component.library.45.foreground", fallback: FixedPalette.onMedia))
+        }.catalogLayoutTarget("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.paddingX")
         .frame(height: badgeHeight)
-        .modifier(BadgeGlassBackground(tint: statusColor))
-    }
-
-    /// Stop & insert — only shown when transcription won't stop on its own.
-    private var stopButton: some View {
-        Button(action: { onDone?() }) {
-            Image(systemName: "stop.fill")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white.opacity(isStopHovered ? 1.0 : 0.7))
-                .frame(width: 24, height: 24)
-                .background(
-                    Circle()
-                        .fill(Color.white.opacity(isStopHovered ? 0.22 : 0.12))
-                )
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(isStopHovered ? 1.05 : 1.0)
-        .animation(.easeOut(duration: 0.15), value: isStopHovered)
-        .onHover { hovering in
-            isStopHovered = hovering
-        }
-        .localizedHelp("Stop and insert")
-    }
-
-    /// Cancel — discards the transcript.
-    private var cancelButton: some View {
-        Button(action: { onCancel?() }) {
-            Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.white.opacity(isCloseHovered ? 1.0 : 0.7))
-                .frame(width: 24, height: 24)
-                .background(
-                    Circle()
-                        .fill(Color.white.opacity(isCloseHovered ? 0.22 : 0.12))
-                )
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(isCloseHovered ? 1.05 : 1.0)
-        .animation(.easeOut(duration: 0.15), value: isCloseHovered)
-        .onHover { hovering in
-            isCloseHovered = hovering
-        }
-        .localizedHelp("Cancel (Esc)")
+        .modifier(BadgeBackground(tint: statusColor))
     }
 }
 
-// MARK: - Badge Glass Background
+// MARK: - Badge Background
 
-/// Liquid Glass capsule for the status badge (macOS 26+), tinted with the
-/// state color, with a themed translucent fallback on earlier systems.
-private struct BadgeGlassBackground: ViewModifier {
-    @Environment(\.theme) private var theme
+/// Opaque status badge capsule tinted with the state color. No Liquid Glass:
+/// the base window material is the only translucent layer in the app.
+private struct BadgeBackground: ViewModifier {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     let tint: Color
 
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content
-                .background(Capsule().fill(Color.black.opacity(0.55)))
-                .glassEffect(.regular.tint(tint.opacity(0.28)), in: Capsule())
-                .overlay(Capsule().strokeBorder(tint.opacity(0.5), lineWidth: 1))
-        } else {
-            content
-                .background(Capsule().fill(Color.black.opacity(0.85)))
-                .background(Capsule().fill(tint.opacity(0.22)))
-                .clipShape(Capsule())
-                .overlay(Capsule().strokeBorder(tint.opacity(0.5), lineWidth: 1))
-        }
+        content
+            .background(RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(45, "radius", 14, theme)).fill(theme.assignedColor("component.library.45.background", fallback: FixedPalette.mediaScrim(0.85))))
+            .background(Capsule().fill(theme.assignedColor("component.library.45.background", fallback: theme.wash(behind: tint))))
+            .clipShape(RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(45, "radius", 14, theme)))
+            .overlay(RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(45, "radius", 14, theme)).strokeBorder(theme.assignedColor("component.library.45.border", fallback: theme.rule(around: tint)), lineWidth: theme.stroke.default))
     }
 }
 
-// MARK: - Glass Background
+// MARK: - Overlay Background
 
-/// Applies Liquid Glass to the overlay on macOS 26+, with a clean themed
-/// fallback (solid rounded card + border + shadow) on earlier systems.
-private struct OverlayGlassBackground: ViewModifier {
-    @Environment(\.theme) private var theme
+/// Opaque dark HUD card (independent of the app theme) with an accent border
+/// and a soft shadow. Reads cleanly on both light and dark desktops.
+private struct OverlayBackground: ViewModifier {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     let cornerRadius: CGFloat
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        // A consistent dark HUD (independent of the app theme) reads cleanly on
-        // both light and dark desktops and avoids the washed-out "outcast" that a
-        // translucent white fill produced on light themes.
-        if #available(macOS 26.0, *) {
-            content
-                .background(shape.fill(Color.black.opacity(0.55)))
-                .glassEffect(.regular, in: shape)
-                .overlay(
-                    shape.strokeBorder(theme.accentColor.opacity(0.55), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.25), radius: 10, x: 0, y: 4)
-        } else {
-            content
-                .background(shape.fill(Color.black.opacity(0.8)))
-                .clipShape(shape)
-                .overlay(
-                    shape.strokeBorder(theme.accentColor.opacity(0.55), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 3)
-        }
+        let shape = RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(45, "radius", cornerRadius, theme), style: .continuous)
+        content
+            .background(shape.fill(theme.assignedColor("component.library.45.background", fallback: FixedPalette.mediaScrim(0.8))))
+            .clipShape(shape)
+            .overlay(
+                shape.strokeBorder(theme.assignedColor("component.library.45.border", fallback: theme.border.focus), lineWidth: theme.stroke.default)
+            )
+            .themeElevation(theme.elevation.raised)
     }
 }
 
@@ -244,12 +187,14 @@ private struct OverlayGlassBackground: ViewModifier {
 
 #if DEBUG
     struct TranscriptionOverlayView_Previews: PreviewProvider {
+        @MainActor private static var theme: any ThemeProtocol { ThemeManager.shared.currentTheme }
+
         static var previews: some View {
             ZStack {
-                Color(hex: "0f0f10")
+                CustomizableTheme.dark().surface.canvas
                     .ignoresSafeArea()
 
-                VStack(spacing: 30) {
+                VStack(spacing: theme.space.s32) {
                     // Active with audio
                     TranscriptionOverlayView(
                         audioLevel: 0.6,
@@ -266,7 +211,7 @@ private struct OverlayGlassBackground: ViewModifier {
                         onCancel: { print("Cancel") }
                     )
                 }
-                .padding(40)
+                .padding(theme.space.s40)
             }
             .frame(width: 450, height: 250)
         }

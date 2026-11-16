@@ -121,7 +121,7 @@ enum SubagentModelResolution {
         capabilityId: String,
         agentId: UUID?,
         evalModel: String?,
-        invokingParentModelName: String? = nil,
+        invokingParentModelName: String?,
         idleWaitSeconds: Int,
         deniedMessage: String,
         unavailableMessage: String,

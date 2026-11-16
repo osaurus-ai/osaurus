@@ -17,6 +17,29 @@ import Testing
 @Suite("SharedArtifact trust-boundary hardening", .serialized)
 struct SharedArtifactSecurityTests {
 
+    /// A missing file is `not_found` and not retryable as-is, and the hint
+    /// names the file tools only when the caller holds them.
+    @Test func failureEnvelope_missingFileIsNotFoundAndScopeAware() throws {
+        let reason = SharedArtifact.ResolutionFailure.fileNotFound(path: "report.md", searchedLocations: ["/w/report.md"])
+        let shareOnly = ToolExecutionScope(exposed: [])
+        shareOnly.activate(["share_artifact"])
+        let envelope = ChatExecutionContext.$toolExecutionScope.withValue(shareOnly) {
+            SharedArtifact.failureEnvelope(reason: reason, executionMode: .sandbox)
+        }
+        let parsed = try #require(
+            try JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any])
+        #expect(parsed["kind"] as? String == "not_found")
+        #expect(parsed["retryable"] as? Bool == false)
+        #expect(!(parsed["message"] as? String ?? "").contains("file_read"))
+
+        let withFiles = ToolExecutionScope(exposed: [])
+        withFiles.activate(["share_artifact", "file_read"])
+        let listed = ChatExecutionContext.$toolExecutionScope.withValue(withFiles) {
+            SharedArtifact.failureEnvelope(reason: reason, executionMode: .sandbox)
+        }
+        #expect(listed.contains("file_read"))
+    }
+
     /// Cross-suite serialization gate. Other suites that also touch
     /// `OsaurusPaths.overrideRoot` (e.g. `AttachmentSpilloverTests`)
     /// race with us if they run concurrently — `@Suite(.serialized)`

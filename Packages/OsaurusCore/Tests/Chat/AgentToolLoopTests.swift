@@ -23,7 +23,7 @@ private final class ScriptedLoopSurface {
     /// Result envelope per tool name; defaults to a generic success.
     var toolResults: [String: AgentLoopToolExecution] = [:]
     var cancelled = false
-    /// When true, `buildMessages` reports a hard context overflow.
+    /// When true, `buildMessages` reports an advisory context estimate.
     var overBudget = false
     /// When non-nil, hooks expose `pendingTodoCount` returning this value
     /// (the chat surface's session-todo plumb).
@@ -1065,52 +1065,64 @@ struct AgentToolLoopTests {
         #expect(AgentToolLoop.continuationRequestNotice(pending: 1).contains("1 item remains"))
     }
 
-    /// The stream consumer's cut is authoritative — it stopped reading, so
-    /// whatever terminal reason the runtime reports describes a generation
-    /// nobody finished. A wall of one repeated sentence is never an answer.
-    @Test func repetitionLoopOutranksTheReportedStopReason() {
-        for stopReason in ["stop", "length", nil] {
-            let step = AgentLoopModelStep.classifyTerminal(
+    /// Repetition can be requested data: quotes, code and fixture rows are
+    /// not grounds to override the runtime's terminal reason or retry a turn.
+    @Test func repeatedVisibleDataKeepsTheAuthoritativeTerminalReason() async throws {
+        let line = "The north gate remains open.\n"
+        let payloads = [
+            String(repeating: line, count: 20),
+            String(repeating: "> " + line, count: 20),
+            "~~~text\n" + String(repeating: line, count: 20) + "~~~",
+            "```text\n" + String(repeating: line, count: 20) + "```",
+            "| Status |\n| --- |\n" + String(repeating: "| unchanged |\n", count: 20),
+        ]
+        for content in payloads {
+            let completed = AgentLoopModelStep.classifyTerminal(
                 contentIsBlank: false,
-                thinkingIsBlank: true,
-                stopReason: stopReason,
-                requiresVisibleFinalResponse: false,
+                thinkingIsBlank: false,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: true,
                 toolsWereOffered: true,
-                content: "Let me continue:",
-                repetitionLoopPhrase: "let me continue"
+                content: content
             )
-            guard case .repetitionLoop(let phrase) = step else {
-                Issue.record("a cut stream must classify as a loop (stop=\(stopReason ?? "nil"))")
-                return
+            guard case .finalResponse = completed else {
+                Issue.record("requested repeated data must respect natural stop")
+                continue
             }
-            #expect(phrase == "let me continue")
-        }
-    }
+            for policy in [chatPolicy(), headlessPolicy()] {
+                let surface = ScriptedLoopSurface(steps: [completed, .emptyResponse])
+                let result = try await AgentToolLoop.run(
+                    policy: policy, state: AgentTaskState(), hooks: surface.makeHooks()
+                )
+                #expect(result.exit == .finalResponse)
+                #expect(result.iterations == 1)
+                #expect(surface.steps.count == 1, "no extra generation for repeated data")
+                #expect(surface.builtNotices == [[]], "no injected repetition instruction")
+                #expect(surface.emittedFinalTexts.isEmpty, "no fake task-size fallback")
+                #expect(surface.executedCalls.isEmpty)
+            }
 
-    /// Turns the consumer did not cut are unaffected.
-    @Test func absentRepetitionPhraseLeavesClassificationUnchanged() {
-        let step = AgentLoopModelStep.classifyTerminal(
-            contentIsBlank: false,
-            thinkingIsBlank: true,
-            stopReason: "stop",
-            requiresVisibleFinalResponse: false,
-            toolsWereOffered: true,
-            content: "All ten documents are loaded."
-        )
-        guard case .finalResponse = step else {
-            Issue.record("an ordinary turn must not be treated as a loop")
-            return
+            let capped = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: false,
+                stopReason: "length",
+                requiresVisibleFinalResponse: true,
+                toolsWereOffered: true,
+                content: content
+            )
+            guard case .lengthExhausted = capped else {
+                Issue.record("an explicit output limit must remain authoritative")
+                continue
+            }
+            let surface = ScriptedLoopSurface(steps: [capped, .finalResponse])
+            let result = try await AgentToolLoop.run(
+                policy: chatPolicy(), state: AgentTaskState(), hooks: surface.makeHooks()
+            )
+            #expect(result.exit == .lengthExhausted)
+            #expect(surface.steps.count == 1, "a capped turn must not silently retry")
+            #expect(surface.builtNotices == [[]])
+            #expect(surface.emittedFinalTexts == [AgentToolLoop.lengthExhaustedFallback])
         }
-    }
-
-    /// The notice has to name the repeated phrase — a generic "you repeated
-    /// yourself" gives a small model nothing to steer away from.
-    @Test func repetitionNoticeNamesThePhraseAndDemandsOneAction() {
-        let notice = AgentToolLoop.repetitionLoopNotice(phrase: "let me continue")
-        #expect(notice.contains("let me continue"))
-        #expect(notice.contains("exactly ONE concrete thing"))
-        // Degrades cleanly when the phrase was not captured.
-        #expect(!AgentToolLoop.repetitionLoopNotice(phrase: nil).contains("(\"\")"))
     }
 
     @Test func recoveryIdempotencyOrdinalDistinguishesLogicalReplayOnly() {
@@ -1299,24 +1311,6 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.isEmpty)
     }
 
-    @Test func oversizedToolCallGetsOneUnchargedChunkingRetry() async throws {
-        let surface = ScriptedLoopSurface(steps: [
-            .oversizedToolCall(toolName: "file_write", argumentCharacters: 16_500),
-            .toolCalls([inv("file_write", #"{"path":"index.html","content":"part"}"#)]),
-            .finalResponse,
-        ])
-        let result = try await AgentToolLoop.run(
-            policy: chatPolicy(maxIterations: 2),
-            state: AgentTaskState(),
-            hooks: surface.makeHooks()
-        )
-
-        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
-        #expect(surface.executedCalls.map(\.name) == ["file_write"])
-        #expect(surface.builtNotices.count == 3)
-        #expect(surface.builtNotices[1].joined().contains("mode: \"append\""))
-    }
-
     @Test func truncatedToolCallGetsOneUnchargedChunkingRetry() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .truncatedToolCall(toolName: "file_write", argumentCharacters: 9_100),
@@ -1333,38 +1327,6 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.map(\.name) == ["file_write"])
         #expect(surface.builtNotices[1].joined().contains("reached the model output limit"))
         #expect(surface.builtNotices[1].joined().contains("mode: \"append\""))
-    }
-
-    @Test func streamingArgumentLimitFitsWorstCaseEscapedWriteChunk() throws {
-        let content = String(
-            repeating: #"\"#,
-            count: WorkspaceToolContract.maxWriteContentCharacters
-        )
-        let data = try JSONSerialization.data(withJSONObject: [
-            "path": "escaped.txt",
-            "content": content,
-        ])
-        #expect(data.count < AgentToolLoop.maxStreamingToolArgumentCharacters)
-    }
-
-    @Test func repeatedOversizedToolCallStopsWithoutAnotherDecodeLoop() async throws {
-        let surface = ScriptedLoopSurface(steps: [
-            .oversizedToolCall(toolName: "file_write", argumentCharacters: 16_500),
-            .oversizedToolCall(toolName: "file_write", argumentCharacters: 16_600),
-            .finalResponse,
-        ])
-        let result = try await AgentToolLoop.run(
-            policy: chatPolicy(),
-            state: AgentTaskState(),
-            hooks: surface.makeHooks()
-        )
-
-        #expect(
-            result
-                == AgentToolLoop.RunResult(exit: .oversizedToolCallExhausted, iterations: 1)
-        )
-        #expect(surface.emittedFinalTexts == [AgentToolLoop.oversizedToolCallFallback])
-        #expect(surface.steps.count == 1)
     }
 
     @Test func repeatedTruncatedToolCallStopsWithoutAnotherDecodeLoop() async throws {
@@ -1604,17 +1566,6 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.count == max)
     }
 
-    @Test func nearLimitNoticeAddsDelegationNudgeOnlyWhenSpawnVisible() {
-        let plain = AgentToolLoop.contextNearLimitNotice(spawnAvailable: false)
-        #expect(plain.contains("Context is nearly full"))
-        #expect(!plain.contains("spawn"))
-
-        let nudged = AgentToolLoop.contextNearLimitNotice(spawnAvailable: true)
-        #expect(nudged.contains("Context is nearly full"))
-        #expect(nudged.contains("spawn tool"))
-        #expect(nudged.contains("self-contained input"))
-    }
-
     @Test func budgetWarningStagedAtThreshold() async throws {
         // maxIterations 5, threshold 3: after iteration 2 remaining == 3,
         // so iterations 3, 4, 5 must each see the warning notice.
@@ -1781,8 +1732,10 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.map(\.name) == ["bad_tool"])
         #expect(state.lastResultClass == .error)
         #expect(surface.emittedToolRejectionTexts == ["no"])
-        // No batch-complete callback on early stop.
-        #expect(surface.batchOutcomes.isEmpty)
+        // Per-batch history consumers need the processed rejection even
+        // when the remainder of the model's batch does not execute.
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes.first?.map(\.invocation.toolName) == ["bad_tool"])
     }
 
     @Test func rejectionContinuesUnderHeadlessPolicy() async throws {
@@ -1912,6 +1865,27 @@ struct AgentToolLoopTests {
         #expect(AgentToolLoop.shouldStopAfterToolOutcome(outcome))
     }
 
+    /// Reading a failed workflow test run succeeds; the run's own `error`
+    /// and `retryable` fields must not end the Architect's turn.
+    @Test func successDescribingAFailedRunDoesNotEndTheTurn() {
+        let result = ToolEnvelope.success(
+            tool: "workflow_runs",
+            result: [
+                "error": ["node_id": "parse_repo", "reason": "Enter a valid GitHub repository URL."],
+                "failure": ["kind": "code", "retryable": false, "fix_in": "workflow"],
+                "status": "failed",
+            ])
+        let outcome = AgentLoopToolOutcome(
+            invocation: inv("workflow_runs"),
+            callId: "read-failed-run",
+            result: result,
+            wasDeduped: false,
+            wasError: ToolEnvelope.isError(result)
+        )
+        #expect(!outcome.wasError)
+        #expect(!AgentToolLoop.shouldStopAfterToolOutcome(outcome))
+    }
+
     @Test func terminalComputerUseEnvelopeStopsChatWithoutParentFollowUp() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("computer_use")]),
@@ -1971,7 +1945,7 @@ struct AgentToolLoopTests {
             result: ToolEnvelope.failure(
                 kind: .unavailable,
                 message:
-                    "No AppleScript model is installed. Download one in Settings → Computer Use → Models.",
+                    "No AppleScript model is installed. Download one in Settings → Local Models → AppleScript.",
                 tool: "mac_query",
                 retryable: false
             ),
@@ -2239,6 +2213,145 @@ struct AgentToolLoopTests {
         #expect(state.lastResultEnvelope == nil)
     }
 
+    @Test func serialInterceptCommitsEarlierOutcomesWithoutExecutingLaterCalls() async throws {
+        let surface = ScriptedLoopSurface(steps: [.toolCalls([
+            inv("first", callId: "call_first"),
+            inv("complete", #"{"summary":"done"}"#, callId: "call_complete"),
+            inv("never_runs", callId: "call_never"),
+        ])])
+        surface.toolResults["complete"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(tool: "complete", text: "done"), endRun: true
+        )
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(), state: AgentTaskState(), hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .endedBySurface)
+        #expect(surface.executedCalls.map(\.name) == ["first", "complete"])
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes.first?.map(\.callId) == ["call_first"])
+    }
+
+    @Test func processedCallCancellationDoesNotExecuteLaterBatchWrites() async throws {
+        for limit in [0, 1, 2] {
+            let surface = ScriptedLoopSurface(steps: [
+                .toolCalls([inv("write_one"), inv("write_two"), inv("write_three")])
+            ])
+            var hooks = surface.makeHooks()
+            let serial = hooks.executeTool
+            hooks.executeBatch = { calls in
+                var results: [AgentLoopToolExecution] = []
+                for call in calls { results.append(await serial(call.invocation, call.callId)) }
+                return results
+            }
+            hooks.isCancelled = { surface.executedCalls.count >= limit }
+            AgentLoopEvaluator.applyProcessedCallCancellation(to: &hooks, after: limit)
+            let result = try await AgentToolLoop.run(
+                policy: chatPolicy(),
+                state: AgentTaskState(),
+                hooks: hooks
+            )
+            #expect(result.exit == .cancelled)
+            #expect(surface.executedCalls.map(\.name) == Array(["write_one", "write_two"].prefix(limit)))
+            #expect(surface.emittedToolRejectionTexts.isEmpty)
+        }
+    }
+
+    @Test func ordinaryEvalKeepsParallelDispatch() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("one"), inv("two")]), .finalResponse,
+        ])
+        var hooks = surface.makeHooks()
+        var batches = 0
+        hooks.executeBatch = { calls in
+            batches += 1
+            return calls.map {
+                AgentLoopToolExecution(result: ToolEnvelope.success(tool: $0.invocation.toolName, text: "ok"))
+            }
+        }
+        AgentLoopEvaluator.applyProcessedCallCancellation(to: &hooks, after: nil)
+        let result = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .finalResponse)
+        #expect(batches == 1)
+        #expect(surface.executedCalls.isEmpty)
+    }
+
+    @Test func nativeRejectedWriteStopsWithoutCreatingFileOrRunningSibling() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_write", #"{"path":"report.key","content":"hello"}"#), inv("never_runs")])
+        ])
+        var hooks = surface.makeHooks()
+        hooks.executeTool = { call, _ in
+            let result: String
+            do {
+                result = try await FileWriteTool(rootPath: root).execute(argumentsJSON: call.jsonArguments)
+            } catch {
+                Issue.record("Native fixture unexpectedly threw: \(error)")
+                return AgentLoopToolExecution(result: ToolEnvelope.fromError(error, tool: call.toolName), isError: true)
+            }
+            #expect(result.contains("\"kind\":\"rejected\""))
+            #expect(call.toolName == "file_write")
+            return AgentLoopToolExecution(result: result, isError: ToolEnvelope.isError(result))
+        }
+        let result = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .toolRejected)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("report.key").path))
+    }
+
+    @Test func iterationPreparationFollowsRecordedBatchAndPrecedesNextSnapshot() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("first"), inv("second")]), .finalResponse,
+        ])
+        var hooks = surface.makeHooks()
+        var crossings: [(builds: Int, batches: Int, results: Int)] = []
+        let build = hooks.buildMessages
+        hooks.buildMessages = { notices in
+            crossings.append((surface.builtNotices.count, surface.batchOutcomes.count,
+                              surface.batchOutcomes.last?.count ?? 0))
+            return try await build(notices)
+        }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .finalResponse)
+        try #require(crossings.count == 2)
+        #expect(crossings[0].builds == 0 && crossings[0].batches == 0)
+        #expect(crossings[1].builds == 1 && crossings[1].batches == 1)
+        #expect(crossings[1].results == 2)
+    }
+
+    @Test func cancelledIterationPreparationNeverBuildsOrStartsAnotherRequest() async throws {
+        let surface = ScriptedLoopSurface(steps: [.finalResponse])
+        var hooks = surface.makeHooks()
+        hooks.buildMessages = { _ in
+            surface.cancelled = true
+            return AgentLoopIterationInput(messages: [])
+        }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .cancelled)
+        #expect(surface.builtNotices.isEmpty)
+        #expect(surface.steps.count == 1)
+    }
+
+    @Test func failedIterationPreparationPreservesResultsAndDoesNotStartNextRequest() async throws {
+        enum Failure: Error { case summary }
+        let surface = ScriptedLoopSurface(steps: [.toolCalls([inv("read")]), .finalResponse])
+        var hooks = surface.makeHooks()
+        let build = hooks.buildMessages
+        hooks.buildMessages = { notices in
+            if !surface.batchOutcomes.isEmpty { throw Failure.summary }
+            return try await build(notices)
+        }
+        await #expect(throws: Failure.self) {
+            try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        }
+        #expect(surface.builtNotices.count == 1)
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.steps.count == 1)
+    }
+
     @Test func cancellationStopsBetweenToolCalls() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("first_tool"), inv("second_tool")])
@@ -2261,6 +2374,8 @@ struct AgentToolLoopTests {
         #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 1))
         #expect(surface.executedCalls.map(\.name) == ["first_tool"])
         #expect(surface.emittedToolRejectionTexts.isEmpty)
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes.first?.map(\.invocation.toolName) == ["first_tool"])
     }
 
     @Test func cancellationWinsOverAConcurrentDenialWithoutSyntheticText() async throws {
@@ -3094,7 +3209,7 @@ struct AgentToolLoopParallelBatchTests {
 
     @Test func batchBindsSharedBatchIdForUndoGrouping() async {
         // Multi-call batches bind one `ChatExecutionContext.currentBatchId`
-        // for the whole wave so the file-operation log can group them.
+        // for the whole wave so its tool calls can be correlated.
         actor BatchIds {
             private(set) var ids: [UUID?] = []
             func record(_ id: UUID?) { ids.append(id) }
@@ -3120,26 +3235,66 @@ struct AgentToolLoopParallelBatchTests {
 @MainActor
 struct AgentLoopOverBudgetTests {
 
-    @Test func overBudgetEndsRunBeforeModelStep() async throws {
-        // `buildMessages` reporting a hard overflow must end the run with
-        // the distinct `.overBudget` exit WITHOUT a model step or any
-        // tool execution — the request is doomed, don't send it.
+    @Test("second chat turn reaches runtime when protected history exceeds an estimated window")
+    func secondTurnEstimateDoesNotRefuse() async throws {
+        // Same shared builder/driver as ChatView, without model or network I/O.
+        // A small fallback/provider window permits question 1, then the first
+        // answer pushes question 2 over the heuristic history allowance.
+        let manager = AgentLoopBudget.makeBudgetManager(
+            contextWindow: 4_096, systemPromptChars: 800,
+            toolTokens: 0, maxResponseTokens: nil)
+        let first = [
+            ChatMessage(role: "system", content: String(repeating: "s", count: 800)),
+            ChatMessage(role: "user", content: "Hello"),
+        ]
+        let second = first + [
+            ChatMessage(role: "assistant", content: String(repeating: "answer ", count: 1_500)),
+            ChatMessage(role: "user", content: "Explain that further"),
+        ]
+        for (index, messages) in [first, second].enumerated() {
+            let surface = ScriptedLoopSurface(steps: [.finalResponse])
+            var hooks = surface.makeHooks()
+            hooks.buildMessages = { notices in
+                let input = AgentLoopBudget.composeIterationMessages(
+                    messages, notices: notices, manager: manager,
+                    watermark: CompactionWatermark())
+                #expect(input.overBudget == (index == 1))
+                #expect(input.messages.count == messages.count)
+                return input
+            }
+            let result = try await AgentToolLoop.run(
+                policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+            #expect(result.exit == .finalResponse)
+            #expect(surface.steps.isEmpty, "turn \(index + 1) must reach the runtime")
+        }
+    }
+
+    @Test func overBudgetEstimateStillRunsModelAndTools() async throws {
         let surface = ScriptedLoopSurface(steps: [
-            .toolCalls([inv("never_runs")])
+            .toolCalls([inv("runs")]), .finalResponse,
         ])
         surface.overBudget = true
-
         let result = try await AgentToolLoop.run(
-            policy: chatPolicy(),
-            state: AgentTaskState(),
-            hooks: surface.makeHooks()
-        )
+            policy: chatPolicy(), state: AgentTaskState(), hooks: surface.makeHooks())
+        #expect(result.exit == .finalResponse)
+        #expect(result.iterations == 2)
+        #expect(surface.executedCalls.count == 1)
+        #expect(surface.steps.isEmpty)
+    }
 
-        #expect(result.exit == .overBudget)
-        #expect(result.iterations == 0)
-        #expect(surface.executedCalls.isEmpty)
-        // The scripted model step was never consumed.
-        #expect(surface.steps.count == 1)
+    @Test func runtimeContextErrorPropagatesDespiteEstimate() async throws {
+        enum RuntimeError: Error { case contextLimit }
+        let surface = ScriptedLoopSurface(steps: [])
+        surface.overBudget = true
+        var hooks = surface.makeHooks()
+        hooks.modelStep = { _, _ in throw RuntimeError.contextLimit }
+        do {
+            _ = try await AgentToolLoop.run(
+                policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+            Issue.record("runtime context error must propagate")
+        } catch RuntimeError.contextLimit {
+            // Real backend errors remain authoritative.
+        }
     }
 
     @Test func composeIterationMessagesReportsHardOverflow() {

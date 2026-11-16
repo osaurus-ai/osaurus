@@ -20,6 +20,34 @@ import Testing
 @Suite("RemoteChatRequest encoding")
 struct RemoteChatRequestEncodingTests {
 
+    @Test func wireProbeCapturesSelectedProtocolEndpointAtRequestConstruction() async throws {
+        let rows: [(RemoteProviderType, String)] = [
+            (.openResponses, "/v1/responses"),
+            (.openaiLegacy, "/v1/chat/completions"),
+            (.anthropic, "/v1/messages"),
+            (.gemini, "/v1/models/fixture-model:streamGenerateContent"),
+        ]
+        for (type, path) in rows {
+            let service = RemoteProviderService(
+                provider: RemoteProvider(
+                    name: "wire-fixture", host: "example.test", providerProtocol: .https,
+                    port: nil, basePath: "/v1", authType: .none, providerType: type
+                ),
+                models: ["fixture-model"], resolvedHeaders: [:]
+            )
+            let probe = WireTransportProbe()
+            let built = try await WireTransportProbe.$current.withValue(probe) {
+                try await service.buildURLRequest(for: Self.makeRequest(
+                    model: "fixture-model", maxTokens: nil, stream: true
+                ))
+            }
+            #expect(built.url?.path == path)
+            #expect(probe.requestEndpointURL?.path == path)
+            #expect(probe.requestEndpointURL?.query == nil)
+            #expect(probe.snapshot().request == built.httpBody)
+        }
+    }
+
     @Test func encode_nonReasoningModel_usesMaxTokens() throws {
         let request = Self.makeRequest(model: "mistral-large-latest", maxTokens: 1024)
         let payload = try Self.encodeAsDictionary(request)
@@ -50,6 +78,39 @@ struct RemoteChatRequestEncodingTests {
 
         #expect(payload["max_completion_tokens"] as? Int == 4096)
         #expect(payload["max_tokens"] == nil)
+    }
+
+    /// GPT-6 Astra has no dotted minor (`gpt-6-astra`) but is a reasoning
+    /// model like the rest of the gpt-5+ line: it must take the
+    /// `max_completion_tokens` key and the request must not carry the
+    /// sampler knobs Astra rejects.
+    @Test func encode_gpt6Astra_usesMaxCompletionTokens() throws {
+        let request = Self.makeRequest(model: "gpt-6-astra", maxTokens: 4096)
+        let payload = try Self.encodeAsDictionary(request)
+
+        #expect(payload["max_completion_tokens"] as? Int == 4096)
+        #expect(payload["max_tokens"] == nil)
+
+        // Official API-key route accepts every documented Astra effort.
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let (accepted, thinking) = RemoteProviderService.remoteChatReasoningControls(
+                providerType: .openResponses,
+                host: "api.openai.com",
+                model: "gpt-6-astra",
+                effort: effort
+            )
+            #expect(accepted == effort, "official API must accept \(effort)")
+            #expect(thinking == nil)
+        }
+        // `none` is a GPT-5.6-only wire value; Astra rejects it, so the
+        // direct-rail alias stays stripped even on the official host.
+        let (none, _) = RemoteProviderService.remoteChatReasoningControls(
+            providerType: .openResponses,
+            host: "api.openai.com",
+            model: "gpt-6-astra",
+            effort: "none"
+        )
+        #expect(none == nil)
     }
 
     @Test func encode_nilMaxTokens_omitsBothKeys() throws {
@@ -151,6 +212,36 @@ struct RemoteChatRequestEncodingTests {
         let config = payload["generationConfig"] as? [String: Any]
         #expect(config?["seed"] == nil)
         #expect(config?["responseMimeType"] == nil)
+    }
+
+    /// The picker's effort reaches native Gemini as `thinkingLevel` on
+    /// Gemini 3 and as a `thinkingBudget` on 2.5 (#3108).
+    @Test func geminiRequest_mapsReasoningEffortIntoThinkingConfig() throws {
+        let level = try Self.encodeAsDictionary(
+            Self.makeRequest(model: "gemini-3.8-flash", maxTokens: nil, reasoningEffort: "high").toGeminiRequest()
+        )
+        let levelThinking = (level["generationConfig"] as? [String: Any])?["thinkingConfig"] as? [String: Any]
+        #expect(levelThinking?["thinkingLevel"] as? String == "high")
+        #expect(levelThinking?["thinkingBudget"] == nil)
+
+        let budget = try Self.encodeAsDictionary(
+            Self.makeRequest(model: "gemini-2.5-flash", maxTokens: nil, reasoningEffort: "low").toGeminiRequest()
+        )
+        let budgetThinking = (budget["generationConfig"] as? [String: Any])?["thinkingConfig"] as? [String: Any]
+        #expect(budgetThinking?["thinkingBudget"] as? Int == 1024)
+        #expect(budgetThinking?["thinkingLevel"] == nil)
+    }
+
+    /// An effort the model does not document (3 Pro has no `medium`) and
+    /// models with no contract send no thinkingConfig at all.
+    @Test func geminiRequest_omitsThinkingConfig_whenEffortUnsupported() throws {
+        for (model, effort) in [("gemini-3-pro-preview", "medium"), ("gemini-2.0-flash", "high"), ("gemini-3.8-flash", nil)] {
+            let payload = try Self.encodeAsDictionary(
+                Self.makeRequest(model: model, maxTokens: 256, reasoningEffort: effort).toGeminiRequest()
+            )
+            let config = payload["generationConfig"] as? [String: Any]
+            #expect(config?["thinkingConfig"] == nil, "\(model) \(effort ?? "nil")")
+        }
     }
 
     // MARK: - Dropped-media rejection (Anthropic/Gemini wire)
@@ -262,6 +353,34 @@ struct RemoteChatRequestEncodingTests {
                 parameters: params
             ) == 16_384
         )
+    }
+
+    @Test func anthropicImplicitMaxTokens_usesTheModelsOwnLimitWhereTheWindowHasRoom() {
+        let cap = { (modelMax: Int?, window: Int?, prompt: Int) in
+            RemoteProviderService.anthropicImplicitMaxTokens(
+                resolved: 16_384, modelMaxTokens: modelMax, contextWindow: window, estimatedPromptTokens: prompt)
+        }
+        #expect(cap(64_000, 200_000, 20_000) == 64_000)
+        #expect(cap(64_000, 200_000, 120_000) == 50_000, "room left in 85% of the window")
+        #expect(cap(64_000, 200_000, 190_000) == 16_384, "never below the chat-wide budget")
+        #expect(cap(8_192, 200_000, 0) == 16_384, "a smaller published limit is not a raise")
+        #expect(cap(nil, 200_000, 0) == 16_384)
+        #expect(cap(64_000, nil, 0) == 16_384, "no window, no way to check the room")
+    }
+
+    /// Adaptive-thinking Claude generations return HTTP 400 "`temperature` is
+    /// deprecated for this model." — the encoder must omit the sampler knobs
+    /// for them (opus-5 included) while older dated snapshots keep them.
+    @Test func anthropicRequest_omitsSamplerKnobsForAdaptiveThinkingModels() throws {
+        for model in ["claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "anthropic/claude-opus-5"] {
+            let anthropic = Self.makeRequest(model: model, maxTokens: 1024).toAnthropicRequest()
+            #expect(anthropic.temperature == nil, "\(model) must not carry temperature")
+            #expect(anthropic.top_p == nil, "\(model) must not carry top_p")
+        }
+        let legacy = Self.makeRequest(model: "claude-haiku-4-5", maxTokens: 1024).toAnthropicRequest()
+        // Float(0.7) widened to Double — compare with tolerance.
+        let legacyTemperature = try #require(legacy.temperature)
+        #expect(abs(legacyTemperature - 0.7) < 0.0001)
     }
 
     @Test func anthropicStreamingToolsEnableEagerInputStreaming() throws {
@@ -954,6 +1073,254 @@ struct RemoteChatRequestEncodingTests {
 
         let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
         #expect(request.toChatCompletionRequest().tools == nil)
+    }
+
+    /// Codex CLI sends `reasoning: {"summary": "auto"}` with no `effort` when
+    /// it has no metadata for a custom-provider model. `effort` is optional
+    /// in the Responses API; requiring it rejected every Codex turn with
+    /// "missing required key `effort` at reasoning".
+    @Test func openResponsesRequest_acceptsReasoningWithoutEffort() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "raptor-0.6-4b-jang_6m",
+              "input": "hi",
+              "reasoning": { "summary": "auto" },
+              "stream": true
+            }
+            """#.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        #expect(request.reasoning?.effort == nil)
+        #expect(request.reasoning?.summary == "auto")
+        // No effort on the wire means no effort override downstream — the
+        // model's own default applies, not a synthetic one.
+        #expect(request.toChatCompletionRequest().reasoning_effort == nil)
+
+        // An explicit effort still round-trips.
+        let withEffort = Data(
+            #"""
+            { "model": "m", "input": "hi", "reasoning": { "effort": "low" } }
+            """#.utf8
+        )
+        let explicit = try JSONDecoder().decode(OpenResponsesRequest.self, from: withEffort)
+        #expect(explicit.toChatCompletionRequest().reasoning_effort == "low")
+    }
+
+    /// The exact request shape Codex CLI 0.155.1 (`codex exec`) sends a custom
+    /// `wire_api = "responses"` provider, captured against a loopback echo
+    /// server and trimmed (instructions/prompts shortened, two goal tools
+    /// dropped). Every structural feature is kept: `instructions`, developer +
+    /// user `message` items with `input_text` parts, `strict: false` function
+    /// tools, a `namespace` tool with nested `tools`, a `web_search` tool,
+    /// `reasoning` without `effort`, `store: false`, `include`,
+    /// `prompt_cache_key`, and `client_metadata`. This is the request the
+    /// Server → "Use with Codex CLI" card exists to serve.
+    @Test func openResponsesRequest_decodesCodexCLICustomProviderTurn() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "raptor-0.6-4b-jang_6m",
+              "instructions": "You are a coding agent running in the Codex CLI, a terminal-based coding assista…",
+              "input": [
+                {
+                  "type": "message",
+                  "id": "msg_01a0c717-a8c9-7a50-b9b7-cd9fe5a2faf1",
+                  "role": "developer",
+                  "content": [
+                    { "type": "input_text", "text": "<skills_instructions>\n## Skills\nA skill is a set of local instructions to follow that is s…" },
+                    { "type": "input_text", "text": "<permissions instructions>\nFilesystem sandboxing defines which files can be read or writte…" }
+                  ]
+                },
+                {
+                  "type": "message",
+                  "id": "msg_01a0c717-a8c9-7a50-b9b7-cdaed8ad1386",
+                  "role": "user",
+                  "content": [
+                    { "type": "input_text", "text": "<environment_context>\n  <cwd>/tmp/osaurus-codex-proof/work</cwd>\n  <shell>zsh</shell>\n  <c…" }
+                  ]
+                },
+                {
+                  "type": "message",
+                  "id": "msg_01a0c717-a8d6-7b51-8c77-9a2510199d49",
+                  "role": "user",
+                  "content": [
+                    { "type": "input_text", "text": "Use the shell to read notes.txt in the current directory, then reply with only the secret …" }
+                  ]
+                }
+              ],
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "exec_command",
+                  "description": "Runs a command in a PTY, returning outpu",
+                  "strict": false,
+                  "parameters": {
+                    "type": "object",
+                    "properties": { "cmd": { "type": "string" }, "max_output_tokens": { "type": "number" } },
+                    "required": ["cmd"],
+                    "additionalProperties": false
+                  }
+                },
+                {
+                  "type": "function",
+                  "name": "view_image",
+                  "description": "View a local image file from the filesys",
+                  "strict": false,
+                  "parameters": {
+                    "type": "object",
+                    "properties": { "path": { "type": "string", "description": "Local filesystem path to an image file." } },
+                    "required": ["path"],
+                    "additionalProperties": false
+                  }
+                },
+                {
+                  "type": "namespace",
+                  "name": "multi_agent_v1",
+                  "description": "Tools for spawning and managing sub-agen",
+                  "tools": [
+                    {
+                      "type": "function",
+                      "name": "close_agent",
+                      "description": "Close an agent and any open descendants ",
+                      "strict": false,
+                      "parameters": {
+                        "type": "object",
+                        "properties": { "target": { "type": "string", "description": "Agent id to close (from spawn_" } },
+                        "required": ["target"],
+                        "additionalProperties": false
+                      }
+                    }
+                  ]
+                },
+                { "type": "web_search", "external_web_access": false }
+              ],
+              "tool_choice": "auto",
+              "parallel_tool_calls": true,
+              "reasoning": { "summary": "auto" },
+              "store": false,
+              "stream": true,
+              "include": ["reasoning.encrypted_content"],
+              "prompt_cache_key": "01a0c717-a8a2-74a1-9434-3d7c54e37a0b",
+              "client_metadata": {
+                "root_turn_id": "01a0c717-a8b7-7c30-b1a2-0be24521a36e",
+                "x-codex-turn-metadata": "{\"request_kind\":\"turn\"}"
+              }
+            }
+            """#.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        #expect(request.model == "raptor-0.6-4b-jang_6m")
+        #expect(request.stream == true)
+        #expect(request.reasoning?.effort == nil)
+        #expect(request.reasoning?.summary == "auto")
+
+        let chat = request.toChatCompletionRequest()
+        #expect(chat.reasoning_effort == nil)
+        // Only the two top-level function tools become chat tools; the
+        // namespace and web_search tools are passed over, not rejected.
+        let toolNames = chat.tools?.map(\.function.name) ?? []
+        #expect(toolNames == ["exec_command", "view_image"])
+        #expect(chat.tools?.allSatisfy { $0.function.strict == false } == true)
+        // `instructions` leads as the system message, followed by the three
+        // input messages in order.
+        #expect(chat.messages.first?.role == "system")
+        #expect(chat.messages.count == 4)
+        #expect(chat.messages.last?.role == "user")
+        #expect(chat.messages.last?.content?.contains("notes.txt") == true)
+    }
+
+    /// Codex CLI's history replay, captured from Codex 0.155.1 via a logging
+    /// proxy across a tool-calling turn and a `codex exec resume` follow-up:
+    /// - the prior `function_call` is echoed with `id`/`call_id`/`name`/
+    ///   `arguments` but no `status`;
+    /// - the `function_call_output` carries an `id`;
+    /// - the model's own answer comes back as an assistant `message` whose
+    ///   content part is `output_text`, not `input_text`.
+    /// Each of those is legal Responses input, and each one individually made
+    /// the whole `input` array fail to decode ("wrong type at input —
+    /// expected OpenResponsesInput"), so Codex could never get past its first
+    /// tool call or resume a thread.
+    @Test func openResponsesRequest_promptCacheKeyBecomesTheSessionId() throws {
+        // Codex CLI's thread id rides in `prompt_cache_key`; the local runtime
+        // keys the disk-cache chain and memory prefixes on `session_id`.
+        let keyed = try JSONDecoder().decode(
+            OpenResponsesRequest.self,
+            from: Data(
+                #"{"model":"m","input":"hi","prompt_cache_key":"01a0c717-a8a2-74a1-9434-3d7c54e37a0b"}"#.utf8))
+        #expect(keyed.toChatCompletionRequest().session_id == "01a0c717-a8a2-74a1-9434-3d7c54e37a0b")
+        let blank = try JSONDecoder().decode(
+            OpenResponsesRequest.self, from: Data(#"{"model":"m","input":"hi","prompt_cache_key":"  "}"#.utf8))
+        #expect(blank.toChatCompletionRequest().session_id == nil)
+        let absent = try JSONDecoder().decode(
+            OpenResponsesRequest.self, from: Data(#"{"model":"m","input":"hi"}"#.utf8))
+        #expect(absent.toChatCompletionRequest().session_id == nil)
+    }
+
+    @Test func openResponsesRequest_decodesCodexCLIToolFollowUpTurn() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "raptor-0.6-4b-jang_6m",
+              "instructions": "You are a coding agent…",
+              "input": [
+                { "type": "message", "id": "msg_1", "role": "user", "content": [{ "type": "input_text", "text": "Read notes.txt" }] },
+                { "type": "function_call", "id": "item_22D2E438C5DA49A9B85E88FC", "name": "exec_command", "arguments": "{\"cmd\":\"cat notes.txt\"}", "call_id": "call_2BF20B37D3C744A29988B76E" },
+                { "type": "function_call_output", "id": "fco_01a0c72a-b4d0-7c70-8c49-078c4389894c", "call_id": "call_2BF20B37D3C744A29988B76E", "output": "Chunk ID: 2afbed\nProcess exited with code 0\nOutput:\nThe secret word is PTERODACTYL.\n" },
+                { "type": "message", "id": "item_2142E6240EDB4A8DA2796DFE", "role": "assistant", "content": [{ "type": "output_text", "text": "PTERODACTYL" }] },
+                { "type": "message", "id": "msg_2", "role": "user", "content": [{ "type": "input_text", "text": "How many letters?" }] }
+              ],
+              "tools": [
+                { "type": "function", "name": "exec_command", "strict": false, "parameters": { "type": "object", "properties": { "cmd": { "type": "string" } }, "required": ["cmd"] } }
+              ],
+              "tool_choice": "auto",
+              "reasoning": { "summary": "auto" },
+              "store": false,
+              "stream": true
+            }
+            """#.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        guard case .items(let items) = request.input else {
+            Issue.record("expected item input")
+            return
+        }
+        #expect(items.count == 5)
+        guard case .functionCall(let call) = items[1] else {
+            Issue.record("expected function_call item")
+            return
+        }
+        #expect(call.status == nil)
+        #expect(call.call_id == "call_2BF20B37D3C744A29988B76E")
+        #expect(call.name == "exec_command")
+        guard case .message(let assistant) = items[3],
+            case .parts(let parts) = assistant.content,
+            case .outputText(let replayed) = parts.first
+        else {
+            Issue.record("expected assistant message with an output_text part")
+            return
+        }
+        #expect(assistant.role == "assistant")
+        #expect(replayed.text == "PTERODACTYL")
+
+        let chat = request.toChatCompletionRequest()
+        // system, user, assistant(tool_calls), tool, assistant(answer), user
+        #expect(chat.messages.map(\.role) == ["system", "user", "assistant", "tool", "assistant", "user"])
+        #expect(chat.messages[2].tool_calls?.first?.id == "call_2BF20B37D3C744A29988B76E")
+        #expect(chat.messages[2].tool_calls?.first?.function.name == "exec_command")
+        #expect(chat.messages[3].tool_call_id == "call_2BF20B37D3C744A29988B76E")
+        #expect(chat.messages[3].content?.contains("PTERODACTYL") == true)
+        #expect(chat.messages[4].content == "PTERODACTYL")
+        #expect(chat.messages[5].content == "How many letters?")
+
+        // Re-encoding keeps the replayed part as `output_text`, so a
+        // Responses-native upstream sees the item exactly as Codex sent it.
+        let reencoded = try JSONEncoder().encode(items[3])
+        #expect(String(decoding: reencoded, as: UTF8.self).contains("\"output_text\""))
+        #expect(!String(decoding: reencoded, as: UTF8.self).contains("\"input_text\""))
     }
 
     @Test func openResponsesRequest_rejectsFunctionToolWithoutName() throws {
@@ -1713,6 +2080,24 @@ struct RemoteChatRequestEncodingTests {
         let extracted = RemoteProviderService.extractErrorMessage(from: body, statusCode: 400)
         #expect(extracted.contains("attachment"))
         #expect(!extracted.contains("must be a string"))
+    }
+
+    @Test func extractErrorMessage_surfacesOpenRouterUpstreamRaw() {
+        let body = Data(
+            #"{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"{\"message\":\"tool_choice: type \\\"tool\\\" and \\\"any\\\" are not supported for this model.\"}","provider_name":"Amazon Bedrock"}}}"#.utf8
+        )
+        let extracted = RemoteProviderService.extractErrorMessage(from: body, statusCode: 400)
+        #expect(extracted.contains("Provider returned error"))
+        #expect(extracted.contains("are not supported for this model"))
+        #expect(extracted.contains("(code: 400)"))
+    }
+
+    @Test func extractErrorMessage_plainTextOpenRouterRaw() {
+        let body = Data(
+            #"{"error":{"message":"Provider returned error","metadata":{"raw":"upstream exploded"}}}"#.utf8
+        )
+        let extracted = RemoteProviderService.extractErrorMessage(from: body, statusCode: 502)
+        #expect(extracted == "Provider returned error: upstream exploded")
     }
 
     @Test func routerWireCompatibleMessages_includesEmptyStringForAssistantToolHistory() throws {
@@ -3257,11 +3642,15 @@ struct RemoteChatRequestEncodingTests {
     @Test func dsv4RemoteEffort_stripsDirectRailAliasesForAllRemoteModels() throws {
         // Direct/off aliases are local runtime controls. Public remote schemas
         // reject them as `reasoning_effort` values, even when the model is not
-        // a local DSV4 bundle.
-        for effort in ["instruct", "none", "no_think", "off", "disabled", "false"] {
+        // a local DSV4 bundle. (`none` is a real OpenAI effort on GPT-5.1+,
+        // so it is checked against a model that rejects it.)
+        for (model, effort) in [
+            ("gpt-5.5", "instruct"), ("o3", "none"), ("gpt-5.5", "no_think"),
+            ("gpt-5.5", "off"), ("gpt-5.5", "disabled"), ("gpt-5.5", "false"),
+        ] {
             let nonDSV4 = RemoteProviderService.dsv4RemoteEffort(
                 host: "api.openai.com",
-                model: "gpt-5.5",
+                model: model,
                 effort: effort
             )
             #expect(nonDSV4.effort == nil)
@@ -4280,7 +4669,9 @@ struct RemoteChatRequestEncodingTests {
                         assertNonWhitespace(textBlock.text)
                     case .toolResult(let result):
                         assertNonWhitespace(result.content?.plainText ?? "")
-                    case .toolUse, .image:
+                    case .toolUse, .image, .thinking, .redactedThinking:
+                        // Opaque/signed reasoning is not a text/tool-result
+                        // payload. Its dedicated continuity tests own it.
                         break
                     }
                 }

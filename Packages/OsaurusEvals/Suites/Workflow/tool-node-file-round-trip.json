@@ -1,0 +1,102 @@
+{
+  "id": "workflow.tool-node-file-round-trip",
+  "domain": "workflow",
+  "label": "workflow \u2022 tool steps write a file from the input and read it back",
+  "query": "tool steps write a file from the input and read it back",
+  "notes": "No model. A `file_write` tool step writes the input note into the run's folder (no caller folder, so the run workspace), and a `file_read` tool step reads it back; the second step's structured result (`kind`, `path`, `total_lines`) is the workflow output. Proves tool nodes run through ToolRegistry.execute with bound arguments, file tools resolve against the run folder, and a JSON result passes through as the step output.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [
+          {
+            "from": "save",
+            "to": "load"
+          }
+        ],
+        "examples": [],
+        "input_schema": {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "note"
+          ],
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "save",
+            "input": {
+              "content": "{{input.note}}",
+              "path": "notes/{{input.name}}.md"
+            },
+            "kind": "tool",
+            "name": "Save Note",
+            "output_schema": {},
+            "tool": {
+              "name": "file_write"
+            }
+          },
+          {
+            "id": "load",
+            "input": {
+              "path": "notes/{{input.name}}.md"
+            },
+            "kind": "tool",
+            "name": "Read Note",
+            "output_schema": {},
+            "tool": {
+              "name": "file_read"
+            }
+          }
+        ],
+        "output": {
+          "read": "{{nodes.load.output}}"
+        },
+        "output_schema": {
+          "properties": {
+            "read": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "read"
+          ],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {
+        "name": "standup",
+        "note": "Ship the tool nodes on Friday."
+      },
+      "nodeStatuses": {
+        "load": "done",
+        "save": "done"
+      },
+      "outputKeys": [
+        "read.text"
+      ],
+      "outputValues": {
+        "read.kind": [
+          "file"
+        ],
+        "read.path": [
+          "notes/standup.md"
+        ],
+        "read.total_lines": [
+          1
+        ]
+      }
+    }
+  }
+}

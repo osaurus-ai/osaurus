@@ -15,28 +15,32 @@ import SwiftUI
 
 struct MarkdownLinkText: View {
     let markdown: String
-    var font: Font = .system(size: 12)
-    var textColor: Color = .secondary
-    var linkColor: Color = .accentColor
+    var style: ThemeTextStyleRole = .caption
+    /// Defaults to `text.secondary`.
+    var textColor: Color? = nil
+    /// Defaults to `text.link`.
+    var linkColor: Color? = nil
     var alignment: TextAlignment = .leading
+
+    @Environment(\.theme) private var theme
 
     var body: some View {
         renderedText
-            .font(font)
-            .foregroundColor(textColor)
+            .textStyle(style)
+            .foregroundColor(textColor ?? theme.text.secondary)
             .multilineTextAlignment(alignment)
-            .tint(linkColor)
+            .tint(linkColor ?? theme.text.link)
             .environment(
                 \.openURL,
                 OpenURLAction { url in
-                    NSWorkspace.shared.open(url)
+                    Task.detached { NSWorkspace.shared.open(url) }
                     return .handled
                 }
             )
     }
 
     private var renderedText: Text {
-        if let attributed = Self.parseMarkdownLinks(markdown, linkColor: linkColor) {
+        if let attributed = Self.parseMarkdownLinks(markdown, linkColor: linkColor ?? theme.text.link) {
             return Text(attributed)
         }
         return Text(markdown)

@@ -31,15 +31,25 @@ struct SpawnPoolAutoAddTests {
 
     @Test("agents apply adds the new agent to the Default spawn pool; delete prunes it")
     func agentsApply_addsToSpawnPool_deleteRemoves() async throws {
-        // Cross-suite lock: delegation suites sandbox the same store via
+        // Canonical lock order: Storage → Sandbox (`AgentManager.shared`
+        // reads `OsaurusPaths.overrideRoot`, which storage-swapping suites
+        // flip) → SubagentStore innermost. Cross-suite: delegation suites
+        // sandbox the same store via
         // `SubagentConfigurationStore.setOverrideDirectory`; mutating the
         // live store while a sandbox lease is active races both sides.
-        await SubagentStoreTestLock.shared.acquire()
-        defer { SubagentStoreTestLock.shared.release() }
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            try await agentsApplyBody()
+        }
+    }
 
+    private func agentsApplyBody() async throws {
         let name = "Spawn Pool Probe \(UUID().uuidString.prefix(6))"
         var document = OsaurusConfigDocument()
-        document.agents = [AgentEntry(name: name)]
+        var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            document.agents = [entry]
         let results = await ConfigApplier.apply(document: document, prune: false)
         #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
 
@@ -50,11 +60,14 @@ struct SpawnPoolAutoAddTests {
         #expect(
             SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(created.id),
             "a newly created agent must join the Default agent's spawn pool")
-        // The create result must tell the orchestrator it can act NOW.
+        // The create result says the agent is usable NOW, without naming
+        // `spawn_agent`, which is not in the Orchestrator's schema.
         let createResult = results.first { $0.section == "agents" && $0.target == name }
+        let createMessage = createResult?.message ?? ""
         #expect(
-            createResult?.message?.contains("spawn_agent") == true,
-            "create result must point at spawn_agent: \(String(describing: createResult))")
+            createMessage.contains("can hand `\(name)` work now"),
+            "create result must say the agent is usable now: \(String(describing: createResult))")
+        #expect(!createMessage.contains("spawn_agent"), "\(createMessage)")
 
         // Re-applying the same document updates (not re-creates) the agent
         // and must not duplicate the pool entry.
@@ -71,12 +84,17 @@ struct SpawnPoolAutoAddTests {
 
     @Test("AgentManager.create auto-adds; built-ins are excluded; the append is idempotent")
     func managerCreate_addsToPool_builtInsExcluded() async throws {
-        await SubagentStoreTestLock.shared.acquire()
-        defer { SubagentStoreTestLock.shared.release() }
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            try await managerCreateBody()
+        }
+    }
 
+    private func managerCreateBody() async throws {
         let agent = AgentManager.shared.create(
             name: "Pool Create Probe \(UUID().uuidString.prefix(6))",
-            description: "", systemPrompt: "")
+            description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         #expect(
             SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(agent.id),
             "AgentManager.create must auto-add the agent to the Default spawn pool")
@@ -99,6 +117,99 @@ struct SpawnPoolAutoAddTests {
         _ = await AgentManager.shared.delete(id: agent.id)
         #expect(
             !SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(agent.id))
+    }
+
+    @Test("orchestrator_spawnable: false keeps a created agent out of the pool; patching ignores it")
+    func orchestratorSpawnableFalse_onlyAppliesOnCreate() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            try await orchestratorSpawnableBody()
+        }
+    }
+
+    private func orchestratorSpawnableBody() async throws {
+        let name = "Opt Out Probe \(UUID().uuidString.prefix(6))"
+        var entry = AgentEntry(name: name)
+        entry.description = "Handles independent tasks for this isolated delegation test."
+        entry.orchestratorSpawnable = false
+        var document = OsaurusConfigDocument()
+        document.agents = [entry]
+
+        let plan = try ConfigPlanner.plan(document: document, prune: false)
+        let createAction = plan.actions.first { $0.section == "agents" && $0.target == name }
+        #expect(createAction?.changes.contains("not added to the Orchestrator's delegation list") == true)
+
+        let results = await ConfigApplier.apply(document: document, prune: false)
+        #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+        let created = try #require(AgentManager.shared.agents.first { $0.name == name })
+        defer { Task { _ = await AgentManager.shared.delete(id: created.id) } }
+        #expect(
+            !SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(created.id),
+            "an opted-out agent must not join the Default spawn pool")
+        let createResult = results.first { $0.section == "agents" && $0.target == name }
+        #expect(createResult?.message?.contains("Settings → Agents → Delegation") == true, "\(String(describing: createResult))")
+
+        // The user adds it by hand; a bundle update carrying the same flag
+        // patches the agent and must leave that choice alone.
+        _ = SubagentConfigurationStore.mutate { $0.spawnableAgentIDs.append(created.id) }
+        _ = await ConfigApplier.apply(document: document, prune: false)
+        #expect(
+            SubagentConfigurationStore.snapshot().spawnableAgentIDs.filter { $0 == created.id }.count == 1,
+            "patching must not remove an agent the user added to the pool")
+    }
+
+    @Test("orchestrator_spawnable omitted or true joins the pool as before")
+    func orchestratorSpawnableTrueOrOmitted_joinsPool() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            for flag in [nil, true] as [Bool?] {
+                let name = "Opt In Probe \(UUID().uuidString.prefix(6))"
+                var entry = AgentEntry(name: name)
+                entry.description = "Handles independent tasks for this isolated delegation test."
+                entry.orchestratorSpawnable = flag
+                var document = OsaurusConfigDocument()
+                document.agents = [entry]
+                let results = await ConfigApplier.apply(document: document, prune: false)
+                #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+                let created = try #require(AgentManager.shared.agents.first { $0.name == name })
+                #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(created.id))
+                _ = await AgentManager.shared.delete(id: created.id)
+            }
+        }
+    }
+
+    @Test("a delegation section in the same document overrides orchestrator_spawnable")
+    func delegationSectionWinsOverOptOut() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            let name = "Opt Out Override \(UUID().uuidString.prefix(6))"
+            var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            entry.orchestratorSpawnable = false
+            var delegation = DelegationSection()
+            delegation.spawnableAgents = [name]
+            var document = OsaurusConfigDocument()
+            document.agents = [entry]
+            document.delegation = delegation
+            let results = await ConfigApplier.apply(document: document, prune: false)
+            #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+            let created = try #require(AgentManager.shared.agents.first { $0.name == name })
+            #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(created.id))
+            _ = await AgentManager.shared.delete(id: created.id)
+        }
+    }
+
+    @Test("bundle agent files accept orchestrator_spawnable through the strict parser")
+    func templateParseAcceptsOrchestratorSpawnable() throws {
+        let template = try Template.parse(
+            #"{ "name": "Strict Probe", "orchestrator_spawnable": false, "system_prompt": "Hi." }"#)
+        #expect(template.agent.orchestratorSpawnable == false)
+        #expect(throws: (any Error).self) {
+            try Template.parse(#"{ "name": "Strict Probe", "orchestrator_spawnabel": false }"#)
+        }
     }
 
     @Test("duplicate, bundle import, and backup restore are wired to the pool hook")
@@ -136,36 +247,34 @@ struct SpawnPoolAutoAddTests {
 @MainActor
 struct SameTurnSpawnStagingTests {
 
-    private static func agentEnum(of tool: Tool) -> [String] {
-        guard case .object(let root)? = tool.function.parameters,
-            case .object(let properties)? = root["properties"],
-            case .object(let agent)? = properties["agent"],
-            case .array(let values)? = agent["enum"]
-        else { return [] }
-        return values.compactMap {
-            if case .string(let value) = $0 { return value }
-            return nil
-        }
-    }
-
     @Test("osaurus_config is an activation trigger for the buffer-drain growth path")
     func osaurusConfigTriggersActivation() {
         #expect(CapabilityLoadBuffer.shouldActivate(after: "osaurus_config"))
     }
 
-    @Test("a chat-turn apply that creates an agent stages constrained spawn specs")
-    func chatApply_stagesSpawnSpecs_sameTurn() async throws {
-        await SubagentStoreTestLock.shared.acquire()
-        defer { SubagentStoreTestLock.shared.release() }
-
+    @Test("a chat-turn apply creates the agent on the chat's model and stages no spawn tools")
+    func chatApply_createsOnTheChatModel_stagesNoSpawn() async throws {
         try await ChatHistoryTestStorage.run {
+            // Canonical lock order: Storage → Sandbox (via
+            // `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking
+            // the store lock outermost deadlocks against suites that nest it
+            // canonically (`SpawnPermissionGateTests`, `AppleApps*Tests`).
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+
             let buffer = CapabilityLoadBuffer()
             let name = "Same Turn Spawn \(UUID().uuidString.prefix(6))"
             var document = OsaurusConfigDocument()
-            document.agents = [AgentEntry(name: name)]
+            var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            document.agents = [entry]
 
             let session = ChatSession()
             session.agentId = Agent.defaultId
+            // The fixture model is never in the picker list, so the session's
+            // first picker load would reset a selection made before it lands.
+            await session.refreshPickerItems()
+            session.selectedModel = "local/chat-selected-worker-model"
 
             // Bind the task locals exactly like a live orchestrator turn:
             // the session box identifies the conversation, the buffer
@@ -185,55 +294,63 @@ struct SameTurnSpawnStagingTests {
                 return
             }
             defer { Task { _ = await AgentManager.shared.delete(id: created.id) } }
+            #expect(created.defaultModel == "local/chat-selected-worker-model")
+            #expect(AgentManager.shared.effectiveModel(for: created.id) == session.selectedModel)
 
-            let staged = await buffer.drain()
-            let names = staged.map { $0.function.name }
-            #expect(
-                names.contains(SubagentCapabilityRegistry.spawnAgentToolName),
-                "spawn_agent must be staged for the same turn, got \(names)")
-            #expect(
-                !names.contains("spawn_batch"),
-                "spawn_batch was removed; only spawn_agent is staged, got \(names)")
-
-            // The staged schema must already advertise the just-created
-            // agent (UUID + display name) — execution validates against the
-            // live pool, but a strict enum-enforcing provider needs the
-            // identity in the schema.
-            if let spawnAgent = staged.first(
-                where: { $0.function.name == SubagentCapabilityRegistry.spawnAgentToolName })
-            {
-                let enumValues = Self.agentEnum(of: spawnAgent)
-                #expect(enumValues.contains(created.id.uuidString), "\(enumValues)")
-                #expect(enumValues.contains(name), "\(enumValues)")
-            }
-
-            // Mirror of the loop's growth path (`toolScope.activate(newTools)`
-            // after an activation-trigger tool): the staged specs both
-            // authorize and publish for the next iteration.
-            let scope = ToolExecutionScope(exposed: [])
-            #expect(!scope.permits(SubagentCapabilityRegistry.spawnAgentToolName))
-            scope.activate(staged)
-            #expect(scope.permits(SubagentCapabilityRegistry.spawnAgentToolName))
-            #expect(
-                scope.modelVisibleSpecs.map { $0.function.name }
-                    .contains(SubagentCapabilityRegistry.spawnAgentToolName))
+            let names = await buffer.drain().map { $0.function.name }
+            #expect(!names.contains(SubagentCapabilityRegistry.spawnAgentToolName), "\(names)")
         }
     }
 
-    @Test("non-chat applies stage nothing")
-    func nonChatApply_stagesNothing() async throws {
-        await SubagentStoreTestLock.shared.acquire()
-        defer { SubagentStoreTestLock.shared.release() }
-
+    @Test("an Orchestrator turn's apply stages no spawn tools")
+    func orchestratorApply_stagesNothing() async throws {
         try await ChatHistoryTestStorage.run {
-            let buffer = CapabilityLoadBuffer()
-            let name = "Headless Spawn \(UUID().uuidString.prefix(6))"
-            var document = OsaurusConfigDocument()
-            document.agents = [AgentEntry(name: name)]
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
 
-            // HTTP-sourced session bound: still not a live interactive chat
-            // turn, so nothing is staged (CLI/HTTP/delegation surfaces
-            // compose fresh anyway).
+            let buffer = CapabilityLoadBuffer()
+            let name = "Routing Spawn \(UUID().uuidString.prefix(6))"
+            var document = OsaurusConfigDocument()
+            var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            document.agents = [entry]
+
+            let session = ChatSession()
+            session.agentId = Agent.defaultId
+            let results = await CapabilityLoadBuffer.$overrideForTests.withValue(buffer) {
+                await ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(session)) {
+                    await ConfigApplier.apply(document: document, prune: false)
+                }
+            }
+            #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+            let created = AgentManager.shared.agents.first(where: { $0.name == name })
+            #expect(created != nil, "agent `\(name)` was not created")
+            defer { if let created { Task { _ = await AgentManager.shared.delete(id: created.id) } } }
+            let names = await buffer.drain().map { $0.function.name }
+            #expect(!names.contains(SubagentCapabilityRegistry.spawnAgentToolName), "\(names)")
+        }
+    }
+
+    @Test("an owner .http dispatch turn (phone / App Intent) stages no spawn tools either")
+    func ownerHTTPApply_stagesNoSpawn() async throws {
+        try await ChatHistoryTestStorage.run {
+            // Canonical lock order: Storage → Sandbox (via
+            // `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking
+            // the store lock outermost deadlocks against suites that nest it
+            // canonically (`SpawnPermissionGateTests`, `AppleApps*Tests`).
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+
+            let buffer = CapabilityLoadBuffer()
+            let name = "Remote Spawn \(UUID().uuidString.prefix(6))"
+            var document = OsaurusConfigDocument()
+            var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            document.agents = [entry]
+
+            // A dispatched "Ask Osaurus" run is a real `ChatSession.send`
+            // turn (`source == .http`): its loop drains the buffer after
+            // `osaurus_config` exactly like the in-app chat.
             let session = ChatSession()
             session.agentId = Agent.defaultId
             session.source = .http
@@ -251,16 +368,50 @@ struct SameTurnSpawnStagingTests {
             }
 
             let staged = await buffer.drain()
-            #expect(staged.isEmpty, "non-chat applies must not stage spawn specs: \(staged)")
+            #expect(
+                !staged.map { $0.function.name }.contains(SubagentCapabilityRegistry.spawnAgentToolName),
+                "\(staged)")
+        }
+    }
+
+    @Test("an apply with no live session bound (CLI / bare completion) stages nothing")
+    func unboundApply_stagesNothing() async throws {
+        try await ChatHistoryTestStorage.run {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+
+            let buffer = CapabilityLoadBuffer()
+            let name = "Headless Spawn \(UUID().uuidString.prefix(6))"
+            var document = OsaurusConfigDocument()
+            var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            document.agents = [entry]
+
+            // No `currentChatSessionBox`: there is no loop to drain the
+            // buffer, so a staged spec could only leak into an unrelated run.
+            let results = await CapabilityLoadBuffer.$overrideForTests.withValue(buffer) {
+                await ConfigApplier.apply(document: document, prune: false)
+            }
+            #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+            if let created = AgentManager.shared.agents.first(where: { $0.name == name }) {
+                _ = await AgentManager.shared.delete(id: created.id)
+            }
+
+            let staged = await buffer.drain()
+            #expect(staged.isEmpty, "unbound applies must not stage spawn specs: \(staged)")
         }
     }
 
     @Test("a chat-turn apply that does not grow the pool stages nothing")
     func chatApply_withoutPoolGrowth_stagesNothing() async throws {
-        await SubagentStoreTestLock.shared.acquire()
-        defer { SubagentStoreTestLock.shared.release() }
-
         try await ChatHistoryTestStorage.run {
+            // Canonical lock order: Storage → Sandbox (via
+            // `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking
+            // the store lock outermost deadlocks against suites that nest it
+            // canonically (`SpawnPermissionGateTests`, `AppleApps*Tests`).
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+
             let buffer = CapabilityLoadBuffer()
             // A memory-only change: no agents section, pool untouched.
             var document = OsaurusConfigDocument()
@@ -328,6 +479,32 @@ struct SpawnPoolSeedMigrationTests {
         #expect(snapshot.spawnableAgentIDs == [custom2.id])
     }
 
+    /// Load-time reconcile prunes ids whose agent is gone — but a load that
+    /// yields no custom agents at all while the pool has members is a failed
+    /// agent load, not N deletions. Pruning there empties a seeded pool for
+    /// good (seeding never re-runs); the guard keeps the ids until a load
+    /// with agents present can tell stale from live.
+    @Test("reconcile never empties a seeded pool on an agent load that returned nothing")
+    func reconcileKeepsThePoolWhenNoAgentsLoaded() async throws {
+        let lease = await acquireSubagentStoreSandbox("spawn-pool-reconcile-guard")
+        defer { lease.release() }
+        let live = Agent(name: "Reconcile Live")
+        let gone = Agent(name: "Reconcile Gone")
+        let builtIn = Agent(name: "Reconcile Built-in", isBuiltIn: true)
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(spawnableAgentIDs: [live.id, gone.id], spawnPoolSeeded: true))
+
+        // Nothing (or only the built-in) loaded: keep everything.
+        _ = SubagentConfigurationStore.reconcile(with: [])
+        #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs == [live.id, gone.id])
+        _ = SubagentConfigurationStore.reconcile(with: [builtIn])
+        #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs == [live.id, gone.id])
+
+        // A real load with agents present prunes only the missing one.
+        _ = SubagentConfigurationStore.reconcile(with: [live, builtIn])
+        #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs == [live.id])
+    }
+
     @Test("the sentinel survives persistence, normalization, and delegation applies")
     func sentinelSurvivesRoundTrips() async throws {
         let lease = await acquireSubagentStoreSandbox("spawn-pool-seed-roundtrip")
@@ -378,72 +555,86 @@ struct SpawnPoolSeedMigrationTests {
 
     @Test("RAM opt-out survives stale editors, config round-trip and a cold settings read")
     func ramSafetySharedPersistence() async throws {
-        let lease = await acquireSubagentStoreSandbox("ram-safety-shared-persistence")
-        defer { lease.release() }
+        // Canonical lock order: Storage → Sandbox → SubagentStore innermost.
+        // `AgentManager.shared` is read (name resolution in `ConfigApplier`)
+        // and mutated here, so storage-swapping suites must be excluded too;
+        // a concurrent `AgentManager.refresh()` otherwise changes the pool
+        // between `before` and `after`.
+        try await SandboxTestLock.runWithStoragePaths {
+            let lease = await acquireSubagentStoreSandbox("ram-safety-shared-persistence")
+            defer { lease.release() }
 
-        for enabled in [false, true, false] {
-            let baseline = SubagentConfigurationStore.snapshot()
-            var staleEditor = baseline
-            staleEditor.budgets.maxDelegateTurns = 7
-            var changed = baseline
-            changed.ramSafetyPreflightEnabled = enabled
-            SubagentConfigurationStore.save(changed)
-            let merged = SubagentConfigurationStore.saveEditorSnapshot(
-                staleEditor, loadedBaseline: baseline
-            )
-            #expect(merged.ramSafetyPreflightEnabled == enabled)
-
-            let exported = ConfigExporter.export(sections: [.delegation])
-            #expect(exported.delegation?.ramSafetyPreflight == enabled)
-            let results = await ConfigApplier.apply(document: exported, prune: false)
-            #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
-            SubagentConfigurationStore.flushPendingWrites()
-            SubagentConfigurationStore.invalidateSnapshot()
-            let reloaded = try #require(SubagentConfigurationStore.load())
-            #expect(reloaded.ramSafetyPreflightEnabled == enabled)
-            // Both the default launcher and custom agents use this same
-            // shared flag; residency shape may not turn it back on.
-            for handoff in [false, true] {
-                let plan = try SubagentResidency.decidePlan(
-                    isLocal: true, modelName: "gemma",
-                    residentChatModels: ["gemma"],
-                    handoffEnabled: handoff,
-                    ramSafetyEnabled: reloaded.ramSafetyPreflightEnabled,
-                    requiredBytes: 5_899_232_198, idleWaitSeconds: 30,
-                    deniedMessage: "unused"
+            for enabled in [false, true, false] {
+                let baseline = SubagentConfigurationStore.snapshot()
+                var staleEditor = baseline
+                staleEditor.budgets.maxDelegateTurns = 7
+                var changed = baseline
+                changed.ramSafetyPreflightEnabled = enabled
+                SubagentConfigurationStore.save(changed)
+                let merged = SubagentConfigurationStore.saveEditorSnapshot(
+                    staleEditor, loadedBaseline: baseline
                 )
-                #expect(plan.ramSafetyEnabled == enabled)
-                #expect(!plan.shouldUnload)
+                #expect(merged.ramSafetyPreflightEnabled == enabled)
+
+                let exported = ConfigExporter.export(sections: [.delegation])
+                #expect(exported.delegation?.ramSafetyPreflight == enabled)
+                let results = await ConfigApplier.apply(document: exported, prune: false)
+                #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+                SubagentConfigurationStore.flushPendingWrites()
+                SubagentConfigurationStore.invalidateSnapshot()
+                let reloaded = try #require(SubagentConfigurationStore.load())
+                #expect(reloaded.ramSafetyPreflightEnabled == enabled)
+                // Both the default launcher and custom agents use this same
+                // shared flag; residency shape may not turn it back on.
+                for handoff in [false, true] {
+                    let plan = try SubagentResidency.decidePlan(
+                        isLocal: true, modelName: "gemma",
+                        residentChatModels: ["gemma"],
+                        handoffEnabled: handoff,
+                        ramSafetyEnabled: reloaded.ramSafetyPreflightEnabled,
+                        requiredBytes: 5_899_232_198, idleWaitSeconds: 30,
+                        deniedMessage: "unused"
+                    )
+                    #expect(plan.ramSafetyEnabled == enabled)
+                    #expect(!plan.shouldUnload)
+                }
             }
         }
     }
 
     @Test("delegation export/apply round-trip is a no-op after seeding")
     func exportApplyRoundTrip_isNoOp() async throws {
-        let lease = await acquireSubagentStoreSandbox("spawn-pool-export-roundtrip")
-        defer { lease.release() }
+        // Canonical lock order: Storage → Sandbox → SubagentStore innermost.
+        // `AgentManager.shared` is read (name resolution in `ConfigApplier`)
+        // and mutated here, so storage-swapping suites must be excluded too;
+        // a concurrent `AgentManager.refresh()` otherwise changes the pool
+        // between `before` and `after`.
+        try await SandboxTestLock.runWithStoragePaths {
+            let lease = await acquireSubagentStoreSandbox("spawn-pool-export-roundtrip")
+            defer { lease.release() }
 
-        // A seeded install with one custom agent in the pool (create
-        // auto-adds it; the sentinel is what a real seeded install carries).
-        let agent = AgentManager.shared.create(
-            name: "Export Roundtrip \(UUID().uuidString.prefix(6))",
-            description: "", systemPrompt: "")
-        _ = SubagentConfigurationStore.mutate { $0.spawnPoolSeeded = true }
-        let before = SubagentConfigurationStore.snapshot()
-        #expect(before.spawnableAgentIDs.contains(agent.id))
+            // A seeded install with one custom agent in the pool (create
+            // auto-adds it; the sentinel is what a real seeded install carries).
+            let agent = AgentManager.shared.create(
+                name: "Export Roundtrip \(UUID().uuidString.prefix(6))",
+                description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
+            _ = SubagentConfigurationStore.mutate { $0.spawnPoolSeeded = true }
+            let before = SubagentConfigurationStore.snapshot()
+            #expect(before.spawnableAgentIDs.contains(agent.id))
 
-        // Export names the pool by agent display name; re-applying the
-        // exported document must resolve back to the identical pool and
-        // leave the sentinel intact — otherwise backup/restore flows would
-        // re-trigger seeding and resurrect user removals.
-        let exported = ConfigExporter.export(sections: [.delegation])
-        let results = await ConfigApplier.apply(document: exported, prune: false)
-        #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+            // Export names the pool by agent display name; re-applying the
+            // exported document must resolve back to the identical pool and
+            // leave the sentinel intact — otherwise backup/restore flows would
+            // re-trigger seeding and resurrect user removals.
+            let exported = ConfigExporter.export(sections: [.delegation])
+            let results = await ConfigApplier.apply(document: exported, prune: false)
+            #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
 
-        let after = SubagentConfigurationStore.snapshot()
-        #expect(after.spawnableAgentIDs == before.spawnableAgentIDs)
-        #expect(after.spawnPoolSeeded, "round-trip must not reset the seed sentinel")
+            let after = SubagentConfigurationStore.snapshot()
+            #expect(after.spawnableAgentIDs == before.spawnableAgentIDs)
+            #expect(after.spawnPoolSeeded, "round-trip must not reset the seed sentinel")
 
-        _ = await AgentManager.shared.delete(id: agent.id)
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
     }
 }

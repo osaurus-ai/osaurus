@@ -232,14 +232,25 @@ struct ModelRuntimeFindDirectoryTests {
             kvRetentionCap: nil
         )
 
-        #expect(safeAutoCap == strictCap * 4)
-        #expect(uncapped == strictCap * 16)
+        // Twelve KV owners scale with retained tokens. The other 36 layers
+        // retain fixed FP32 recurrence and BF16 convolution tails, including
+        // when the bundle omits dimensions supplied by Qwen35Configuration.
+        let recurrentPerLayer: Int64 = 64 * 192 * 128 * 4
+        let convolutionPerLayer: Int64 = 3 * (2 * 16 * 192 + 64 * 128) * 2
+        let fixedState = 36 * (recurrentPerLayer + convolutionPerLayer)
+        let fixedPriced = fixedState + fixedState / 4
+        let kvPerPosition: Int64 = 12 * 2 * 8 * 128 * 2
+        let strictKV = kvPerPosition * 16_384
+        #expect(strictCap == fixedPriced + strictKV + strictKV / 4)
+        #expect(safeAutoCap - fixedPriced == (strictCap - fixedPriced) * 4)
+        #expect(uncapped - fixedPriced == (strictCap - fixedPriced) * 16)
     }
 
     /// The delegated-contract price is genuinely below cap pricing on real
     /// architecture facts: the same estimator, once at the model-wide 64K
     /// retention cap and once at the enforced delegated ceiling (tool-enabled
-    /// default contract → 16,684 positions), must charge proportionally less
+    /// default contract → 16,684 positions), must charge less for KV while
+    /// preserving the fixed recurrent-state allocation
     /// — this is the byte-level statement of the 16 GiB refusal→admission
     /// flip for a tool-enabled delegated agent.
     @Test("delegated contract ceiling prices below the retention cap")
@@ -282,9 +293,18 @@ struct ModelRuntimeFindDirectoryTests {
             kvRetentionCap: contract.contextPositions
         )
         #expect(contractPriced < capPriced)
-        // Position pricing is linear, so the ratio tracks the position ratio.
-        #expect(contractPriced <= capPriced * 13_713 / 65_536 + 1024)
-        #expect(contractPriced > 0)
+        #expect(contract.contextPositions == 13_713)
+        // Only attention KV scales with positions; GDN recurrence and the
+        // convolution tail are fixed, so scaling the entire price undercounts.
+        let recurrentPerLayer: Int64 = 64 * 192 * 128 * 4
+        let convolutionPerLayer: Int64 = 3 * (2 * 16 * 192 + 64 * 128) * 2
+        let fixedState = 36 * (recurrentPerLayer + convolutionPerLayer)
+        let fixedPriced = fixedState + fixedState / 4
+        let kvPerPosition: Int64 = 12 * 2 * 8 * 128 * 2
+        let contractKV = kvPerPosition * 13_713
+        let capKV = kvPerPosition * 65_536
+        #expect(contractPriced == fixedPriced + contractKV + contractKV / 4)
+        #expect(capPriced == fixedPriced + capKV + capKV / 4)
     }
 
     /// The REPORTED 16 GiB shape on Gemma-class topology: an E2B-scale
@@ -380,8 +400,8 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(looped == single * 2)
     }
 
-    @Test("Routed JANGTQ pre-load RAM gate uses MLXPress hot working set")
-    func routedJANGTQLoadFootprintUsesCompressionHotSet() throws {
+    @Test("Routed JANGTQ production admission counts all compute weights")
+    func routedJANGTQLoadFootprintCountsComputeWeights() throws {
         let dir = try makeIsolatedDir()
         let config = """
             {
@@ -414,11 +434,11 @@ struct ModelRuntimeFindDirectoryTests {
             modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L"
         )
 
-        #expect(effective == 30 * 1024 * 1024 * 1024)
+        #expect(effective == raw)
     }
 
-    @Test("MiMo JANGTQ config-side routed metadata uses hot working set")
-    func mimoJANGTQConfigRoutedMetadataUsesCompressionHotSet() throws {
+    @Test("MiMo JANGTQ metadata does not enable a compression discount")
+    func mimoJANGTQConfigDoesNotDiscountComputeWeights() throws {
         let dir = try makeIsolatedDir()
         let config = """
             {
@@ -452,11 +472,11 @@ struct ModelRuntimeFindDirectoryTests {
             modelName: "mimo-v2.5-jangtq_2"
         )
 
-        #expect(effective == 24 * 1024 * 1024 * 1024)
+        #expect(effective == raw)
     }
 
-    @Test("Plain MiMo JANG config-side routed metadata uses hot working set")
-    func plainMiMoJANGConfigRoutedMetadataUsesCompressionHotSet() throws {
+    @Test("Plain MiMo JANG production admission counts all compute weights")
+    func plainMiMoJANGConfigCountsComputeWeights() throws {
         let dir = try makeIsolatedDir()
         let config = """
             {
@@ -497,11 +517,11 @@ struct ModelRuntimeFindDirectoryTests {
             modelName: "mimo-v2.5-jang_2l"
         )
 
-        #expect(effective == Int64(Double(raw) * 0.30))
+        #expect(effective == raw)
     }
 
-    @Test("Plain N2 JANG nested text-config routed metadata uses hot working set")
-    func plainN2JANGNestedTextConfigRoutedMetadataUsesCompressionHotSet() throws {
+    @Test("Nested routed metadata does not discount production compute weights")
+    func plainN2JANGNestedTextConfigCountsComputeWeights() throws {
         let dir = try makeIsolatedDir()
         let config = """
             {
@@ -537,11 +557,11 @@ struct ModelRuntimeFindDirectoryTests {
             modelName: "nex-n2-pro-jang_1l"
         )
 
-        #expect(effective == Int64(Double(raw) * 0.30))
+        #expect(effective == raw)
     }
 
-    @Test("Known MiMo and N2 plain JANG names use hot working set without config JSON")
-    func knownPlainMiMoAndN2JANGNamesAvoidBundleJSONRead() throws {
+    @Test("Known JANG names cannot discount unreadable bundle weights")
+    func knownPlainMiMoAndN2JANGNamesCannotDiscountWeights() throws {
         for name in ["MiMo-V2.5-JANG_2L", "Nex-N2-Pro-JANG_1L"] {
             let dir = try makeIsolatedDir()
             try Data("{".utf8).write(to: dir.appendingPathComponent("config.json"))
@@ -554,12 +574,12 @@ struct ModelRuntimeFindDirectoryTests {
                 modelName: name
             )
 
-            #expect(effective == 30 * 1024 * 1024 * 1024)
+            #expect(effective == raw)
         }
     }
 
-    @Test("MiMo and N2 JANGTQ known names use hot working set without config JSON")
-    func mimoAndN2JANGTQKnownNameLoadFootprintAvoidsBundleJSONRead() throws {
+    @Test("Known JANGTQ names cannot discount unreadable bundle weights")
+    func mimoAndN2JANGTQKnownNamesCannotDiscountWeights() throws {
         for name in ["MiMo-V2.5-JANGTQ_2", "Nex-N2-Pro-JANGTQ2"] {
             let dir = try makeIsolatedDir()
             try Data("{".utf8).write(to: dir.appendingPathComponent("config.json"))
@@ -573,7 +593,7 @@ struct ModelRuntimeFindDirectoryTests {
                 modelName: name
             )
 
-            #expect(effective == 30 * 1024 * 1024 * 1024)
+            #expect(effective == raw)
         }
     }
 
@@ -992,8 +1012,12 @@ struct ModelRuntimeFindDirectoryTests {
             kvRetentionCap: 65_536
         )
         let kv = Int64(16) * 65_536 * (2 * 4 * 256) * 2
-        let gdnState = Int64(48) * (32 * 128 * 128) * 2
-        let expected = Int64(Double(kv + gdnState) * 1.25)
+        // Recurrence is FP32 regardless of KV dtype. The default 16 key
+        // heads also contribute to the separate BF16 convolution tail.
+        let gdnState = Int64(48) * (32 * 128 * 128) * 4
+        let convState = Int64(48) * 3 * (2 * 16 * 128 + 32 * 128) * 2
+        let state = kv + gdnState + convState
+        let expected = state + state / 4
         #expect(headroom == expected)
         // The old all-layers-are-attention count priced this at ~20 GiB.
         #expect(headroom < 8 * 1024 * 1024 * 1024)

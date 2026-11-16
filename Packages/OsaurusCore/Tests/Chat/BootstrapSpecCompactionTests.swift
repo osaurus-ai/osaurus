@@ -198,3 +198,36 @@ struct KnowledgeWriteBootstrapSpecTests {
         #expect(rule.contains("frontmatter"))
     }
 }
+
+/// The Architect's argument contracts must survive first-turn compaction: it
+/// has no `capabilities_load` to restore them, and a skeletonized
+/// `workflow_draft` left a live local model guessing the `ops` shape for
+/// its whole turn.
+@Suite
+struct ArchitectBootstrapSpecTests {
+
+    @Test @MainActor func everyArchitectToolKeepsItsParameterSchema() {
+        let tools = ToolRegistry.shared.specs(forTools: Array(ToolRegistry.architectToolNames))
+        #expect(tools.count == ToolRegistry.architectToolNames.count)
+        for tool in tools {
+            let compact = SystemPromptComposer.compactBootstrapSpec(tool)
+            #expect(compact.function.parameters == tool.function.parameters, "\(tool.function.name)")
+        }
+    }
+
+    @Test func draftOpsAndSaveTriggerKeepTheirDescriptions() {
+        func property(_ tool: OsaurusTool, _ key: String) -> String? {
+            let compact = SystemPromptComposer.compactBootstrapSpec(tool.asOpenAITool())
+            guard case .object(let root)? = compact.function.parameters,
+                case .object(let properties)? = root["properties"],
+                case .object(let field)? = properties[key],
+                case .string(let text)? = field["description"]
+            else { return nil }
+            return text
+        }
+        #expect(property(WorkflowDraftTool(), "ops")?.contains("set_info {name?, summary?}") == true)
+        let trigger = property(WorkflowProposeSaveTool(), "trigger") ?? ""
+        #expect(trigger.contains("frequency_value: \"0 7 * * 1-5\""))
+        #expect(trigger.contains("rss {url}"))
+    }
+}

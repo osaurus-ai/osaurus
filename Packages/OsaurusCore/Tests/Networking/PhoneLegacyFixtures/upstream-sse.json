@@ -1,0 +1,97 @@
+{
+  "routes" : [
+    {
+      "elementKeys" : {
+        "osaurus_agent_tool" : [
+          "call_id",
+          "name",
+          "phase"
+        ]
+      },
+      "id" : "agentTool.started.plain",
+      "json" : true,
+      "keys" : [
+        "choices",
+        "created",
+        "id",
+        "model",
+        "object",
+        "osaurus_agent_tool"
+      ],
+      "status" : 0
+    },
+    {
+      "elementKeys" : {
+        "osaurus_agent_tool" : [
+          "arguments",
+          "call_id",
+          "category",
+          "duration_ms",
+          "end_run",
+          "icon",
+          "is_error",
+          "label",
+          "name",
+          "phase",
+          "result",
+          "result_truncated"
+        ]
+      },
+      "id" : "agentTool.completed.detail",
+      "json" : true,
+      "keys" : [
+        "choices",
+        "created",
+        "id",
+        "model",
+        "object",
+        "osaurus_agent_tool"
+      ],
+      "status" : 0
+    },
+    {
+      "elementKeys" : {
+        "osaurus_prefill" : [
+          "completedUnitCount",
+          "detail",
+          "stage",
+          "totalUnitCount"
+        ]
+      },
+      "id" : "prefill",
+      "json" : true,
+      "keys" : [
+        "choices",
+        "created",
+        "id",
+        "model",
+        "object",
+        "osaurus_prefill"
+      ],
+      "status" : 0
+    },
+    {
+      "elementKeys" : {
+        "osaurus_artifacts" : [
+          "bytes_base64",
+          "description",
+          "mime",
+          "name",
+          "size_bytes"
+        ]
+      },
+      "id" : "artifacts",
+      "json" : true,
+      "keys" : [
+        "choices",
+        "created",
+        "id",
+        "model",
+        "object",
+        "osaurus_artifacts"
+      ],
+      "status" : 0
+    }
+  ],
+  "upstreamSHA" : "eb0e968c35657472826062d707b5e27a74ca69f9"
+}

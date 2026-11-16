@@ -8,7 +8,7 @@
 import Foundation
 
 /// Codable version of ChatTurn for session persistence
-public struct ChatTurnData: Codable, Identifiable, Sendable {
+public struct ChatTurnData: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let role: MessageRole
     public var content: String
@@ -23,6 +23,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Finished Computer Use / AppleScript step logs, keyed by call id. UI
     /// history only: never part of the model-facing tool result.
     public var toolCallLogs: [String: SubagentRunLog]
+    /// Why a call ran without its approval card, keyed by call id. UI
+    /// history only; empty for calls that asked and for legacy turns.
+    public var toolCallApprovalSkips: [String: ToolApprovalSkipReason] = [:]
     /// Seconds the model spent thinking; drives "Thought for 30s". Nil when unknown.
     public var thinkingDuration: TimeInterval?
     public var thinking: String
@@ -45,6 +48,13 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Seconds from request start to first visible token, for latency
     /// reporting. Nil when unknown.
     public var timeToFirstToken: TimeInterval?
+    /// The rate displayed during generation, preserving the provider's measurement semantics.
+    public var generationTokensPerSecond: Double?
+    /// Cold model loading inside the first-token window. Nil when unavailable.
+    public var modelLoadSeconds: TimeInterval?
+    /// When the user sent the message that opened this run (see
+    /// `ChatTurn.requestedAt`). Nil for non-first turns and legacy sessions.
+    public var requestedAt: Date?
     /// Authoritative runtime finish reason (`stop`, `length`, etc.). Nil for
     /// legacy turns and providers that do not report one.
     public var terminalStopReason: String?
@@ -56,6 +66,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Provider-native Responses output Items retained for exact stateless
     /// replay. Empty for legacy sessions and non-Responses providers.
     public var responsesOutputItems: [JSONValue]
+    public var anthropicThinkingBlocks: [JSONValue] = []
     public var inputTokenCount: Int?
     public var cachedInputTokenCount: Int?
     /// An abandoned reasoning/protocol attempt can remain visible in the
@@ -70,7 +81,25 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// session replays the exact wire bytes of every past turn and the
     /// disk-backed prefix cache can still hit. Nil for non-user turns and
     /// legacy sessions.
+    var generationControls: ChatTurnGenerationControls? = nil
     public var injectedContextPrefix: String?
+    /// Who wrote this turn when it isn't simply "the user" and "the agent":
+    /// a workspace teammate, invite peer, remote agent, channel sender, or
+    /// the owner speaking in a hosted conversation. Snapshot at write time.
+    /// Nil for ordinary one-person chats and legacy sessions.
+    public var author: ParticipantRef?
+    /// The host's id for a message its owner posted into this shared-agent
+    /// conversation, so it is shown once.
+    public var remoteParticipantMessageId: String?
+    /// On a user turn: the request for another device to run the agent.
+    /// Nil for turns this device answers itself.
+    public var hostRun: HostRunRequest?
+    /// Set on a turn Osaurus wrote itself (the first-run opening). Nil for
+    /// generated and typed turns.
+    public var origin: ChatTurnOrigin?
+    /// Where this reply was generated, for the first-run chat's label. Nil
+    /// elsewhere.
+    public var runLocation: ChatRunLocation?
 
     public init(
         id: UUID = UUID(),
@@ -89,6 +118,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         lastOutputAt: Date? = nil,
         generationTokenCount: Int? = nil,
         timeToFirstToken: TimeInterval? = nil,
+        generationTokensPerSecond: Double? = nil,
+        modelLoadSeconds: TimeInterval? = nil,
+        requestedAt: Date? = nil,
         terminalStopReason: String? = nil,
         reasoningItemId: String? = nil,
         reasoningEncrypted: String? = nil,
@@ -98,7 +130,11 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         modelContextExcluded: Bool = false,
         routerBilling: RouterBillingSummary? = nil,
         injectedContextPrefix: String? = nil,
-        toolCallLogs: [String: SubagentRunLog] = [:]
+        toolCallLogs: [String: SubagentRunLog] = [:],
+        author: ParticipantRef? = nil,
+        remoteParticipantMessageId: String? = nil,
+        hostRun: HostRunRequest? = nil,
+        toolCallApprovalSkips: [String: ToolApprovalSkipReason] = [:]
     ) {
         self.id = id
         self.role = role
@@ -116,6 +152,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.lastOutputAt = lastOutputAt
         self.generationTokenCount = generationTokenCount
         self.timeToFirstToken = timeToFirstToken
+        self.generationTokensPerSecond = generationTokensPerSecond
+        self.modelLoadSeconds = modelLoadSeconds
+        self.requestedAt = requestedAt
         self.terminalStopReason = terminalStopReason
         self.reasoningItemId = reasoningItemId
         self.reasoningEncrypted = reasoningEncrypted
@@ -126,6 +165,10 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.routerBilling = routerBilling
         self.injectedContextPrefix = injectedContextPrefix
         self.toolCallLogs = toolCallLogs
+        self.author = author
+        self.remoteParticipantMessageId = remoteParticipantMessageId
+        self.hostRun = hostRun
+        self.toolCallApprovalSkips = toolCallApprovalSkips
     }
 
     // Backward-compatible decoder: migrates old `attachedImages` into unified `attachments`
@@ -141,6 +184,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
             try container.decodeIfPresent([String: TimeInterval].self, forKey: .toolCallDurations) ?? [:]
         toolCallLogs =
             (try? container.decodeIfPresent([String: SubagentRunLog].self, forKey: .toolCallLogs)) ?? [:]
+        toolCallApprovalSkips =
+            (try? container.decodeIfPresent([String: String].self, forKey: .toolCallApprovalSkips))?
+            .compactMapValues(ToolApprovalSkipReason.init(rawValue:)) ?? [:]
         thinkingDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .thinkingDuration)
         thinking = try container.decodeIfPresent(String.self, forKey: .thinking) ?? ""
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
@@ -148,18 +194,28 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         lastOutputAt = try container.decodeIfPresent(Date.self, forKey: .lastOutputAt)
         generationTokenCount = try container.decodeIfPresent(Int.self, forKey: .generationTokenCount)
         timeToFirstToken = try container.decodeIfPresent(TimeInterval.self, forKey: .timeToFirstToken)
+        generationTokensPerSecond = try container.decodeIfPresent(Double.self, forKey: .generationTokensPerSecond)
+        modelLoadSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .modelLoadSeconds)
+        requestedAt = try container.decodeIfPresent(Date.self, forKey: .requestedAt)
         terminalStopReason = try container.decodeIfPresent(String.self, forKey: .terminalStopReason)
         reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
         responsesOutputItems =
             try container.decodeIfPresent([JSONValue].self, forKey: .responsesOutputItems) ?? []
+        anthropicThinkingBlocks = try container.decodeIfPresent([JSONValue].self, forKey: .anthropicThinkingBlocks) ?? []
         inputTokenCount = try container.decodeIfPresent(Int.self, forKey: .inputTokenCount)
         cachedInputTokenCount =
             try container.decodeIfPresent(Int.self, forKey: .cachedInputTokenCount)
         modelContextExcluded =
             try container.decodeIfPresent(Bool.self, forKey: .modelContextExcluded) ?? false
         routerBilling = try container.decodeIfPresent(RouterBillingSummary.self, forKey: .routerBilling)
+        generationControls = try container.decodeIfPresent(ChatTurnGenerationControls.self, forKey: .generationControls)
         injectedContextPrefix = try container.decodeIfPresent(String.self, forKey: .injectedContextPrefix)
+        author = try? container.decodeIfPresent(ParticipantRef.self, forKey: .author)
+        remoteParticipantMessageId = try container.decodeIfPresent(String.self, forKey: .remoteParticipantMessageId)
+        hostRun = try container.decodeIfPresent(HostRunRequest.self, forKey: .hostRun)
+        origin = try? container.decodeIfPresent(ChatTurnOrigin.self, forKey: .origin)
+        runLocation = try? container.decodeIfPresent(ChatRunLocation.self, forKey: .runLocation)
 
         if let unified = try container.decodeIfPresent([Attachment].self, forKey: .attachments) {
             attachments = unified
@@ -188,6 +244,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         if !toolCallLogs.isEmpty {
             try container.encode(toolCallLogs, forKey: .toolCallLogs)
         }
+        if !toolCallApprovalSkips.isEmpty {
+            try container.encode(toolCallApprovalSkips.mapValues(\.rawValue), forKey: .toolCallApprovalSkips)
+        }
         try container.encodeIfPresent(thinkingDuration, forKey: .thinkingDuration)
         try container.encode(thinking, forKey: .thinking)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
@@ -195,34 +254,63 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(lastOutputAt, forKey: .lastOutputAt)
         try container.encodeIfPresent(generationTokenCount, forKey: .generationTokenCount)
         try container.encodeIfPresent(timeToFirstToken, forKey: .timeToFirstToken)
+        try container.encodeIfPresent(generationTokensPerSecond, forKey: .generationTokensPerSecond)
+        try container.encodeIfPresent(modelLoadSeconds, forKey: .modelLoadSeconds)
+        try container.encodeIfPresent(requestedAt, forKey: .requestedAt)
         try container.encodeIfPresent(terminalStopReason, forKey: .terminalStopReason)
         try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
         try container.encodeIfPresent(reasoningEncrypted, forKey: .reasoningEncrypted)
         if !responsesOutputItems.isEmpty {
             try container.encode(responsesOutputItems, forKey: .responsesOutputItems)
         }
+        if !anthropicThinkingBlocks.isEmpty { try container.encode(anthropicThinkingBlocks, forKey: .anthropicThinkingBlocks) }
         try container.encodeIfPresent(inputTokenCount, forKey: .inputTokenCount)
         try container.encodeIfPresent(cachedInputTokenCount, forKey: .cachedInputTokenCount)
         if modelContextExcluded {
             try container.encode(true, forKey: .modelContextExcluded)
         }
         try container.encodeIfPresent(routerBilling, forKey: .routerBilling)
+        try container.encodeIfPresent(generationControls, forKey: .generationControls)
         try container.encodeIfPresent(injectedContextPrefix, forKey: .injectedContextPrefix)
+        try container.encodeIfPresent(author, forKey: .author)
+        try container.encodeIfPresent(remoteParticipantMessageId, forKey: .remoteParticipantMessageId)
+        try container.encodeIfPresent(hostRun, forKey: .hostRun)
+        try container.encodeIfPresent(origin, forKey: .origin)
+        try container.encodeIfPresent(runLocation, forKey: .runLocation)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, role, content, attachments
         case sharedArtifacts
         case attachedImages  // legacy key for reading old sessions
-        case toolCalls, toolCallId, toolResults, toolCallDurations, toolCallLogs, thinking
+        case toolCalls, toolCallId, toolResults, toolCallDurations, toolCallLogs, toolCallApprovalSkips, thinking
         case thinkingDuration
         case createdAt, completedAt, lastOutputAt, generationTokenCount, timeToFirstToken
+        case generationTokensPerSecond, modelLoadSeconds, requestedAt
         case terminalStopReason
-        case reasoningItemId, reasoningEncrypted, responsesOutputItems
+        case reasoningItemId, reasoningEncrypted, responsesOutputItems, anthropicThinkingBlocks
         case inputTokenCount, cachedInputTokenCount
         case modelContextExcluded
         case routerBilling
         case injectedContextPrefix
+        case author
+        case remoteParticipantMessageId
+        case hostRun
+        case generationControls
+        case origin, runLocation
+    }
+}
+
+// MARK: - Display content
+
+extension ChatTurnData {
+    /// The text the chat presents for this turn — the human-authored text
+    /// inside a dispatch envelope when one wraps the content, else the raw
+    /// content. Unmemoized mirror of `ChatTurn.displayContent(sessionSource:)`
+    /// for the rare persistence-side callers (title derivation).
+    public func displayContent(sessionSource: SessionSource) -> String {
+        guard role == .user, !content.isEmpty else { return content }
+        return DispatchEnvelope.parse(content, sessionSource: sessionSource)?.displayText ?? content
     }
 }
 
@@ -242,6 +330,7 @@ extension ChatTurnData {
         self.toolResults = turn.toolResults
         self.toolCallDurations = turn.toolCallDurations
         self.toolCallLogs = turn.toolCallLogs
+        self.toolCallApprovalSkips = turn.toolCallApprovalSkips
         self.thinkingDuration = turn.thinkingDuration
         self.thinking = turn.thinking
         self.createdAt = turn.createdAt
@@ -249,15 +338,25 @@ extension ChatTurnData {
         self.lastOutputAt = turn.lastOutputAt
         self.generationTokenCount = turn.generationTokenCount
         self.timeToFirstToken = turn.timeToFirstToken
+        self.generationTokensPerSecond = turn.generationTokensPerSecond
+        self.modelLoadSeconds = turn.modelLoadSeconds
+        self.requestedAt = turn.requestedAt
         self.terminalStopReason = turn.terminalStopReason
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
         self.responsesOutputItems = turn.responsesOutputItems
+        self.anthropicThinkingBlocks = turn.anthropicThinkingBlocks
         self.inputTokenCount = turn.inputTokenCount
         self.cachedInputTokenCount = turn.cachedInputTokenCount
         self.modelContextExcluded = turn.modelContextExcluded
         self.routerBilling = turn.routerBilling
         self.injectedContextPrefix = turn.injectedContextPrefix
+        self.author = turn.author
+        self.remoteParticipantMessageId = turn.remoteParticipantMessageId
+        self.hostRun = turn.hostRun
+        self.generationControls = turn.generationControls
+        self.origin = turn.origin
+        self.runLocation = turn.runLocation
     }
 }
 
@@ -280,20 +379,31 @@ extension ChatTurn {
         for (callId, log) in data.toolCallLogs {
             SubagentRunLogArchive.shared.store(log, for: callId)
         }
+        self.toolCallApprovalSkips = data.toolCallApprovalSkips
         self.thinkingDuration = data.thinkingDuration
         self.thinking = data.thinking
         self.completedAt = data.completedAt
         self.lastOutputAt = data.lastOutputAt
         self.generationTokenCount = data.generationTokenCount
         self.timeToFirstToken = data.timeToFirstToken
+        self.generationTokensPerSecond = data.generationTokensPerSecond
+        self.modelLoadSeconds = data.modelLoadSeconds
+        self.requestedAt = data.requestedAt
         self.terminalStopReason = data.terminalStopReason
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted
         self.responsesOutputItems = data.responsesOutputItems
+        self.anthropicThinkingBlocks = data.anthropicThinkingBlocks
         self.inputTokenCount = data.inputTokenCount
         self.cachedInputTokenCount = data.cachedInputTokenCount
         self.modelContextExcluded = data.modelContextExcluded
         self.routerBilling = data.routerBilling
         self.injectedContextPrefix = data.injectedContextPrefix
+        self.author = data.author
+        self.remoteParticipantMessageId = data.remoteParticipantMessageId
+        self.hostRun = data.hostRun
+        self.generationControls = data.generationControls
+        self.origin = data.origin
+        self.runLocation = data.runLocation
     }
 }

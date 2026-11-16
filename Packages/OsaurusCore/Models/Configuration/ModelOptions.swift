@@ -32,6 +32,10 @@ enum ModelOptionValue: Sendable, Equatable, Hashable, Codable {
 // MARK: - Option Definition
 
 struct ModelOptionSegment: Identifiable, Sendable {
+    /// A segment that clears the explicit choice. Its row already offers
+    /// what "Reset to default" would, so the picker shows no reset link.
+    static let defaultID = "default"
+
     let id: String
     let label: String
 }
@@ -131,6 +135,25 @@ struct ModelReasoningCapabilities: Sendable, Equatable, Hashable {
         defaultLevelId: "medium"
     )
 
+    /// Documented reasoning contract for GPT-6 Astra (`gpt-6-astra`) on the
+    /// official `api.openai.com` API-key route: `low` through `max`,
+    /// defaulting to `medium`. Unlike GPT-5.6, Astra does NOT accept `none`
+    /// (developers.openai.com/api/docs/models/gpt-6-astra, audited 2026-09);
+    /// offering it would 400 the request. Same host scoping as the 5.6
+    /// profile — never applied to custom OpenAI-compatible providers.
+    static let officialOpenAIGPT6Astra = ModelReasoningCapabilities(
+        levels: ["low", "medium", "high", "xhigh", "max"].map { Level(id: $0) },
+        defaultLevelId: "medium"
+    )
+
+    /// Documented contract for the GPT-6 models that do accept `none`
+    /// (`gpt-6.1-terra`, `gpt-6-luna`, `gpt-6-sol`): `none` through `max`, defaulting to
+    /// `medium`. Same official-host scoping as the Astra profile.
+    static let officialOpenAIGPT6WithNone = ModelReasoningCapabilities(
+        levels: ["none", "low", "medium", "high", "xhigh", "max"].map { Level(id: $0) },
+        defaultLevelId: "medium"
+    )
+
     init(levels: [Level], defaultLevelId: String?) {
         self.levels = levels
         self.defaultLevelId = defaultLevelId
@@ -205,33 +228,32 @@ enum ModelProfileRegistry {
         OpenAIOSeriesReasoningProfile.self,
         OpenAIGPT51ReasoningProfile.self,
         OpenAIGPT52PlusReasoningProfile.self,
+        OpenAIGPT6ReasoningProfile.self,
         OpenAIReasoningProfile.self,
         MistralReasoningProfile.self,
         ZaiGlmReasoningProfile.self,
         QwenThinkingProfile.self,
         NemotronThinkingProfile.self,
         LagunaThinkingProfile.self,
+        // DeepSeek-V4.1 names also match the broader DSV4 matcher; first match wins.
+        DSV41ReasoningProfile.self,
         DSV4ReasoningProfile.self,
         Hy3ReasoningProfile.self,
         LingRuntimeProfile.self,
         ZayaThinkingProfile.self,
         Gemma4RuntimeProfile.self,
         MuseGlimmerReasoningProfile.self,
-        Gemini31FlashImageProfile.self,
-        GeminiProImageProfile.self,
-        GeminiFlashImageProfile.self,
-        AutoThinkingProfile.self,
-    ]
+    ] + GeminiImageModels.profiles
 
     /// Memoized `profile(for:)` results, keyed by model id.
     ///
     /// The lookup walks every registered profile and calls `matches`, and
     /// those matchers lowercase the id and run family regexes. SwiftUI reads
     /// this from composer and picker body getters on every evaluation, so the
-    /// scan showed up on the main thread in hang samples. The answer is a pure
-    /// function of the id (`profiles` is a compile-time list), so it can be
-    /// cached for the life of the process. A present key with a `nil` value is
-    /// a valid "no profile matches" hit.
+    /// scan showed up on the main thread in hang samples. Only the name-only
+    /// profiles above are stable for the life of the process. AutoThinkingProfile
+    /// depends on asynchronous, invalidatable bundle discovery and must NEVER
+    /// be memoized here (including its provisional cold miss).
     private static let profileMemoLock = NSLock()
     private nonisolated(unsafe) static var profileMemo: [String: (any ModelProfile.Type)?] = [:]
 
@@ -239,14 +261,17 @@ enum ModelProfileRegistry {
         profileMemoLock.lock()
         let cached = profileMemo[modelId]
         profileMemoLock.unlock()
-        // Outer optional: was the id cached. Inner: did anything match.
-        if let cached { return cached }
-
-        let resolved = profiles.first { $0.matches(modelId: modelId) }
-        profileMemoLock.lock()
-        profileMemo[modelId] = resolved
-        profileMemoLock.unlock()
-        return resolved
+        let named: (any ModelProfile.Type)?
+        if let cached {
+            named = cached
+        } else {
+            named = profiles.first { $0.matches(modelId: modelId) }
+            profileMemoLock.lock()
+            profileMemo.updateValue(named, forKey: modelId)
+            profileMemoLock.unlock()
+        }
+        if let named { return named }
+        return AutoThinkingProfile.matches(modelId: modelId) ? AutoThinkingProfile.self : nil
     }
 
     static func defaults(for modelId: String) -> [String: ModelOptionValue] {
@@ -276,7 +301,9 @@ enum ModelProfileRegistry {
         for modelId: String,
         values: [String: ModelOptionValue]
     ) -> String? {
-        if let explicit = values["reasoningEffort"]?.stringValue { return explicit }
+        if let explicit = normalizedOptions(for: modelId, persisted: values)["reasoningEffort"]?.stringValue {
+            return explicit
+        }
         return reasoningCapabilities(for: modelId)?.defaultLevelId
     }
 
@@ -292,7 +319,7 @@ enum ModelProfileRegistry {
     ) -> String? {
         if let capabilities = reasoningCapabilities(for: modelId), !capabilities.isEmpty {
             let effective =
-                values["reasoningEffort"]?.stringValue ?? capabilities.defaultLevelId
+                effectiveReasoningEffort(for: modelId, values: values) ?? capabilities.defaultLevelId
             return effective.map { ModelReasoningCapabilities.displayLabel(forEffort: $0) }
         }
         guard
@@ -329,7 +356,7 @@ enum ModelProfileRegistry {
         // Do not synthesize profile defaults into requests. Missing values mean
         // "let the model bundle/runtime decide"; only explicit UI/API choices
         // are allowed to reach modelOptions.
-        guard let persisted else { return [:] }
+        guard var persisted else { return [:] }
 
         let allowedIds = Set(definitions.map(\.id))
         // Segment ids allowed per option. A persisted segment value that is no
@@ -340,6 +367,26 @@ enum ModelProfileRegistry {
             if case .segmented(let segments) = def.kind {
                 acc[def.id] = Set(segments.map(\.id))
             }
+        }
+        // A bundle can declare native low as its Off rail. Preserve old saved
+        // selections when discovery replaces the native effort list with modes.
+        if let effort = persisted["reasoningEffort"]?.stringValue,
+            let mode = DeclaredReasoningEffort.mode(
+                forNativeEffort: effort, control: DeclaredReasoningEffort.control(forModelId: modelId)),
+            allowedSegmentValues["reasoningEffort"]?.contains(mode) == true
+        {
+            persisted["reasoningEffort"] = .string(mode)
+        }
+        // An explicit Off from the older toggle remains Off when asynchronous
+        // bundle discovery replaces it with an effort picker. Do not convert
+        // an absent choice into a default or invent an unsupported direct rail.
+        // The boolean took precedence in the adapter when both keys existed;
+        // retain that intent while migrating to the single offered control.
+        if !allowedIds.contains("disableThinking"),
+            persisted["disableThinking"]?.boolValue == true,
+            allowedSegmentValues["reasoningEffort"]?.contains("none") == true
+        {
+            persisted["reasoningEffort"] = .string("none")
         }
         return persisted.filter { key, value in
             guard allowedIds.contains(key) else { return false }
@@ -399,10 +446,13 @@ enum ModelProfileRegistry {
 // MARK: - DSV4 Reasoning Profile
 
 /// DeepSeek-V4 / DSV4 Flash JANG bundles use vmlx's dedicated DSV4 encoder
-/// rather than a generic `enable_thinking`-only Jinja path. The runtime has
-/// four intentional modes:
+/// rather than a generic `enable_thinking`-only Jinja path. For DSV4-0731 the
+/// runtime has four intentional modes:
 /// - instruct: compatibility id for the direct/off rail (`enable_thinking=false`)
 /// - low/high/max: exact 0731 reasoning-effort values passed through to vmlx
+///
+/// DeepSeek-V4.1 names match ``DSV41ReasoningProfile`` first (registered
+/// ahead of this profile), which offers V4.1's full effort ladder.
 ///
 /// The bundle default is low. The default below is display-only; Osaurus does
 /// not synthesize it into requests, so bundle metadata remains authoritative.
@@ -439,6 +489,55 @@ struct DSV4ReasoningProfile: ModelProfile {
             return value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         default:
             return nil
+        }
+    }
+}
+
+/// DeepSeek-V4.1 bundles (`model_type=deepseek_v41`) render a numeric
+/// `Reasoning Effort: N` line, and vmlx's encoder
+/// (`DeepseekV4ChatEncoder.reasoningBudget`) maps the named ladder onto it:
+/// low 50, medium 62, high 75, xhigh 88, max 100 (`minimal` 25). Off is the
+/// direct chat rail (`enable_thinking=false`, no effort line), stored as
+/// `instruct` like DSV4-0731 so saved choices keep working; `none` and the
+/// other off aliases normalize to it. The V4.1 default budget is 50 (low);
+/// the default below is display-only and never synthesized into requests.
+struct DSV41ReasoningProfile: ModelProfile {
+    static let displayName = "DeepSeek-V4.1 Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        ModelFamilyNames.isDSV41Family(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Mode"),
+            icon: "brain.head.profile",
+            kind: .segmented([
+                ModelOptionSegment(id: "instruct", label: L("Off")),
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "xhigh", label: L("Extra High")),
+                ModelOptionSegment(id: "max", label: L("Max")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("low")
+    ]
+
+    /// The V4.1 named efforts, plus the shared off aliases mapped to
+    /// `instruct`. Nil for anything else (numeric budgets, `minimal`), which
+    /// the adapter forwards unchanged for vmlx's encoder to resolve.
+    static func normalizedEffort(_ value: String) -> String? {
+        let lowered = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch lowered {
+        case "low", "medium", "high", "xhigh", "max":
+            return lowered
+        default:
+            return DSV4ReasoningProfile.normalizedEffort(lowered) == "instruct" ? "instruct" : nil
         }
     }
 }
@@ -493,10 +592,26 @@ struct MuseGlimmerReasoningProfile: ModelProfile {
 ///   .officialOpenAIGPT56`) and the live Codex catalog; on custom
 ///   OpenAI-compatible hosts it falls through to the 5.2+ static set, which
 ///   is never assumed to include `max`.
+/// - gpt-6: Astra and 6.1 Sol `low` through `max`, no `none`
+///   (`officialOpenAIGPT6Astra`); 6 Sol, Terra and Luna `none` through `max`
+///   (`officialOpenAIGPT6WithNone`). Both are official-route profiles beside
+///   the live Codex catalog; the static `OpenAIGPT6ReasoningProfile` offers
+///   `low` through `xhigh` on custom hosts.
 private enum OpenAIModelVersion {
     static func bare(_ modelId: String) -> String {
         modelId.lowercased().split(separator: "/").last.map(String.init)
             ?? modelId.lowercased()
+    }
+
+    /// Whether the id names a GPT-6 family model (`gpt-6-astra`, dated
+    /// snapshots, future `gpt-6.x` minors).
+    static func isGPT6(_ modelId: String) -> Bool {
+        let bare = Self.bare(modelId)
+        guard bare.hasPrefix("gpt-6") else { return false }
+        // Reject fused suffixes like a hypothetical "gpt-60"; accept the
+        // bare family, a dash codename, or a dotted minor.
+        let rest = bare.dropFirst("gpt-6".count)
+        return rest.isEmpty || rest.hasPrefix("-") || rest.hasPrefix(".")
     }
 
     /// The minor version N for a "gpt-5.N…" id; nil for the original gpt-5
@@ -599,12 +714,44 @@ struct OpenAIGPT52PlusReasoningProfile: ModelProfile {
     ]
 }
 
+/// GPT-6 family (Astra) on hosts without a documented/live capability
+/// profile — `low` through `xhigh`, defaulting to `medium`. Astra rejects
+/// `none` outright, so it is not offered; `max` is never offered statically
+/// (same policy as 5.6: it requires the documented official-route profile or
+/// the live Codex catalog).
+struct OpenAIGPT6ReasoningProfile: ModelProfile {
+    static let displayName = "Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        OpenAIModelVersion.isGPT6(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Effort"),
+            icon: "brain",
+            kind: .segmented([
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "xhigh", label: L("Extra High")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("medium")
+    ]
+}
+
 /// Generic OpenAI reasoning fallback. Registered after the version-specific
 /// profiles above, so in practice it resolves only for the original gpt-5
 /// family (gpt-5, -mini, -nano, -codex), which accepts `minimal` through
-/// `high`. Its broad `matches` (any o1/o3/o4/gpt-5* id) is intentionally
-/// kept: `RemoteProviderService` uses it as the "OpenAI reasoning model"
-/// wire predicate (max_completion_tokens, temperature/top_p stripping).
+/// `high`. Its broad `matches` (any o1/o3/o4/gpt-5*/gpt-6* id) is
+/// intentionally kept: `RemoteProviderService` uses it as the "OpenAI
+/// reasoning model" wire predicate (max_completion_tokens, temperature/top_p
+/// stripping) — GPT-6 Astra rejects `temperature`/`top_p` like the rest.
 struct OpenAIReasoningProfile: ModelProfile {
     static let displayName = "Reasoning"
 
@@ -613,6 +760,7 @@ struct OpenAIReasoningProfile: ModelProfile {
     static func matches(modelId: String) -> Bool {
         let bare = OpenAIModelVersion.bare(modelId)
         return reasoningModelPrefixes.contains { bare.hasPrefix($0) }
+            || OpenAIModelVersion.isGPT6(modelId)
     }
 
     static let options: [ModelOptionDefinition] = [
@@ -1023,14 +1171,114 @@ private let geminiOutputTypeSegments: [ModelOptionSegment] = [
     ModelOptionSegment(id: "imageOnly", label: L("Image Only")),
 ]
 
+// MARK: - Gemini Image Models
+
+/// The Gemini image-generation profiles, most specific first. Matching one
+/// of these is what makes a model an image model on the wire
+/// (`responseModalities`, `imageConfig`, non-streaming `generateContent`),
+/// so a Nano Banana id that matches none of them is sent as plain text chat.
+enum GeminiImageModels {
+    static let profiles: [any ModelProfile.Type] = [
+        GeminiNanoBanana21ImageProfile.self,
+        GeminiFlashLiteImageProfile.self,
+        Gemini31FlashImageProfile.self,
+        GeminiProImageProfile.self,
+        GeminiFlashImageProfile.self,
+    ]
+
+    static func isImageModel(_ modelId: String) -> Bool {
+        profiles.contains { $0.matches(modelId: modelId) }
+    }
+}
+
+// MARK: - Gemini Nano Banana 2.1 Image Profile
+
+/// Gemini Nano Banana 2.1 (`gemini-nano-banana-2.1`) — the extended aspect
+/// ratios (including 1:4/4:1/1:8/8:1) at 1K/2K/4K, per the Gemini image docs
+/// (audited 2026-11). Unlike 3.1 Flash Image it has no 512px tier. Must
+/// precede `GeminiProImageProfile`, whose `nano-banana` match would
+/// otherwise limit it to the standard ratios.
+struct GeminiNanoBanana21ImageProfile: ModelProfile {
+    static let displayName = "Image Generation (Nano Banana 2.1)"
+
+    static func matches(modelId: String) -> Bool {
+        modelId.lowercased().contains("nano-banana-2.1")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "aspectRatio",
+            label: L("Aspect Ratio"),
+            icon: "aspectratio",
+            kind: .segmented(geminiExtendedAspectRatioSegments)
+        ),
+        ModelOptionDefinition(
+            id: "imageSize",
+            label: L("Resolution"),
+            icon: "arrow.up.right.and.arrow.down.left",
+            kind: .segmented([
+                ModelOptionSegment(id: "auto", label: L("Auto")),
+                ModelOptionSegment(id: "1K", label: "1K"),
+                ModelOptionSegment(id: "2K", label: "2K"),
+                ModelOptionSegment(id: "4K", label: "4K"),
+            ])
+        ),
+        ModelOptionDefinition(
+            id: "outputType",
+            label: L("Output"),
+            icon: "photo.on.rectangle",
+            kind: .segmented(geminiOutputTypeSegments)
+        ),
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "aspectRatio": .string("auto"),
+        "imageSize": .string("auto"),
+        "outputType": .string("textAndImage"),
+    ]
+}
+
+// MARK: - Gemini 3.1 Flash Lite Image Profile (Nano Banana 2 Lite)
+
+/// Gemini 3.1 Flash Lite Image (`gemini-3.1-flash-lite-image`) — the
+/// standard aspect ratios and output type only. It renders 1K and rejects
+/// 2K/4K (Gemini image docs, audited 2026-11), so there is no resolution
+/// control.
+struct GeminiFlashLiteImageProfile: ModelProfile {
+    static let displayName = "Image Generation (Flash Lite)"
+
+    static func matches(modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.contains("gemini-3.1-flash-lite") && lower.contains("image")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "aspectRatio",
+            label: L("Aspect Ratio"),
+            icon: "aspectratio",
+            kind: .segmented(geminiAspectRatioSegments)
+        ),
+        ModelOptionDefinition(
+            id: "outputType",
+            label: L("Output"),
+            icon: "photo.on.rectangle",
+            kind: .segmented(geminiOutputTypeSegments)
+        ),
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "aspectRatio": .string("auto"),
+        "outputType": .string("textAndImage"),
+    ]
+}
+
 // MARK: - Gemini 3.1 Flash Image Profile (Nano Banana 2)
 
 /// Gemini 3.1 Flash Image Preview — supports extended aspect ratios
 /// (including 1:4/4:1/1:8/8:1), resolution (512px/1K/2K/4K), and output
-/// type. Excludes the Lite variant: per the Gemini image docs (audited
-/// 2026-07) `gemini-3.1-flash-lite-image` supports only 1K output, so
-/// offering it this resolution set would send values the API rejects; Lite
-/// intentionally matches no profile and runs on API defaults.
+/// type. Excludes the Lite variant, which supports only 1K output and has
+/// its own `GeminiFlashLiteImageProfile`.
 struct Gemini31FlashImageProfile: ModelProfile {
     static let displayName = "Image Generation (3.1 Flash)"
 

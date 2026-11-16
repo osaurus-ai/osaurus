@@ -2,19 +2,10 @@
 //  ModelLoadAccountingTests.swift
 //  OsaurusCoreTests
 //
-//  Pins the arithmetic behind splitting cold model load out of the reported
-//  time-to-first-token.
-//
-//  Why this is worth a test file: a user on a 64 GB M3 Max reported
-//  "TTFT 215.61s" on a ~1.8k-token prompt. No machine prefills 1.8k tokens in
-//  215 s, so the number was not measuring prefill — it was measuring a cold
-//  27 GB container load billed as TTFT. The number was ours, and it read as an
-//  engine fault.
-//
-//  The subtraction has one dangerous failure mode: over-subtracting drives the
-//  reported TTFT to zero, which would replace a scary-but-honest number with a
-//  reassuring lie. Hence union-not-sum, clipping at both ends, and a hard floor
-//  at the window length.
+//  Global model-load union/clipping diagnostics. These intervals do not
+//  identify an individual request, so ChatView must not subtract them from
+//  that request's TTFT. Request-owned TTFT coverage is in
+//  ResponsesVisualLifecycleTests.
 //
 
 import XCTest
@@ -32,9 +23,9 @@ final class ModelLoadAccountingTests: XCTestCase {
 
     // MARK: - The reported case
 
-    /// The shape of the M3 Max report: a 212 s load inside a 215.6 s window
-    /// leaves ~3.6 s of actual time-to-first-token.
-    func testColdLoadIsSeparatedFromTheRemainingTTFT() {
+    /// The reported 212s global load interval is measurable, but not enough
+    /// to assign that interval to a particular request.
+    func testGlobalColdLoadIntervalIsRecordedWithoutRequestAttribution() {
         let m = manager()
         let sendAt = t0
         m._testBeginModelLoad(at: sendAt.addingTimeInterval(0.1))
@@ -44,7 +35,6 @@ final class ModelLoadAccountingTests: XCTestCase {
         let load = m.modelLoadSeconds(from: sendAt, to: firstToken)
 
         XCTAssertEqual(load, 212.0, accuracy: 0.01)
-        XCTAssertEqual(firstToken.timeIntervalSince(sendAt) - load, 3.61, accuracy: 0.01)
     }
 
     // MARK: - Union, not sum

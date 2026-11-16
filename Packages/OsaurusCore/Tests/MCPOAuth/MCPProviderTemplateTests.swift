@@ -4,10 +4,11 @@
 //
 //  Sanity tests for the well-known provider catalog. The catalog is hardcoded
 //  Swift, so these tests catch regressions in copy/paste edits (duplicate IDs,
-//  malformed URLs, missing auto-sign-in flag, broken alphabetical order) that
+//  malformed URLs, missing auto-sign-in flag, broken category order) that
 //  would otherwise only surface at runtime.
 //
 
+import AppKit
 import Foundation
 import Testing
 
@@ -29,11 +30,8 @@ struct MCPProviderTemplateTests {
         #expect(Set(names).count == names.count)
     }
 
-    @Test func everyConnectableURLIsHTTPS() {
-        // Self-hosting templates intentionally ship an empty `url` because the
-        // user supplies their own deployment endpoint. Skip them here; their
-        // helpURL is validated separately.
-        for template in MCPProviderTemplate.allTemplates where template.selfHostingHelpURL == nil {
+    @Test func everyURLIsHTTPS() {
+        for template in MCPProviderTemplate.allTemplates {
             let url = URL(string: template.url)
             #expect(url != nil, "Template \(template.id) has unparseable URL: \(template.url)")
             #expect(
@@ -44,19 +42,6 @@ struct MCPProviderTemplateTests {
                 url?.host?.isEmpty == false,
                 "Template \(template.id) URL is missing a host"
             )
-        }
-    }
-
-    @Test func selfHostingTemplatesHaveHelpURL() {
-        // Self-hosting templates can't drop the user into a one-tap connect flow
-        // because there's no hosted endpoint, so they must point somewhere
-        // useful (deploy docs, vendor README) over https.
-        let selfHosting = MCPProviderTemplate.allTemplates.filter { $0.selfHostingHelpURL != nil }
-        #expect(!selfHosting.isEmpty, "expected at least one self-hosting template (e.g. Google Workspace)")
-        for template in selfHosting {
-            let url = template.selfHostingHelpURL
-            #expect(url?.scheme == "https", "Template \(template.id) selfHostingHelpURL must use https")
-            #expect(url?.host?.isEmpty == false, "Template \(template.id) selfHostingHelpURL is missing a host")
         }
     }
 
@@ -81,12 +66,98 @@ struct MCPProviderTemplateTests {
         }
     }
 
-    @Test func templatesAreAlphabeticallyOrdered() {
-        // The picker renders this list in declaration order; keeping it sorted
-        // gives a predictable scan order in the chip row.
-        let displayNames = MCPProviderTemplate.allTemplates.map(\.displayName)
-        let sorted = displayNames.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        #expect(displayNames == sorted, "Catalog is not alphabetically sorted by displayName")
+    @Test func iconsAreRealSFSymbols() {
+        // A misspelled symbol renders as an empty tile with no build error.
+        for template in MCPProviderTemplate.allTemplates {
+            #expect(
+                NSImage(systemSymbolName: template.iconSystemName, accessibilityDescription: nil) != nil,
+                "Template \(template.id) uses unknown SF Symbol \(template.iconSystemName)"
+            )
+        }
+    }
+
+    @Test func templatesAreOrderedByCategoryThenName() {
+        // Professional domains come first; within a category the directory
+        // scans alphabetically.
+        let templates = MCPProviderTemplate.allTemplates
+        for (lhs, rhs) in zip(templates, templates.dropFirst()) {
+            let lhsRank = MCPProviderCategory.allCases.firstIndex(of: lhs.category)!
+            let rhsRank = MCPProviderCategory.allCases.firstIndex(of: rhs.category)!
+            #expect(lhsRank <= rhsRank, "\(lhs.id) (\(lhs.category)) sorts after \(rhs.id) (\(rhs.category))")
+            if lhsRank == rhsRank {
+                #expect(
+                    lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending,
+                    "\(lhs.displayName) and \(rhs.displayName) are out of order"
+                )
+            }
+        }
+        #expect(templates.first?.category == .legal)
+    }
+
+    @Test func everyCategoryHasTemplates() {
+        for category in MCPProviderCategory.allCases {
+            #expect(
+                MCPProviderTemplate.allTemplates.contains { $0.category == category },
+                "Category \(category) is empty"
+            )
+        }
+    }
+
+    @Test func metadataDocumentOnlyTemplatesAreHiddenUntilPublished() {
+        let cimdOnly = MCPProviderTemplate.allTemplates.filter(\.requiresClientMetadataDocument)
+        #expect(!cimdOnly.isEmpty)
+        for template in cimdOnly {
+            #expect(template.authType == .oauth)
+            #expect(!template.requiresManualOAuthCredentials)
+        }
+        let hidden = MCPProviderTemplate.available(metadataDocumentPublished: false)
+        #expect(hidden.allSatisfy { !$0.requiresClientMetadataDocument })
+        #expect(MCPProviderTemplate.available(metadataDocumentPublished: true) == MCPProviderTemplate.allTemplates)
+    }
+
+    @Test func directorySearchMatchesCategoryAndFiltersByCategory() {
+        let legal = MCPProviderDirectoryView.templates(matching: "legal")
+        #expect(legal.contains { $0.id == "courtlistener" })
+        let health = MCPProviderDirectoryView.templates(matching: "", category: .healthcare)
+        #expect(!health.isEmpty)
+        #expect(health.allSatisfy { $0.category == .healthcare })
+        let hiddenByDefault = MCPProviderDirectoryView.templates(matching: "MyCase")
+        #expect(hiddenByDefault.isEmpty)
+        let shownWhenPublished = MCPProviderDirectoryView.templates(
+            matching: "MyCase", metadataDocumentPublished: true
+        )
+        #expect(shownWhenPublished.map(\.id) == ["mycase"])
+    }
+
+    @Test func correctedEndpointsArePinned() {
+        let byId = Dictionary(uniqueKeysWithValues: MCPProviderTemplate.allTemplates.map { ($0.id, $0) })
+        // `/mcp` on these hosts returns 404.
+        #expect(byId["vercel"]?.url == "https://mcp.vercel.com/")
+        // Atlassian v2 and Zapier publish OAuth discovery with dynamic
+        // client registration, so they no longer need an API key.
+        #expect(byId["atlassian"]?.url == "https://mcp.atlassian.com/v2/mcp")
+        #expect(byId["atlassian"]?.authType == .oauth)
+        #expect(byId["zapier"]?.authType == .oauth)
+        // Stack Overflow publishes no OAuth discovery metadata, and Google's
+        // hosted servers replace the self-hosted Workspace template.
+        #expect(byId["stackoverflow"] == nil)
+        #expect(byId["google_workspace"] == nil)
+        #expect(byId["google_drive"]?.requiresManualOAuthCredentials == true)
+        // Gusto serves MCP at the bare host; `/mcp` returns 404.
+        #expect(byId["gusto"]?.url == "https://mcp.api.gusto.com")
+        // Dropbox, Gusto, and QuickBooks publish dynamic client registration.
+        // Harvey and Microsoft Work IQ only accept clients they or the tenant
+        // admin issue, so they need the manual credentials form.
+        for id in ["dropbox", "dropbox_dash", "gusto", "quickbooks"] {
+            #expect(byId[id]?.authType == .oauth, "\(id)")
+            #expect(byId[id]?.requiresManualOAuthCredentials == false, "\(id)")
+        }
+        for id in ["harvey", "microsoft_365"] {
+            #expect(byId[id]?.requiresManualOAuthCredentials == true, "\(id)")
+            #expect(byId[id]?.requiresSubscription == true, "\(id)")
+        }
+        #expect(byId["everlaw"] == nil)
+        #expect(byId["clio"] == nil)
     }
 
     @Test func confidentialOAuthTemplatesAreFullyConfigured() {
@@ -100,6 +171,10 @@ struct MCPProviderTemplateTests {
         #expect(
             !confidential.isEmpty,
             "expected at least one confidential-client OAuth template (HubSpot)"
+        )
+        #expect(
+            Set(confidential.compactMap(\.oauthFixedLoopbackPort)) == [MCPProviderTemplate.manualOAuthLoopbackPort],
+            "manual OAuth templates should share one redirect URI"
         )
         for template in confidential {
             #expect(

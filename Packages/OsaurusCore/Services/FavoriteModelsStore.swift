@@ -24,6 +24,23 @@ final class FavoriteModelsStore: ObservableObject {
 
     private let userDefaults: UserDefaults
     private let storageKey = "favorite_model_keys"
+    /// Starter slugs that have already been considered for seeding (added, or
+    /// deliberately skipped because the user had curated favourites first).
+    /// A slug in this ledger is never seeded again, so a user who removes a
+    /// starter favourite does not get it back on the next catalog refresh.
+    private let starterLedgerKey = "favorite_model_starter_seeded_slugs"
+
+    /// Osaurus Cloud models every new user starts with in the Favourites
+    /// shortlist, in display order. Matched against Router model ids by final
+    /// path component (Router ids are provider-prefixed, e.g.
+    /// `osaurus/deepseek-v4-1-flash`). The first slot is the first-run model:
+    /// `starterSlugs(routerModelIds:)` swaps in the newest DeepSeek Flash the
+    /// Router offers.
+    nonisolated static let starterOsaurusCloudSlugs: [String] = [
+        RemoteProviderManager.firstRunOsaurusModelSlug,
+        "claude-opus-5-5",
+        "gpt-6-astra",
+    ]
 
     private struct Stored: Codable {
         var version: Int
@@ -35,6 +52,71 @@ final class FavoriteModelsStore: ObservableObject {
         let loaded = Self.load(from: userDefaults, key: storageKey)
         self.favoriteKeys = loaded
         self.keySet = Set(loaded)
+    }
+
+    // MARK: - Starter favourites
+
+    /// Starter slugs already handled (seeded or skipped). Exposed for tests.
+    var seededStarterSlugs: [String] {
+        userDefaults.stringArray(forKey: starterLedgerKey) ?? []
+    }
+
+    /// Seed the Osaurus Cloud starter favourites once the Router catalog is
+    /// known. Idempotent and incremental:
+    ///
+    /// - A user who already has favourites but was never seeded is treated as
+    ///   having curated their own list: every starter slug is recorded as
+    ///   handled and nothing is added.
+    /// - Otherwise each not-yet-handled starter slug present in
+    ///   `routerModelIds` is favourited and recorded. Slugs the Router does
+    ///   not offer yet stay pending and are picked up by a later catalog
+    ///   arrival, so a model added to the Router after install still lands.
+    ///
+    /// `routerModelIds` are the picker-prefixed ids the Router exposes;
+    /// `routerSourceKey` is the Router's `ModelSource.uniqueKey`.
+    func seedStarterFavoritesIfNeeded(routerModelIds: [String], routerSourceKey: String) {
+        var ledger = seededStarterSlugs
+        let ledgerSet = Set(ledger)
+        let flashHandled = ledger.contains(where: RemoteProviderManager.isFirstRunOsaurusModelId)
+        let pending = Self.starterSlugs(routerModelIds: routerModelIds).filter { slug in
+            if RemoteProviderManager.isFirstRunOsaurusModelId(slug) { return !flashHandled }
+            return !ledgerSet.contains(slug)
+        }
+        guard !pending.isEmpty else { return }
+
+        if ledger.isEmpty, !favoriteKeys.isEmpty {
+            // Existing user with their own favourites: never touch the list.
+            userDefaults.set(ledger + pending, forKey: starterLedgerKey)
+            return
+        }
+
+        for slug in pending {
+            guard let modelId = routerModelIds.first(where: { Self.slug(of: $0) == slug }) else {
+                continue
+            }
+            add(Self.key(sourceKey: routerSourceKey, modelId: modelId))
+            ledger.append(slug)
+        }
+        if ledger != seededStarterSlugs {
+            userDefaults.set(ledger, forKey: starterLedgerKey)
+        }
+    }
+
+    /// The starter slugs for this Router catalog: the first-run slot names
+    /// the newest DeepSeek Flash offered, and the fixed slug before the
+    /// catalog has one. A Flash slug already in the ledger fills the slot,
+    /// so a newer version never seeds a second Flash favourite.
+    nonisolated static func starterSlugs(routerModelIds: [String]) -> [String] {
+        let flash = RemoteProviderManager.newestFirstRunOsaurusModelId(in: routerModelIds).map(slug(of:))
+        return starterOsaurusCloudSlugs.map { starter in
+            starter == RemoteProviderManager.firstRunOsaurusModelSlug ? (flash ?? starter) : starter
+        }
+    }
+
+    /// Final path component of a (possibly provider-prefixed) model id,
+    /// lowercased for comparison.
+    nonisolated static func slug(of modelId: String) -> String {
+        (modelId.split(separator: "/").last.map(String.init) ?? modelId).lowercased()
     }
 
     /// Stable cross-provider favourite key: the source's unique key joined to

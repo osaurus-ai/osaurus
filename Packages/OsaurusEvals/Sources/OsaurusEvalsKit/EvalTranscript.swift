@@ -212,6 +212,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
     public let trial: Int?
     public let trialCount: Int?
     public let error: String?
+    /// Cache-specific per-turn status, usage, restore and producer-drain data.
+    public let cacheProof: CacheProofTranscript?
 
     public init(
         caseId: String,
@@ -230,7 +232,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
         stepDiagnostics: [StepEvent]? = nil,
         trial: Int? = nil,
         trialCount: Int? = nil,
-        error: String? = nil
+        error: String? = nil,
+        cacheProof: CacheProofTranscript? = nil
     ) {
         self.caseId = caseId
         self.domain = domain
@@ -249,6 +252,7 @@ public struct EvalCaseTranscript: Codable, Sendable {
         self.trial = trial ?? EvalTrialExecutionContext.current?.ordinal
         self.trialCount = trialCount ?? EvalTrialExecutionContext.current?.total
         self.error = error
+        self.cacheProof = cacheProof
     }
 }
 
@@ -256,7 +260,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
 /// `<report>.transcripts/` when `--transcripts` is set; runners hand it
 /// every LLM-case transcript and it persists ONLY failed/errored rows
 /// (a passing case's transcript is rarely interesting and multiplies
-/// disk fast). Repeat failures carry a trial ordinal and write distinct files,
+/// disk fast). An explicit all-transcripts mode also retains successful rows.
+/// Repeats carry a trial ordinal and write distinct files,
 /// so stochastic protocol failures do not overwrite one another.
 @MainActor
 public enum EvalTranscriptStore {
@@ -264,11 +269,14 @@ public enum EvalTranscriptStore {
     public private(set) static var directory: URL?
     /// Files written since `configure` — the CLI's end-of-suite summary.
     public private(set) static var writtenCount = 0
+    /// Explicit qualification mode; reset for every configured suite.
+    public private(set) static var includeSuccessful = false
 
     /// Point the store at a directory (created lazily on first write) or
     /// disable it with nil. Resets the written counter — call per suite.
-    public static func configure(directory: URL?) {
+    public static func configure(directory: URL?, includeSuccessful: Bool = false) {
         self.directory = directory
+        self.includeSuccessful = directory != nil && includeSuccessful
         writtenCount = 0
     }
 
@@ -283,7 +291,7 @@ public enum EvalTranscriptStore {
             EvalCaseOutcome.failed.rawValue, EvalCaseOutcome.errored.rawValue,
         ]
         guard persisted.contains(transcript.outcome)
-            || (includeSuccessful && transcript.outcome == EvalCaseOutcome.passed.rawValue)
+            || ((includeSuccessful || self.includeSuccessful) && transcript.outcome == EvalCaseOutcome.passed.rawValue)
         else { return }
         do {
             try FileManager.default.createDirectory(

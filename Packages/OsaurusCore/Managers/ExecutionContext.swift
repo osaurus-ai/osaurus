@@ -6,7 +6,7 @@
 //  headlessly. Windows are created lazily only when needed for UI.
 //
 //  Used by:
-//  - TaskDispatcher (scheduler / HTTP / plugin / watcher dispatch)
+//  - BackgroundTaskManager.dispatchChat (automation / HTTP / plugin dispatch)
 //  - BackgroundTaskManager.dispatchChat
 //  - Future webhook handlers (headless, no UI)
 //
@@ -40,6 +40,14 @@ public final class ExecutionContext: ObservableObject {
     /// bookmark is present so the run still reaches its target folder.
     let folderPath: String?
 
+    /// Set for a run another of the user's devices asked this Mac for: it
+    /// uses the agent's model even though it continues a window chat, since
+    /// the device the user chats on can't pick this Mac's model.
+    var followsAgentModel = false
+    /// A model the requesting device picked for this run (`hostRun.model`),
+    /// used instead of the agent's. Already checked against the picker.
+    var pinnedModel: String?
+
     /// Whether execution is currently in progress
     public var isExecuting: Bool { chatSession.isStreaming }
 
@@ -52,6 +60,7 @@ public final class ExecutionContext: ObservableObject {
         folderBookmark: Data? = nil,
         folderPath: String? = nil,
         source: SessionSource = .chat,
+        automationKind: EventSourceKind? = nil,
         sourcePluginId: String? = nil,
         externalSessionKey: String? = nil,
         loadIntent: ModelLoadIntent = .interactive,
@@ -75,6 +84,7 @@ public final class ExecutionContext: ObservableObject {
         // actual saved session.
         session.sessionId = id
         session.source = source
+        session.automationKind = automationKind
         session.loadIntent = loadIntent
         session.sourcePluginId = sourcePluginId
         session.externalSessionKey = externalSessionKey
@@ -97,9 +107,11 @@ public final class ExecutionContext: ObservableObject {
         workspace prepared: WorkspaceAgentRunClient.Prepared,
         title: String? = nil,
         source: SessionSource,
+        automationKind: EventSourceKind? = nil,
         externalSessionKey: String? = nil,
         loadIntent: ModelLoadIntent = .interactive,
-        delegationBudget: DelegatedRunContract? = nil
+        delegationBudget: DelegatedRunContract? = nil,
+        callingAgentId: UUID? = nil
     ) {
         self.id = id
         self.agentId = Agent.defaultId
@@ -113,6 +125,7 @@ public final class ExecutionContext: ObservableObject {
         session.agentId = Agent.defaultId
         session.sessionId = id
         session.source = source
+        session.automationKind = automationKind
         session.loadIntent = loadIntent
         session.externalSessionKey = externalSessionKey
         session.dispatchTaskId = id
@@ -122,7 +135,8 @@ public final class ExecutionContext: ObservableObject {
         )
         session.headlessRemoteAgentBinding = .init(
             providerId: prepared.providerId,
-            effectiveModel: prepared.effectiveModel
+            effectiveModel: prepared.effectiveModel,
+            callingAgentId: callingAgentId
         )
         session.title = title ?? prepared.displayName
         self.chatSession = session
@@ -138,12 +152,14 @@ public final class ExecutionContext: ObservableObject {
     /// model is re-applied in `prepare()` once picker items load.
     init(
         reattaching existing: ChatSessionData,
+        reusing liveSession: ChatSession? = nil,
         folderBookmark: Data? = nil,
         folderPath: String? = nil,
         workspace prepared: WorkspaceAgentRunClient.Prepared? = nil,
         loadIntent: ModelLoadIntent = .interactive,
         delegationBudget: DelegatedRunContract? = nil,
-        delegationModel: String? = nil
+        delegationModel: String? = nil,
+        callingAgentId: UUID? = nil
     ) {
         self.id = existing.id
         self.agentId = existing.agentId ?? Agent.defaultId
@@ -152,7 +168,11 @@ public final class ExecutionContext: ObservableObject {
         self.folderBookmark = folderBookmark
         self.folderPath = folderPath
 
-        let session = ChatSession()
+        // A tab/registry may already own this conversation. Reuse that exact
+        // object: hydrating a second writer lets tab-close save stale history
+        // over the dispatched turns. Its live edits outrank the disk snapshot.
+        precondition(liveSession == nil || liveSession?.sessionId == existing.id)
+        let session = liveSession ?? ChatSession()
         session.agentId = existing.agentId
         session.loadIntent = loadIntent
         // A resumed delegation (`spawn_agent` `continue`) re-applies the
@@ -163,7 +183,7 @@ public final class ExecutionContext: ObservableObject {
         // Apply identity + history immediately so observers (e.g. the
         // BackgroundTaskState activity feed) see the existing turns from
         // the very first publish.
-        session.load(from: existing)
+        if liveSession == nil { session.load(from: existing) }
         if let prepared {
             // Reattaching to a shared-agent conversation: re-install the
             // Mode 2 binding (a fresh provider id after a re-pair is fine —
@@ -174,13 +194,14 @@ public final class ExecutionContext: ObservableObject {
             )
             session.headlessRemoteAgentBinding = .init(
                 providerId: prepared.providerId,
-                effectiveModel: prepared.effectiveModel
+                effectiveModel: prepared.effectiveModel,
+                callingAgentId: callingAgentId
             )
         }
         // `load(from:)` may have failed to restore the model if picker
         // items aren't loaded yet; `prepare()` re-applies after refresh.
         self.chatSession = session
-        self.pendingReattachSession = existing
+        self.pendingReattachSession = liveSession == nil ? existing : nil
     }
 
     /// Set when this context was built via `init(reattaching:)`. Lets
@@ -212,20 +233,32 @@ public final class ExecutionContext: ObservableObject {
         // picker items are populated — the load() call in init may have
         // fallen back to the agent default because the picker was empty.
         if let pending = pendingReattachSession {
-            chatSession.load(from: pending)
+            chatSession.restorePersistedModelSelection(pending.selectedModel)
             pendingReattachSession = nil
         }
         // Headless dispatches follow the agent's current default model on
         // every turn; the persisted session model is only a fallback. No-op
-        // for window chats (see the method doc). A workspace target sends
-        // no model at all (the host picks its own), so leave the pin alone.
+        // for window chats (see the method doc) unless `followsAgentModel`.
+        // A workspace target sends no model at all (the host picks its own),
+        // so leave the pin alone.
         if workspaceTarget == nil {
-            chatSession.applyAgentDefaultModelForDispatch()
+            if let pinnedModel {
+                chatSession.pinModelForRun(pinnedModel)
+            } else {
+                chatSession.applyAgentDefaultModelForDispatch(inWindowChat: followsAgentModel)
+            }
         }
     }
 
     /// Begin execution with the given prompt.
-    public func start(prompt: String) async {
+    @discardableResult
+    public func start(prompt: String, taskIntent: ChatTaskIntent? = nil, generationOverrides: ChatTurnOverrides? = nil) async -> String? {
+        do { try generationOverrides?.validate(forWorkspaceAgent: workspaceTarget != nil) }
+        catch {
+            let message = error.localizedDescription
+            chatSession.lastStreamError = message
+            return message
+        }
         let folderFailure = await activateFolderContextIfNeeded()
         if let folderFailure {
             // The dispatch NAMED a folder and that folder cannot be read.
@@ -235,10 +268,11 @@ public final class ExecutionContext: ObservableObject {
             // of files. The run still executes (the result must reach the
             // watcher log/UI), but the model is told the truth up front so it
             // reports the real problem instead of inventing one.
-            chatSession.send(folderFailure + "\n\n" + prompt)
-            return
+            chatSession.send(folderFailure + "\n\n" + prompt, taskIntent: taskIntent, turnOverrides: generationOverrides)
+            return nil
         }
-        chatSession.send(prompt)
+        chatSession.send(prompt, taskIntent: taskIntent, turnOverrides: generationOverrides)
+        return nil
     }
 
     /// Resolve the stored bookmark onto THIS context's session folder state
@@ -282,14 +316,7 @@ public final class ExecutionContext: ObservableObject {
             print(
                 "[ExecutionContext] Dispatch folder could not be restored: \(path) — run proceeds with an explicit folder-unreadable preamble"
             )
-            return
-                "IMPORTANT — the configured folder for this task, '\(path)', could not "
-                + "be read (it is missing, not a directory, or macOS denied access). "
-                + "Do NOT inspect other directories in its place and do NOT report the "
-                + "folder as empty. Report this access problem as the outcome and stop; "
-                + "the user can restore access by re-picking the folder where it was "
-                + "set — the Watcher or Schedule that owns it, or the agent's Working "
-                + "Folder (chat folder chip / agent editor)."
+            return Self.folderUnreadablePreamble(path: path)
         }
         // This folder came from a background dispatch (Watcher / schedule /
         // plugin), not an interactive UI pick. Mark it so
@@ -298,6 +325,26 @@ public final class ExecutionContext: ObservableObject {
         // folder (the Voice Memo Watcher "empty folder" bug).
         await MainActor.run { chatSession.folderContextFromDispatchBookmark = true }
         return nil
+    }
+
+    /// Fixed fragments of the folder-unreadable preamble. Shared with
+    /// `DispatchEnvelope`, which strips the preamble for display, so the
+    /// producer and the parser can never drift apart. Byte-for-byte the
+    /// historical text.
+    nonisolated static let folderUnreadablePreamblePrefix = "IMPORTANT — the configured folder for this task, '"
+    nonisolated static let folderUnreadablePreambleSuffix =
+        "', could not "
+        + "be read (it is missing, not a directory, or macOS denied access). "
+        + "Do NOT inspect other directories in its place and do NOT report the "
+        + "folder as empty. Report this access problem as the outcome and stop; "
+        + "the user can restore access by re-picking the folder where it was "
+        + "set — the Watcher or Schedule that owns it, or the agent's Working "
+        + "Folder (chat folder chip / agent editor)."
+
+    /// The preamble prepended to a dispatched prompt when its named folder
+    /// could not be restored (see `activateFolderContextIfNeeded`).
+    nonisolated static func folderUnreadablePreamble(path: String) -> String {
+        folderUnreadablePreamblePrefix + path + folderUnreadablePreambleSuffix
     }
 
     /// Poll until execution completes or the task is cancelled.

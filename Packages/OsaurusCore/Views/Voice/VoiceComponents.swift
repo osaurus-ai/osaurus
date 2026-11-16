@@ -37,7 +37,9 @@ public struct WaveformView: View {
     /// Whether the view is actively recording
     var isActive: Bool = true
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     public init(
         level: Float,
@@ -54,6 +56,8 @@ public struct WaveformView: View {
     }
 
     public var body: some View {
+        Group {
+
         switch style {
         case .bars:
             barsView
@@ -64,7 +68,9 @@ public struct WaveformView: View {
         case .minimal:
             minimalView
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     // MARK: - Bars Style
 
@@ -96,7 +102,7 @@ public struct WaveformView: View {
     }
 
     private var effectiveColor: Color {
-        primaryColor ?? theme.accentColor
+        primaryColor ?? theme.action.primary.default.background
     }
 }
 
@@ -104,6 +110,10 @@ public struct WaveformView: View {
 
 /// Waveform visualization with smooth 60fps animation
 private struct WaveformBars: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
+
     let level: Float
     let barCount: Int
     let color: Color
@@ -116,6 +126,8 @@ private struct WaveformBars: View {
     private let barSpacing: CGFloat = 2
 
     var body: some View {
+        Group {
+
         // 30fps is visually indistinguishable for a sine-driven waveform and
         // halves the per-frame body evaluations, which showed up in app-hang
         // sampling on memory-starved machines.
@@ -133,7 +145,9 @@ private struct WaveformBars: View {
                 phaseOffsets = (0 ..< barCount).map { _ in Double.random(in: 0 ... .pi * 2) }
             }
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     @ViewBuilder
     private func singleBar(index: Int, timestamp: TimeInterval) -> some View {
@@ -173,11 +187,17 @@ private struct WaveformBars: View {
 // MARK: - Waveform Wave
 
 private struct WaveformWave: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
+
     let level: Float
     let color: Color
     let isActive: Bool
 
     var body: some View {
+        Group {
+
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             WaveformWaveCanvas(
                 level: level,
@@ -187,20 +207,29 @@ private struct WaveformWave: View {
             )
         }
         .frame(height: 40)
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 private struct WaveformWaveCanvas: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     let level: Float
     let color: Color
     let isActive: Bool
     let timestamp: TimeInterval
 
     var body: some View {
+        Group {
+
         Canvas { context, size in
             drawWave(context: context, size: size)
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     private func drawWave(context: GraphicsContext, size: CGSize) {
         let midY: CGFloat = size.height / 2
@@ -232,7 +261,7 @@ private struct WaveformWaveCanvas: View {
         context.stroke(
             path,
             with: .linearGradient(gradient, startPoint: startPt, endPoint: endPt),
-            lineWidth: 3.5
+            lineWidth: theme.stroke.focus * 1.5
         )
     }
 }
@@ -240,11 +269,16 @@ private struct WaveformWaveCanvas: View {
 // MARK: - Waveform Circular
 
 private struct WaveformCircular: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     let level: Float
     let color: Color
     let isActive: Bool
 
     var body: some View {
+        Group {
+
         TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
             let phase = isActive ? timeline.date.timeIntervalSinceReferenceDate * 4 : 0
             let levelCG = CGFloat(level)
@@ -252,13 +286,13 @@ private struct WaveformCircular: View {
             ZStack {
                 // Outer pulsing ring - intensity tied to level
                 Circle()
-                    .stroke(color.opacity(0.2), lineWidth: 2)
+                    .stroke(color.opacity(0.2), lineWidth: theme.stroke.focus)
                     .frame(width: 50, height: 50)
                     .scaleEffect(1 + levelCG * 0.5 * CGFloat(sin(phase * 2.5)))
 
                 // Middle ring - intensity tied to level
                 Circle()
-                    .stroke(color.opacity(0.4), lineWidth: 2)
+                    .stroke(color.opacity(0.4), lineWidth: theme.stroke.focus)
                     .frame(width: 35, height: 35)
                     .scaleEffect(1 + levelCG * 0.4 * CGFloat(sin(phase * 3.5 + 1)))
 
@@ -277,11 +311,16 @@ private struct WaveformCircular: View {
             }
         }
         .frame(width: 60, height: 60)
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 // MARK: - Waveform Minimal
 
 private struct WaveformMinimal: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     let level: Float
     let color: Color
     let isActive: Bool
@@ -290,10 +329,12 @@ private struct WaveformMinimal: View {
     @State private var isPulsing = false
 
     var body: some View {
+        Group {
+
         ZStack {
             // Pulse ring
             Circle()
-                .stroke(color.opacity(0.3), lineWidth: 2)
+                .stroke(color.opacity(0.3), lineWidth: theme.stroke.focus)
                 .frame(width: 24, height: 24)
                 .scaleEffect(isPulsing ? 1.5 : 1.0)
                 .opacity(isPulsing ? 0 : 1)
@@ -308,20 +349,22 @@ private struct WaveformMinimal: View {
         .onAppear {
             // Continuous decorative pulse: keep the static ring under Reduce Motion.
             guard isActive, !reduceMotion else { return }
-            withAnimation(.easeOut(duration: 1.0).repeatForever(autoreverses: false)) {
+            withAnimation(theme.motion.loop(.easeOut, duration: 1.0)) {
                 isPulsing = true
             }
         }
         .onChange(of: isActive) { _, active in
             if active, !reduceMotion {
-                withAnimation(.easeOut(duration: 1.0).repeatForever(autoreverses: false)) {
+                withAnimation(theme.motion.loop(.easeOut, duration: 1.0)) {
                     isPulsing = true
                 }
             } else {
                 isPulsing = false
             }
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Transcription Preview View
@@ -337,7 +380,9 @@ public struct TranscriptionPreviewView: View {
     /// Placeholder text when empty
     var placeholder: String = "Listening..."
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cursorVisible = true
 
@@ -352,28 +397,30 @@ public struct TranscriptionPreviewView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 0) {
+        Group {
+
+        HStack(spacing: theme.space.s0) {
             if text.isEmpty {
                 Text(placeholder)
-                    .font(.system(size: 15))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                    .foregroundColor(theme.text.tertiary)
                     .italic()
             } else {
                 Text(text)
-                    .font(.system(size: 15))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                    .foregroundColor(theme.text.primary)
             }
 
             // Blinking cursor (static under Reduce Motion)
             if isTranscribing {
                 Rectangle()
-                    .fill(theme.accentColor)
+                    .fill(theme.action.primary.default.background)
                     .frame(width: 2, height: 18)
                     .opacity(cursorVisible ? 1 : 0)
                     .animation(
                         reduceMotion
                             ? nil
-                            : .easeInOut(duration: 0.5).repeatForever(autoreverses: true),
+                            : theme.motion.loop(.easeInOut, duration: 0.5, autoreverses: true),
                         value: cursorVisible
                     )
                     .onAppear {
@@ -384,18 +431,18 @@ public struct TranscriptionPreviewView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionPreviewView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionPreviewView.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionPreviewView.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionPreviewView.body.paddingY")
         .background(
             ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(theme.inputBackground)
+                RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                    .fill(theme.surface.raised)
 
                 if isTranscribing {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
                         .fill(
                             LinearGradient(
-                                colors: [theme.accentColor.opacity(0.05), Color.clear],
+                                colors: [theme.surface.hover, Color.clear],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
@@ -404,20 +451,15 @@ public struct TranscriptionPreviewView: View {
             }
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
                 .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            isTranscribing ? theme.accentColor.opacity(0.5) : theme.glassEdgeLight.opacity(0.15),
-                            isTranscribing ? theme.accentColor.opacity(0.2) : theme.inputBorder,
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
+                    isTranscribing ? theme.border.focus : theme.border.strong,
                     lineWidth: isTranscribing ? 1.5 : 1
                 )
         )
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Voice Status Indicator
@@ -461,7 +503,9 @@ public struct VoiceStatusIndicator: View {
     /// Compact mode (icon only)
     var compact: Bool = false
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     public init(state: VoiceState, showLabel: Bool = true, compact: Bool = false) {
         self.state = state
@@ -470,19 +514,21 @@ public struct VoiceStatusIndicator: View {
     }
 
     public var body: some View {
-        HStack(spacing: compact ? 0 : 6) {
+        Group {
+
+        HStack(spacing: compact ? theme.space.s0 : theme.space.s6) {
             // Animated icon
             ZStack {
                 if state == .listening {
                     // Pulsing background for listening state
                     Circle()
-                        .fill(stateColor.opacity(0.3))
+                        .fill(theme.wash(behind: stateColor))
                         .frame(width: 20, height: 20)
                         .modifier(PulseModifier())
                 }
 
                 Image(systemName: state.iconName)
-                    .font(.system(size: compact ? 14 : 12, weight: .medium))
+                    .glyphSize(compact ? .body : .caption, weight: .medium)
                     .foregroundColor(stateColor)
                     .symbolEffect(.pulse, isActive: state == .processing)
             }
@@ -490,17 +536,17 @@ public struct VoiceStatusIndicator: View {
 
             if showLabel && !compact {
                 Text(state.label)
-                    .font(.system(size: 11, weight: .medium))
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.smallLabel)
                     .foregroundColor(stateColor)
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, compact ? 8 : 12)
-        .padding(.vertical, compact ? 6 : 7)
+        .padding(.horizontal, compact ? theme.space.s8 : theme.space.s12)
+        .padding(.vertical, compact ? theme.space.s6 : theme.space.s6)
         .background(
             ZStack {
                 Capsule()
-                    .fill(stateColor.opacity(0.1))
+                    .fill(theme.wash(behind: stateColor))
 
                 // Subtle gradient for active states
                 if state == .listening || state == .processing {
@@ -526,19 +572,21 @@ public struct VoiceStatusIndicator: View {
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
-                    lineWidth: 1
+                    lineWidth: theme.stroke.default
                 )
         )
-        .animation(.easeInOut(duration: 0.2), value: state)
-    }
+        .animation(theme.motion.quick, value: state)
+    
+        }.environment(\.theme, theme)
+}
 
     private var stateColor: Color {
         switch state {
-        case .idle: return theme.secondaryText
-        case .listening: return theme.accentColor
-        case .processing: return theme.warningColor
-        case .ready: return theme.successColor
-        case .error: return theme.errorColor
+        case .idle: return theme.text.secondary
+        case .listening: return theme.action.primary.default.background
+        case .processing: return theme.status.warning.foreground
+        case .ready: return theme.status.success.foreground
+        case .error: return theme.status.error.foreground
         }
     }
 }
@@ -546,6 +594,9 @@ public struct VoiceStatusIndicator: View {
 // MARK: - Pulse Modifier
 
 private struct PulseModifier: ViewModifier {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
@@ -554,7 +605,7 @@ private struct PulseModifier: ViewModifier {
             .scaleEffect(isPulsing ? 1.3 : 1.0)
             .opacity(isPulsing ? 0.5 : 1.0)
             .animation(
-                .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
+                theme.motion.loop(.easeInOut, duration: 0.8, autoreverses: true),
                 value: isPulsing
             )
             .onAppear {
@@ -580,7 +631,9 @@ public struct CountdownRingButton: View {
     /// Called when tapped (to cancel/resume)
     var onTap: (() -> Void)?
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     public init(
         duration: Double,
@@ -605,91 +658,82 @@ public struct CountdownRingButton: View {
     }
 
     public var body: some View {
+        Group {
+
         Button(action: { onTap?() }) {
-            HStack(spacing: 14) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s14, theme))) {
                 // Circular progress
                 ZStack {
                     // Track
                     Circle()
-                        .stroke(theme.tertiaryBackground, lineWidth: 3)
+                        .stroke(theme.border.default, lineWidth: theme.stroke.focus * 1.5)
                         .frame(width: 36, height: 36)
 
                     // Progress (depletes)
                     Circle()
                         .trim(from: 0, to: 1.0 - progress)
                         .stroke(
-                            theme.accentColor,
-                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                            theme.action.primary.default.background,
+                            style: StrokeStyle(lineWidth: theme.stroke.focus * 1.5, lineCap: .round)
                         )
                         .frame(width: 36, height: 36)
                         .rotationEffect(.degrees(-90))
-                        .animation(.linear(duration: 0.1), value: progress)
+                        .animation(theme.motion.quick, value: progress)
 
                     // Number
                     Text("\(currentSecond)", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.mono)
+                        .foregroundColor(theme.text.primary)
                         .contentTransition(.numericText())
                 }
 
                 // Label
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s2, theme))) {
                     Text("Sending...", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowTitle)
+                        .foregroundColor(theme.text.primary)
                     Text("Tap to cancel", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                }
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
+                }.catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.verticalGap")
 
                 Spacer()
 
-                // Cancel icon
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(8)
-                    .background(
-                        ZStack {
-                            Circle()
-                                .fill(theme.tertiaryBackground)
-                            Circle()
-                                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-                        }
-                    )
-            }
-            .padding(14)
+                SettingsIconButton("xmark", help: "Cancel", size: .compact) { onTap?() }
+            }.catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.horizontalGap")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.padding2.horizontal", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s14, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.padding2.vertical", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.padding2.horizontal").catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.padding2.vertical")
             .background(
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(theme.cardBackground.opacity(0.95))
+                    RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                        .fill(theme.surface.raised)
 
                     LinearGradient(
-                        colors: [theme.accentColor.opacity(0.06), Color.clear],
+                        colors: [theme.surface.hover, Color.clear],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous))
                 }
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                theme.accentColor.opacity(0.4),
-                                theme.accentColor.opacity(0.15),
+                                theme.border.strong,
+                                theme.border.default,
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 1
+                        lineWidth: theme.stroke.default
                     )
             )
-            .shadow(color: theme.accentColor.opacity(0.15), radius: 8, x: 0, y: 2)
         }
         .buttonStyle(.plain)
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Pause Detection Ring
@@ -708,7 +752,9 @@ public struct PauseDetectionRing: View {
     /// Size (unused, kept for API compatibility)
     var size: CGFloat = 60
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     public init(
         silenceDuration: Double,
@@ -734,21 +780,23 @@ public struct PauseDetectionRing: View {
     }
 
     public var body: some View {
-        HStack(spacing: 8) {
+        Group {
+
+        HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.pauseDetectionRing.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s8, theme))) {
             // Progress bar (only show when there's silence building)
             if progress > 0.1 && !isSpeaking {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         // Track
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(theme.tertiaryBackground)
+                        RoundedRectangle(cornerRadius: theme.radius.small)
+                            .fill(theme.emptyTrack(theme.surface.hover))
                             .frame(height: 3)
 
                         // Progress
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(progress > 0.7 ? theme.warningColor : theme.accentColor.opacity(0.6))
+                        RoundedRectangle(cornerRadius: theme.radius.small)
+                            .fill(progress > 0.7 ? theme.status.warning.foreground : theme.status.info.foreground)
                             .frame(width: geo.size.width * progress, height: 3)
-                            .animation(.easeOut(duration: 0.15), value: progress)
+                            .animation(theme.motion.quick, value: progress)
                     }
                 }
                 .frame(width: 40, height: 3)
@@ -756,22 +804,22 @@ public struct PauseDetectionRing: View {
 
             if !isSpeaking {
                 Text("Pause to send", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        }.catalogLayoutTarget("component.library.45.elements.layout.pauseDetectionRing.body.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.pauseDetectionRing.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.45.elements.layout.pauseDetectionRing.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.pauseDetectionRing.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.45.elements.layout.pauseDetectionRing.body.paddingY")
         .background(
             ZStack {
                 Capsule()
-                    .fill(theme.tertiaryBackground.opacity(0.5))
+                    .fill(theme.surface.hover)
 
                 if isSpeaking {
                     Capsule()
                         .fill(
                             LinearGradient(
-                                colors: [theme.accentColor.opacity(0.08), Color.clear],
+                                colors: [theme.surface.hover, Color.clear],
                                 startPoint: .leading,
                                 endPoint: .trailing
                             )
@@ -782,11 +830,13 @@ public struct PauseDetectionRing: View {
         .overlay(
             Capsule()
                 .strokeBorder(
-                    isSpeaking ? theme.accentColor.opacity(0.2) : theme.primaryBorder.opacity(0.1),
-                    lineWidth: 1
+                    isSpeaking ? theme.border.strong : theme.border.subtle,
+                    lineWidth: theme.stroke.default
                 )
         )
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Silence Timeout Indicator
@@ -829,52 +879,19 @@ public struct SilenceTimeoutIndicator: View {
         silenceDuration > 5.0 && remainingTime < 20
     }
 
-    /// Text color based on urgency
-    private var textColor: Color {
-        if remainingTime < 5 {
-            return theme.errorColor
-        } else if remainingTime < 10 {
-            return theme.warningColor
-        } else {
-            return theme.tertiaryText
-        }
+    private var tone: StatusChip.Tone {
+        if remainingTime < 5 { return .error }
+        if remainingTime < 10 { return .warning }
+        return .neutral
     }
 
     public var body: some View {
         if shouldShow {
-            HStack(spacing: 4) {
-                Image(systemName: "clock")
-                    .font(.system(size: 9))
-                Text("Closing in \(Int(remainingTime))s", bundle: .module)
-                    .font(.system(size: 10, weight: .medium))
-                    .contentTransition(.numericText())
-            }
-            .foregroundColor(textColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                ZStack {
-                    Capsule()
-                        .fill(theme.tertiaryBackground.opacity(0.8))
-
-                    if remainingTime < 10 {
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [textColor.opacity(0.1), Color.clear],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                    }
-                }
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(textColor.opacity(0.2), lineWidth: 1)
-            )
-            .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            .animation(.easeInOut(duration: 0.2), value: shouldShow)
+            StatusChip(L("Closing in \(Int(remainingTime))s"), tone: tone, icon: "clock")
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .animation(theme.motion.quick, value: shouldShow)
         }
     }
 }
@@ -898,7 +915,9 @@ public struct CountdownTimerView: View {
     /// Called when cancelled
     var onCancel: (() -> Void)?
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     public init(
         duration: Double,
@@ -920,86 +939,85 @@ public struct CountdownTimerView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 12) {
+        Group {
+
+        HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s12, theme))) {
             // Circular progress
             ZStack {
                 Circle()
-                    .stroke(theme.tertiaryBackground, lineWidth: 3)
+                    .stroke(theme.border.default, lineWidth: theme.stroke.focus * 1.5)
                     .frame(width: 32, height: 32)
 
                 Circle()
                     .trim(from: 0, to: progress)
-                    .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .stroke(theme.status.info.foreground, style: StrokeStyle(lineWidth: theme.stroke.focus * 1.5, lineCap: .round))
                     .frame(width: 32, height: 32)
                     .rotationEffect(.degrees(-90))
-                    .animation(.linear(duration: 0.1), value: progress)
+                    .animation(theme.motion.quick, value: progress)
 
                 Text("\(Int(ceil(remaining)))", bundle: .module)
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.primary)
                     .contentTransition(.numericText())
             }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s2, theme))) {
                 Text(label)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.primary)
 
                 Text("Tap to cancel", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
+            }.catalogLayoutTarget("component.library.45.elements.layout.countdownTimerView.body.verticalGap")
 
             Spacer()
 
-            // Cancel button
-            Button(action: { onCancel?() }) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(16)
+            SettingsIconButton("xmark", help: "Cancel", size: .compact) { onCancel?() }
+        }.catalogLayoutTarget("component.library.45.elements.layout.countdownTimerView.body.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s16, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.45.elements.layout.countdownTimerView.body.padding.horizontal").catalogLayoutTarget("component.library.45.elements.layout.countdownTimerView.body.padding.vertical")
         .background(
             ZStack {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(theme.cardBackground.opacity(0.95))
+                RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
+                    .fill(theme.surface.raised)
 
                 LinearGradient(
-                    colors: [theme.accentColor.opacity(0.06), Color.clear],
+                    colors: [theme.surface.hover, Color.clear],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous))
             }
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
                 .strokeBorder(
                     LinearGradient(
                         colors: [
-                            theme.accentColor.opacity(0.4),
-                            theme.accentColor.opacity(0.15),
+                            theme.border.strong,
+                            theme.border.default,
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
-                    lineWidth: 1.5
+                    lineWidth: theme.stroke.default
                 )
         )
-        .shadow(color: theme.accentColor.opacity(0.15), radius: 8, x: 0, y: 2)
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Preview
 
 #if DEBUG
     struct VoiceComponents_Previews: PreviewProvider {
+        @MainActor private static var theme: any ThemeProtocol { ThemeManager.shared.currentTheme }
+
         static var previews: some View {
-            VStack(spacing: 20) {
+            VStack(spacing: theme.space.s20) {
                 // Waveform styles
-                HStack(spacing: 20) {
+                HStack(spacing: theme.space.s20) {
                     WaveformView(level: 0.6, style: .bars)
                     WaveformView(level: 0.6, style: .wave)
                     WaveformView(level: 0.6, style: .circular)
@@ -1014,7 +1032,7 @@ public struct CountdownTimerView: View {
                 )
 
                 // Status indicators
-                HStack(spacing: 12) {
+                HStack(spacing: theme.space.s12) {
                     VoiceStatusIndicator(state: .idle)
                     VoiceStatusIndicator(state: .listening)
                     VoiceStatusIndicator(state: .processing)
@@ -1024,12 +1042,12 @@ public struct CountdownTimerView: View {
                 Divider()
 
                 // Pause detection indicator
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text("Pause Detection", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.gray)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(CustomizableTheme.dark().text.tertiary)
 
-                    HStack(spacing: 16) {
+                    HStack(spacing: theme.space.s16) {
                         PauseDetectionRing(
                             silenceDuration: 0.3,
                             pauseThreshold: 1.5,
@@ -1045,10 +1063,10 @@ public struct CountdownTimerView: View {
                 }
 
                 // Countdown button
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text("Countdown", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.gray)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(CustomizableTheme.dark().text.tertiary)
 
                     CountdownRingButton(
                         duration: 3.0,
@@ -1057,10 +1075,10 @@ public struct CountdownTimerView: View {
                 }
 
                 // Silence timeout
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text("Silence Timeout", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.gray)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(CustomizableTheme.dark().text.tertiary)
 
                     SilenceTimeoutIndicator(
                         silenceDuration: 18,
@@ -1068,9 +1086,9 @@ public struct CountdownTimerView: View {
                     )
                 }
             }
-            .padding(24)
+            .padding(theme.space.s24)
             .frame(width: 400)
-            .background(Color(hex: "0c0c0b"))
+            .background(CustomizableTheme.dark().surface.canvas)
         }
     }
 #endif

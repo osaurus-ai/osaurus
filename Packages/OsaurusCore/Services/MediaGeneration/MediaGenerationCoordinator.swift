@@ -18,28 +18,40 @@ actor MediaGenerationCoordinator {
     private var cloudModels: [MediaModelInfo] = []
     private var cloudSupported = false
     private var recoveryTasks: [UUID: Task<Void, Never>] = [:]
+    private let isRouterEnabled: @Sendable () -> Bool
 
     init(
         jobs: MediaJobStore = .shared,
-        cloud: OsaurusCloudMediaClient = OsaurusCloudMediaClient()
+        cloud: OsaurusCloudMediaClient = OsaurusCloudMediaClient(),
+        isRouterEnabled: @escaping @Sendable () -> Bool = { OsaurusRouter.isEnabled }
     ) {
         self.jobs = jobs
         self.cloud = cloud
+        self.isRouterEnabled = isRouterEnabled
     }
 
+    /// With the Osaurus Router turned off this makes no request and clears
+    /// any cached Cloud choices; turning it back on posts
+    /// `.remoteProviderStatusChanged`, which triggers a fresh refresh.
     func refreshCloudCatalog() async {
-        do {
-            switch try await cloud.catalog() {
-            case .available(let models):
-                cloudModels = models
-                cloudSupported = true
-            case .unsupported:
+        if isRouterEnabled() {
+            do {
+                let availability = try await cloud.catalog()
+                // The switch can flip while the request is in flight.
+                if isRouterEnabled(), case .available(let models) = availability {
+                    cloudModels = models
+                    cloudSupported = true
+                } else {
+                    cloudModels = []
+                    cloudSupported = false
+                }
+            } catch {
+                // Fail closed: transient/error responses never expose stale Cloud
+                // choices and never redirect work to direct Venice.
                 cloudModels = []
                 cloudSupported = false
             }
-        } catch {
-            // Fail closed: transient/error responses never expose stale Cloud
-            // choices and never redirect work to direct Venice.
+        } else {
             cloudModels = []
             cloudSupported = false
         }
@@ -66,8 +78,11 @@ actor MediaGenerationCoordinator {
                     steps: request.steps,
                     guidance: request.guidance.map(Float.init),
                     seed: request.seed.flatMap { $0 >= 0 ? UInt64($0) : nil },
-                    numImages: request.count,
+                    numImages: request.count, seeds: request.seeds, batchSize: request.batchSize,
                     outputFormat: request.format,
+                    sampler: request.sampler, scheduler: request.scheduler, shift: request.shift,
+                    previewInterval: request.previewInterval, previewMaxPixel: request.previewMaxPixel,
+                    adapters: request.adapters,
                     context: .current()
                 )
             )
@@ -87,26 +102,94 @@ actor MediaGenerationCoordinator {
                 RemoteProviderManager.shared.configuredProvider(id: providerID)
             }
             guard let provider else { throw MediaGenerationError.providerUnavailable }
-            return try await VeniceMediaClient(provider: provider).generateImage(request)
+            // Activity log: the prompt leaves this Mac for the provider.
+            let activity = Self.remoteMediaActivity(
+                provider: provider, kind: .image, operation: .generate, request: request)
+            do {
+                let generated = try await VeniceMediaClient(provider: provider).generateImage(request)
+                activity?.finish(producedCount: generated.count, error: nil)
+                return generated
+            } catch {
+                activity?.finish(producedCount: 0, error: error.localizedDescription)
+                throw error
+            }
         case .osaurusCloud:
             guard cloudSupported else {
                 throw MediaGenerationError.unsupported("Osaurus Cloud media is not available.")
             }
+            // Router cloud media is logged by `OsaurusRouterAPIClient` as a
+            // Router row; no second row here.
             return try await cloud.generateImage(request)
         }
+    }
+
+    /// Open a `mediaGeneration` activity row for a direct remote-provider
+    /// (Venice) call. nil when the local HTTP API owns the request.
+    private static func remoteMediaActivity(
+        provider: RemoteProvider,
+        kind: MediaActivityLogger.MediaKind,
+        operation: MediaActivityLogger.MediaOperation,
+        request: MediaImageGenerationRequest
+    ) -> MediaActivityLogger.MediaJob? {
+        MediaActivityLogger.beginMedia(
+            kind: kind,
+            operation: operation,
+            model: request.target.modelID,
+            prompt: request.prompt,
+            provider: provider.name,
+            endpoint: provider.baseURL?.absoluteString ?? provider.host,
+            requestedCount: request.count,
+            size: Self.sizeLabel(width: request.width, height: request.height, aspect: request.aspectRatio, resolution: request.resolution),
+            steps: request.steps,
+            trigger: ChatExecutionContext.currentToolCallId != nil ? .chatTool : .imagePanel
+        )
+    }
+
+    private static func remoteMediaActivity(
+        provider: RemoteProvider,
+        operation: MediaActivityLogger.MediaOperation,
+        request: MediaVideoGenerationRequest
+    ) -> MediaActivityLogger.MediaJob? {
+        MediaActivityLogger.beginMedia(
+            kind: .video,
+            operation: operation,
+            model: request.target.modelID,
+            prompt: request.prompt,
+            provider: provider.name,
+            endpoint: provider.baseURL?.absoluteString ?? provider.host,
+            requestedCount: 1,
+            size: Self.sizeLabel(width: nil, height: nil, aspect: request.aspectRatio, resolution: request.resolution),
+            durationSeconds: Double(request.duration),
+            trigger: ChatExecutionContext.currentToolCallId != nil ? .chatTool : .imagePanel
+        )
+    }
+
+    private static func sizeLabel(width: Int?, height: Int?, aspect: String?, resolution: String?) -> String? {
+        if let width, let height { return "\(width)×\(height)" }
+        let parts = [resolution, aspect].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
     func quoteVideo(_ request: MediaVideoGenerationRequest) async throws -> MediaVideoQuote {
         try await validateVideoRequest(request)
         switch request.target.backend {
         case .local:
-            throw MediaGenerationError.unsupported("Local video generation is not available.")
+            _ = try await ImageGenerationService.shared.validateVideo(request)
+            return MediaVideoQuote(usd: 0)
         case .remoteProvider(let providerID):
             let provider = await MainActor.run {
                 RemoteProviderManager.shared.configuredProvider(id: providerID)
             }
             guard let provider else { throw MediaGenerationError.providerUnavailable }
-            return try await VeniceMediaClient(provider: provider).quoteVideo(request)
+            let activity = Self.remoteMediaActivity(provider: provider, operation: .quote, request: request)
+            do {
+                let quote = try await VeniceMediaClient(provider: provider).quoteVideo(request)
+                activity?.finish(producedCount: 0, error: nil)
+                return quote
+            } catch {
+                activity?.finish(producedCount: 0, error: error.localizedDescription)
+                throw error
+            }
         case .osaurusCloud:
             guard cloudSupported else {
                 throw MediaGenerationError.unsupported("Osaurus Cloud media is not available.")
@@ -124,10 +207,16 @@ actor MediaGenerationCoordinator {
     func generateVideo(
         _ request: MediaVideoGenerationRequest,
         approvedQuote: MediaVideoQuote,
+        interrupt: InterruptToken? = nil,
         progress: @escaping @Sendable (MediaGenerationEvent) -> Void
     ) async throws -> GeneratedMedia {
         try await validateVideoRequest(request)
         try Task.checkCancellation()
+
+        if request.target.backend == .local {
+            return try await NativeImageJobCoordinator.shared.generateVideo(request,
+                context: .current(), interrupt: interrupt, progress: progress)
+        }
 
         var durableID: UUID?
         do {
@@ -177,6 +266,30 @@ actor MediaGenerationCoordinator {
         _ request: MediaVideoGenerationRequest,
         approvedQuote: MediaVideoQuote
     ) async throws -> DurableMediaJob {
+        if request.target.backend == .local {
+            try await validateVideoRequest(request)
+            _ = try await ImageGenerationService.shared.validateVideo(request)
+            let id = UUID()
+            let job = DurableMediaJob(id: id, backend: .local, providerID: nil,
+                modelID: request.target.modelID, kind: request.sourceImage == nil ? .textToVideo : .imageToVideo,
+                queueID: id.uuidString, downloadURL: nil, quoteUSD: 0, state: .queued, outputURL: nil,
+                errorMessage: nil, cleanupPending: false, createdAt: Date(), updatedAt: Date())
+            try await jobs.upsert(job)
+            let context = NativeImageJobContext.current()
+            recoveryTasks[id] = Task {
+                do {
+                    let media = try await NativeImageJobCoordinator.shared.generateVideo(request,
+                        context: context, interrupt: nil, progress: { _ in })
+                    try await self.jobs.update(id: id, state: .completed, outputURL: media.url,
+                        effectiveVideo: media.effectiveVideo)
+                } catch {
+                    try? await self.jobs.update(id: id, state: .failed, errorMessage: error.localizedDescription)
+                }
+                await self.recoveryFinished(id)
+            }
+            await notifyJobChanged()
+            return job
+        }
         let job = try await submitVideo(request, approvedQuote: approvedQuote)
         await notifyJobChanged()
         scheduleRecovery(job)
@@ -215,10 +328,19 @@ actor MediaGenerationCoordinator {
             }
             guard let provider else { throw MediaGenerationError.providerUnavailable }
             let client = try VeniceMediaClient(provider: provider)
-            let currentQuote = try await client.quoteVideo(request)
-            try Self.requireApprovedQuote(approvedQuote, current: currentQuote)
-            try Task.checkCancellation()
-            let queued = try await client.queueVideo(request)
+            let activity = Self.remoteMediaActivity(provider: provider, operation: .generate, request: request)
+            let queued: VeniceQueuedVideo
+            let currentQuote: MediaVideoQuote
+            do {
+                currentQuote = try await client.quoteVideo(request)
+                try Self.requireApprovedQuote(approvedQuote, current: currentQuote)
+                try Task.checkCancellation()
+                queued = try await client.queueVideo(request)
+                activity?.finish(producedCount: 1, jobId: queued.queueID, error: nil)
+            } catch {
+                activity?.finish(producedCount: 0, error: error.localizedDescription)
+                throw error
+            }
             let job = DurableMediaJob(
                 id: UUID(),
                 backend: request.target.backend,
@@ -326,7 +448,7 @@ actor MediaGenerationCoordinator {
                 case .osaurusCloud:
                     _ = try await self.retrieveCloud(job: job, progress: { _ in })
                 case .local:
-                    throw MediaGenerationError.unsupported("Local jobs are not durable.")
+                    throw MediaGenerationError.unsupported("Local video generation was interrupted by an app restart. Submit the job again.")
                 }
             } catch {
                 try? await self.jobs.update(
@@ -471,10 +593,16 @@ actor MediaGenerationCoordinator {
         guard !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw MediaGenerationError.invalidRequest("A prompt is required.")
         }
-        guard (1 ... 4).contains(request.count) else {
-            throw MediaGenerationError.invalidRequest("Image count must be between 1 and 4.")
+        let maximumCount = request.target.backend == .local ? 8 : 4
+        guard (1 ... maximumCount).contains(request.count) else {
+            throw MediaGenerationError.invalidRequest("Image count must be between 1 and \(maximumCount).")
         }
         guard request.target.backend != .local else { return }
+        guard request.sampler == nil, request.scheduler == nil, request.shift == nil,
+            request.seeds == nil, request.batchSize == 1,
+            request.previewInterval == nil, request.previewMaxPixel == 256, request.adapters.isEmpty else {
+            throw MediaGenerationError.invalidRequest("Sampling, batching, adapters and previews require a local image model.")
+        }
         let model = try await requiredMediaModel(for: request.target)
         guard model.kind == .image else {
             throw MediaGenerationError.invalidRequest(
@@ -519,7 +647,24 @@ actor MediaGenerationCoordinator {
         guard !request.duration.isEmpty else {
             throw MediaGenerationError.invalidRequest("A duration is required.")
         }
-        guard request.target.backend != .local else { return }
+        if let source = request.sourceImage, source.count > 25 * 1_024 * 1_024 {
+            throw MediaGenerationError.invalidRequest("The source image must not exceed 25 MB.")
+        }
+        if request.sourceImage != nil,
+            !["image/png", "image/jpeg", "image/webp"].contains(request.sourceImageMIMEType ?? "")
+        {
+            throw MediaGenerationError.invalidRequest(
+                "The source image must be PNG, JPEG, or WebP."
+            )
+        }
+        if request.target.backend == .local {
+            _ = try LocalVideoRequestPolicy(request)
+            return
+        }
+        guard request.width == nil, request.height == nil, request.frameCount == nil,
+            request.fps == nil, request.steps == nil, request.guidance == nil, request.seed == nil else {
+            throw MediaGenerationError.invalidRequest("Explicit dimensions, frames, fps, steps, guidance and seed require a local video model.")
+        }
         let model = try await requiredMediaModel(for: request.target)
         let expectedKind: MediaGenerationKind =
             request.sourceImage == nil ? .textToVideo : .imageToVideo
@@ -549,16 +694,6 @@ actor MediaGenerationCoordinator {
         if request.audio != nil, !model.constraints.audioConfigurable {
             throw MediaGenerationError.invalidRequest(
                 "Audio cannot be configured for the selected model."
-            )
-        }
-        if let source = request.sourceImage, source.count > 25 * 1_024 * 1_024 {
-            throw MediaGenerationError.invalidRequest("The source image must not exceed 25 MB.")
-        }
-        if request.sourceImage != nil,
-            !["image/png", "image/jpeg", "image/webp"].contains(request.sourceImageMIMEType ?? "")
-        {
-            throw MediaGenerationError.invalidRequest(
-                "The source image must be PNG, JPEG, or WebP."
             )
         }
     }

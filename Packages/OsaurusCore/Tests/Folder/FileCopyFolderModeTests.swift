@@ -2,8 +2,8 @@
 //  FileCopyFolderModeTests.swift
 //
 //  `file_copy` in plain folder mode: a byte-exact host→host duplicate
-//  that is logged as `FileOperation.copy`, carries `operation_id`, and
-//  restores overwritten bytes (any encoding) on `file_undo`.
+//  that the file history journal records as one change set (surfaced as
+//  `operation_id`) and restores overwritten bytes (any encoding) on undo.
 //
 
 import Foundation
@@ -40,11 +40,13 @@ struct FileCopyFolderModeTests {
         #expect(payload["source_area"] as? String == "workspace")
         #expect(payload["destination_area"] as? String == "workspace")
         #expect(payload["overwrote"] as? Bool == false)
-        #expect(payload["operation_id"] == nil)  // no session bound -> not logged
+        #expect(payload["operation_id"] == nil)  // no capture bound -> no change set
         #expect(try Data(contentsOf: root.appendingPathComponent("backup/blob-copy.bin")) == bytes)
     }
 
-    @Test func overwriteIsLoggedAsCopyAndUndoRestoresPreviousBytes() async throws {
+    @Test func overwriteIsRecordedAndUndoRestoresPreviousBytes() async throws {
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let sessionId = "file-copy-undo-\(UUID().uuidString)"
@@ -53,50 +55,54 @@ struct FileCopyFolderModeTests {
         try source.write(to: root.appendingPathComponent("new.docx"))
         try previous.write(to: root.appendingPathComponent("old.docx"))
 
-        try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-            let refused = try await copy(root, ["source": "new.docx", "destination": "old.docx"])
-            #expect(ToolEnvelope.isError(refused))
-            #expect(EnvelopeAssertions.failureField(refused) == "overwrite")
+        let refused = try await env.run(
+            FileCopyTool(rootPath: root),
+            FileHistoryTestEnv.json(["source": "new.docx", "destination": "old.docx"]),
+            sessionId: sessionId, folder: root)
+        #expect(ToolEnvelope.isError(refused))
+        #expect(EnvelopeAssertions.failureField(refused) == "overwrite")
+        #expect(await env.journal.changeSets(for: sessionId).isEmpty)
 
-            let result = try await copy(
-                root,
-                ["source": "new.docx", "destination": "old.docx", "overwrite": true]
-            )
-            #expect(ToolEnvelope.isSuccess(result), "\(result)")
-            let payload = try #require(EnvelopeAssertions.successPayload(result))
-            #expect(payload["overwrote"] as? Bool == true)
-            let opId = try #require(UUID(uuidString: payload["operation_id"] as? String ?? ""))
-            #expect(try Data(contentsOf: root.appendingPathComponent("old.docx")) == source)
+        let result = try await env.run(
+            FileCopyTool(rootPath: root),
+            FileHistoryTestEnv.json(["source": "new.docx", "destination": "old.docx", "overwrite": true]),
+            sessionId: sessionId, folder: root)
+        #expect(ToolEnvelope.isSuccess(result), "\(result)")
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect(payload["overwrote"] as? Bool == true)
+        let opId = try #require(UUID(uuidString: payload["operation_id"] as? String ?? ""))
+        #expect(try Data(contentsOf: root.appendingPathComponent("old.docx")) == source)
 
-            let ops = await FileOperationLog.shared.operations(for: sessionId)
-            let entry = try #require(ops.first { $0.id == opId })
-            #expect(entry.type == .copy)
-            #expect(entry.path == "new.docx")
-            #expect(entry.destinationPath == "old.docx")
-            #expect(entry.previousContentEncoding == .base64)
-            #expect(entry.contentKind == "binary")
+        let set = try #require(await env.journal.changeSet(id: opId, sessionId: sessionId))
+        #expect(set.toolName == "file_copy")
+        #expect(set.entries.map(\.path) == ["old.docx"])
+        #expect(set.entries.first?.kind == .modified)
 
-            _ = try await FileOperationLog.shared.undo(sessionId: sessionId, operationId: opId)
-            #expect(try Data(contentsOf: root.appendingPathComponent("old.docx")) == previous)
-        }
-        await FileOperationLog.shared.clear(sessionId: sessionId)
+        let summary = await env.journal.revert(.set(opId), sessionId: sessionId)
+        #expect(summary.isClean, "\(summary)")
+        #expect(try Data(contentsOf: root.appendingPathComponent("old.docx")) == previous)
+        #expect(try Data(contentsOf: root.appendingPathComponent("new.docx")) == source)
     }
 
     @Test func undoOfFreshCopyRemovesTheDestination() async throws {
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let sessionId = "file-copy-fresh-\(UUID().uuidString)"
         try "hello".write(to: root.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
 
-        try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-            let result = try await copy(root, ["source": "a.txt", "destination": "b.txt"])
-            let payload = try #require(EnvelopeAssertions.successPayload(result))
-            let opId = try #require(UUID(uuidString: payload["operation_id"] as? String ?? ""))
-            #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("b.txt").path))
-            _ = try await FileOperationLog.shared.undo(sessionId: sessionId, operationId: opId)
-            #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("b.txt").path))
-        }
-        await FileOperationLog.shared.clear(sessionId: sessionId)
+        let result = try await env.run(
+            FileCopyTool(rootPath: root),
+            FileHistoryTestEnv.json(["source": "a.txt", "destination": "b.txt"]),
+            sessionId: sessionId, folder: root)
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        let opId = try #require(UUID(uuidString: payload["operation_id"] as? String ?? ""))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("b.txt").path))
+        let summary = await env.journal.revert(.set(opId), sessionId: sessionId)
+        #expect(summary.isClean, "\(summary)")
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("b.txt").path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("a.txt").path))
     }
 
     @Test func rejectsDirectoriesAndSelfCopies() async throws {

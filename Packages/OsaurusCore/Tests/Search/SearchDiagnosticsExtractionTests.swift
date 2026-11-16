@@ -86,6 +86,23 @@ struct SearchDiagnosticsExtractionTests {
         #expect(payload["results"] != nil)
     }
 
+    @Test func voiceCallSearchDropsTheNudgeToFetchPagesAndCapsPageText() {
+        let outcome = SearchEngineOutcome(
+            hits: [SearchHit(title: "Swift", url: "https://swift.org", snippet: "Language", engine: "fixture")],
+            provider: "fixture",
+            attempts: []
+        )
+        let chat = WebSearchResultFormatter.resultsPayload(request: SearchRequest(query: "swift"), outcome: outcome)
+        #expect(chat["next_action"] != nil)
+        #expect(VoiceCallSearch.pageLimit == SearchReadability.maxMarkdownCharacters)
+
+        ChatExecutionContext.$isVoiceCall.withValue(true) {
+            let call = WebSearchResultFormatter.resultsPayload(request: SearchRequest(query: "swift"), outcome: outcome)
+            #expect(call["next_action"] == nil)
+            #expect(VoiceCallSearch.pageLimit == VoiceCallSearch.pageCharacters)
+        }
+    }
+
     @Test func extractionBlocksUnsafePrivateAndMetadataURLsBeforeFetch() async {
         let urls = [
             "http://localhost:8080/page",

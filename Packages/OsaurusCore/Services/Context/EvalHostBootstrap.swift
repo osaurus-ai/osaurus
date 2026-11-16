@@ -84,6 +84,19 @@ public enum EvalHostBootstrap {
         ModelPickerItemCache.shared.hasReadyAppleScriptModel
     }
 
+    /// Installed spawn targets the production resolver would not offer, such
+    /// as a worker pinned to a model this host has not installed. Chat
+    /// withholds `spawn_agent` from targets that are not runnable.
+    @MainActor
+    public static func unrunnableSpawnTargets(_ ids: [UUID]) async -> [UUID] {
+        let snapshot = await SpawnDescriptors.resolveForRequest(
+            agentIDs: ids,
+            launcherModelOverride: nil
+        )
+        let runnable = Set(snapshot.runnableAgentIDs)
+        return ids.filter { !runnable.contains($0) }
+    }
+
     /// Boot every subsystem the chat path's capability search depends on
     /// so an out-of-process eval CLI sees the same indices the host app
     /// does. Mirrors the relevant slice of

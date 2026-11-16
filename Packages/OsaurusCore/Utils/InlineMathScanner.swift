@@ -5,9 +5,17 @@
 //  Splits a line of message text into plain-text and inline-math spans.
 //
 //  This lives apart from the view that draws it so the delimiter rules can be tested
-//  directly. They are almost entirely rules about what is *not* math: `$` is also the
-//  currency sign and the shell variable sigil, so the scanner has to turn down spans
-//  that a naive "text between two dollar signs" reading would accept.
+//  directly. `$` is also the currency sign and the shell variable sigil, so the rules
+//  have to decide when two of them delimit math. They follow pandoc's
+//  `tex_math_dollars` extension, which is the de facto Markdown standard and the
+//  behaviour models are trained against:
+//
+//    * the opening `$` must have a non-space character immediately to its right;
+//    * the closing `$` must have a non-space character immediately to its left, and
+//      must not be followed immediately by a digit;
+//    * the closer is the *first* unescaped `$` after the opener, so a span can never
+//      contain another `$` — if that first candidate is invalid the pair is not math;
+//    * backslash-escape literal dollars as `\$`; code spans are never math.
 //
 
 import Foundation
@@ -36,53 +44,11 @@ enum InlineMathScanner {
         text.contains("$") || text.contains("\\(")
     }
 
-    /// Content that is unambiguously LaTeX because it uses LaTeX syntax.
-    @inline(__always)
-    static func looksLikeLatex(_ s: String) -> Bool {
-        for scalar in s.unicodeScalars {
-            switch scalar {
-            case "\\", "^", "_", "{": return true
-            default: continue
-            }
-        }
-        return false
-    }
-
-    @inline(__always)
-    private static func isASCIIDigit(_ scalar: Unicode.Scalar) -> Bool {
-        scalar >= "0" && scalar <= "9"
-    }
-
-    /// Whether a `$…$` span carrying no explicit LaTeX syntax should still be typeset.
-    ///
-    /// Requiring LaTeX syntax was the original rule, and it was too strict: it left the
-    /// single most common inline form models emit (`$O(n)$`) showing raw delimiters
-    /// beside correctly rendered math in the same sentence, because `O(n)` contains no
-    /// `\`, `^`, `_` or `{`.
-    ///
-    /// Two properties separate math from money. Currency amounts begin with a digit right
-    /// after the `$`; and when a currency run is mis-paired, the "closing" `$` is really
-    /// the opening `$` of the next amount, so a digit follows it. Both guards earn their
-    /// place: the first rejects `$5 to $10`, the second rejects `$USD 5 and $10`.
-    ///
-    /// A span that starts with a digit and has no LaTeX syntax (`$2$`) stays literal —
-    /// the deliberate cost of never typesetting a price.
-    @inline(__always)
-    static func looksLikeDollarMath(_ content: String, followedBy next: Unicode.Scalar?) -> Bool {
-        let scalars = content.unicodeScalars
-        guard let first = scalars.first, scalars.count <= 64 else { return false }
-        guard !isASCIIDigit(first) else { return false }
-        if let next, isASCIIDigit(next) { return false }
-        for scalar in scalars where scalar == "\n" { return false }
-        // Require something substantive; a span of pure punctuation is not math.
-        return scalars.contains { CharacterSet.alphanumerics.contains($0) }
-    }
-
     /// Split text into alternating plain-text and math segments.
     ///
-    /// Handles `$…$` (no whitespace padding) and `\(…\)`. A delimited span that fails the
-    /// rules above is emitted as literal text, and scanning resumes just past the opening
-    /// delimiter, so a real math span later on the same line can still match.
+    /// Handles `$…$` under pandoc's `tex_math_dollars` rules and `\(…\)`. Anything that
+    /// the rules turn down is emitted as literal text and scanning resumes at the next
+    /// character, so a real math span later on the same line still matches.
     static func split(_ text: String) -> [Segment] {
         var segments: [Segment] = []
         var current = ""
@@ -158,21 +124,13 @@ enum InlineMathScanner {
                 continue
             }
 
-            // $…$ — require non-whitespace after the opening and before the closing `$`.
-            if c == "$",
-                let after = peek(1),
-                !after.properties.isWhitespace,
-                after != "$",
-                let closeIdx = findClosingDollar(scalars, from: i + 1)
-            {
-                let content = slice(i + 1, closeIdx)
-                if looksLikeLatex(content)
-                    || looksLikeDollarMath(content, followedBy: peek(closeIdx - i + 1))
-                {
-                    emitMath(content, fallback: slice(i, closeIdx + 1), advanceTo: closeIdx + 1)
-                    continue
-                }
-                // Currency/plain text: fall through, keeping the `$` literal.
+            // $…$ — a span only when both delimiters satisfy pandoc's conditions.
+            if c == "$", let closeIdx = dollarSpanCloser(scalars, openingAt: i) {
+                emitMath(
+                    slice(i + 1, closeIdx),
+                    fallback: slice(i, closeIdx + 1),
+                    advanceTo: closeIdx + 1)
+                continue
             }
 
             current.append(String(c))
@@ -181,6 +139,43 @@ enum InlineMathScanner {
 
         flushText()
         return segments
+    }
+
+    /// Index of the `$` that closes a dollar span opened at `open`, or `nil` when the
+    /// pair is not math.
+    ///
+    /// Mirrors pandoc: the opener needs a non-space character to its right, the closer
+    /// needs a non-space character to its left, and the closer must not be followed by a
+    /// digit. Only the first unescaped `$` is ever considered.
+    private static func dollarSpanCloser(_ scalars: [Unicode.Scalar], openingAt open: Int) -> Int? {
+        guard open + 1 < scalars.count else { return nil }
+        guard !scalars[open + 1].properties.isWhitespace else { return nil }
+        // `$$` is display math, paired by the block parser, never an inline opener.
+        guard let close = firstUnescapedDollar(scalars, from: open + 1), close > open + 1 else {
+            return nil
+        }
+        guard !scalars[close - 1].properties.isWhitespace else { return nil }
+        if close + 1 < scalars.count, isASCIIDigit(scalars[close + 1]) { return nil }
+        return close
+    }
+
+    /// Index of the first `$` at or after `start` that is not backslash-escaped.
+    private static func firstUnescapedDollar(_ scalars: [Unicode.Scalar], from start: Int) -> Int? {
+        var j = start
+        while j < scalars.count {
+            if scalars[j] == "\\", j + 1 < scalars.count, scalars[j + 1] == "$" {
+                j += 2
+                continue
+            }
+            if scalars[j] == "$" { return j }
+            j += 1
+        }
+        return nil
+    }
+
+    @inline(__always)
+    private static func isASCIIDigit(_ scalar: Unicode.Scalar) -> Bool {
+        scalar >= "0" && scalar <= "9"
     }
 
     /// Find the start of a backtick run of exactly `runLength`, closing a code span
@@ -207,18 +202,6 @@ enum InlineMathScanner {
         var j = start
         while j + 1 < scalars.count {
             if scalars[j] == "\\" && scalars[j + 1] == ")" {
-                return j
-            }
-            j += 1
-        }
-        return nil
-    }
-
-    /// Find the index of a closing `$` whose preceding character is not whitespace.
-    private static func findClosingDollar(_ scalars: [Unicode.Scalar], from start: Int) -> Int? {
-        var j = start
-        while j < scalars.count {
-            if scalars[j] == "$", j > 0, !scalars[j - 1].properties.isWhitespace {
                 return j
             }
             j += 1

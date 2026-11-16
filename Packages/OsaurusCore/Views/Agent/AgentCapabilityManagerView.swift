@@ -27,6 +27,10 @@ import SwiftUI
 enum CapabilitySource: Hashable {
     /// Built-in tools — always loaded by the runtime, shown for transparency.
     case builtIn
+    /// One per built-in Apple app family (Calendar, Mail, …). Toggled per
+    /// app through `AgentSettings.enabledAppleApps`, never per tool, and
+    /// never offered to the Default agent.
+    case appleApp(AppleApp)
     /// One per native dylib plugin.
     case plugin(pluginId: String, displayName: String)
     /// One per remote MCP provider.
@@ -34,18 +38,28 @@ enum CapabilitySource: Hashable {
     /// One per provisioned sandbox plugin.
     case sandboxPlugin(pluginId: String)
 
+    static let appleGroupIdPrefix = "src:apple:"
+
     var groupId: String {
         switch self {
         case .builtIn: return "src:builtin"
+        case .appleApp(let app): return "\(Self.appleGroupIdPrefix)\(app.rawValue)"
         case .plugin(let pluginId, _): return "src:plugin:\(pluginId)"
         case .mcpProvider(let name): return "src:mcp:\(name)"
         case .sandboxPlugin(let pluginId): return "src:sandbox:\(pluginId)"
         }
     }
 
+    /// Inverse of `groupId` for Apple groups; nil for every other source.
+    static func appleApp(fromGroupId groupId: String) -> AppleApp? {
+        guard groupId.hasPrefix(appleGroupIdPrefix) else { return nil }
+        return AppleApp(rawValue: String(groupId.dropFirst(appleGroupIdPrefix.count)))
+    }
+
     var displayName: String {
         switch self {
         case .builtIn: return L("Built-in")
+        case .appleApp(let app): return app.displayName
         case .plugin(_, let name): return name
         case .mcpProvider(let name): return name
         case .sandboxPlugin(let pluginId): return pluginId
@@ -55,6 +69,7 @@ enum CapabilitySource: Hashable {
     var icon: String {
         switch self {
         case .builtIn: return "shippingbox.circle"
+        case .appleApp(let app): return app.icon
         case .plugin: return "puzzlepiece.extension"
         case .mcpProvider: return "antenna.radiowaves.left.and.right"
         case .sandboxPlugin: return "shippingbox"
@@ -68,6 +83,14 @@ enum CapabilitySource: Hashable {
         case .builtIn: return true
         default: return false
         }
+    }
+
+    /// Apple app groups flip as a unit: the per-row switch and the header's
+    /// master checkbox both write the app's membership in
+    /// `enabledAppleApps`, so a row toggle is a group toggle.
+    var togglesAsGroup: Bool {
+        if case .appleApp = self { return true }
+        return false
     }
 }
 
@@ -104,12 +127,27 @@ enum CapabilityRowBuilder {
     struct Input {
         let visibleTools: [ToolRegistry.ToolEntry]
         let plugins: [PluginManager.LoadedPlugin]
+        /// Effective enabled set: the agent's `manualToolNames` plus every
+        /// tool of an enabled Apple app (the host unions them before
+        /// building so the Assigned filter and counts see one universe).
         let enabledToolNames: Set<String>
         let toolMode: ToolSelectionMode
         let searchQuery: String
         let filter: CapabilityFilter
         let expandedGroups: Set<String>
+        /// Whether Apple app groups are offered at all. False for the
+        /// Default agent, which never carries Apple tools.
+        var includesAppleApps: Bool = false
+        /// macOS permissions an enabled Apple app still lacks; drives the
+        /// "Permission needed" badge on that app's header.
+        var appleAppMissingPermissions: [AppleApp: [SystemPermission]] = [:]
+        /// The saved custom agent whose own tool policies the enabled rows
+        /// show and edit. Nil for drafts and built-in agents.
+        var policyAgentId: UUID? = nil
     }
+
+    /// Badge text on Apple rows explaining why one switch flips six tools.
+    static let appleGroupToggleLabel = L("Per app")
 
     static func build(_ input: Input) -> [CapabilityRow] {
         let normalized = input.searchQuery
@@ -143,19 +181,31 @@ enum CapabilityRowBuilder {
         // tool source is ever added, only `source(forTool:)` needs to grow.
         for tool in input.visibleTools {
             let src = source(forTool: tool, pluginNameById: pluginNameById)
+            // Apple app groups are a custom-agent surface; for hosts that
+            // exclude them (the Default agent) the tools fold back into the
+            // informational built-in bucket and stay hidden.
+            if case .appleApp = src, !input.includesAppleApps {
+                ensureSource(.builtIn)
+                buckets[CapabilitySource.builtIn.groupId]?.append(tool)
+                continue
+            }
             ensureSource(src)
             buckets[src.groupId]?.append(tool)
         }
 
-        // Stable order by `sortRank` (plugins, then MCP providers, then
-        // sandbox plugins), ties broken alpha by display name. The built-in
-        // bucket may be present in `sources` but gets filtered out at row
-        // emission below — its sort rank doesn't matter.
+        // Stable order by `sortRank` (Apple apps, then plugins, then MCP
+        // providers, then sandbox plugins), ties broken alpha by display
+        // name — except Apple apps, which keep the catalog order so the
+        // list reads like the Abilities copy (Calendar, Reminders, …). The
+        // built-in bucket may be present in `sources` but gets filtered
+        // out at row emission below — its sort rank doesn't matter.
         sourceOrder.sort { lhs, rhs in
             guard let l = sources[lhs], let r = sources[rhs] else { return lhs < rhs }
-            return sortRank(l) < sortRank(r)
-                || (sortRank(l) == sortRank(r)
-                    && l.displayName.localizedCaseInsensitiveCompare(r.displayName) == .orderedAscending)
+            if sortRank(l) != sortRank(r) { return sortRank(l) < sortRank(r) }
+            if case .appleApp(let la) = l, case .appleApp(let ra) = r {
+                return AppleApp.allCases.firstIndex(of: la)! < AppleApp.allCases.firstIndex(of: ra)!
+            }
+            return l.displayName.localizedCaseInsensitiveCompare(r.displayName) == .orderedAscending
         }
 
         // Emit rows.
@@ -213,7 +263,8 @@ enum CapabilityRowBuilder {
                     icon: source.icon,
                     enabledCount: enabledCount,
                     totalCount: totalCount,
-                    isExpanded: isExpanded
+                    isExpanded: isExpanded,
+                    status: groupStatus(for: source, enabledCount: enabledCount, input: input)
                 )
             )
 
@@ -221,23 +272,54 @@ enum CapabilityRowBuilder {
 
             for tool in toolsForRows {
                 let availability = availability(forTool: tool, input: input)
+                let enabled = input.enabledToolNames.contains(tool.name)
                 rows.append(
                     .tool(
                         id: "\(groupId)::tool::\(tool.name)",
                         name: tool.name,
                         description: tool.description,
-                        enabled: input.enabledToolNames.contains(tool.name),
+                        enabled: enabled,
                         availability: availability,
                         // Informational sources were filtered above; every
-                        // tool that reaches this point is freely toggleable.
-                        isAgentRestricted: false,
+                        // tool that reaches this point is toggleable — Apple
+                        // rows flip their whole app and say so.
+                        groupToggleLabel: source.togglesAsGroup ? appleGroupToggleLabel : nil,
                         catalogTokens: tool.estimatedTokens,
-                        estimatedTokens: tool.estimatedTokens
+                        estimatedTokens: tool.estimatedTokens,
+                        policy: enabled ? toolPolicy(tool.name, agentId: input.policyAgentId) : nil
                     )
                 )
             }
         }
         return rows
+    }
+
+    static func toolPolicy(_ toolName: String, agentId: UUID?) -> CapabilityToolPolicy? {
+        guard let agentId, let info = ToolRegistry.shared.policyInfo(for: toolName, agentId: agentId) else {
+            return nil
+        }
+        return CapabilityToolPolicy(agentId: agentId, override: info.configuredPolicy, effective: info.effectivePolicy)
+    }
+
+    /// "Permission needed" on an enabled Apple app whose macOS grant is
+    /// still missing. Nothing for other sources or for apps that are off
+    /// (macOS is only asked once the app is on).
+    static func groupStatus(
+        for source: CapabilitySource,
+        enabledCount: Int,
+        input: Input
+    ) -> CapabilityGroupStatus? {
+        guard case .appleApp(let app) = source, enabledCount > 0,
+            let missing = input.appleAppMissingPermissions[app], !missing.isEmpty
+        else { return nil }
+        let names = missing.map(\.displayName).joined(separator: ", ")
+        return CapabilityGroupStatus(
+            text: missing.count == 1 ? L("Permission needed") : L("Permissions needed"),
+            icon: "exclamationmark.triangle.fill",
+            isWarning: true,
+            isActionable: true,
+            detail: L("macOS has not granted: \(names). Click to grant or open System Settings.")
+        )
     }
 
     private static func availability(forTool tool: ToolRegistry.ToolEntry, input: Input) -> ToolAvailability {
@@ -262,9 +344,10 @@ enum CapabilityRowBuilder {
     private static func sortRank(_ source: CapabilitySource) -> Int {
         switch source {
         case .builtIn: return 0
-        case .plugin: return 1
-        case .mcpProvider: return 2
-        case .sandboxPlugin: return 3
+        case .appleApp: return 1
+        case .plugin: return 2
+        case .mcpProvider: return 3
+        case .sandboxPlugin: return 4
         }
     }
 
@@ -294,6 +377,12 @@ enum CapabilityRowBuilder {
     /// drop capabilities.
     static func source(forTool tool: ToolRegistry.ToolEntry, pluginNameById: [String: String]) -> CapabilitySource {
         let registry = ToolRegistry.shared
+        // Apple app tools are registered as built-ins but are gated per
+        // agent, so they get their own toggleable group ahead of the
+        // informational built-in bucket.
+        if let app = AppleApp.app(forTool: tool.name) {
+            return .appleApp(app)
+        }
         if registry.builtInToolNames.contains(tool.name) || registry.runtimeManagedToolNames.contains(tool.name) {
             return .builtIn
         }
@@ -332,12 +421,17 @@ struct AgentCapabilityManagerView: View {
         case live(agentId: UUID)
         case draft(
             mode: Binding<ToolSelectionMode>,
-            tools: Binding<Set<String>>
+            tools: Binding<Set<String>>,
+            appleApps: Binding<Set<AppleApp>>
         )
     }
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @ObservedObject private var agentManager = AgentManager.shared
+    /// Live macOS permission states for the Apple app group badges.
+    @ObservedObject private var permissionService = SystemPermissionService.shared
 
     let source: Source
     /// When non-nil, a "Done" affordance appears in the sticky header so the
@@ -352,14 +446,14 @@ struct AgentCapabilityManagerView: View {
     let compact: Bool
     /// Reports the table's local state before live persistence round-trips,
     /// allowing the shared Abilities context preview to update immediately.
-    let onSelectionChanged: ((ToolSelectionMode, Set<String>) -> Void)?
+    let onSelectionChanged: ((ToolSelectionMode, Set<String>, Set<AppleApp>) -> Void)?
 
     /// Live-mode init used by the Tools tab.
     init(
         agentId: UUID,
         onDismiss: (() -> Void)?,
         compact: Bool = false,
-        onSelectionChanged: ((ToolSelectionMode, Set<String>) -> Void)? = nil
+        onSelectionChanged: ((ToolSelectionMode, Set<String>, Set<AppleApp>) -> Void)? = nil
     ) {
         self.source = .live(agentId: agentId)
         self.onDismiss = onDismiss
@@ -371,10 +465,11 @@ struct AgentCapabilityManagerView: View {
     init(
         draftMode: Binding<ToolSelectionMode>,
         draftTools: Binding<Set<String>>,
+        draftAppleApps: Binding<Set<AppleApp>>,
         onDismiss: (() -> Void)?,
         compact: Bool = false
     ) {
-        self.source = .draft(mode: draftMode, tools: draftTools)
+        self.source = .draft(mode: draftMode, tools: draftTools, appleApps: draftAppleApps)
         self.onDismiss = onDismiss
         self.compact = compact
         self.onSelectionChanged = nil
@@ -383,7 +478,6 @@ struct AgentCapabilityManagerView: View {
     // MARK: Local UI state
 
     @State private var searchText: String = ""
-    @State private var searchFocused: Bool = false
     @State private var filter: CapabilityFilter = .all
     @State private var expandedGroups: Set<String> = []
 
@@ -392,19 +486,41 @@ struct AgentCapabilityManagerView: View {
     /// seeded from the bindings and written back through them.
     @State private var enabledToolNames: Set<String> = []
     @State private var toolMode: ToolSelectionMode = .auto
+    /// Built-in Apple app families the agent may use (per app, OFF by
+    /// default). Mirrors `AgentSettings.enabledAppleApps` in live mode and
+    /// the draft binding in the create sheet. Kept apart from
+    /// `enabledToolNames` so Apple names never leak into `manualToolNames`.
+    @State private var enabledAppleApps: Set<AppleApp> = []
+    /// Apps whose first-use permission request is in flight.
+    @State private var appleAppPermissionRequests: Set<AppleApp> = []
+
+    /// Apple groups are a custom-agent surface. The Default agent never
+    /// carries Apple tools (`orchestratorExcludedToolNames`), so its picker
+    /// hides them instead of showing switches that could not take effect.
+    private var includesAppleApps: Bool {
+        switch source {
+        case .live(let agentId): return agentId != Agent.defaultId
+        case .draft: return true
+        }
+    }
+
+    /// `manualToolNames` plus every tool of an enabled Apple app: the one
+    /// enabled universe the row builder, pill and chips reason about.
+    private var effectiveEnabledToolNames: Set<String> {
+        guard includesAppleApps else { return enabledToolNames }
+        return enabledToolNames.union(AppleApp.toolNames(for: enabledAppleApps))
+    }
 
     /// Snapshot of the registries this turn (rebuilt on `.toolsListChanged`).
     @State private var visibleTools: [ToolRegistry.ToolEntry] = []
     @State private var plugins: [PluginManager.LoadedPlugin] = []
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             stickyHeader
-                .background(theme.primaryBackground)
+                .background(theme.surface.canvas)
                 .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder)
-                        .frame(height: 1)
+                    ThemeHairlineDivider()
                         .opacity(compact ? 0 : 1),
                     alignment: .bottom
                 )
@@ -422,6 +538,7 @@ struct AgentCapabilityManagerView: View {
                     onToggleGroup: handleToggleGroup,
                     onEnableAllInGroup: { handleBulkToggle(in: $0, enable: true) },
                     onDisableAllInGroup: { handleBulkToggle(in: $0, enable: false) },
+                    onGroupStatusTap: handleGroupStatusTap,
                     onToggleTool: handleToggleTool
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -430,7 +547,7 @@ struct AgentCapabilityManagerView: View {
                     emptyState
                 }
             }
-            .background(theme.primaryBackground)
+            .background(theme.surface.canvas)
         }
         .onAppear {
             loadFromRegistries()
@@ -452,24 +569,24 @@ struct AgentCapabilityManagerView: View {
     // MARK: - Sticky header
 
     private var stickyHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             // Helper-text row (standalone mode only) — mirrors the info line
             // every other detail tab leads with; the tab strip already names
             // the tab, so repeating a "Tools" title here was noise. In
             // compact mode the host sheet's header supplies the context.
             if !compact {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s8) {
                     if onDismiss != nil { doneButton }
 
                     Image(systemName: "info.circle")
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.micro)
+                        .foregroundColor(theme.text.tertiary)
                     Text(
-                        "Pick which tools this agent can use. Skills come from the shared library and are always available.",
+                        "Pick which tools this agent can use. Skills come from the shared library; limit them below.",
                         bundle: .module
                     )
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
 
                     Spacer()
                     summaryPill
@@ -479,30 +596,38 @@ struct AgentCapabilityManagerView: View {
             // Compact mode places the Done affordance left of the search field
             // so it reads as a "back" arrow into the host form, not a trailing
             // accessory of the input.
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s8) {
                 if compact, onDismiss != nil { doneButton }
                 searchField
                 if compact { summaryPill }
                 filterChips
             }
 
+            if case .live(let agentId) = source, agentManager.agent(for: agentId)?.isBuiltIn == false {
+                AgentToolApprovalsCard(agentId: agentId)
+            }
+
             autoDiscoverCard
+
+            if case .live(let agentId) = source, agentId != Agent.defaultId {
+                AgentSkillAllowListCard(agentId: agentId)
+            }
         }
-        .padding(.horizontal, compact ? 20 : 24)
-        .padding(.vertical, 14)
+        .padding(.horizontal, compact ? theme.space.s20 : theme.space.s24)
+        .padding(.vertical, theme.space.s12)
     }
 
     @ViewBuilder
     private var doneButton: some View {
         if let onDismiss {
             Button(action: onDismiss) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .semibold))
+                        .glyphSize(.footnote, weight: .semibold)
                     Text("Done", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
-                .foregroundColor(theme.accentColor)
+                .foregroundColor(theme.text.link)
             }
             .buttonStyle(.plain)
         }
@@ -515,7 +640,9 @@ struct AgentCapabilityManagerView: View {
         var names: Set<String> = []
         for tool in visibleTools {
             let source = CapabilityRowBuilder.source(forTool: tool, pluginNameById: [:])
-            if !source.isInformational { names.insert(tool.name) }
+            if source.isInformational { continue }
+            if case .appleApp = source, !includesAppleApps { continue }
+            names.insert(tool.name)
         }
         return names
     }
@@ -523,107 +650,45 @@ struct AgentCapabilityManagerView: View {
     /// Assigned tools that still exist in the registry — stale allowlist
     /// entries (e.g. from an uninstalled plugin) shouldn't inflate counts.
     private var assignedActionableCount: Int {
-        actionableToolNames.intersection(enabledToolNames).count
+        actionableToolNames.intersection(effectiveEnabledToolNames).count
     }
 
     private var summaryPill: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 9))
-            Text(
-                "\(assignedActionableCount) of \(actionableToolNames.count) assigned",
-                bundle: .module
-            )
-            .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(theme.accentColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule().fill(theme.accentColor.opacity(0.12))
-                .overlay(Capsule().strokeBorder(theme.accentColor.opacity(0.2), lineWidth: 1))
+        StatusChip(
+            L("\(assignedActionableCount) of \(actionableToolNames.count) assigned"),
+            tone: .accent,
+            icon: "checkmark.seal.fill"
         )
     }
 
     private var searchField: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(searchFocused ? theme.accentColor : theme.tertiaryText)
-                .frame(width: 16)
-
-            ZStack(alignment: .leading) {
-                if searchText.isEmpty {
-                    Text("Search by name or description...", bundle: .module)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-                TextField(
-                    "",
-                    text: $searchText,
-                    onEditingChanged: { editing in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            searchFocused = editing
-                        }
-                    }
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(theme.primaryText)
-            }
-
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(.plain)
-                .localizedHelp("Clear search")
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(
-                            searchFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                            lineWidth: searchFocused ? 1.5 : 1
-                        )
-                )
+        SearchField(
+            text: $searchText,
+            placeholder: "Search by name or description...",
+            fillsAvailableWidth: true
         )
     }
 
     private var autoDiscoverCard: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             Image(systemName: toolMode == .auto ? "sparkles" : "list.bullet.rectangle")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(toolMode == .auto ? theme.accentColor : theme.secondaryText)
+                .glyphSize(.label, weight: .semibold)
+                .foregroundColor(toolMode == .auto ? theme.text.link : theme.text.secondary)
                 .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous).fill(
-                        toolMode == .auto ? theme.accentColor.opacity(0.12) : theme.inputBackground
-                    )
-                )
+                .settingsChrome(toolMode == .auto ? .selected : .inset)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Auto-discover relevant tools", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     toolMode == .auto
                         ? "The model starts with a small set and loads more of your assigned tools on demand."
                         : "All assigned tools are sent to the model every turn.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .componentInspectionText(48, role: .caption, fallback: .footnote, theme: theme)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -637,56 +702,20 @@ struct AgentCapabilityManagerView: View {
                     set: { newValue in commit(mode: newValue ? .auto : .manual) }
                 )
             )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
+            .settingsSwitch()
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+        .settingsChrome(.surface)
     }
 
     private var filterChips: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             ForEach(CapabilityFilter.allCases) { option in
                 let isSelected = option == filter
                 let count = option == .all ? actionableToolNames.count : assignedActionableCount
-                Button {
+                FilterChip(LCached(option.label), count: count, isSelected: isSelected) {
                     filter = option
-                } label: {
-                    HStack(spacing: 4) {
-                        // Constant weight so chips don't change width (and
-                        // shift their neighbor) when the selection moves.
-                        Text(LocalizedStringKey(option.label), bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                        Text("\(count)", bundle: .module)
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                            .opacity(0.85)
-                    }
-                    .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(isSelected ? theme.accentColor.opacity(0.14) : theme.inputBackground)
-                            .overlay(
-                                Capsule(style: .continuous).strokeBorder(
-                                    isSelected ? theme.accentColor.opacity(0.25) : theme.inputBorder,
-                                    lineWidth: 1
-                                )
-                            )
-                    )
-                    .contentShape(Capsule(style: .continuous))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(option.label)
-                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
             }
         }
     }
@@ -699,63 +728,27 @@ struct AgentCapabilityManagerView: View {
     /// empty tool registry.
     private var emptyState: some View {
         let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return VStack(spacing: 8) {
-            Image(systemName: trimmedSearch.isEmpty ? "wrench.and.screwdriver" : "magnifyingglass")
-                .font(.system(size: 24, weight: .regular))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.bottom, 4)
-
-            if !trimmedSearch.isEmpty {
-                Text("No tools match \u{201C}\(trimmedSearch)\u{201D}", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Try a different name or description.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                emptyStateAction(label: L("Clear Search")) {
-                    searchText = ""
-                }
-            } else if filter == .assigned {
-                Text("No tools assigned yet", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Switch to All and turn on the tools this agent should use.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                emptyStateAction(label: L("Show All Tools")) {
-                    filter = .all
-                }
-            } else {
-                Text("No tools available", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Install plugins or connect MCP servers to add tools.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
+        if !trimmedSearch.isEmpty {
+            return SettingsEmptyState(
+                inline: "magnifyingglass",
+                title: L("No tools match “\(trimmedSearch)”"),
+                hint: "Try a different name or description.",
+                secondaryAction: .init(title: L("Clear Search"), icon: "", handler: { searchText = "" })
+            )
         }
-        .multilineTextAlignment(.center)
-        .padding(24)
-    }
-
-    private func emptyStateAction(label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(theme.accentColor.opacity(0.12))
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1)
-                        )
-                )
+        if filter == .assigned {
+            return SettingsEmptyState(
+                inline: "wrench.and.screwdriver",
+                title: "No tools assigned yet",
+                hint: "Switch to All and turn on the tools this agent should use.",
+                secondaryAction: .init(title: L("Show All Tools"), icon: "", handler: { filter = .all })
+            )
         }
-        .buttonStyle(.plain)
-        .padding(.top, 6)
+        return SettingsEmptyState(
+            inline: "wrench.and.screwdriver",
+            title: "No tools available",
+            hint: "Install plugins or connect MCP servers to add tools."
+        )
     }
 
     // MARK: - Rows
@@ -765,13 +758,35 @@ struct AgentCapabilityManagerView: View {
             CapabilityRowBuilder.Input(
                 visibleTools: visibleTools,
                 plugins: plugins,
-                enabledToolNames: enabledToolNames,
+                enabledToolNames: effectiveEnabledToolNames,
                 toolMode: toolMode,
                 searchQuery: searchText,
                 filter: filter,
-                expandedGroups: expandedGroups
+                expandedGroups: expandedGroups,
+                includesAppleApps: includesAppleApps,
+                appleAppMissingPermissions: appleAppMissingPermissions,
+                policyAgentId: policyAgentId
             )
         )
+    }
+
+    private var policyAgentId: UUID? {
+        guard case .live(let agentId) = source, agentManager.agent(for: agentId)?.isBuiltIn == false else {
+            return nil
+        }
+        return agentId
+    }
+
+    /// Permissions each enabled Apple app still lacks, from the permission
+    /// service's cached states (refreshed after every request round).
+    private var appleAppMissingPermissions: [AppleApp: [SystemPermission]] {
+        guard includesAppleApps else { return [:] }
+        var missing: [AppleApp: [SystemPermission]] = [:]
+        for app in enabledAppleApps {
+            let gaps = app.systemPermissions.filter { !permissionService.cachedIsGranted($0) }
+            if !gaps.isEmpty { missing[app] = gaps }
+        }
+        return missing
     }
 
     // MARK: - Loading
@@ -808,10 +823,14 @@ struct AgentCapabilityManagerView: View {
         switch source {
         case .live:
             loadFromAgent()
-        case .draft(let mode, let tools):
+        case .draft(let mode, let tools, let appleApps):
             toolMode = mode.wrappedValue
             enabledToolNames = tools.wrappedValue
+            enabledAppleApps = appleApps.wrappedValue
             notifySelectionChanged()
+        }
+        if includesAppleApps, !enabledAppleApps.isEmpty {
+            permissionService.refreshAllPermissions()
         }
     }
 
@@ -819,6 +838,9 @@ struct AgentCapabilityManagerView: View {
         guard case .live(let agentId) = source else { return }
         toolMode = agentManager.effectiveToolSelectionMode(for: agentId)
         enabledToolNames = Set(agentManager.effectiveEnabledToolNames(for: agentId) ?? [])
+        enabledAppleApps =
+            agentId == Agent.defaultId
+            ? [] : (agentManager.agent(for: agentId)?.settings.enabledAppleApps ?? [])
         notifySelectionChanged()
     }
 
@@ -835,6 +857,10 @@ struct AgentCapabilityManagerView: View {
     /// Bulk-flip every (non-restricted) child of a group on or off in one
     /// commit. Wired to the group header's enable-all / disable-all glyphs.
     private func handleBulkToggle(in groupId: String, enable: Bool) {
+        if let app = CapabilitySource.appleApp(fromGroupId: groupId) {
+            setAppleApp(app, enabled: enable)
+            return
+        }
         let toolNames = childrenOf(groupId: groupId)
         guard !toolNames.isEmpty else { return }
         var next = enabledToolNames
@@ -848,6 +874,12 @@ struct AgentCapabilityManagerView: View {
 
     private func handleToggleTool(_ rowId: String, _ wasEnabled: Bool) {
         guard let decoded = CapabilityRowBuilder.decode(rowId: rowId), decoded.kind == "tool" else { return }
+        // Apple rows flip their whole app (the row carries a "Per app"
+        // badge saying so); their names must never enter `manualToolNames`.
+        if let app = CapabilitySource.appleApp(fromGroupId: decoded.groupId) {
+            setAppleApp(app, enabled: !wasEnabled)
+            return
+        }
         var next = enabledToolNames
         if wasEnabled {
             next.remove(decoded.payload)
@@ -855,6 +887,81 @@ struct AgentCapabilityManagerView: View {
             next.insert(decoded.payload)
         }
         commit(nextTools: next)
+    }
+
+    /// "Permission needed" badge: re-ask macOS for the promptable grants,
+    /// then deep-link System Settings for whatever is still missing after
+    /// the probes — a denied Automation grant never re-prompts (the probe
+    /// just fails), and Full Disk Access is manual-only, so both need the
+    /// pane opened in the same tap or the badge is a dead end.
+    private func handleGroupStatusTap(_ groupId: String) {
+        guard let app = CapabilitySource.appleApp(fromGroupId: groupId) else { return }
+        let missing = app.systemPermissions.filter { !permissionService.cachedIsGranted($0) }
+        guard !missing.isEmpty else { return }
+        requestAppleAppPermissions(app, openSettingsForRemaining: true)
+    }
+
+    /// System Settings pane to open for the grants still missing after the
+    /// promptable requests ran: Full Disk Access first (it is never
+    /// promptable), then the first denied Automation / other grant.
+    static func settingsTarget(forStillMissing missing: [SystemPermission]) -> SystemPermission? {
+        if missing.contains(.disk) { return .disk }
+        return missing.first { $0.systemSettingsURL != nil }
+    }
+
+    // MARK: - Apple apps
+
+    /// Turning an app ON also fires the macOS permission request right away
+    /// so the first tool call does not stall on a TCC dialog mid-turn; a denial does NOT revert the toggle — the
+    /// header shows "Permission needed" with a one-click path instead.
+    private func setAppleApp(_ app: AppleApp, enabled: Bool) {
+        guard includesAppleApps else { return }
+        var next = enabledAppleApps
+        if enabled { next.insert(app) } else { next.remove(app) }
+        guard next != enabledAppleApps else { return }
+        enabledAppleApps = next
+        notifySelectionChanged()
+        switch source {
+        case .live(let agentId):
+            agentManager.updateEnabledAppleApps(next, for: agentId)
+        case .draft(_, _, let appleApps):
+            appleApps.wrappedValue = next
+        }
+        // macOS grants are process-wide, not per agent, so the Create Agent
+        // draft asks right away too — otherwise the guide's "turning an app on
+        // asks macOS" promise held only for saved agents.
+        if enabled { requestAppleAppPermissions(app) }
+    }
+
+    /// Grants without a system dialog; the only path is System Settings.
+    private static func isManualOnlyPermission(_ permission: SystemPermission) -> Bool {
+        permission == .disk || permission == .accessibility || permission == .screenRecording
+    }
+
+    /// Ask macOS for every permission the app needs that is not yet granted.
+    /// Sequential so two TCC dialogs never stack; automation grants are
+    /// probed via the background pre-launch path (no focus steal).
+    ///
+    /// `openSettingsForRemaining` (the badge tap) opens the System Settings
+    /// pane for the first grant still missing once the probes finish; the
+    /// toggle-on path leaves it `false` so flipping a switch never yanks the
+    /// user into System Settings.
+    private func requestAppleAppPermissions(_ app: AppleApp, openSettingsForRemaining: Bool = false) {
+        let missing = app.systemPermissions.filter { !permissionService.cachedIsGranted($0) }
+        guard !missing.isEmpty, !appleAppPermissionRequests.contains(app) else { return }
+        appleAppPermissionRequests.insert(app)
+        Task { @MainActor in
+            defer { appleAppPermissionRequests.remove(app) }
+            for permission in missing where !Self.isManualOnlyPermission(permission) {
+                _ = await permissionService.requestPermissionAndWait(permission)
+            }
+            permissionService.refreshAllPermissions()
+            guard openSettingsForRemaining else { return }
+            let stillMissing = app.systemPermissions.filter { !permissionService.cachedIsGranted($0) }
+            if let target = Self.settingsTarget(forStillMissing: stillMissing) {
+                permissionService.openSystemSettings(for: target)
+            }
+        }
     }
 
     /// Collect every (non-restricted) child of a group directly from the live
@@ -889,7 +996,7 @@ struct AgentCapabilityManagerView: View {
         switch source {
         case .live(let agentId):
             agentManager.updateEnabledToolNames(Array(nextTools), for: agentId)
-        case .draft(_, let tools):
+        case .draft(_, let tools, _):
             tools.wrappedValue = nextTools
         }
     }
@@ -901,12 +1008,12 @@ struct AgentCapabilityManagerView: View {
         switch source {
         case .live(let agentId):
             agentManager.updateToolSelectionMode(mode, for: agentId)
-        case .draft(let modeBinding, _):
+        case .draft(let modeBinding, _, _):
             modeBinding.wrappedValue = mode
         }
     }
 
     private func notifySelectionChanged() {
-        onSelectionChanged?(toolMode, enabledToolNames)
+        onSelectionChanged?(toolMode, enabledToolNames, enabledAppleApps)
     }
 }

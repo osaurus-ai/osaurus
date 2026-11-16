@@ -1,0 +1,50 @@
+{
+  "id": "workflow.team-ask-planner-week",
+  "domain": "workflow",
+  "label": "workflow • prepared ask: what is due this week",
+  "query": "prepared ask: what is due this week",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-planner-week",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "reminders": [
+            {
+              "id": "reminder-read-1",
+              "title": "File the expense report",
+              "dueDate": "{{date:now+2h}}",
+              "listTitle": "Work",
+              "isCompleted": false
+            }
+          ],
+          "count": 1
+        }
+      },
+      "toolArguments": {
+        "read": {
+          "status": "incomplete",
+          "due_before": "{{date:week_end}}"
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "expense"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

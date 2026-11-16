@@ -1,0 +1,80 @@
+{
+  "id": "workflow.invalid-input-fails-early",
+  "domain": "workflow",
+  "label": "workflow \u2022 input that violates the input schema fails before any node",
+  "query": "input that violates the input schema fails before any node",
+  "notes": "No model. The required `client` field is missing, so the run must fail at input validation and leave the dialog node pending (never presented).",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [],
+        "examples": [],
+        "input_schema": {
+          "properties": {
+            "client": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "client"
+          ],
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "dialog": {
+              "fields": [
+                {
+                  "key": "plan",
+                  "label": "Plan",
+                  "persistence": "always_ask",
+                  "required": true,
+                  "type": "text"
+                }
+              ],
+              "message": "Plan?",
+              "title": "Plan"
+            },
+            "id": "ask",
+            "input": {},
+            "kind": "dialog",
+            "name": "Ask Plan",
+            "output_schema": {
+              "type": "object"
+            },
+            "retry": {
+              "backoff_seconds": 1,
+              "max_attempts": 1
+            },
+            "timeout": 120
+          }
+        ],
+        "output": {
+          "plan": "{{nodes.ask.output.plan}}"
+        },
+        "output_schema": {
+          "properties": {
+            "plan": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "plan"
+          ],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {
+        "name": "Acme"
+      },
+      "status": "failed",
+      "nodeStatuses": {
+        "ask": "pending"
+      }
+    }
+  }
+}

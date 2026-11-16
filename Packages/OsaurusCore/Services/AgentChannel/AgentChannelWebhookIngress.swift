@@ -140,8 +140,11 @@ actor AgentChannelWebhookIngress {
     ]
 
     typealias ConnectionLookup = @Sendable (String) -> AgentChannelConnection?
-    typealias RelaySubmit = @Sendable (AgentChannelInboundRelayRequest) async -> AgentChannelInboundRelaySubmission
+    /// Hands an authorized message to the events that listen to it.
+    typealias RelaySubmit = @Sendable (ChannelInboundMessage) async -> AgentChannelInboundRelaySubmission
     typealias TaskLookup = @Sendable (UUID) async -> AgentChannelWebhookTaskSnapshot?
+    /// The agent the matching event runs, so a redelivery reports the same task.
+    typealias TargetLookup = @Sendable (EventMatcher.ChannelFacts) async -> AgentDispatchTarget?
     typealias ReplyHandlerFactory =
         @Sendable (AgentChannelConnection, AgentChannelN8nEnvelope)
         -> AgentChannelInboundReplyHandler?
@@ -156,6 +159,7 @@ actor AgentChannelWebhookIngress {
     private let connectionLookup: ConnectionLookup
     private let relaySubmit: RelaySubmit
     private let taskLookup: TaskLookup
+    private let targetLookup: TargetLookup
     private let rateLimiter: PairingRateLimiter
     /// Test seam; when nil the n8n preset decides whether a push applies.
     private var replyHandlerFactory: ReplyHandlerFactory?
@@ -175,6 +179,7 @@ actor AgentChannelWebhookIngress {
         connectionLookup: ConnectionLookup? = nil,
         relaySubmit: RelaySubmit? = nil,
         taskLookup: TaskLookup? = nil,
+        targetLookup: TargetLookup? = nil,
         rateLimiter: PairingRateLimiter = PairingRateLimiter(window: 60, maxPerWindow: 120, denialCooldown: 10),
         replyHandlerFactory: ReplyHandlerFactory? = nil
     ) {
@@ -190,10 +195,14 @@ actor AgentChannelWebhookIngress {
                 AgentChannelConfigurationStore.load().connection(id: id)
             }
         self.relaySubmit =
-            relaySubmit ?? { request in
-                await AgentChannelInboundRelay.shared.submit(request)
+            relaySubmit ?? { message in
+                await EventManager.shared.ingestChannelMessage(message)
             }
         self.taskLookup = taskLookup ?? Self.defaultTaskLookup
+        self.targetLookup =
+            targetLookup ?? { facts in
+                await MainActor.run { EventManager.shared.channelAgentTarget(for: facts) }
+            }
         self.rateLimiter = rateLimiter
         self.replyHandlerFactory = replyHandlerFactory
     }
@@ -324,7 +333,12 @@ actor AgentChannelWebhookIngress {
                 stage: .rejected,
                 reason: receive.authorizationReason ?? "duplicate_event"
             )
-            let partition = partition(for: connection, n8n: n8n, envelope: envelope)
+            let facts = EventMatcher.ChannelFacts(
+                kind: connection.kind, connectionId: connection.id, roomId: envelope.conversationId,
+                content: envelope.content, mentionsBot: nil, hasPriorOutbound: false)
+            let target = await targetLookup(facts)
+            let partition = partition(
+                for: connection, envelope: envelope, submission: target.map { .dispatched(target: $0, rule: "") })
             return .json(
                 200,
                 [
@@ -388,7 +402,7 @@ actor AgentChannelWebhookIngress {
 
         let providerRoute = AgentChannelProviderRoute(
             conversationId: envelope.conversationId,
-            threadId: n8n.inboundDispatch.continueThreads ? envelope.threadId : nil,
+            threadId: envelope.threadId,
             replyAddress: envelope.replyToken,
             displayName: "n8n \(envelope.conversationId)"
         )
@@ -404,22 +418,23 @@ actor AgentChannelWebhookIngress {
             trustLevel: .verified
         )
         let submission = await relaySubmit(
-            AgentChannelInboundRelayRequest(
+            ChannelInboundMessage(
                 identity: identity,
+                kind: connection.kind,
                 connectionId: connection.id,
                 providerEventId: envelope.eventId,
                 providerRoute: providerRoute,
                 content: envelope.content,
                 attachments: envelope.attachments.map(\.stored),
-                settings: n8n.inboundDispatch,
                 sourceLabel:
                     "n8n connection \(connection.id), conversation \(envelope.conversationId), sender \(envelope.sender.id)",
                 reply: replyHandler(for: connection, envelope: envelope)
             )
         )
 
-        let partition = partition(for: connection, n8n: n8n, envelope: envelope, submission: submission)
+        let partition = partition(for: connection, envelope: envelope, submission: submission)
         let dispatchDescription: String
+        var tracksTask = true
         switch submission {
         case .dispatched(let target, let rule):
             receiveCounters[connection.id, default: (0, 0, 0, 0)].attempted += 1
@@ -430,6 +445,16 @@ actor AgentChannelWebhookIngress {
                 providerEventId: envelope.eventId,
                 stage: .dispatched,
                 reason: await AgentChannelInboundActivityPresentation.dispatchReason(target: target, rule: rule)
+            )
+        case .fired(let eventNames, _):
+            receiveCounters[connection.id, default: (0, 0, 0, 0)].attempted += 1
+            tracksTask = false
+            dispatchDescription = "fired"
+            await activityCenter.record(
+                connectionId: connection.id,
+                providerEventId: envelope.eventId,
+                stage: .dispatched,
+                reason: await AgentChannelInboundActivityPresentation.firedReason(eventNames: eventNames)
             )
         case .suppressed(let reason):
             receiveCounters[connection.id, default: (0, 0, 0, 0)].suppressed += 1
@@ -447,6 +472,13 @@ actor AgentChannelWebhookIngress {
         }
         await publishHealth(connection: connection, failure: nil)
 
+        // Workflow events have no chat task to poll; their runs are in Automations.
+        guard tracksTask else {
+            return .json(
+                202,
+                ["status": "accepted", "event_id": envelope.eventId, "dispatch": dispatchDescription]
+            )
+        }
         return .json(
             202,
             [
@@ -793,32 +825,24 @@ actor AgentChannelWebhookIngress {
 
     private func partition(
         for connection: AgentChannelConnection,
-        n8n: AgentChannelN8nConfiguration,
         envelope: AgentChannelN8nEnvelope,
         submission: AgentChannelInboundRelaySubmission? = nil
     ) -> AgentChannelSessionPartition {
-        let target: AgentDispatchTarget?
+        var target: AgentDispatchTarget?
         if case .dispatched(let dispatchedTarget, _)? = submission {
             target = dispatchedTarget
-        } else {
-            target =
-                AgentChannelDispatchRouter.resolve(
-                    settings: n8n.inboundDispatch,
-                    roomId: envelope.conversationId,
-                    content: envelope.content
-                )?.target ?? n8n.inboundDispatch.target
         }
         return substrate.makeSessionPartition(
             target: target,
             connectionId: connection.id,
             providerRoute: AgentChannelProviderRoute(
                 conversationId: envelope.conversationId,
-                threadId: n8n.inboundDispatch.continueThreads ? envelope.threadId : nil
+                threadId: envelope.threadId
             )
         )
     }
 
-    /// A failed proof backs the source off, as `/pair` does on denial.
+    /// A failed proof backs the source off, as a failed `/pair-invite` proof does.
     private func penalizing(
         _ response: AgentChannelWebhookIngressResponse,
         source: String
@@ -839,7 +863,11 @@ actor AgentChannelWebhookIngress {
     private func publishHealth(connection: AgentChannelConnection, failure: String?) async {
         let counters = receiveCounters[connection.id] ?? (0, 0, 0, 0)
         let row = health[connection.id] ?? AgentChannelWebhookIngressHealth(connectionId: connection.id)
-        let receiveEnabled = connection.n8n?.inboundDispatch.isConfigured ?? false
+        let connectionId = connection.id
+        let kind = connection.kind
+        let receiveEnabled = await MainActor.run {
+            EventManager.shared.events(kind: kind, connectionId: connectionId).contains(where: \.isEnabled)
+        }
         let status: AgentChannelTransportHealthStatus
         let severity: AgentChannelTransportHealthSeverity
         let summary: String

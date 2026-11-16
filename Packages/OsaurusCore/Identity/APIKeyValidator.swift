@@ -13,7 +13,7 @@ public struct APIKeyValidator: Sendable {
     /// Lowercased set of every agent address whose scoped keys this validator
     /// accepts. A token's `aud` must equal the master address or be in this
     /// set. The server builds this from ALL of the user's agents so that
-    /// agent-scoped keys minted by `/pair` and `/pair-invite` validate.
+    /// agent-scoped keys minted by `/pair-invite` (or the retired LAN `/pair`) validate.
     private let agentAddresses: Set<String>
     private let masterAddress: String
     private let whitelist: Set<String>

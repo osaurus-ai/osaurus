@@ -1,0 +1,38 @@
+{
+  "id": "firstrun.ask-builder-uncommitted",
+  "domain": "workflow",
+  "label": "first run • Builder card: What is uncommitted right now",
+  "query": "walkthrough ask: What is uncommitted right now",
+  "notes": "The walkthrough's `builder.uncommitted` ask: the prepared workflow it runs, from workflow.team-ask-builder-uncommitted. Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-builder-uncommitted",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "text": "On branch main\nChanges not staged for commit:\n\tmodified:   Sources/Billing/Invoice.swift\n"
+        }
+      },
+      "toolArguments": {
+        "read": {}
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "Invoice"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

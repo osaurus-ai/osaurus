@@ -21,7 +21,20 @@ final class ModelPickerItemCache: ObservableObject {
     @Published private(set) var items: [ModelPickerItem] = [] {
         didSet { chatModelCandidates = items.chatModelCandidates }
     }
+    /// Chat/cloud discovery has completed. Optional local media may still be
+    /// scanning and joins `items` through a later publication.
     @Published private(set) var isLoaded = false
+
+    // Optional local media discovery may wait on an unavailable volume or a
+    // filesystem permission prompt. It must not hold usable chat models behind
+    // that I/O. Each catalog retains its last completed snapshot and publishes
+    // through the same items stream when refreshed.
+    private var chatAndCloudItems: [ModelPickerItem] = []
+    private var localMediaItems: [ModelPickerItem] = []
+    private let loadChatAndCloudItems: @MainActor () async -> [ModelPickerItem]
+    private let loadLocalMediaItems: @MainActor () async -> [ModelPickerItem]
+    private var localMediaRebuildTask: Task<Void, Never>?
+    private var pendingLocalMediaRebuild = false
 
     /// Stored projection of `items.chatModelCandidates`, recomputed once per
     /// rebuild. The filter runs `isLikelyChatCapable` string matching over
@@ -80,8 +93,22 @@ final class ModelPickerItemCache: ObservableObject {
     /// notifications into at most one extra rebuild.
     private var pendingRebuild: Bool = false
 
-    private init() {
-        registerObservers()
+    private convenience init() {
+        self.init(
+            observeChanges: true,
+            loadChatAndCloudItems: Self.computeItems,
+            loadLocalMediaItems: Self.computeLocalMediaItems
+        )
+    }
+
+    private init(
+        observeChanges: Bool,
+        loadChatAndCloudItems: @escaping @MainActor () async -> [ModelPickerItem],
+        loadLocalMediaItems: @escaping @MainActor () async -> [ModelPickerItem]
+    ) {
+        self.loadChatAndCloudItems = loadChatAndCloudItems
+        self.loadLocalMediaItems = loadLocalMediaItems
+        if observeChanges { registerObservers() }
     }
 
     private func registerObservers() {
@@ -91,6 +118,9 @@ final class ModelPickerItemCache: ObservableObject {
             .localModelsChanged,
             .remoteProviderModelsChanged,
             .cloudMediaCatalogChanged,
+            // The `foundation` entry is gated on live Apple Intelligence
+            // availability, which `AppConfiguration` re-probes on activation.
+            .foundationModelAvailabilityChanged,
         ] {
             NotificationCenter.default.addObserver(
                 forName: name,
@@ -128,6 +158,7 @@ final class ModelPickerItemCache: ObservableObject {
     /// latest items computed by the rebuild that this call awaited.
     @discardableResult
     func buildModelPickerItems() async -> [ModelPickerItem] {
+        requestLocalMediaRebuild()
         if let existing = rebuildTask {
             // A rebuild is already running — request another pass after it
             // finishes (so we pick up state that changed since it started),
@@ -142,16 +173,68 @@ final class ModelPickerItemCache: ObservableObject {
             var latest: [ModelPickerItem] = []
             repeat {
                 self.pendingRebuild = false
-                let options = await Self.computeItems()
-                self.items = options
+                self.chatAndCloudItems = await self.loadChatAndCloudItems()
+                self.publishItems()
                 self.isLoaded = true
-                latest = options
+                latest = self.items
             } while self.pendingRebuild
             self.rebuildTask = nil
             return latest
         }
         rebuildTask = task
         return await task.value
+    }
+
+    /// Media download/delete callers can explicitly wait for their refreshed
+    /// media catalog. Ordinary chat/picker callers do not wait for disk I/O
+    /// belonging to a different runtime.
+    func refreshLocalMediaModelItems() async {
+        requestLocalMediaRebuild()
+        await localMediaRebuildTask?.value
+    }
+
+    private func requestLocalMediaRebuild() {
+        if localMediaRebuildTask != nil {
+            pendingLocalMediaRebuild = true
+            return
+        }
+        localMediaRebuildTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            repeat {
+                self.pendingLocalMediaRebuild = false
+                let options = await self.loadLocalMediaItems()
+                // If model state changed during discovery, keep the previous
+                // snapshot until the requested fresh pass completes.
+                if !self.pendingLocalMediaRebuild {
+                    self.localMediaItems = options
+                    if self.isLoaded { self.publishItems() }
+                }
+            } while self.pendingLocalMediaRebuild
+            self.localMediaRebuildTask = nil
+        }
+    }
+
+    private func publishItems() {
+        var options = chatAndCloudItems
+        // Preserve foundation/local/media/remote ordering as media arrives.
+        let index =
+            options.firstIndex {
+                if case .remote = $0.source { return true }
+                return false
+            } ?? options.endIndex
+        options.insert(contentsOf: localMediaItems, at: index)
+        items = options
+    }
+
+    /// The items as they stand, for a reader that doesn't need a rebuild of
+    /// its own: every change (models, providers, the cloud catalog) already
+    /// rebuilds them as it happens. Waits only for a rebuild under way, or
+    /// for a first one. A full rebuild runs to seconds with cloud providers
+    /// connected, which the phone's picker waited out on every open.
+    func currentItems() async -> [ModelPickerItem] {
+        if let rebuildTask { return await rebuildTask.value }
+        if isLoaded { return items }
+        return await buildModelPickerItems()
     }
 
     /// Kick off a rebuild without awaiting it. Safe to call at app launch for a
@@ -174,6 +257,8 @@ final class ModelPickerItemCache: ObservableObject {
     /// caller will immediately trigger a rebuild.
     func invalidateCache() {
         isLoaded = false
+        chatAndCloudItems = []
+        localMediaItems = []
         items = []
     }
 
@@ -186,9 +271,23 @@ final class ModelPickerItemCache: ObservableObject {
         @discardableResult
         func _setItemsForTesting(_ newItems: [ModelPickerItem]) -> [ModelPickerItem] {
             let previous = items
+            chatAndCloudItems = newItems.filter { !$0.source.isImageGeneration }
+            localMediaItems = newItems.filter { $0.source.isImageGeneration }
             items = newItems
             isLoaded = true
             return previous
+        }
+
+        static func _makeForTesting(
+            observeChanges: Bool = false,
+            loadChatAndCloudItems: @escaping @MainActor () async -> [ModelPickerItem],
+            loadLocalMediaItems: @escaping @MainActor () async -> [ModelPickerItem]
+        ) -> ModelPickerItemCache {
+            ModelPickerItemCache(
+                observeChanges: observeChanges,
+                loadChatAndCloudItems: loadChatAndCloudItems,
+                loadLocalMediaItems: loadLocalMediaItems
+            )
         }
     #endif
 
@@ -207,14 +306,6 @@ final class ModelPickerItemCache: ObservableObject {
             options.append(.foundation())
         }
 
-        // Cheap `isExecutableFile` stat, so it stays on the main actor with
-        // the other synchronous gates rather than paying a detached hop.
-        if ClaudeCodeConfiguration.isAvailable() {
-            for model in ClaudeCodeModel.allCases {
-                options.append(.claudeCode(model))
-            }
-        }
-
         let localModels = await Task.detached(priority: .userInitiated) {
             // Exclude embedding/encoder-only bundles (e.g. potion-base-4M
             // pulled into the HF cache by the memory feature): they can't
@@ -223,7 +314,7 @@ final class ModelPickerItemCache: ObservableObject {
             // `isEmbedding` here also warms its memoized verdict off the
             // main actor, like the `isVLM` warm-up below.
             let models = ModelManager.discoverLocalModels()
-                .filter { !$0.isEmbedding }
+                .filter { !$0.isEmbedding && !$0.isDecision }
             // Warm the memoized VLM + MLX-format verdicts while still off the
             // main actor: `fromMLXModel` below reads both `isVLM` and
             // `isMLXFormat` on the MainActor, and a cold cache would otherwise
@@ -237,14 +328,6 @@ final class ModelPickerItemCache: ObservableObject {
 
         for model in localModels {
             options.append(.fromMLXModel(model))
-        }
-
-        // On-device image-generation models (vMLXFlux). Only surface bundles
-        // that are fully staged/loadable; incomplete ones stay hidden until
-        // their weights are present.
-        let imageModels = (try? await ImageGenerationService.shared.availableModels()) ?? []
-        for model in imageModels where model.ready {
-            options.append(.fromImageModel(model))
         }
 
         let manager = RemoteProviderManager.shared
@@ -281,6 +364,31 @@ final class ModelPickerItemCache: ObservableObject {
         return options
     }
 
+    /// Keep the existing ready-bundle and video eligibility rules. Only the
+    /// dependency on chat readiness changes; media still publishes after its
+    /// actual scan, without guessing availability or abandoning an I/O task.
+    private static func computeLocalMediaItems() async -> [ModelPickerItem] {
+        var options: [ModelPickerItem] = []
+        let imageModels = (try? await ImageGenerationService.shared.availableModels()) ?? []
+        for model in imageModels where model.ready && model.kind != "videoGen" {
+            options.append(.fromImageModel(model))
+        }
+        let videoModels = (try? await ImageGenerationService.shared.availableVideoModels()) ?? []
+        options.append(
+            contentsOf: videoModels.map { model in
+                ModelPickerItem(
+                    id: model.id,
+                    displayName: model.displayName,
+                    source: .imageGeneration,
+                    imageKind: "videoGen",
+                    imageReady: true,
+                    mediaModel: model
+                )
+            }
+        )
+        return options
+    }
+
     /// Pure remote-item assembly, split from `computeItems()` so the
     /// provider-scoped enrichment rules are unit-testable without live
     /// provider state:
@@ -288,6 +396,8 @@ final class ModelPickerItemCache: ObservableObject {
     ///   per-model reasoning capabilities (keyed by bare slug).
     /// - The official `api.openai.com` Open Responses (API-key) route
     ///   attaches the documented GPT-5.6 public reasoning profile.
+    /// - Native Anthropic providers attach the thinking/effort contract,
+    ///   context window, and lifecycle the Models API advertised per model.
     /// - Custom OpenAI-compatible providers are never assumed to support
     ///   either contract.
     /// Returns the picker items plus the full-id keyed capability map used to
@@ -297,7 +407,10 @@ final class ModelPickerItemCache: ObservableObject {
         codexMetadata: [String: CodexModelMetadata],
         osaurusRouterProviderId: UUID,
         routerMetadata: (String) -> OsaurusRouterModel?,
-        remoteContextLength: (UUID, String) -> Int? = { _, _ in nil }
+        remoteContextLength: (UUID, String) -> Int? = { _, _ in nil },
+        anthropicModelInfo: (UUID, String) -> AnthropicModelInfo? = {
+            AnthropicModelCatalog.info(providerId: $0, modelId: $1)
+        }
     ) -> (items: [ModelPickerItem], reasoningCapabilities: [String: ModelReasoningCapabilities]) {
         var items: [ModelPickerItem] = []
         var capabilities: [String: ModelReasoningCapabilities] = [:]
@@ -335,6 +448,22 @@ final class ModelPickerItemCache: ObservableObject {
                         providerName: providerInfo.providerName,
                         providerId: providerInfo.providerId
                     )
+                } else if providerInfo.providerType == .anthropic {
+                    let bareId = unprefixedRouterModelId(modelId)
+                    let info = anthropicModelInfo(providerInfo.providerId, bareId)
+                    let advertisedInput = info?.max_input_tokens.flatMap { $0 > 0 ? $0 : nil }
+                    item = .fromRemoteModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId,
+                        contextLength: remoteContextLength(providerInfo.providerId, bareId)
+                            ?? advertisedInput,
+                        reasoningCapabilities: AnthropicReasoningContract.capabilities(
+                            from: info?.capabilities
+                        ),
+                        displayName: info.flatMap { $0.display_name.isEmpty ? nil : $0.display_name },
+                        description: info?.isDeprecated == true ? "Deprecated" : nil
+                    )
                 } else {
                     item = .fromRemoteModel(
                         modelId: modelId,
@@ -343,7 +472,13 @@ final class ModelPickerItemCache: ObservableObject {
                         contextLength: remoteContextLength(
                             providerInfo.providerId,
                             unprefixedRouterModelId(modelId)
-                        )
+                        ),
+                        // Gemini text models get their documented thinking
+                        // levels on routes that forward the effort intact.
+                        reasoningCapabilities: GeminiReasoningContract.routeHonorsContract(
+                            providerType: providerInfo.providerType,
+                            host: providerInfo.host
+                        ) ? GeminiReasoningContract.capabilities(forModelId: modelId) : nil
                     )
                 }
                 items.append(item)

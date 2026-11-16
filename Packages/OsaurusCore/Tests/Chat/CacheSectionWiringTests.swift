@@ -20,12 +20,19 @@
 import XCTest
 
 final class CacheSectionWiringTests: XCTestCase {
-    func testQuotaPollingAndVisibleNoticeFollowCurrentChatEligibility() throws {
+    /// Cache pressure is never announced in the chat: no card, no poller, no
+    /// suppression preference. The state stays where the user goes looking
+    /// for it — the context-budget popover and Live Activity.
+    func testNoCachePressurePopupInTheChat() throws {
         let src = try source("Views/Chat/FloatingInputCard.swift")
-        XCTAssertTrue(src.contains(".task(id: ssdQuotaNoticePollContext)"))
-        XCTAssertTrue(src.contains("session: inputHistoryKey,\n            eligible: canPresentSSDQuotaNotice"))
-        XCTAssertTrue(src.contains("if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot"))
-        XCTAssertTrue(src.contains("DiskCacheQuotaNoticeSuppression.suppress()"))
+        XCTAssertFalse(src.contains("ssd-quota-warning"))
+        XCTAssertFalse(src.contains("ssdQuotaWarningRow"))
+        XCTAssertFalse(src.contains("DiskCacheQuotaNotices"))
+        XCTAssertFalse(src.contains("DiskCacheQuotaNoticeSuppression"))
+        // The popover's disk-cache row is still fed by the runtime's snapshots.
+        XCTAssertTrue(src.contains("matching: settings.cache, modelName: model, session: session"))
+        let cache = try source("Views/Settings/ServerSettings/CacheSection.swift")
+        XCTAssertFalse(cache.contains("Show SSD Cache Capacity Notices"))
     }
 
     func testMTPBannerPreservesIndividualButtonAccessibility() throws {
@@ -68,7 +75,7 @@ final class CacheSectionWiringTests: XCTestCase {
     func testClearButtonDisablesItselfWhileRunning() throws {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertTrue(src.contains("isClearingDiskCache = true"))
-        XCTAssertTrue(src.contains(".disabled(isClearingDiskCache)"))
+        XCTAssertTrue(src.contains(".disabled(isClearingDiskCache || hasUnsavedDiskCacheDirectory)"))
     }
 
     /// The purge must serialize with runtime cache IO and use indexed ownership.
@@ -108,7 +115,7 @@ final class CacheSectionWiringTests: XCTestCase {
     func testSizeControlEditsThePercentNotGigabytes() throws {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertTrue(
-            src.contains("$draft.cache.blockDisk.maxSizePercent"),
+            src.contains("value: diskCachePercentBinding"),
             "the size control is not bound to the percent"
         )
         XCTAssertFalse(
@@ -124,10 +131,10 @@ final class CacheSectionWiringTests: XCTestCase {
     func testResolvedSizeLabelUsesTheEngineResolver() throws {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertTrue(
-            src.contains("VMLXServerRuntimeSettings.resolveDiskCacheMaxGB("),
+            src.contains("ModelRuntime.diskCacheCap("),
             "the readout does not use the resolver the coordinator uses"
         )
-        XCTAssertTrue(src.contains("VMLXServerRuntimeSettings.cacheVolumeCapacityGB("))
+        XCTAssertTrue(src.contains("diskCacheResolution = resolution"))
     }
 
     /// Diagnostics must not report `null` for a cache that has a real cap.
@@ -137,7 +144,7 @@ final class CacheSectionWiringTests: XCTestCase {
         let src = try source("Networking/HTTPHandler.swift")
         XCTAssertTrue(src.contains("\"block_disk_max_size_percent\""))
         XCTAssertTrue(
-            src.contains("\"block_disk_max_size_gb\": VMLXServerRuntimeSettings.resolveDiskCacheMaxGB("),
+            src.contains("\"block_disk_max_size_gb\": ModelRuntime.diskCacheCap("),
             "diagnostics still report the raw stored field"
         )
     }
@@ -146,7 +153,7 @@ final class CacheSectionWiringTests: XCTestCase {
     /// made the whole readout vanish with nothing loaded.
     func testFooterFallsBackWhenNoModelIsResident() throws {
         let src = try source("Views/Chat/FloatingInputCard.swift")
-        XCTAssertTrue(src.contains("directorySizeIfExists(at: dir)"))
+        XCTAssertTrue(src.contains("DiskCacheVolumeSnapshot.read(directory: dir)"))
         XCTAssertTrue(
             src.contains("diskCache.usedBytes > 0 || diskCache.maxBytes > 0"),
             "the section is gated such that it disappears without a cap"
@@ -156,34 +163,31 @@ final class CacheSectionWiringTests: XCTestCase {
     /// The readout must show the cap the ENGINE enforces, not the share in
     /// isolation.
     ///
-    /// Caught live: with 10% of a 3.7 TB volume the share resolved to 372 GB,
-    /// but `applyHostAwareDiskCacheCeiling` additionally bounds the cap to a
-    /// quarter of free bytes, and only 969 GB was free — so the coordinator
-    /// enforced 242 GB. A label showing 372 would over-promise by 130 GB and
-    /// contradict the "Active" row a few lines below it in the same panel.
-    func testReadoutsApplyTheHostAwareCeiling() throws {
+    /// Both labels must use the same resolver as the live coordinator so
+    /// Automatic, explicit choices and unavailable volume readings agree.
+    func testReadoutsUseTheSharedQuotaResolver() throws {
         for path in [
             "Views/Settings/ServerSettings/CacheSection.swift",
             "Views/Chat/FloatingInputCard.swift",
         ] {
             let src = try source(path)
             XCTAssertTrue(
-                src.contains("ModelRuntime.hostAwareDiskCacheDecision("),
-                "\(path) reports the raw share and would over-promise on a full disk"
+                src.contains("ModelRuntime.diskCacheCap("),
+                "\(path) bypasses the shared quota resolver"
             )
             XCTAssertTrue(
-                src.contains("OsaurusPaths.volumeFreeBytes("),
-                "\(path) never measures free space, so it cannot apply the ceiling"
+                src.contains("ModelRuntime.diskCacheDirectoryForDisplay("),
+                "\(path) does not resolve the selected cache volume"
             )
         }
     }
 
-    /// When the ceiling bites, the label has to say WHY. A user who set 10%
-    /// and sees a smaller number otherwise reads it as the setting being
-    /// ignored.
-    func testLimitedLabelNamesTheReason() throws {
+    /// An oversized explicit choice produces an advisory, not a hidden clamp.
+    func testUnavailableSpaceIsAnAdvisoryInsteadOfAHiddenCeiling() throws {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
-        XCTAssertTrue(src.contains("disk is nearly full"), "the lower cap is unexplained")
+        XCTAssertFalse(src.contains("limited to 25%%"))
+        XCTAssertTrue(src.contains("result.exceedsAvailableSpace"))
+        XCTAssertTrue(src.contains("hasDiskSpaceWarning ? theme.status.error.foreground"))
     }
 
     /// The share field must not be formatted to one decimal place.
@@ -209,7 +213,7 @@ final class CacheSectionWiringTests: XCTestCase {
     func testLabelShowsTheShareActuallyInEffect() throws {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertTrue(
-            src.contains("stored.map { $0 > 0 }"),
+            src.contains("switch result.rule"),
             "the label echoes the raw field and can print a share nothing enforces"
         )
     }

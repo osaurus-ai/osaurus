@@ -64,6 +64,19 @@ PACKAGE_NAMES: Dict[str, str] = {
 }
 
 
+# Third-party assets shipped inside the app that no Package.resolved lists.
+BUNDLED_ASSETS: List[Dict] = [
+    {
+        "name": "potion-base-4M (embedding model)",
+        "identity": "potion-base-4m",
+        "version": "9b3cff41",
+        "repository": "https://huggingface.co/minishlab/potion-base-4M",
+        "license": "MIT",
+        "licenseUrl": "https://huggingface.co/minishlab/potion-base-4M",
+    },
+]
+
+
 def parse_package_resolved(path: Path) -> List[Dict]:
     """Parse a Package.resolved file and return list of dependencies."""
     if not path.exists():
@@ -118,7 +131,9 @@ def generate_acknowledgements(dependencies: Dict[str, Dict]) -> List[Dict]:
         }
         
         acknowledgements.append(entry)
-    
+
+    acknowledgements.extend(BUNDLED_ASSETS)
+    acknowledgements.sort(key=lambda entry: entry["identity"])
     return acknowledgements
 
 

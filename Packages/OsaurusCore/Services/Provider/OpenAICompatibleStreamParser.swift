@@ -119,6 +119,15 @@ struct OpenAICompatibleStreamFramer {
             }
             carriageReturnLast = false
         }
+
+        /// Bytes of the line still waiting for its terminator.
+        var pendingByteCount: Int { lineBuffer.count }
+
+        /// Drops the bytes of the unterminated line received so far; the
+        /// rest of that line still arrives as one (truncated) line.
+        mutating func discardPending() {
+            lineBuffer = Data()
+        }
     }
 
     @inline(__always)
@@ -655,7 +664,9 @@ struct OpenAICompatibleStreamParser {
                         id: nil, name: nil, args: "", thoughtSignature: nil
                     )
                 if let id = toolCall.id { current.id = id }
-                if let name = toolCall.function?.name, current.name == nil {
+                // Some compatible servers emit an empty placeholder before the name.
+                // Keep the slot unnamed until the actual nonempty name arrives.
+                if let name = toolCall.function?.name, !name.isEmpty, current.name == nil {
                     current.name = name
                     print("[Osaurus] OpenAI tool call detected: index=\(idx), name=\(name)")
                     yield(StreamingToolHint.encode(name))

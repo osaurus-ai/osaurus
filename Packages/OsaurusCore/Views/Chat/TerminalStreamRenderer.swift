@@ -131,9 +131,6 @@ final class TerminalStreamRenderer {
         applyLineTrackerToStorage()
 
         textView.needsDisplay = true
-        if let container = textView.textContainer {
-            textView.layoutManager?.ensureLayout(for: container)
-        }
         if stickyToBottom() {
             textView.scrollToEndOfDocument(nil)
         }
@@ -154,9 +151,6 @@ final class TerminalStreamRenderer {
         let rendered = TerminalLineTracker.render(stripped)
         guard !rendered.isEmpty else { return }
         storage.append(NSAttributedString(string: rendered, attributes: bodyAttrs))
-        if let container = textView.textContainer {
-            textView.layoutManager?.ensureLayout(for: container)
-        }
         textView.needsDisplay = true
     }
 
@@ -166,13 +160,9 @@ final class TerminalStreamRenderer {
         guard !flushScheduled else { return }
         flushScheduled = true
         // `RunLoop.main.perform` coalesces multiple schedules in the
-        // same tick into a single dequeue. The closure isn't statically
-        // MainActor-isolated even though it runs on main, so assume
-        // isolation to call MainActor methods.
+        // same tick into a single dequeue.
         RunLoop.main.perform { [weak self] in
-            MainActor.assumeIsolated {
-                self?.flushPendingChunks()
-            }
+            onMainRunLoopTick { self?.flushPendingChunks() }
         }
     }
 

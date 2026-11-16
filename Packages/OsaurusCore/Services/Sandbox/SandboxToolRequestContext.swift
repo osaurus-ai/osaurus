@@ -27,6 +27,21 @@ struct SandboxToolRequestContext: Sendable {
         fallbackAgentName: String? = nil,
         fallbackConfig: AutonomousExecConfig? = nil
     ) async -> SandboxToolRequestContext {
+        // A workflow runs as its own sandbox identity, enabled by the
+        // workflow's setup rather than any agent's config. Its packages are
+        // the ones setup installed; a run installs nothing new.
+        if let workflow = ChatExecutionContext.workflowSandbox {
+            return SandboxToolRequestContext(
+                agentUUID: nil,
+                agentId: workflow.bridge.agentId,
+                agentName: workflow.bridge.agentName,
+                home: workflow.bridge.home,
+                config: AutonomousExecConfig(
+                    enabled: true, maxCommandsPerTurn: workflow.bridge.maxCommandsPerTurn, pluginCreate: false,
+                    sandboxNetworkEnabled: false, backgroundProcessEnabled: false),
+                isRequestBound: true
+            )
+        }
         if let requestAgentId = ChatExecutionContext.currentAgentId {
             let (config, name) = await MainActor.run {
                 (
@@ -49,7 +64,10 @@ struct SandboxToolRequestContext: Sendable {
         if let fallbackUUID {
             (resolvedConfig, defaultName) = await MainActor.run {
                 let name = SandboxAgentProvisioner.linuxName(for: fallbackUUID.uuidString)
-                guard AgentManager.shared.agent(for: fallbackUUID) != nil else {
+                guard
+                    AgentManager.shared.agent(for: fallbackUUID) != nil
+                        || fallbackUUID == BuiltInWorker.code.agentId
+                else {
                     return (fallbackConfig, name)
                 }
                 return (

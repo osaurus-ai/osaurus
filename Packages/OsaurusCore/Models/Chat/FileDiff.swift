@@ -44,6 +44,9 @@ struct FileDiff: Equatable {
     let truncated: Bool
     /// The raw unified-diff text, used for the card's copy action.
     let rawDiff: String
+    /// File history change set the write produced (the result's
+    /// `operation_id`); backs the card's Revert / View actions.
+    var operationId: UUID?
     /// True for the live card rendered while the tool call's arguments are
     /// still streaming — content is a partial prefix of the file, so the
     /// renderer skips syntax highlighting and shows a "writing" badge.
@@ -69,17 +72,19 @@ struct FileDiff: Equatable {
             !diffText.isEmpty
         else { return nil }
 
-        return fromUnifiedDiff(
+        var diff = fromUnifiedDiff(
             diffText,
             path: (payload["path"] as? String) ?? "",
             isPreview: (payload["dry_run"] as? Bool) ?? false,
             truncated: (payload["diff_truncated"] as? Bool) ?? false
         )
+        diff.operationId = (payload["operation_id"] as? String).flatMap(UUID.init(uuidString:))
+        return diff
     }
 
     /// Builds a `FileDiff` from raw unified-diff text (the format produced by
     /// `WorkspaceWriteSafety.unifiedDiffText`). Shared by the tool-result card
-    /// and the sandbox Changes sheet, which diffs baseline vs. live files.
+    /// and the File Changes panel, which diffs recorded before/after states.
     static func fromUnifiedDiff(
         _ diffText: String,
         path: String,
@@ -221,7 +226,10 @@ struct FileDiff: Equatable {
     /// labeled with the wrong file.
     static func inferredEditPath(
         partialArgs: String,
-        knownFiles: [(path: String, content: String)]
+        // Autoclosure: building the known-files index parses every file_read
+        // envelope in the transcript, so only pay for it once an excerpt long
+        // enough to identify a file has actually streamed.
+        knownFiles: @autoclosure () -> [(path: String, content: String)]
     ) -> String? {
         // Same per-delta scan budget as the live preview: this runs on every
         // streaming delta too, and both the arg scan and the `contains`
@@ -232,7 +240,7 @@ struct FileDiff: Equatable {
             excerpt.count >= inferenceMinExcerptLength
         else { return nil }
         var match: String?
-        for (path, content) in knownFiles where content.contains(excerpt) {
+        for (path, content) in knownFiles() where content.contains(excerpt) {
             if match != nil { return nil }  // ambiguous — never label on a coin flip
             match = path
         }

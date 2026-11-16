@@ -4,6 +4,157 @@ import Testing
 
 @Suite("ModelMediaCapabilities — config and weight evidence")
 struct ModelMediaCapabilitiesMCDCTests {
+    @Test func deepseekV41InBundleVisionTowerGrantsImagesOnly() throws {
+        let root = try VisionBundleFixture.makeDeepseekV41()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for alias in ["neutral", "DeepSeek-V4.1-Flash-1017-JANG-Q2Q3-IMATRIX"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(!caps.supportsVideo)
+            #expect(!caps.supportsAudio)
+        }
+        #expect(LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+    }
+
+    @Test(arguments: ["vision.patch_embed", "vision.blocks.1.attn", "vision.blocks.0.mlp",
+                      "vision.norm", "aligner.w2", "image_start", "image_newline"])
+    func deepseekV41MissingVisionComponentIsTextOnly(component: String) throws {
+        let root = try VisionBundleFixture.makeDeepseekV41(omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        #expect(ModelMediaCapabilities.from(directory: root, modelId: "neutral") == .textOnly)
+    }
+
+    @Test func deepseekV41RequiresDepthBlocksAndImageToken() throws {
+        let deeper = try VisionBundleFixture.makeDeepseekV41(depth: 3)
+        defer { try? FileManager.default.removeItem(at: deeper) }
+        #expect(!LocalVisionEvidence.inspect(deeper, refresh: true).hasVision)
+        let noToken = try VisionBundleFixture.makeDeepseekV41(imageTokenId: nil)
+        defer { try? FileManager.default.removeItem(at: noToken) }
+        #expect(!LocalVisionEvidence.inspect(noToken, refresh: true).hasVision)
+    }
+
+    @Test func miniMaxM3InBundleVisionStackGrantsImagesOnly() throws {
+        let root = try VisionBundleFixture.makeMiniMaxM3()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for alias in ["neutral", "MiniMax-M3.1-Flash-JANGHT1.9"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(!caps.supportsVideo)
+            #expect(!caps.supportsAudio)
+        }
+        #expect(LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        #expect(VLMDetection.isVLM(at: root))
+    }
+
+    @Test(arguments: ["patch_embedding", "pre_layrnorm", "layers.1.self_attn.q_proj", "layers.0.mlp.fc2",
+                      "multi_modal_projector.linear_2", "patch_merge_mlp.linear_1"])
+    func miniMaxM3MissingVisionComponentIsTextOnly(component: String) throws {
+        let root = try VisionBundleFixture.makeMiniMaxM3(omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        #expect(ModelMediaCapabilities.from(directory: root, modelId: "neutral") == .textOnly)
+    }
+
+    /// Opt-in: OSAURUS_M31_BUNDLE=<the installed MiniMax-M3.1 bundle> (reads config files and safetensors headers only).
+    @Test func miniMaxM3RealBundleEvidence() throws {
+        guard let path = ProcessInfo.processInfo.environment["OSAURUS_M31_BUNDLE"] else { return }
+        let evidence = LocalVisionEvidence.inspect(URL(fileURLWithPath: path), refresh: true)
+        #expect(evidence.hasVision, "\(evidence.reason)")
+        let caps = ModelMediaCapabilities.from(directory: URL(fileURLWithPath: path), modelId: "OsaurusAI/MiniMax-M3.1-Flash-JANGHT1.9")
+        #expect(caps.supportsImage && !caps.supportsVideo && !caps.supportsAudio)
+        print("[m31-evidence] \(evidence.modelType): hasVision \(evidence.hasVision): \(evidence.reason)")
+    }
+
+    @Test func miniMaxM3RequiresDepthTokenAndProcessor() throws {
+        for root in [try VisionBundleFixture.makeMiniMaxM3(depth: 3),
+                     try VisionBundleFixture.makeMiniMaxM3(imageTokenId: nil),
+                     try VisionBundleFixture.makeMiniMaxM3(processor: false)] {
+            defer { try? FileManager.default.removeItem(at: root) }
+            #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        }
+        #expect(LocalVisionEvidence.miniMaxM3VisionRuntimeAvailable)
+        #expect(VLMDetection.isVLM(modelType: "minimax_m3_vl"))
+        #expect(!VLMDetection.isVLM(modelType: "minimax_m3"))
+    }
+
+    @Test(arguments: [true, false], [true, false])
+    func nemotronVideoRequiresBundleTokenAndTemporalWeights(hasToken: Bool, hasTemporalWeights: Bool) throws {
+        let root = try VisionBundleFixture.make(type: "nemotron_h_omni")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try VisionBundleFixture.writeJSON([
+            "model_type": "nemotron_h_omni",
+            "vision_config": ["patch_size": 16, "video_temporal_patch_size": 2],
+            "sound_config": NSNull(),
+            "video_context_token_id": hasToken ? 131081 : NSNull(),
+        ], to: root.appendingPathComponent("config_omni.json"))
+        try VisionBundleFixture.writeJSON(["processor_class": "NemotronHOmniProcessor"],
+            to: root.appendingPathComponent("processor_config.json"))
+        var names = ["vision_model.radio_model.model.patch_generator.embedder.weight",
+                     "vision_model.radio_model.model.blocks.0.attn.qkv.weight"]
+        if hasTemporalWeights {
+            names.append("vision_model.radio_model.model.patch_generator.video_embedder.weight")
+        }
+        try VisionBundleFixture.writeWeights(names, to: root.appendingPathComponent("model.safetensors"))
+        for alias in ["neutral", "Nemotron-3-Nano-Omni", "Nemotron-3.5-Super-VL"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(caps.supportsVideo == (hasToken && hasTemporalWeights))
+            #expect(!caps.supportsAudio)
+        }
+    }
+
+    @Test func mimoNativeProcessorAndComponentEvidenceSurviveAliases() throws {
+        let root = try VisionBundleFixture.makeMiMo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for alias in ["neutral", "MiMo-V2.6", "Qwen3-VL"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(caps.supportsVideo)
+            #expect(caps.supportsAudio)
+        }
+    }
+
+    @Test(arguments: ["visual.patch_embed", "visual.blocks.1", "visual.merger.mlp.2",
+                      "speech_embeddings.1", "audio_encoder.projection.mlp.2",
+                      "audio_encoder.input_local_transformer.layers.1"])
+    func mimoMissingComponentOnlyDisablesItsModality(component: String) throws {
+        let root = try VisionBundleFixture.makeMiMo(omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "neutral")
+        #expect(caps.supportsImage == !component.hasPrefix("visual"))
+        #expect(caps.supportsVideo == caps.supportsImage)
+        #expect(caps.supportsAudio == component.hasPrefix("visual"))
+    }
+
+    @Test(arguments: ["encoder.conv1", "encoder.down_sample_layer", "encoder.layers.1",
+                      "encoder.quantizer.vq.layers.1"])
+    func mimoAudioRequiresTokenizerWeights(component: String) throws {
+        let root = try VisionBundleFixture.makeMiMo(sidecarOmit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "neutral")
+        #expect(caps.supportsImage && caps.supportsVideo)
+        #expect(!caps.supportsAudio)
+    }
+
+    @Test(arguments: ["attention_projection_layout", "processor_config", "video_token_id", "audio_token_id"])
+    func mimoRequiresNativeRepresentationAndMatchingTokens(key: String) throws {
+        let root = try VisionBundleFixture.makeMiMo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("config.json")
+        var config = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        config.removeValue(forKey: key)
+        try VisionBundleFixture.writeJSON(config, to: file)
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "MiMo-V2.6")
+        if key == "video_token_id" {
+            #expect(caps.supportsImage && caps.supportsAudio && !caps.supportsVideo)
+        } else if key == "audio_token_id" {
+            #expect(caps.supportsImage && caps.supportsVideo && !caps.supportsAudio)
+        } else {
+            #expect(caps == .textOnly)
+        }
+    }
+
     @Test func visionEvidenceMatchesFormatPreflightAndRefreshesChangedHeaders() throws {
         let root = try VisionBundleFixture.make()
         defer { try? FileManager.default.removeItem(at: root) }

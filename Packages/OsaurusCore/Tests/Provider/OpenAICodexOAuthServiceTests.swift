@@ -109,6 +109,14 @@ struct OpenAICodexOAuthServiceTests {
     @Test func supportedModels_containsCurrentCatalog() {
         let models = OpenAICodexOAuthService.supportedModels
         let expected = [
+            "gpt-6.1-sol",
+            "gpt-6-astra",
+            "gpt-6.1-terra",
+            "gpt-6-sol",
+            "gpt-6-luna",
+            "gpt-5.6",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
             "gpt-5.5",
             "gpt-5.5-pro",
             "gpt-5.4",
@@ -120,17 +128,37 @@ struct OpenAICodexOAuthServiceTests {
         for slug in expected {
             #expect(models.contains(slug), "static fallback is missing \(slug)")
         }
+        // Shut down on the OpenAI API 2026-07-23.
+        for retired in ["gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex", "gpt-5.1-codex-mini"] {
+            #expect(!models.contains(retired), "static fallback still lists retired \(retired)")
+        }
         #expect(Set(models).count == models.count, "static fallback has duplicate slugs")
     }
 
     @Test func supportedModels_allUseCodexSlugFormat() {
         // Mirrors the live `/models` filter: Codex-compatible slugs use a
-        // dotted version ("gpt-5.4-codex"), chat-only slugs use dashes
+        // dotted version ("gpt-5.4-codex") or a major + codename
+        // ("gpt-6-astra"); chat-only slugs use dashed minors
         // ("gpt-5-4-thinking") and would 400 if invoked.
         for slug in OpenAICodexOAuthService.supportedModels {
-            let matches = slug.range(of: #"^gpt-\d+\.\d+"#, options: .regularExpression) != nil
+            let matches =
+                slug.range(of: OpenAICodexOAuthService.codexSlugPattern, options: .regularExpression) != nil
             #expect(matches, "static fallback slug \(slug) does not use Codex naming")
         }
+    }
+
+    @Test func codexSlugPattern_acceptsCodenamesAndRejectsChatOnlyShapes() {
+        func matches(_ slug: String) -> Bool {
+            slug.range(of: OpenAICodexOAuthService.codexSlugPattern, options: .regularExpression) != nil
+        }
+        #expect(matches("gpt-6-astra"))
+        #expect(matches("gpt-5.6-terra"))
+        #expect(matches("gpt-5.3-codex"))
+        #expect(matches("gpt-5.5"))
+        #expect(!matches("gpt-5-4-thinking"))
+        #expect(!matches("gpt-4o"))
+        #expect(!matches("gpt-4o-mini"))
+        #expect(!matches("o3"))
     }
 
     @Test func decodeModelCatalog_attributesEachDropReasonInSummary() throws {
@@ -143,15 +171,17 @@ struct OpenAICodexOAuthServiceTests {
                 {"slug":"gpt-4o","visibility":"list","priority":4},
                 {"slug":"gpt-5.5-internal","visibility":"hidden","priority":5},
                 {"slug":""},
-                {"slug":"gpt-5.5","visibility":"list","priority":6}
+                {"slug":"gpt-5.5","visibility":"list","priority":6},
+                {"slug":"gpt-6-astra","visibility":"list","priority":0,"shell_type":"shell_command"}
             ]}
             """
         let (models, summary) = try OpenAICodexOAuthService.decodeModelCatalog(Data(payload.utf8))
 
-        // Sorted by priority (missing -> last), duplicates dropped.
-        #expect(models == ["gpt-5.3-codex", "gpt-5.5", "gpt-5.2"])
-        #expect(summary.rawEntryCount == 8)
-        #expect(summary.compatibleCount == 3)
+        // Sorted by priority (missing -> last), duplicates dropped. The
+        // GPT-6 codename slug has no dotted minor and must still survive.
+        #expect(models == ["gpt-6-astra", "gpt-5.3-codex", "gpt-5.5", "gpt-5.2"])
+        #expect(summary.rawEntryCount == 9)
+        #expect(summary.compatibleCount == 4)
         #expect(
             summary.filteredModels == [
                 .init(slug: "gpt-5-4-thinking", reason: .shellToolDisabled),
@@ -286,6 +316,23 @@ struct OpenAICodexOAuthServiceTests {
         let legacy = try #require(summary.modelMetadata["gpt-5.5"])
         #expect(legacy.inputModalities == nil)
         #expect(legacy.supportsImageInput)
+    }
+
+    @Test func decodeModelCatalog_preservesReasoningSummarySupport() throws {
+        let payload = """
+            {"models":[
+                {"slug":"gpt-6.1-terra","visibility":"list","priority":1,
+                 "shell_type":"shell_command","supports_reasoning_summaries":true},
+                {"slug":"gpt-5.2-codex-mini","visibility":"list","priority":2,
+                 "shell_type":"shell_command","supports_reasoning_summaries":false},
+                {"slug":"gpt-5.5","visibility":"list","priority":3,"shell_type":"shell_command"}
+            ]}
+            """
+        let (_, summary) = try OpenAICodexOAuthService.decodeModelCatalog(Data(payload.utf8))
+
+        #expect(summary.modelMetadata["gpt-6.1-terra"]?.supportsReasoningSummaries == true)
+        #expect(summary.modelMetadata["gpt-5.2-codex-mini"]?.supportsReasoningSummaries == false)
+        #expect(summary.modelMetadata["gpt-5.5"]?.supportsReasoningSummaries == nil)
     }
 
     @Test func decodeModelCatalog_throwsTypedErrorForUnreadablePayload() {

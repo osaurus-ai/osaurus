@@ -121,15 +121,10 @@ public struct Configuration {
         let fm = FileManager.default
         let current = home.appendingPathComponent("MLXModels", isDirectory: true)
         let legacy = home.appendingPathComponent("Documents/MLXModels", isDirectory: true)
-        let cliFallback = home.appendingPathComponent(".osaurus/models", isDirectory: true)
         if directoryHasVisibleContents(current, fileManager: fm) { return .init(url: current, source: "app_default") }
         if directoryHasVisibleContents(legacy, fileManager: fm) { return .init(url: legacy, source: "legacy_app_default") }
-        if directoryHasVisibleContents(cliFallback, fileManager: fm) {
-            return .init(url: cliFallback, source: "cli_default")
-        }
         if fm.fileExists(atPath: current.path) { return .init(url: current, source: "app_default") }
         if fm.fileExists(atPath: legacy.path) { return .init(url: legacy, source: "legacy_app_default") }
-        if fm.fileExists(atPath: cliFallback.path) { return .init(url: cliFallback, source: "cli_default") }
         return .init(url: current, source: "app_default")
     }
 

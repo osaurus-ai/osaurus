@@ -148,7 +148,8 @@ enum AgentChannelN8nPreset {
     /// `AgentChannelConnectionService.sendMessage` so the write kill switch,
     /// connection enablement, C2 host policy, confirm_send, allowlists and
     /// idempotency all apply). `nil` when the connection has no outbound
-    /// webhook or auto-reply is off, in which case replies remain poll-only.
+    /// webhook, in which case replies remain poll-only. Whether a reply is
+    /// sent at all is the matched event's Reply setting.
     static func replyHandler(
         for connection: AgentChannelConnection,
         envelope: AgentChannelN8nEnvelope,
@@ -157,7 +158,6 @@ enum AgentChannelN8nPreset {
     ) -> AgentChannelInboundReplyHandler? {
         guard let n8n = connection.n8n,
             n8n.outbound.isConfigured,
-            n8n.inboundDispatch.autoReplyEnabled,
             connection.customHTTP != nil
         else { return nil }
         let conversationId = envelope.conversationId

@@ -1,0 +1,134 @@
+{
+  "description": "A tool-using turn with thinking, metrics, a user file and session metadata.",
+  "conversation": {
+    "title": "Weather in Lisbon",
+    "created_ms": 1767225600000,
+    "pinned": true,
+    "archived": false,
+    "tags": {
+      "osaurus.session": "0b3e5c1d-2f4a-4b6c-9d8e-1f2a3b4c5d6e",
+      "source": "chat",
+      "agentId": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+      "projectId": "d4c3b2a1-0f9e-4d8c-b7a6-5f4e3d2c1b0a"
+    },
+    "app_data": {
+      "ai.osaurus.session/1": {
+        "v": 1,
+        "id": "0b3e5c1d-2f4a-4b6c-9d8e-1f2a3b4c5d6e",
+        "source": "chat",
+        "agentId": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+        "projectId": "d4c3b2a1-0f9e-4d8c-b7a6-5f4e3d2c1b0a",
+        "selectedModel": "OsaurusAI/gemma-4-qat-mxfp4",
+        "capabilities": ["search", "vision"],
+        "folderPath": "~/Projects/trip",
+        "conversationSummary": {
+          "id": "e5f6a7b8-c9d0-4e1f-a2b3-c4d5e6f7a8b9",
+          "summaryText": "The user is planning a trip to Lisbon.",
+          "coveredTurnIds": ["b0000000-0000-4000-8000-000000000001"],
+          "createdAt": 1767225700000,
+          "modelIdentifier": "OsaurusAI/gemma-4-qat-mxfp4",
+          "savedTokensEstimate": 1200
+        },
+        "parkedWorkflowRuns": [
+          { "run_id": "f0e1d2c3-b4a5-4968-8776-655443322110", "call_id": "call_wf", "tool_name": "run_workflow" }
+        ]
+      }
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's the weather in Lisbon? Here's my itinerary.",
+      "created_ms": 1767225600000,
+      "attachments": [
+        { "name": "itinerary.txt", "media_type": "text/plain", "text": "Day 1: Alfama. Day 2: Belém." }
+      ],
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "b0000000-0000-4000-8000-000000000001",
+          "role": "user",
+          "createdAt": 1767225600000,
+          "attachments": [
+            {
+              "id": "b1000000-0000-4000-8000-000000000001",
+              "kind": "document",
+              "index": 0,
+              "filename": "itinerary.txt",
+              "fileSize": 29
+            }
+          ],
+          "injectedContextPrefix": "<memory>The user prefers Celsius.</memory>"
+        }
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "created_ms": 1767225602000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "b0000000-0000-4000-8000-000000000002",
+          "role": "assistant",
+          "thinking": "The user wants current weather; call the weather tool.",
+          "thinkingDuration": 1.5,
+          "toolCalls": [
+            {
+              "id": "call_1",
+              "type": "function",
+              "function": { "name": "get_weather", "arguments": "{\"city\":\"Lisbon\"}" }
+            }
+          ],
+          "createdAt": 1767225602000
+        }
+      }
+    },
+    {
+      "role": "tool_result",
+      "content": "{\"temp_c\":21,\"sky\":\"clear\"}",
+      "tool_call_id": "call_1",
+      "tool_name": "get_weather",
+      "created_ms": 1767225603000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "b0000000-0000-4000-8000-000000000003",
+          "role": "tool",
+          "toolCallDurations": { "call_1": 0.42 }
+        }
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "It's 21°C and clear in Lisbon.",
+      "created_ms": 1767225604000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "b0000000-0000-4000-8000-000000000004",
+          "role": "assistant",
+          "createdAt": 1767225604000,
+          "completedAt": 1767225606000,
+          "lastOutputAt": 1767225605900,
+          "requestedAt": 1767225600000,
+          "generationTokenCount": 12,
+          "inputTokenCount": 380,
+          "cachedInputTokenCount": 256,
+          "timeToFirstToken": 0.31,
+          "generationTokensPerSecond": 54.2,
+          "terminalStopReason": "stop",
+          "routerBilling": {
+            "costMicro": "120",
+            "status": "settled",
+            "tokenSource": "provider",
+            "inputTokens": 380,
+            "outputTokens": 12,
+            "cachedInputTokens": 256,
+            "cacheWriteTokens": 0
+          }
+        }
+      }
+    }
+  ]
+}

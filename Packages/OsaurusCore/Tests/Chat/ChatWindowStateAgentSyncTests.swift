@@ -52,13 +52,11 @@ struct ChatWindowStateAgentSyncTests {
         systemPrompt: String = "Test identity",
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil,
-        themeId: UUID? = nil,
         avatar: String? = nil
     ) -> Agent {
         Agent(
             name: "\(name)-\(UUID().uuidString.prefix(6))",
             systemPrompt: systemPrompt,
-            themeId: themeId,
             agentAddress: "test-windowstate-\(UUID().uuidString)",
             autonomousExec: AutonomousExecConfig(enabled: false),
             toolSelectionMode: toolSelectionMode,

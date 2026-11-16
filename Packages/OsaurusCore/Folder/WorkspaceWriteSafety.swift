@@ -155,7 +155,7 @@ enum WorkspaceFileFormatPolicy {
     /// Model-facing summary of what `file_write` produces.
     static let writableFormatsSummary =
         "UTF-8 text/code (any extension), `.xlsx` from CSV/TSV text or JSON rows, "
-        + "and `.docx`/`.pdf` from Markdown or HTML"
+        + "`.docx`/`.pdf` from Markdown or HTML, and `.pptx` from Markdown (one slide per heading)"
 
     /// Files whose successful persistence is not evidence that the delivered
     /// program or interactive artifact actually runs.
@@ -187,7 +187,7 @@ enum WorkspaceFileFormatPolicy {
 enum WorkspaceWriteSafety {
     struct Preview {
         var payload: [String: Any]
-        let warnings: [String]
+        var warnings: [String]
         let text: String
     }
 
@@ -207,7 +207,7 @@ enum WorkspaceWriteSafety {
     private static let largeWriteCharacters = 1_000_000
 
     /// Document extensions `file_write` cannot generate. `.xlsx`, `.docx`,
-    /// and `.pdf` are NOT here — they route through
+    /// `.pdf`, and `.pptx` are NOT here — they route through
     /// `FileWriteDocumentRouting`. Every pivot names what the tool does
     /// produce so the model never learns "file_write is text only".
     private static let structuredTargets: [String: StructuredTarget] = {
@@ -216,7 +216,7 @@ enum WorkspaceWriteSafety {
         let wordPivot =
             "Write the same content as `.docx` or `.pdf` (file_write renders Markdown/HTML into a real document) or as Markdown text."
         let presentationPivot =
-            "Presentation generation is not built in: write the outline as Markdown, `.docx`, or `.pdf` instead, or use the `osaurus.pptx` plugin if it is installed."
+            "Write the deck as `.pptx` instead (file_write builds slides from Markdown: each `#`/`##` heading starts a slide), or as Markdown/`.pdf`."
         var table: [String: StructuredTarget] = [:]
         for ext in ["xlsm", "xltx", "xltm", "xlsb", "xls", "xlt", "ods", "numbers"] {
             table[ext] = StructuredTarget(label: "spreadsheet format", pivot: spreadsheetPivot)
@@ -224,7 +224,7 @@ enum WorkspaceWriteSafety {
         for ext in ["docm", "doc", "dot", "dotx", "dotm", "rtfd", "odt", "pages"] {
             table[ext] = StructuredTarget(label: "word-processing format", pivot: wordPivot)
         }
-        for ext in ["pptx", "pptm", "potx", "potm", "ppsx", "ppsm", "ppt", "pot", "pps", "odp", "key"] {
+        for ext in ["pptm", "potx", "potm", "ppsx", "ppsm", "ppt", "pot", "pps", "odp", "key"] {
             table[ext] = StructuredTarget(label: "presentation format", pivot: presentationPivot)
         }
         return table
@@ -246,16 +246,19 @@ enum WorkspaceWriteSafety {
                 "Refused to write '\(path)' with \(toolName): .\(ext) is a \(target.label) that \(toolName) cannot generate. "
                 + "\(toolName) writes \(WorkspaceFileFormatPolicy.writableFormatsSummary). \(target.pivot)",
             field: "path",
-            expected: "a UTF-8 text path, or `.xlsx` / `.docx` / `.pdf` for a generated document",
+            expected: "a UTF-8 text path, or `.xlsx` / `.docx` / `.pdf` / `.pptx` for a generated document",
             tool: toolName,
             retryable: false,
             metadata: ["extension": ext, "writable_formats": WorkspaceFileFormatPolicy.writableFormatsSummary]
         )
     }
 
-    /// Rejection for `file_edit` / redaction tools, which only operate on
-    /// UTF-8 text: any document extension (including the generated
-    /// `.xlsx`/`.docx`/`.pdf`) gets the read-then-regenerate pivot.
+    /// Rejection for text-only tools (`file_edit` on a route without
+    /// in-place document support, redaction) hitting a document extension.
+    /// `.docx`/`.xlsx`/`.pptx`/`.pdf` in the working folder never reach this
+    /// — `file_edit` routes them to `DocumentEditService` first — so it
+    /// covers legacy/other document types (`.doc`, `.xls`, `.odt`, …) and
+    /// sandbox `/workspace` paths, which get the read-then-regenerate pivot.
     static func documentEditRejection(
         path: String,
         fileExtension ext: String,
@@ -269,7 +272,7 @@ enum WorkspaceWriteSafety {
         return ToolEnvelope.failure(
             kind: .rejected,
             message:
-                "Refused to \(verb) '\(path)' with \(toolName): .\(ext) is a \(label), and \(toolName) \(verb)s UTF-8 text only. "
+                "Refused to \(verb) '\(path)' with \(toolName): .\(ext) is a \(label), and \(toolName) can't \(verb) it in place here. "
                 + "Read it with `file_read` (documents are extracted to text), apply the change to that text, then \(regenerateHint)",
             field: "path",
             expected: "a UTF-8 text file; for documents, read with file_read and regenerate with file_write",
@@ -277,14 +280,6 @@ enum WorkspaceWriteSafety {
             retryable: false,
             metadata: ["extension": ext]
         )
-    }
-
-    /// Bytes of an existing file (any content), or `nil` when it does not
-    /// exist. Used by the document write route so an overwrite of a
-    /// binary package is captured for undo instead of refused.
-    static func existingBytes(at fileURL: URL) -> Data? {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        return try? Data(contentsOf: fileURL)
     }
 
     static func existingText(
@@ -339,7 +334,7 @@ enum WorkspaceWriteSafety {
             createsParentDirectories: createsParentDirectories,
             proposedContent: proposedContent
         )
-        let lineCount = proposedContent.components(separatedBy: .newlines).count
+        let lineCount = FolderToolHelpers.contentLines(proposedContent).count
         let resultKind = dryRun ? "workspace_write_preview" : "workspace_write_result"
         let riskLevel = warnings.isEmpty ? "low" : "needs_review"
         var payload: [String: Any] = [
@@ -424,27 +419,6 @@ enum WorkspaceWriteSafety {
             oldLabel: existed ? "before" : "before (new file)",
             newLabel: "after"
         )
-    }
-
-    static func operationHistoryEntry(_ operation: FileOperation) -> [String: Any] {
-        var entry: [String: Any] = [
-            "id": operation.id.uuidString,
-            "type": operation.type.rawValue,
-            "display_name": operation.type.displayName,
-            "path": operation.path,
-            "timestamp": ISO8601DateFormatter().string(from: operation.timestamp),
-            "can_undo": operation.canUndo,
-        ]
-        if let destinationPath = operation.destinationPath {
-            entry["destination_path"] = destinationPath
-        }
-        if let batchId = operation.batchId {
-            entry["batch_id"] = batchId.uuidString
-        }
-        if let contentKind = operation.contentKind {
-            entry["content_kind"] = contentKind
-        }
-        return entry
     }
 
     private static func riskWarnings(

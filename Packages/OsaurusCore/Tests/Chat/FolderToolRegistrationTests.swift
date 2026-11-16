@@ -20,16 +20,16 @@ import Testing
 @MainActor
 struct FolderToolRegistrationTests {
 
-    /// Ensure the canonical folder-tool registration, run `body`, then
-    /// unregister via the test seam. Registration is per-process and
-    /// root-free now — tool bodies resolve the root from the TaskLocal
-    /// execution scope, so no synthetic `FolderContext` is needed here.
+    /// Ensure the canonical folder-tool registration, then run `body`.
+    /// Registration is per-process and root-free now — tool bodies resolve
+    /// the root from the TaskLocal execution scope, so no synthetic
+    /// `FolderContext` is needed here. It stays registered: sandbox chats
+    /// in parallel suites reuse the same registry entries.
     private func withRegisteredFolderTools(
         body: (FolderToolManager) -> Void
     ) {
         let manager = FolderToolManager.shared
         manager.ensureFolderToolsRegistered()
-        defer { manager._unregisterAllForTesting() }
         body(manager)
     }
 

@@ -14,13 +14,24 @@ import Foundation
 /// One window's open tabs at the time they were last saved.
 struct ChatTabLayoutRecord: Codable, Equatable {
     struct Tab: Codable, Equatable {
-        let sessionId: UUID
+        /// The conversation of a chat tab. Nil for a workflow tab.
+        var sessionId: UUID?
         let lastActivatedAt: Date
+        /// Workflow tabs (layout v2): the workflow, the run on screen, and
+        /// the agent the tab is scoped to.
+        var workflowID: UUID? = nil
+        var runID: UUID? = nil
+        var agentId: UUID? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case sessionId, lastActivatedAt, workflowID, runID, agentId
+        }
     }
 
-    /// Persisted conversations in strip order (all agents). Blank tabs and
-    /// registry-owned runs are never recorded: a blank has nothing to
-    /// reopen, and the `BackgroundTaskManager` retains runs itself.
+    /// Persisted conversations and workflow tabs in strip order (all
+    /// agents). Blank tabs and registry-owned runs are never recorded: a
+    /// blank has nothing to reopen, and the `BackgroundTaskManager`
+    /// retains runs itself.
     var tabs: [Tab]
     /// The tab that was showing, when it was a persisted conversation.
     var activeSessionId: UUID?
@@ -40,7 +51,9 @@ struct ChatTabLayout: Codable, Equatable {
 /// from any isolation domain.
 struct ChatTabLayoutStore: @unchecked Sendable {
     static let shared = ChatTabLayoutStore()
-    static let defaultsKey = "chatTabLayout.v1"
+    static let defaultsKey = "chatTabLayout.v2"
+    /// v1 records only had chat tabs; they decode as v2 chat entries.
+    static let legacyDefaultsKey = "chatTabLayout.v1"
 
     private let defaults: UserDefaults
 
@@ -49,13 +62,14 @@ struct ChatTabLayoutStore: @unchecked Sendable {
     }
 
     func load() -> ChatTabLayout {
-        guard let data = defaults.data(forKey: Self.defaultsKey),
+        guard let data = defaults.data(forKey: Self.defaultsKey) ?? defaults.data(forKey: Self.legacyDefaultsKey),
             let layout = try? JSONDecoder().decode(ChatTabLayout.self, from: data)
         else { return ChatTabLayout() }
         return layout
     }
 
     func save(_ layout: ChatTabLayout) {
+        defaults.removeObject(forKey: Self.legacyDefaultsKey)
         if layout.windows.isEmpty {
             defaults.removeObject(forKey: Self.defaultsKey)
             return

@@ -20,7 +20,7 @@ struct PowerSection: View {
                 "Reclaim GPU and disk when the server is idle. Persisted today; host lifecycle bridge ships in a follow-up."
         ) {
             SettingsToggle(
-                title: L("Auto Sleep"),
+                title: "Auto Sleep",
                 description: "Let the server release memory when no requests are in flight.",
                 isOn: $draft.power.autoSleepEnabled
             )
@@ -40,13 +40,13 @@ struct PowerSection: View {
             )
 
             SettingsToggle(
-                title: L("Wake on Request"),
+                title: "Wake on Request",
                 description: "Re-load weights automatically when a new request arrives.",
                 isOn: $draft.power.wakeOnRequest
             )
 
             SettingsToggle(
-                title: L("Defer First Load"),
+                title: "Defer First Load",
                 description: "Wait until the first request before loading any model.",
                 isOn: $draft.power.jitLoad
             )

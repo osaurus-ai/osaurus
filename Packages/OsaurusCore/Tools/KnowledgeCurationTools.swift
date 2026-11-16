@@ -170,7 +170,8 @@ final class FlagKnowledgeStaleTool: OsaurusTool, @unchecked Sendable {
                 tool: name,
                 text:
                     "Filed ticket #\(ticketId) against [\(match.collection.name)] \(relPath). "
-                    + "A curator will review it; the document is unchanged."
+                    + "The ticket only records a note; the document is unchanged. It shows in the "
+                    + "Knowledge view, where the user can fix it in a chat or dismiss it."
             )
         } catch {
             return ToolEnvelope.failure(
@@ -294,8 +295,8 @@ final class UpdateKnowledgeTicketTool: OsaurusTool, @unchecked Sendable {
         "Claim or release a staleness ticket while working a curation "
         + "queue. Set `in_progress` before researching a ticket so other "
         + "scheduled runs skip it, or `open` to release one you cannot finish. "
-        + "Curator agents only; resolution happens via proposal approval, "
-        + "not this tool."
+        + "A ticket only records a note: this tool never changes a document, "
+        + "and fixing one is done with the knowledge write tools."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -367,7 +368,7 @@ final class UpdateKnowledgeTicketTool: OsaurusTool, @unchecked Sendable {
         guard isCurator else {
             return ToolEnvelope.failure(
                 kind: .rejected,
-                message: "This agent is not a knowledge curator.",
+                message: "This agent can't claim or release knowledge tickets.",
                 tool: name
             )
         }

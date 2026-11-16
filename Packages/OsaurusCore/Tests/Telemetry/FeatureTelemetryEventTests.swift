@@ -37,7 +37,7 @@ struct FeatureTelemetryEventTests {
     /// `TelemetryService.track`) so per-event shape assertions stay focused on
     /// the event-specific props.
     private func business(_ props: [String: Any]) -> [String: Any] {
-        props.filter { $0.key != "total_memory_gb" }
+        props.filter { $0.key != "total_memory_gb" && $0.key != "build_channel" }
     }
 
     /// A granted + started service whose sends are captured.
@@ -403,16 +403,30 @@ struct FeatureTelemetryEventTests {
             category: "runtime_start_failed",
             backend: "vm",
             phase: "runtime_start",
+            errorClass: "posix_eexist",
+            trigger: "launch_autostart",
+            coldStart: false,
             service: service
         )
 
         #expect(rec.events.count == 1)
         #expect(rec.events[0].name == "sandbox_provision_failure")
         let props = business(rec.events[0].props)
-        #expect(props.count == 3)
+        #expect(props.count == 6)
         #expect(props["category"] as? String == "runtime_start_failed")
         #expect(props["backend"] as? String == "vm")
         #expect(props["phase"] as? String == "runtime_start")
+        #expect(props["error_class"] as? String == "posix_eexist")
+        #expect(props["trigger"] as? String == "launch_autostart")
+        #expect(props["cold_start"] as? Bool == false)
+        // Every value is a token from a closed set — no message, path, or
+        // agent identity can be smuggled through these dimensions.
+        #expect(
+            SandboxToolRegistrar.failureErrorClasses.contains(props["error_class"] as! String)
+        )
+        #expect(
+            SandboxToolRegistrar.RegistrationTrigger(rawValue: props["trigger"] as! String) != nil
+        )
     }
 
     // MARK: - Remote-id hashing
@@ -539,7 +553,7 @@ struct FeatureTelemetryEventTests {
         service.setEnabled(false)  // declined → drop
 
         FeatureTelemetry.serverStarted(service: service)
-        FeatureTelemetry.agentCreated(service: service)
+        FeatureTelemetry.agentCreated(numberOfAgents: 3, service: service)
         FeatureTelemetry.modelDownloaded(
             model: "mlx-community/Qwen2.5-7B-4bit",
             parameterCount: "7B",
@@ -593,33 +607,209 @@ struct FeatureTelemetryEventTests {
         #expect(rec.events[2].props["source"] as? String == "dispatch")
     }
 
-    // MARK: - Product Hunt launch dialog
-
-    @Test func productHuntLaunchDialog_shown_and_clicked_shapes() {
+    @Test func agentCreated_carries_agent_count_and_origin() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
-        FeatureTelemetry.productHuntLaunchDialogShown(service: service)
-        FeatureTelemetry.productHuntLaunchDialogClicked(action: "launch", service: service)
-        FeatureTelemetry.productHuntLaunchDialogClicked(action: "later", service: service)
+        FeatureTelemetry.agentCreated(numberOfAgents: 4, service: service)
+        FeatureTelemetry.agentCreated(numberOfAgents: 9, origin: "team_seed", service: service)
+
+        let event = rec.events[0]
+        #expect(event.name == "agent_created")
+        #expect(event.props["number_of_agents"] as? Int == 4)
+        #expect(event.props["origin"] as? String == "user")
+        #expect(business(event.props).count == 2)
+        #expect(rec.events[1].props["origin"] as? String == "team_seed")
+    }
+
+    @Test func agentCreationOrigin_maps_config_callers() {
+        #expect(FeatureTelemetry.agentCreationOrigin(for: .templateInstall(templateId: "x")) == "template_install")
+        #expect(FeatureTelemetry.agentCreationOrigin(for: .fileImport) == "import")
+        #expect(FeatureTelemetry.agentCreationOrigin(for: .configurator(sessionId: "s")) == "config")
+        #expect(FeatureTelemetry.agentCreationOrigin(for: .adminAPI) == "config")
+        #expect(FeatureTelemetry.agentCreationOrigin(for: nil) == "config")
+    }
+
+    // MARK: - message_sent source precedence
+
+    @Test func messageSourceToken_prefers_workflow_then_subagent_then_synced_device() {
+        func token(_ w: Bool, _ s: Bool, _ d: Bool) -> String {
+            FeatureTelemetry.messageSourceToken(base: .chatUI, inWorkflow: w, isSubagent: s, forSyncedDevice: d)
+        }
+        #expect(token(false, false, false) == "chat_ui")
+        #expect(token(true, true, true) == "workflow")
+        #expect(token(false, true, true) == "subagent")
+        #expect(token(false, false, true) == "synced_device")
+        #expect(
+            FeatureTelemetry.messageSourceToken(
+                base: .httpAPI, inWorkflow: false, isSubagent: false, forSyncedDevice: false) == "http_api")
+    }
+
+    @Test func messageInfo_drops_brain_source_off_chat_ui() {
+        let workflowStep = FeatureTelemetry.messageInfo(
+            service: StubService(id: "mlx"), effectiveModel: "m", source: .chatUI,
+            isAgent: false, stream: true, inWorkflow: true)
+        #expect(workflowStep.source == "workflow")
+        #expect(workflowStep.brainSource == nil)
+
+        let helper = FeatureTelemetry.messageInfo(
+            service: StubService(id: "mlx"), effectiveModel: "m", source: .chatUI,
+            isAgent: false, stream: true, isSubagent: true)
+        #expect(helper.source == "subagent")
+        #expect(helper.brainSource == nil)
+
+        let chat = FeatureTelemetry.messageInfo(
+            service: StubService(id: "mlx"), effectiveModel: "m", source: .chatUI, isAgent: false, stream: true)
+        #expect(chat.source == "chat_ui")
+        #expect(chat.brainSource != nil)
+    }
+
+    // MARK: - 1.0 feature events
+
+    @Test func workflowAndAutomationEvents_carry_closed_tokens() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.workflowRunStarted(caller: "test", resumed: false, service: service)
+        FeatureTelemetry.workflowRunFinished(caller: "test", status: "completed", duration: 42, service: service)
+        FeatureTelemetry.workflowRunFinished(caller: "event", status: "failed", duration: nil, service: service)
+        FeatureTelemetry.workflowDraftStarted(origin: "inline", service: service)
+        FeatureTelemetry.workflowsOpened(page: "home", service: service)
+        FeatureTelemetry.automationCreated(trigger: "schedule", origin: "user", service: service)
+        FeatureTelemetry.automationRunFinished(trigger: "folder", status: "succeeded", service: service)
 
         #expect(
             rec.events.map(\.name) == [
-                "product_hunt_launch_dialog_shown",
-                "product_hunt_launch_dialog_clicked",
-                "product_hunt_launch_dialog_clicked",
-            ]
-        )
-        // Shown carries no event-specific props; clicked carries only the
-        // closed two-value action token.
-        #expect(business(rec.events[0].props).isEmpty)
-        #expect(rec.events[1].props["action"] as? String == "launch")
-        #expect(business(rec.events[1].props).count == 1)
-        #expect(rec.events[2].props["action"] as? String == "later")
+                "workflow_run_started", "workflow_run_finished", "workflow_run_finished",
+                "workflow_draft_started", "workflows_opened", "automation_created", "automation_run_finished",
+            ])
+        #expect(business(rec.events[0].props).count == 2)
+        #expect(rec.events[0].props["resumed"] as? Bool == false)
+        #expect(rec.events[1].props["duration_bucket"] as? String == "10_60s")
+        #expect(rec.events[2].props["duration_bucket"] as? String == "none")
+        #expect(business(rec.events[1].props).count == 3)
+        #expect(rec.events[3].props["origin"] as? String == "inline")
+        #expect(rec.events[4].props["page"] as? String == "home")
+        #expect(business(rec.events[5].props).count == 2)
+        #expect(rec.events[6].props["status"] as? String == "succeeded")
     }
 
-    @Test func productHuntLaunchDialog_events_drop_when_consent_declined() {
-        let suiteName = "feature-telemetry-ph-declined-\(UUID().uuidString)"
+    @Test func deviceTemplateAccountAndSharingEvents_have_documented_shapes() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.phonePaired(service: service)
+        FeatureTelemetry.phoneUnpaired(via: "phone", service: service)
+        FeatureTelemetry.syncDevicePaired(platform: "iphone", service: service)
+        FeatureTelemetry.syncDeviceRemoved(rotatedKeys: true, service: service)
+        FeatureTelemetry.templateShared(kind: "agent", visibility: "public", bundledPublished: 2, service: service)
+        FeatureTelemetry.templateImported(kind: "workflow", origin: "file", result: "new", service: service)
+        FeatureTelemetry.loginWithOsaurus(outcome: "signed_in", service: service)
+        FeatureTelemetry.accessKeyCreated(service: service)
+        FeatureTelemetry.accessKeyRevoked(service: service)
+        FeatureTelemetry.credentialSaved(scope: "agent", origin: "user", service: service)
+        FeatureTelemetry.credentialDeleted(scope: "shared", service: service)
+        FeatureTelemetry.spaceCreated(service: service)
+        FeatureTelemetry.spaceSwitched(service: service)
+        FeatureTelemetry.spaceDeleted(mode: "after_relaunch", service: service)
+        FeatureTelemetry.workspaceCreated(via: "checkout", service: service)
+        FeatureTelemetry.workspaceJoined(service: service)
+        FeatureTelemetry.workspaceAgentShared(service: service)
+        FeatureTelemetry.guestAccessRevoked(state: "unused_link", service: service)
+        FeatureTelemetry.sharedAgentAdded(service: service)
+        FeatureTelemetry.teamSeeded(
+            source: "fresh_install", teammates: 4, workflows: 5, developerMac: false, service: service)
+
+        let byName = Dictionary(uniqueKeysWithValues: rec.events.map { ($0.name, business($0.props)) })
+        #expect(byName.count == 20)
+        #expect(byName["phone_paired"]?.isEmpty == true)
+        #expect(byName["phone_unpaired"]?["via"] as? String == "phone")
+        #expect(byName["sync_device_paired"]?["platform"] as? String == "iphone")
+        #expect(byName["sync_device_removed"]?["rotated_keys"] as? Bool == true)
+        #expect(byName["template_shared"]?.count == 3)
+        #expect(byName["template_shared"]?["bundled_published"] as? Int == 2)
+        #expect(byName["template_imported"]?.count == 3)
+        #expect(byName["login_with_osaurus"]?["outcome"] as? String == "signed_in")
+        #expect(byName["access_key_created"]?.isEmpty == true)
+        #expect(byName["access_key_revoked"]?.isEmpty == true)
+        #expect(byName["credential_saved"]?.count == 2)
+        #expect(byName["credential_deleted"]?["scope"] as? String == "shared")
+        #expect(byName["space_created"]?.isEmpty == true)
+        #expect(byName["space_switched"]?.isEmpty == true)
+        #expect(byName["space_deleted"]?["mode"] as? String == "after_relaunch")
+        #expect(byName["workspace_created"]?["via"] as? String == "checkout")
+        #expect(byName["workspace_joined"]?.isEmpty == true)
+        #expect(byName["workspace_agent_shared"]?.isEmpty == true)
+        #expect(byName["guest_access_revoked"]?["state"] as? String == "unused_link")
+        #expect(byName["shared_agent_added"]?.isEmpty == true)
+        #expect(byName["team_seeded"]?.count == 4)
+        #expect(byName["team_seeded"]?["developer_mac"] as? Bool == false)
+    }
+
+    @Test func newFeatureEvents_drop_when_consent_declined() {
+        let suiteName = "feature-telemetry-declined-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var sent: [String] = []
+        let service = TelemetryService(defaults: defaults, emit: { name, _ in sent.append(name) })
+        service.markStartedForTesting()
+        service.setEnabled(false)
+
+        FeatureTelemetry.workflowRunStarted(caller: "user", resumed: false, service: service)
+        FeatureTelemetry.automationCreated(trigger: "schedule", origin: "user", service: service)
+        FeatureTelemetry.phonePaired(service: service)
+        FeatureTelemetry.workspaceCreated(via: "direct", service: service)
+
+        #expect(sent.isEmpty)
+    }
+
+    @Test func templateImportResult_tokens_cover_every_disposition() {
+        #expect(TemplateImportSheet.importResultToken(.new, keepBoth: false) == "new")
+        #expect(TemplateImportSheet.importResultToken(nil, keepBoth: false) == "new")
+        #expect(TemplateImportSheet.importResultToken(.alreadyPresent, keepBoth: false) == "already_present")
+        #expect(TemplateImportSheet.importResultToken(.update(fromVersion: 1), keepBoth: false) == "update")
+        #expect(TemplateImportSheet.importResultToken(.older(localLatest: 3), keepBoth: false) == "older")
+        #expect(TemplateImportSheet.importResultToken(.conflict, keepBoth: true) == "copy")
+        #expect(TemplateImportSheet.importResultToken(.conflict, keepBoth: false) == "replace")
+        #expect(TemplateImportSheet.importResultToken(.signerMismatch(localAddress: "a"), keepBoth: false) == "copy")
+    }
+
+    // MARK: - Router announcements dialog
+
+    @Test func announcement_shown_and_clicked_shapes() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.announcementShown(slug: "raptor-launch", service: service)
+        FeatureTelemetry.announcementClicked(
+            slug: "raptor-launch", action: "cta", ctaKind: "external_url", ctaIndex: 0, service: service
+        )
+        FeatureTelemetry.announcementClicked(slug: "raptor-launch", action: "dismiss", service: service)
+
+        #expect(
+            rec.events.map(\.name) == [
+                "announcement_shown",
+                "announcement_clicked",
+                "announcement_clicked",
+            ]
+        )
+        // The slug is the router-side campaign key; clicked adds the closed
+        // action token and, for CTAs, the kind + position of the button.
+        // Never the label/body/URL (operator-defined free text).
+        #expect(rec.events[0].props["slug"] as? String == "raptor-launch")
+        #expect(business(rec.events[0].props).count == 1)
+        #expect(rec.events[1].props["slug"] as? String == "raptor-launch")
+        #expect(rec.events[1].props["action"] as? String == "cta")
+        #expect(rec.events[1].props["cta_kind"] as? String == "external_url")
+        #expect(rec.events[1].props["cta_index"] as? Int == 0)
+        #expect(business(rec.events[1].props).count == 4)
+        #expect(rec.events[2].props["action"] as? String == "dismiss")
+        #expect(rec.events[2].props["cta_kind"] == nil)
+        #expect(business(rec.events[2].props).count == 2)
+    }
+
+    @Test func announcement_events_drop_when_consent_declined() {
+        let suiteName = "feature-telemetry-announcement-declined-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let recorder = Recorder()
@@ -632,8 +822,8 @@ struct FeatureTelemetryEventTests {
         service.markStartedForTesting()
         service.setEnabled(false)  // declined → drop
 
-        FeatureTelemetry.productHuntLaunchDialogShown(service: service)
-        FeatureTelemetry.productHuntLaunchDialogClicked(action: "later", service: service)
+        FeatureTelemetry.announcementShown(slug: "raptor-launch", service: service)
+        FeatureTelemetry.announcementClicked(slug: "raptor-launch", action: "dismiss", service: service)
 
         #expect(recorder.events.isEmpty)
     }
@@ -847,6 +1037,249 @@ struct FeatureTelemetryEventTests {
         #expect(rec.events[2].props["done_without_change"] as? Bool == false)
     }
 
+    // MARK: - Install cohort / age (retention)
+
+    /// Fixed UTC ISO calendar so cohort/age math is deterministic regardless
+    /// of the machine's time zone.
+    private var utcISO: Calendar {
+        var calendar = Calendar(identifier: .iso8601)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
+    private func utc(_ y: Int, _ m: Int, _ d: Int, _ h: Int = 12) -> Date {
+        utcISO.date(from: DateComponents(year: y, month: m, day: d, hour: h))!
+    }
+
+    /// The vocabulary is a dashboard contract; a silent token rename would
+    /// fork the dimension.
+    @Test func installCohortSource_tokens_match_the_documented_contract() {
+        #expect(FeatureTelemetry.installCohortSourceInstall == "install")
+        #expect(FeatureTelemetry.installCohortSourceInferred == "inferred")
+        #expect(FeatureTelemetry.installCohortSourceUnknown == "unknown")
+        #expect(FeatureTelemetry.installAgeCapLabel == "365+")
+    }
+
+    /// A fresh install (onboarding never completed) records the launch
+    /// moment as its install date, and the stamp is one-shot.
+    @Test func stampFirstLaunch_fresh_install_records_now_once() {
+        let (defaults, cleanup) = makeFlagDefaults()
+        defer { cleanup() }
+        let first = utc(2026, 9, 19)
+
+        // A stale data root must not override a genuinely fresh install.
+        FeatureTelemetry.stampFirstLaunchIfNeeded(
+            now: first,
+            birthDates: { [utc(2026, 2, 25)] },
+            defaults: defaults
+        )
+        #expect(FeatureTelemetry.persistedFirstLaunchDate(defaults: defaults) == first)
+        #expect(defaults.string(forKey: FeatureTelemetry.installCohortSourceKey) == "install")
+
+        // Never re-stamps — a later launch (even after re-running
+        // onboarding) keeps the original cohort.
+        defaults.set(false, forKey: "hasCompletedOnboarding")
+        FeatureTelemetry.stampFirstLaunchIfNeeded(
+            now: utc(2026, 10, 1),
+            birthDates: { [utc(2026, 1, 1)] },
+            defaults: defaults
+        )
+        #expect(FeatureTelemetry.persistedFirstLaunchDate(defaults: defaults) == first)
+        #expect(defaults.string(forKey: FeatureTelemetry.installCohortSourceKey) == "install")
+    }
+
+    /// Existing installs are back-dated from the earliest data-root birth
+    /// time — the legacy Application Support root when it is older than the
+    /// copied `~/.osaurus`, whichever single root exists otherwise.
+    @Test func stampFirstLaunch_existing_install_infers_earliest_birth_date() {
+        let now = utc(2026, 9, 19)
+
+        // Legacy root older than the copied active root → legacy wins.
+        let (both, cleanupBoth) = makeFlagDefaults()
+        defer { cleanupBoth() }
+        both.set(true, forKey: "hasCompletedOnboarding")
+        FeatureTelemetry.stampFirstLaunchIfNeeded(
+            now: now,
+            birthDates: { [utc(2026, 2, 25), utc(2025, 11, 3)] },
+            defaults: both
+        )
+        #expect(FeatureTelemetry.persistedFirstLaunchDate(defaults: both) == utc(2025, 11, 3))
+        #expect(both.string(forKey: FeatureTelemetry.installCohortSourceKey) == "inferred")
+
+        // Only one root present → that root.
+        let (one, cleanupOne) = makeFlagDefaults()
+        defer { cleanupOne() }
+        one.set(true, forKey: "hasCompletedOnboarding")
+        FeatureTelemetry.stampFirstLaunchIfNeeded(
+            now: now,
+            birthDates: { [utc(2026, 2, 25)] },
+            defaults: one
+        )
+        #expect(FeatureTelemetry.persistedFirstLaunchDate(defaults: one) == utc(2026, 2, 25))
+        #expect(one.string(forKey: FeatureTelemetry.installCohortSourceKey) == "inferred")
+
+        // A birth time in the future (clock skew) is ignored, never used.
+        let (skew, cleanupSkew) = makeFlagDefaults()
+        defer { cleanupSkew() }
+        skew.set(true, forKey: "hasCompletedOnboarding")
+        FeatureTelemetry.stampFirstLaunchIfNeeded(
+            now: now,
+            birthDates: { [utc(2027, 1, 1), utc(2026, 6, 3)] },
+            defaults: skew
+        )
+        #expect(FeatureTelemetry.persistedFirstLaunchDate(defaults: skew) == utc(2026, 6, 3))
+    }
+
+    /// Existing install with no readable data root: stamp `now`, but label
+    /// it `unknown` so dashboards can exclude it instead of treating the
+    /// upgrade launch as a real install date.
+    @Test func stampFirstLaunch_existing_install_without_roots_is_unknown() {
+        let (defaults, cleanup) = makeFlagDefaults()
+        defer { cleanup() }
+        defaults.set(true, forKey: "hasCompletedOnboarding")
+        let now = utc(2026, 9, 19)
+
+        FeatureTelemetry.stampFirstLaunchIfNeeded(now: now, birthDates: { [] }, defaults: defaults)
+
+        #expect(FeatureTelemetry.persistedFirstLaunchDate(defaults: defaults) == now)
+        #expect(defaults.string(forKey: FeatureTelemetry.installCohortSourceKey) == "unknown")
+    }
+
+    /// The real resolver only ever returns readable birth times and never
+    /// throws or invents a date for a missing path.
+    @Test func defaultInstallBirthDates_returns_only_readable_roots() {
+        let dates = FeatureTelemetry.defaultInstallBirthDates()
+        #expect(dates.count <= 2)
+        #expect(dates.allSatisfy { $0 <= Date() })
+    }
+
+    @Test func installCohort_formats_iso_week_across_year_boundary() {
+        // 2026-09-19 is a Saturday in ISO week 38.
+        #expect(FeatureTelemetry.installCohort(firstLaunch: utc(2026, 9, 19), calendar: utcISO) == "2026-W38")
+        // ISO weeks straddle the calendar year: Jan 1 2027 (Friday) is
+        // still 2026-W53, and Dec 29 2025 (Monday) is already 2026-W01.
+        #expect(FeatureTelemetry.installCohort(firstLaunch: utc(2027, 1, 1), calendar: utcISO) == "2026-W53")
+        #expect(FeatureTelemetry.installCohort(firstLaunch: utc(2025, 12, 29), calendar: utcISO) == "2026-W01")
+    }
+
+    /// Age counts calendar-day boundaries, not 24-hour spans, clamps at
+    /// zero, and caps at the `365+` bucket.
+    @Test func installAgeDays_uses_day_boundaries_clamps_and_caps() {
+        let first = utc(2026, 9, 19, 23)
+        func age(_ now: Date) -> String {
+            FeatureTelemetry.installAgeDays(firstLaunch: first, now: now, calendar: utcISO)
+        }
+
+        // Same day → 0; one hour later across midnight → 1.
+        #expect(age(utc(2026, 9, 19, 23)) == "0")
+        #expect(age(utc(2026, 9, 20, 0)) == "1")
+        #expect(age(utc(2026, 10, 19, 8)) == "30")
+        // Clock went backwards → never negative.
+        #expect(age(utc(2026, 9, 18)) == "0")
+        // Cap.
+        #expect(age(utc(2027, 9, 18)) == "364")
+        #expect(age(utc(2027, 9, 19)) == "365+")
+        #expect(age(utc(2030, 1, 1)) == "365+")
+    }
+
+    /// `daily_active` fires once per local calendar day with exactly the
+    /// three retention dimensions, and is silent until the install is stamped.
+    @Test func dailyActive_fires_once_per_day_with_install_dimensions() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+        let (flags, flagCleanup) = makeFlagDefaults()
+        defer { flagCleanup() }
+
+        // Not stamped yet → silent (emitting bare would reopen a coverage gap).
+        FeatureTelemetry.dailyActive(now: utc(2026, 9, 19), calendar: utcISO, service: service, defaults: flags)
+        #expect(rec.events.isEmpty)
+
+        flags.set(true, forKey: "hasCompletedOnboarding")
+        FeatureTelemetry.stampFirstLaunchIfNeeded(
+            now: utc(2026, 9, 19),
+            birthDates: { [utc(2026, 2, 25)] },
+            defaults: flags
+        )
+
+        // Three launches on the same day → one event.
+        FeatureTelemetry.dailyActive(now: utc(2026, 9, 19, 9), calendar: utcISO, service: service, defaults: flags)
+        FeatureTelemetry.dailyActive(now: utc(2026, 9, 19, 13), calendar: utcISO, service: service, defaults: flags)
+        FeatureTelemetry.dailyActive(now: utc(2026, 9, 19, 23), calendar: utcISO, service: service, defaults: flags)
+        #expect(rec.events.count == 1)
+        #expect(rec.events[0].name == "daily_active")
+        let props = business(rec.events[0].props)
+        #expect(props.keys.sorted() == ["install_age_days", "install_cohort", "install_cohort_source"])
+        #expect(props["install_cohort"] as? String == "2026-W09")
+        #expect(props["install_age_days"] as? String == "206")
+        #expect(props["install_cohort_source"] as? String == "inferred")
+
+        // Next calendar day → fires again with the age advanced.
+        FeatureTelemetry.dailyActive(now: utc(2026, 9, 20, 0), calendar: utcISO, service: service, defaults: flags)
+        #expect(rec.events.count == 2)
+        #expect(rec.events[1].props["install_age_days"] as? String == "207")
+        #expect(rec.events[1].props["install_cohort"] as? String == "2026-W09")
+    }
+
+    /// `installProps` is what rides on `app_launched`: nil before the stamp,
+    /// the same three dimensions afterwards.
+    @Test func installProps_nil_before_stamp_then_carries_dimensions() {
+        let (flags, flagCleanup) = makeFlagDefaults()
+        defer { flagCleanup() }
+
+        #expect(FeatureTelemetry.installProps(now: utc(2026, 9, 19), calendar: utcISO, defaults: flags) == nil)
+
+        FeatureTelemetry.stampFirstLaunchIfNeeded(now: utc(2026, 9, 19), birthDates: { [] }, defaults: flags)
+        let props = FeatureTelemetry.installProps(now: utc(2026, 9, 21), calendar: utcISO, defaults: flags)!
+            .mapValues { $0 as Any }
+        #expect(props.keys.sorted() == ["install_age_days", "install_cohort", "install_cohort_source"])
+        #expect(props["install_cohort"] as? String == "2026-W38")
+        #expect(props["install_age_days"] as? String == "2")
+        #expect(props["install_cohort_source"] as? String == "install")
+    }
+
+    /// `app_launched` carries whatever launch props the caller resolved,
+    /// plus the global RAM bucket — and nothing else.
+    @Test func appLaunched_carries_install_dimensions() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+        let (flags, flagCleanup) = makeFlagDefaults()
+        defer { flagCleanup() }
+
+        FeatureTelemetry.stampFirstLaunchIfNeeded(now: utc(2026, 9, 19), birthDates: { [] }, defaults: flags)
+        let props = FeatureTelemetry.installProps(now: utc(2026, 9, 19), calendar: utcISO, defaults: flags)!
+        // `configure()` needs a real key; `track` is the path it takes.
+        service.track("app_launched", props)
+
+        #expect(rec.events.count == 1)
+        #expect(rec.events[0].name == "app_launched")
+        let sent = business(rec.events[0].props)
+        #expect(sent.keys.sorted() == ["install_age_days", "install_cohort", "install_cohort_source"])
+        #expect(sent["install_cohort"] as? String == "2026-W38")
+        #expect(sent["install_age_days"] as? String == "0")
+        #expect(sent["install_cohort_source"] as? String == "install")
+    }
+
+    /// Retention events obey the same consent gate as everything else.
+    @Test func dailyActive_drops_when_consent_declined() {
+        let suiteName = "feature-telemetry-daily-declined-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let recorder = Recorder()
+        let service = TelemetryService(
+            defaults: defaults,
+            emit: { name, props in
+                recorder.events.append(Event(name: name, props: props.mapValues { $0 as Any }))
+            }
+        )
+        service.markStartedForTesting()
+        service.setEnabled(false)  // declined → drop
+
+        FeatureTelemetry.stampFirstLaunchIfNeeded(now: utc(2026, 9, 19), birthDates: { [] }, defaults: defaults)
+        FeatureTelemetry.dailyActive(now: utc(2026, 9, 19), calendar: utcISO, service: service, defaults: defaults)
+
+        #expect(recorder.events.isEmpty)
+    }
+
     // MARK: - Hardware RAM bucket (attached to every event)
 
     /// Every emitted event must carry the coarse `total_memory_gb` bucket so
@@ -863,5 +1296,77 @@ struct FeatureTelemetryEventTests {
         #expect(bucket != nil)
         let allowed: Set<String> = ["8", "16", "18", "24", "32", "36", "48", "64", "96", "128", "128+"]
         #expect(allowed.contains(bucket ?? ""))
+    }
+
+    @Test func everyEvent_carries_closed_build_channel() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.serverStarted(service: service)
+
+        let channel = rec.events[0].props["build_channel"] as? String
+        #expect(TelemetryService.buildChannels.contains(channel ?? ""))
+    }
+
+    @Test func buildChannel_separatesShippedProofAndDevBuilds() {
+        let shipped = "/Applications/Osaurus.app"
+        #expect(TelemetryService.buildChannel(bundleID: "com.dinoki.osaurus", bundlePath: shipped, isDebug: false) == "release")
+        #expect(TelemetryService.buildChannel(bundleID: "com.dinoki.osaurus", bundlePath: shipped, isDebug: true) == "debug")
+        #expect(
+            TelemetryService.buildChannel(
+                bundleID: "com.dinoki.osaurus.sandboxpodproof", bundlePath: "/tmp/proof/Osaurus.app", isDebug: false)
+                == "proof")
+        #expect(
+            TelemetryService.buildChannel(
+                bundleID: "com.dinoki.osaurus",
+                bundlePath: "/Users/x/Library/Developer/Xcode/DerivedData/osaurus-abc/Build/Products/Release/osaurus.app",
+                isDebug: false) == "dev")
+        #expect(TelemetryService.buildChannel(bundleID: nil, bundlePath: "/repo/.build/debug", isDebug: false) == "dev")
+        #expect(TelemetryService.buildChannel(bundleID: "com.example.fork", bundlePath: shipped, isDebug: false) == "dev")
+        #expect(
+            TelemetryService.buildChannel(
+                bundleID: "com.dinoki.osaurus.beta", bundlePath: "/Applications/Osaurus Beta.app", isDebug: false)
+                == "beta")
+    }
+
+    @Test func sandboxBoot_emitsClosedDominantPhase() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        let sample = SandboxBootSample(
+            kind: .cold, startedAt: Date(), assetResolution: 40, containerCreate: 90,
+            vmBoot: 2, configure: 1, totalToRunning: 133)
+        #expect(sample.dominantPhase == "create")
+        FeatureTelemetry.sandboxBoot(
+            kind: sample.kind.rawValue, durationBucket: "60-300s", dominantPhase: sample.dominantPhase, service: service)
+
+        let props = business(rec.events[0].props)
+        #expect(Set(props.keys) == ["kind", "duration_bucket", "dominant_phase"])
+        #expect(props["dominant_phase"] as? String == "create")
+        let unmeasured = SandboxBootSample(
+            kind: .warm, startedAt: Date(), assetResolution: nil, containerCreate: nil,
+            vmBoot: nil, configure: nil, totalToRunning: 1)
+        #expect(unmeasured.dominantPhase == "unknown")
+        #expect(SandboxBootSample.dominantPhases.contains(unmeasured.dominantPhase))
+    }
+
+    @Test func sandboxProvisionFailure_attachesOwnerStateAndBootstrapStepOnlyWhenKnown() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.sandboxProvisionFailure(
+            category: "vmnet_in_use", backend: "vm", phase: "vm_ownership", errorClass: "sandbox_ownership_conflict",
+            trigger: "launch_autostart", coldStart: false, ownerState: "osaurus_alive", service: service)
+        FeatureTelemetry.sandboxProvisionFailure(
+            category: "agent_provision_failed", backend: "vm", phase: "agent_provision.bootstrap_script",
+            errorClass: "sandbox_user_creation_failed", trigger: "agent_switch", coldStart: false,
+            bootstrapStep: "adduser", service: service)
+
+        let conflict = business(rec.events[0].props)
+        #expect(conflict["owner_state"] as? String == "osaurus_alive")
+        #expect(conflict["bootstrap_step"] == nil)
+        let script = business(rec.events[1].props)
+        #expect(script["bootstrap_step"] as? String == "adduser")
+        #expect(script["owner_state"] == nil)
     }
 }

@@ -27,7 +27,8 @@ import Foundation
 /// hop) and `Sendable`, so it can be handed to the `@MainActor` emitter via a
 /// fire-and-forget `Task` without blocking dispatch.
 struct MessageTelemetryInfo: Sendable {
-    /// Originating surface: `chat_ui` | `http_api` | `plugin`.
+    /// Originating surface: a `sourceToken` value, or `workflow` /
+    /// `subagent` / `synced_device` (see `messageSourceToken`).
     let source: String
     /// Inference backend category: `foundation` | `local` | `remote`.
     let modelSource: String
@@ -82,6 +83,15 @@ struct MessageTelemetryInfo: Sendable {
         self.brainSource = brainSource
         self.capability = capability
     }
+}
+
+/// Context that flows from where an action starts to where it lands, so the
+/// landing event can say why it happened.
+enum TelemetryContext {
+    /// The `agent_created` origin for agents created inside this task. The
+    /// outermost binding wins: a team seed that applies through
+    /// `ConfigApplier` stays `team_seed`.
+    @TaskLocal static var agentCreationOrigin: String?
 }
 
 @MainActor
@@ -280,6 +290,47 @@ enum FeatureTelemetry {
         service.track("agent_run", ["source": source])
     }
 
+    /// An item that needed a person settled. Closed tokens only: the
+    /// `AttentionKind`, the outcome, the surface that answered, and a wait
+    /// bucket. Never the requester, agent, tool, or any text.
+    static func attentionResolved(
+        kind: AttentionKind,
+        outcome: String,
+        surface: AttentionSurface,
+        wait: TimeInterval?,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "attention_resolved",
+            [
+                "kind": kind.rawValue,
+                "outcome": outcome,
+                "surface": surface.rawValue,
+                "wait_bucket": waitBucket(wait),
+            ]
+        )
+    }
+
+    /// An item was delivered to one notification channel.
+    static func notificationDelivered(
+        kind: AttentionKind,
+        channel: NotificationChannelID,
+        service: TelemetryService = .shared
+    ) {
+        service.track("notification_delivered", ["kind": kind.rawValue, "channel": channel.rawValue])
+    }
+
+    nonisolated static func waitBucket(_ wait: TimeInterval?) -> String {
+        guard let wait else { return "none" }
+        switch wait {
+        case ..<10: return "lt_10s"
+        case ..<60: return "10_60s"
+        case ..<300: return "1_5m"
+        case ..<1800: return "5_30m"
+        default: return "gte_30m"
+        }
+    }
+
     /// The model invoked `computer_use`. Fired at the registry permission
     /// gate — the single chokepoint every real invocation passes — BEFORE any
     /// refusal can happen, so the funnel's denominator is "attempts", not
@@ -344,15 +395,188 @@ enum FeatureTelemetry {
         service.track("server_started")
     }
 
+    // MARK: - Install cohort / age (retention without an identifier)
+
+    // Aptabase never receives a user id from Osaurus and its own daily-user
+    // hash rotates, so `app_launched` alone can't yield cohort retention.
+    // Retention only needs COUNTS per (install cohort, install age), which a
+    // locally persisted first-launch date provides with no identifier — the
+    // same pattern as `brain_source` and `total_memory_gb`: a local fact
+    // attached as a coarse dimension. Day-N retention for cohort W is
+    // `count(daily_active | cohort=W, age=N) / count(daily_active | cohort=W, age=0)`.
+
+    /// Persisted first-launch date. Written once by
+    /// `stampFirstLaunchIfNeeded` and never overwritten.
+    nonisolated static let firstLaunchDateKey = "ai.osaurus.telemetry.first_launch_date"
+
+    /// Persisted provenance of `firstLaunchDateKey` (one of the closed
+    /// `installCohortSource*` tokens below).
+    nonisolated static let installCohortSourceKey = "ai.osaurus.telemetry.install_cohort_source"
+
+    /// Calendar day (`yyyy-MM-dd`) on which `daily_active` last fired.
+    private static let dailyActiveLastDayKey = "ai.osaurus.telemetry.daily_active_last_day"
+
+    /// The stamp was written at the install's first-ever launch.
+    nonisolated static let installCohortSourceInstall = "install"
+    /// The install predates this dimension; the date is the earliest
+    /// filesystem birth time of the data roots (day-level precision).
+    nonisolated static let installCohortSourceInferred = "inferred"
+    /// The install predates this dimension and no data root could be
+    /// inspected; the stamp is the launch that introduced the dimension.
+    nonisolated static let installCohortSourceUnknown = "unknown"
+
+    /// Ages at or above this many days collapse into the `installAgeCapLabel`
+    /// bucket so the dimension stays bounded.
+    nonisolated static let installAgeCapDays = 365
+    nonisolated static let installAgeCapLabel = "365+"
+
+    /// ISO-8601 calendar in the user's current time zone: cohorts and ages
+    /// are computed on the user's local day boundaries, matching what
+    /// "came back the next day" means to them.
+    nonisolated static let installCalendar: Calendar = {
+        var calendar = Calendar(identifier: .iso8601)
+        calendar.timeZone = .current
+        return calendar
+    }()
+
+    /// Birth times of the on-disk data roots, used to back-date installs
+    /// that predate this dimension. Two `stat` calls: the active root
+    /// (`~/.osaurus`) and the retired Application Support root, which
+    /// `OsaurusPaths.migrateLegacyApplicationSupportRootIfNeeded` copies
+    /// but never deletes — the copy gives `~/.osaurus` a fresh birth time,
+    /// so the older legacy root is the truthful anchor for those installs.
+    /// No Keychain, no database open. Missing paths are simply absent.
+    nonisolated static func defaultInstallBirthDates() -> [Date] {
+        let fm = FileManager.default
+        var candidates: [URL] = [OsaurusPaths.root()]
+        if let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            candidates.append(support.appendingPathComponent("com.dinoki.osaurus", isDirectory: true))
+        }
+        return candidates.compactMap { url in
+            try? url.resourceValues(forKeys: [.creationDateKey]).creationDate
+        }
+    }
+
+    /// One-time launch stamp. Resolution order, first hit wins:
+    ///   1. Fresh install (onboarding never completed): `now`, `install`.
+    ///   2. Existing install: earliest data-root birth time, `inferred`.
+    ///   3. Existing install with no readable data root: `now`, `unknown`.
+    /// Never re-stamps, so re-running onboarding or a later upgrade can't
+    /// move a user between cohorts. Birth times in the future are ignored
+    /// (a clock skew can't produce a negative age). The freshness key is
+    /// `OnboardingService`'s completion flag.
+    static func stampFirstLaunchIfNeeded(
+        now: Date = Date(),
+        birthDates: () -> [Date] = defaultInstallBirthDates,
+        defaults: UserDefaults = .standard
+    ) {
+        guard defaults.object(forKey: firstLaunchDateKey) == nil else { return }
+
+        let isFreshInstall = !defaults.bool(forKey: "hasCompletedOnboarding")
+        if isFreshInstall {
+            defaults.set(now, forKey: firstLaunchDateKey)
+            defaults.set(installCohortSourceInstall, forKey: installCohortSourceKey)
+            return
+        }
+
+        if let earliest = birthDates().filter({ $0 <= now }).min() {
+            defaults.set(earliest, forKey: firstLaunchDateKey)
+            defaults.set(installCohortSourceInferred, forKey: installCohortSourceKey)
+        } else {
+            defaults.set(now, forKey: firstLaunchDateKey)
+            defaults.set(installCohortSourceUnknown, forKey: installCohortSourceKey)
+        }
+    }
+
+    /// The persisted first-launch date, or `nil` before the stamp has run.
+    nonisolated static func persistedFirstLaunchDate(defaults: UserDefaults = .standard) -> Date? {
+        defaults.object(forKey: firstLaunchDateKey) as? Date
+    }
+
+    /// ISO week the install belongs to, e.g. `2026-W38`. ~52 values per year.
+    nonisolated static func installCohort(
+        firstLaunch: Date,
+        calendar: Calendar = installCalendar
+    ) -> String {
+        let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: firstLaunch)
+        let year = components.yearForWeekOfYear ?? 0
+        let week = components.weekOfYear ?? 0
+        return String(format: "%04d-W%02d", year, week)
+    }
+
+    /// Whole calendar days between the first launch and `now` on the
+    /// calendar's day boundaries (not raw seconds, so a launch at 23:59 and
+    /// one at 00:01 are one day apart). Clamped at zero and capped at
+    /// `installAgeCapLabel`.
+    nonisolated static func installAgeDays(
+        firstLaunch: Date,
+        now: Date,
+        calendar: Calendar = installCalendar
+    ) -> String {
+        let start = calendar.startOfDay(for: firstLaunch)
+        let end = calendar.startOfDay(for: now)
+        let days = max(0, calendar.dateComponents([.day], from: start, to: end).day ?? 0)
+        return days >= installAgeCapDays ? installAgeCapLabel : String(days)
+    }
+
+    /// The three retention dimensions for the current install, or `nil`
+    /// before `stampFirstLaunchIfNeeded` has run (callers must stamp first;
+    /// emitting without the props would silently reopen a coverage gap).
+    nonisolated static func installProps(
+        now: Date = Date(),
+        calendar: Calendar = installCalendar,
+        defaults: UserDefaults = .standard
+    ) -> [String: Value]? {
+        guard let firstLaunch = persistedFirstLaunchDate(defaults: defaults) else { return nil }
+        let source = defaults.string(forKey: installCohortSourceKey) ?? installCohortSourceUnknown
+        return [
+            "install_cohort": installCohort(firstLaunch: firstLaunch, calendar: calendar),
+            "install_age_days": installAgeDays(firstLaunch: firstLaunch, now: now, calendar: calendar),
+            "install_cohort_source": source,
+        ]
+    }
+
+    /// Emits `daily_active` at most once per local calendar day per install,
+    /// carrying the three retention dimensions. Gated by a persisted
+    /// last-emitted-day key so launch frequency can't inflate the count and
+    /// no dependence on Aptabase's IP/UA daily-user hash is needed. Silent
+    /// until the install has been stamped.
+    static func dailyActive(
+        now: Date = Date(),
+        calendar: Calendar = installCalendar,
+        service: TelemetryService = .shared,
+        defaults: UserDefaults = .standard
+    ) {
+        guard let props = installProps(now: now, calendar: calendar, defaults: defaults) else { return }
+        let today = dayToken(now, calendar: calendar)
+        guard defaults.string(forKey: dailyActiveLastDayKey) != today else { return }
+        defaults.set(today, forKey: dailyActiveLastDayKey)
+        service.track("daily_active", props)
+    }
+
+    /// `yyyy-MM-dd` in the calendar's time zone; only ever compared for
+    /// equality, never sent.
+    nonisolated private static func dayToken(_ date: Date, calendar: Calendar) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
+        )
+    }
+
     /// A sandbox VM boot reached `.running`. `kind` is the closed
     /// `SandboxBootSample.BootKind` token (`cold` | `warm` |
     /// `warmFallback`); `durationBucket` is a coarse
-    /// `SandboxStartupMetricsStore.latencyBucket` value. Raw durations,
-    /// image digests, and agent identity are never attached — full
-    /// fidelity stays in the local startup-metrics file.
+    /// `SandboxStartupMetricsStore.latencyBucket` value; `dominantPhase` is
+    /// one of `SandboxBootSample.dominantPhases`. Raw durations, image
+    /// digests, and agent identity are never attached — full fidelity stays
+    /// in the local startup-metrics file.
     static func sandboxBoot(
         kind: String,
         durationBucket: String,
+        dominantPhase: String,
         service: TelemetryService = .shared
     ) {
         service.track(
@@ -360,6 +584,26 @@ enum FeatureTelemetry {
             [
                 "kind": kind,
                 "duration_bucket": durationBucket,
+                "dominant_phase": dominantPhase,
+            ]
+        )
+    }
+
+    /// The sandbox VM restarted so another agent could join the pod (pod
+    /// membership is fixed at boot). `waitBucket` is a
+    /// `SandboxStartupMetricsStore.latencyBucket` value for how long the
+    /// restart waited on other agents' work; `interruptedWork` is whether
+    /// that work was still running when the wait gave up.
+    static func sandboxMembershipRestart(
+        waitBucket: String,
+        interruptedWork: Bool,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "sandbox_membership_restart",
+            [
+                "wait_bucket": waitBucket,
+                "interrupted_work": interruptedWork,
             ]
         )
     }
@@ -367,20 +611,34 @@ enum FeatureTelemetry {
     /// A sandbox startup or per-agent provisioning failure. Every property is
     /// a closed, low-cardinality token produced by the registrar; never pass
     /// through an error message, path, domain, environment value, or agent id.
+    ///
+    /// - `errorClass`: one of `SandboxToolRegistrar.failureErrorClasses`.
+    /// - `trigger`: `SandboxToolRegistrar.RegistrationTrigger` raw value.
+    /// - `coldStart`: whether the attempt was a first-run cold provision.
+    /// - `ownerState`: `vmnet_in_use` only, `SandboxVMOwnershipLease.OwnerState`.
+    /// - `bootstrapStep`: failed script step, `SandboxProvisionStepError.BootstrapStep`.
     static func sandboxProvisionFailure(
         category: String,
         backend: String,
         phase: String,
+        errorClass: String,
+        trigger: String,
+        coldStart: Bool,
+        ownerState: String? = nil,
+        bootstrapStep: String? = nil,
         service: TelemetryService = .shared
     ) {
-        service.track(
-            "sandbox_provision_failure",
-            [
-                "category": category,
-                "backend": backend,
-                "phase": phase,
-            ]
-        )
+        var props: [String: Value] = [
+            "category": category,
+            "backend": backend,
+            "phase": phase,
+            "error_class": errorClass,
+            "trigger": trigger,
+            "cold_start": coldStart,
+        ]
+        if let ownerState { props["owner_state"] = ownerState }
+        if let bootstrapStep { props["bootstrap_step"] = bootstrapStep }
+        service.track("sandbox_provision_failure", props)
     }
 
     // MARK: - Feature adoption / scope
@@ -417,10 +675,58 @@ enum FeatureTelemetry {
         service.track("mcp_provider_added", ["transport": transport])
     }
 
-    /// A user-created agent was added. Count only — no name, prompt, or
-    /// configuration.
-    static func agentCreated(service: TelemetryService = .shared) {
-        service.track("agent_created")
+    /// A user-created agent was added. `numberOfAgents` is the total number
+    /// of agents on the install after this one was added (built-in included),
+    /// so the dashboard can derive how many agents users typically keep.
+    /// `origin` is `user` (New Agent, setup wizard), `team_seed` (the day-one
+    /// team or a discovery), `template_install`, `import`, `config` (the
+    /// Configurator, admin API, or a phone-approved apply), or `plugin`. No
+    /// name, prompt, or configuration.
+    static func agentCreated(numberOfAgents: Int, origin: String = "user", service: TelemetryService = .shared) {
+        service.track("agent_created", ["number_of_agents": numberOfAgents, "origin": origin])
+    }
+
+    /// The `agent_created` origin for a `ConfigApplier` apply.
+    nonisolated static func agentCreationOrigin(for caller: ConfigChangeCaller?) -> String {
+        switch caller {
+        case .templateInstall: return "template_install"
+        case .fileImport: return "import"
+        default: return "config"
+        }
+    }
+
+    /// A New Agent chat opened. `source` is a closed token (`agents_page`,
+    /// `discovery`, `deeplink`).
+    static func agentCreationStarted(source: String, service: TelemetryService = .shared) {
+        service.track("agent_creation_started", ["source": source])
+    }
+
+    /// Create in a New Agent chat saved the agent. Counts only: how many
+    /// messages the user sent the Configurator, how many fields they edited
+    /// in the panel, and whether setup needed the wizard first.
+    static func agentCreationFinished(
+        userMessages: Int, editedFields: Int, neededSetup: Bool, service: TelemetryService = .shared
+    ) {
+        service.track(
+            "agent_creation_finished",
+            ["user_messages": userMessages, "edited_fields": editedFields, "needed_setup": neededSetup])
+    }
+
+    /// The Configurator's first change to a New Agent draft.
+    static func agentCreationDrafted(service: TelemetryService = .shared) {
+        service.track("agent_creation_drafted", [:])
+    }
+
+    /// The first hand edit of one panel field in a draft. `field` is the
+    /// field's fixed id (name, model, tools, ...), never its value.
+    static func agentCreationEdited(field: String, service: TelemetryService = .shared) {
+        service.track("agent_creation_edited", ["field": field])
+    }
+
+    /// A New Agent chat closed before Create. The draft stays resumable;
+    /// counts only.
+    static func agentCreationAbandoned(touchedFields: Int, service: TelemetryService = .shared) {
+        service.track("agent_creation_abandoned", ["touched_fields": touchedFields])
     }
 
     // MARK: - Settings engagement
@@ -455,21 +761,27 @@ enum FeatureTelemetry {
         case .settings: return "general"
         case .chat: return "chat"
         case .voice: return "voice"
-        case .themes: return "themes"
         case .orchestrator: return "orchestrator"
+        case .architect: return "architect"
+        case .configurator: return "configurator"
+        case .delegation: return "delegation"
         case .models: return "models"
         case .providers: return "providers"
         case .imageGeneration: return "image_generation"
         case .agents: return "agents"
         case .agentChannels: return "agent_channels"
+        case .agentRuntimes: return "agent_runtimes"
         case .memory: return "memory"
+        case .projects: return "projects"
         case .knowledge: return "knowledge"
         case .tools: return "tools"
         case .search: return "search"
         case .skills: return "skills"
         case .commands: return "commands"
-        case .schedules: return "schedules"
-        case .watchers: return "watchers"
+        case .workflows: return "workflows"
+        case .automations: return "automations"
+        case .approvals: return "approvals"
+        case .tasks: return "tasks"
         case .sandbox: return "sandbox"
         case .computerUse: return "computer_use"
         case .browser: return "browser"
@@ -479,41 +791,42 @@ enum FeatureTelemetry {
         case .identity: return "identity"
         case .credits: return "credits"
         case .workspaces: return "workspaces"
+        case .access: return "access"
+        case .devices: return "devices"
+        case .connect: return "connect"
         case .insights: return "insights"
+        case .modelDefaults: return "model_defaults"
+        case .keys: return "keys"
         }
     }
 
-    // MARK: - Product Hunt launch dialog (July 2026, one-shot)
+    // MARK: - Router-served announcements (one-shot per slug)
 
-    /// The one-time Product Hunt launch dialog was presented. Count only.
-    static func productHuntLaunchDialogShown(service: TelemetryService = .shared) {
-        service.track("product_hunt_launch_dialog_shown")
-    }
-
-    /// The user dismissed the Product Hunt launch dialog. `action` is a
-    /// closed two-value enum token: `launch` (opened the PH page) or `later`.
-    static func productHuntLaunchDialogClicked(
-        action: String,
+    /// A router announcement dialog was presented. Keyed by `slug` (the
+    /// dismissal key) so an announcement's shown/clicked counts survive
+    /// operator reschedules and copy edits under the same slug.
+    static func announcementShown(
+        slug: String,
         service: TelemetryService = .shared
     ) {
-        service.track("product_hunt_launch_dialog_clicked", ["action": action])
+        service.track("announcement_shown", ["slug": slug])
     }
 
-    // MARK: - Workspaces intro dialog (September 2026, one-shot)
-
-    /// The one-time Founding Workspaces introduction was presented. Count only.
-    static func workspacesIntroDialogShown(service: TelemetryService = .shared) {
-        service.track("workspaces_intro_dialog_shown")
-    }
-
-    /// The user dismissed the Workspaces introduction. `action` is a closed
-    /// two-value enum token: `start_trial` (opened the New Workspace sheet) or `later`
-    /// (Maybe later, corner X, Escape, or outside click).
-    static func workspacesIntroDialogClicked(
+    /// The user acted on a router announcement dialog. `action` is a closed
+    /// enum token: `dismiss` (Close, Escape, outside click) or `cta`
+    /// (one of the operator-defined buttons; `cta_kind` is `external_url`
+    /// or `deeplink` and `cta_index` its 0-based position).
+    static func announcementClicked(
+        slug: String,
         action: String,
+        ctaKind: String? = nil,
+        ctaIndex: Int? = nil,
         service: TelemetryService = .shared
     ) {
-        service.track("workspaces_intro_dialog_clicked", ["action": action])
+        var props: [String: Value] = ["slug": slug, "action": action]
+        if let ctaKind { props["cta_kind"] = ctaKind }
+        if let ctaIndex { props["cta_index"] = ctaIndex }
+        service.track("announcement_clicked", props)
     }
 
     // MARK: - Import history prompt (post-onboarding, one-shot)
@@ -535,7 +848,8 @@ enum FeatureTelemetry {
     }
 
     /// A chat-history import saved at least one conversation. `source` is a
-    /// closed two-value entry-point token: `sidebar` or `onboarding_prompt`.
+    /// closed entry-point token: `sidebar`, `onboarding_prompt`, or
+    /// `discovery`.
     /// Counts only — never file names, provider formats, or content.
     static func chatHistoryImported(
         source: String,
@@ -555,6 +869,209 @@ enum FeatureTelemetry {
                 "failed_files": failedFiles,
             ]
         )
+    }
+
+    // MARK: - Discovery
+
+    /// The discovery setting changed. Boolean only.
+    /// `source` is `settings`, `greeting` (Skip setup under a new chat's
+    /// greeting), or `undo` (its toast's Undo).
+    static func discoveryToggled(enabled: Bool, source: String = "settings", service: TelemetryService = .shared) {
+        service.track("discovery_toggled", ["enabled": enabled, "source": source])
+    }
+
+    /// Set Up Osaurus was opened. `source` is `menu` or `settings`;
+    /// `remaining` is how many items it listed.
+    static func setUpOsaurusOpened(source: String, remaining: Int, service: TelemetryService = .shared) {
+        service.track("set_up_osaurus_opened", ["source": source, "remaining": remaining])
+    }
+
+    /// The day-one team was created. `source` is `fresh_install` (end of
+    /// onboarding) or `starter_agents` (Settings' Create Starter Agents).
+    /// Counts and a bool only; no teammate names or workflow ids.
+    static func teamSeeded(
+        source: String,
+        teammates: Int,
+        workflows: Int,
+        developerMac: Bool,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "team_seeded",
+            ["source": source, "teammates": teammates, "workflows": workflows, "developer_mac": developerMac])
+    }
+
+    // MARK: - Workflows
+
+    /// A workflow run began. `caller` is the `WorkflowCaller.Kind` token
+    /// (`agent`, `orchestrator`, `user`, `test`, `workflow`, `event`).
+    static func workflowRunStarted(caller: String, resumed: Bool, service: TelemetryService = .shared) {
+        service.track("workflow_run_started", ["caller": caller, "resumed": resumed])
+    }
+
+    /// A workflow run's task ended. `status` is the `WorkflowRunStatus`
+    /// token; `duration_bucket` uses the `waitBucket` buckets.
+    static func workflowRunFinished(
+        caller: String,
+        status: String,
+        duration: TimeInterval?,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "workflow_run_finished",
+            ["caller": caller, "status": status, "duration_bucket": waitBucket(duration)])
+    }
+
+    /// A workflow draft was created. `origin` is `blank` (new in the
+    /// Architect), `edit` (a saved workflow opened in the Architect), or
+    /// `inline` (a chat handed a task to the Architect).
+    static func workflowDraftStarted(origin: String, service: TelemetryService = .shared) {
+        service.track("workflow_draft_started", ["origin": origin])
+    }
+
+    /// The Workflows surface came on screen. `page` is `home`, `workflow`,
+    /// `run`, or `new`.
+    static func workflowsOpened(page: String, service: TelemetryService = .shared) {
+        service.track("workflows_opened", ["page": page])
+    }
+
+    // MARK: - Automations
+
+    /// An automation was created. `trigger` is the `EventSourceKind` token;
+    /// `origin` is `user` (Settings or the editor) or `config`
+    /// (`osaurus_config`, including onboarding's Turn On).
+    static func automationCreated(trigger: String, origin: String, service: TelemetryService = .shared) {
+        service.track("automation_created", ["trigger": trigger, "origin": origin])
+    }
+
+    /// An automation run settled. `status` is the `EventRunStatus` token;
+    /// filtered and duplicate deliveries never reach this.
+    static func automationRunFinished(trigger: String, status: String, service: TelemetryService = .shared) {
+        service.track("automation_run_finished", ["trigger": trigger, "status": status])
+    }
+
+    // MARK: - Phone
+
+    /// A phone finished pairing with this Mac. No device name or id.
+    static func phonePaired(service: TelemetryService = .shared) {
+        service.track("phone_paired")
+    }
+
+    /// The paired phone was removed. `via` is `mac` (revoked here) or
+    /// `phone` (the phone unpaired itself).
+    static func phoneUnpaired(via: String, service: TelemetryService = .shared) {
+        service.track("phone_unpaired", ["via": via])
+    }
+
+    /// Another device joined this Mac's Sync account. `platform` is
+    /// `iphone` or `other`; no device name or key.
+    static func syncDevicePaired(platform: String, service: TelemetryService = .shared) {
+        service.track("sync_device_paired", ["platform": platform])
+    }
+
+    /// A device was removed from Sync; `rotated_keys` when the account's
+    /// keys were replaced with it.
+    static func syncDeviceRemoved(rotatedKeys: Bool, service: TelemetryService = .shared) {
+        service.track("sync_device_removed", ["rotated_keys": rotatedKeys])
+    }
+
+    // MARK: - Templates
+
+    /// A workflow or agent was published to the registry. `kind` is
+    /// `workflow` or `agent`; `visibility` is the `WorkflowVisibility`
+    /// token; `bundled_published` counts the workflows an agent share
+    /// published with it.
+    static func templateShared(
+        kind: String,
+        visibility: String,
+        bundledPublished: Int = 0,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "template_shared", ["kind": kind, "visibility": visibility, "bundled_published": bundledPublished])
+    }
+
+    /// An import was saved from the review sheet. `kind` is the
+    /// `TemplateKind` token; `origin` is `registry` (downloaded from the
+    /// store, a link, or a workspace catalog) or `file`; `result` is `new`,
+    /// `update`, `copy`, `replace`, `older`, or `already_present`.
+    static func templateImported(kind: String, origin: String, result: String, service: TelemetryService = .shared) {
+        service.track("template_imported", ["kind": kind, "origin": origin, "result": result])
+    }
+
+    // MARK: - Account and keys
+
+    /// A website asked to sign in with Osaurus. `outcome` is `signed_in`,
+    /// `answered_error`, or `rejected_locally`. Never the site or account.
+    static func loginWithOsaurus(outcome: String, service: TelemetryService = .shared) {
+        service.track("login_with_osaurus", ["outcome": outcome])
+    }
+
+    /// An access key was created. No key, label, or scope.
+    static func accessKeyCreated(service: TelemetryService = .shared) {
+        service.track("access_key_created")
+    }
+
+    /// An access key was revoked.
+    static func accessKeyRevoked(service: TelemetryService = .shared) {
+        service.track("access_key_revoked")
+    }
+
+    /// A new credential was saved. `scope` is `shared` or `agent`; `origin`
+    /// is the `CredentialOrigin` token. Never the key name or value; legacy
+    /// imports and updates of an existing credential are not counted.
+    static func credentialSaved(scope: String, origin: String, service: TelemetryService = .shared) {
+        service.track("credential_saved", ["scope": scope, "origin": origin])
+    }
+
+    /// A credential was deleted (not the bulk removal when an agent is
+    /// deleted). `scope` as for `credential_saved`.
+    static func credentialDeleted(scope: String, service: TelemetryService = .shared) {
+        service.track("credential_deleted", ["scope": scope])
+    }
+
+    // MARK: - Spaces, Workspaces, and Sharing
+
+    /// A Space was created. No name.
+    static func spaceCreated(service: TelemetryService = .shared) {
+        service.track("space_created")
+    }
+
+    /// The user confirmed switching to another Space (the app relaunches).
+    static func spaceSwitched(service: TelemetryService = .shared) {
+        service.track("space_switched")
+    }
+
+    /// A Space was deleted. `mode` is `immediate` or `after_relaunch`.
+    static func spaceDeleted(mode: String, service: TelemetryService = .shared) {
+        service.track("space_deleted", ["mode": mode])
+    }
+
+    /// A workspace was created. `via` is `direct`, `checkout` (after a
+    /// browser purchase), or `activation_code`. No name or price.
+    static func workspaceCreated(via: String, service: TelemetryService = .shared) {
+        service.track("workspace_created", ["via": via])
+    }
+
+    /// The user joined a workspace with a code.
+    static func workspaceJoined(service: TelemetryService = .shared) {
+        service.track("workspace_joined")
+    }
+
+    /// An agent was shared into a workspace.
+    static func workspaceAgentShared(service: TelemetryService = .shared) {
+        service.track("workspace_agent_shared")
+    }
+
+    /// A guest's access to one of this Mac's agents was revoked. `state` is
+    /// `active` (a guest who had connected) or `unused_link`.
+    static func guestAccessRevoked(state: String, service: TelemetryService = .shared) {
+        service.track("guest_access_revoked", ["state": state])
+    }
+
+    /// Another person's agent was added from a guest link.
+    static func sharedAgentAdded(service: TelemetryService = .shared) {
+        service.track("shared_agent_added")
     }
 
     // MARK: - Derivation helpers
@@ -577,6 +1094,7 @@ enum FeatureTelemetry {
     nonisolated static func sourceToken(_ source: InferenceSource) -> String {
         switch source {
         case .chatUI: return "chat_ui"
+        case .evaluation: return "evaluation"
         case .agent: return "agent"
         case .httpAPI: return "http_api"
         case .plugin: return "plugin"
@@ -585,8 +1103,30 @@ enum FeatureTelemetry {
         case .channel: return "channel"
         case .schedule: return "schedule"
         case .watcher: return "watcher"
+        case .webhook: return "webhook"
+        case .email: return "email"
+        case .automation: return "automation"
         case .selfSchedule: return "self_schedule"
+        case .tool: return "tool"
+        case .system: return "system"
         }
+    }
+
+    /// The `message_sent` `source` token. Internal model calls that ride a
+    /// chat-owned engine (workflow steps, delegated subagents) and turns this
+    /// Mac hosts for another of the user's devices would otherwise report as
+    /// `chat_ui` and inflate the headline chat count, so they get their own
+    /// tokens. A workflow step wins over subagent: agentic nodes are both.
+    nonisolated static func messageSourceToken(
+        base: InferenceSource,
+        inWorkflow: Bool,
+        isSubagent: Bool,
+        forSyncedDevice: Bool
+    ) -> String {
+        if inWorkflow { return "workflow" }
+        if isSubagent { return "subagent" }
+        if forSyncedDevice { return "synced_device" }
+        return sourceToken(base)
     }
 
     /// What the request asked the resolved local model to do, classified by
@@ -629,6 +1169,9 @@ enum FeatureTelemetry {
         source: InferenceSource,
         isAgent: Bool,
         stream: Bool,
+        inWorkflow: Bool = false,
+        isSubagent: Bool = false,
+        forSyncedDevice: Bool = false,
         defaults: UserDefaults = .standard
     ) -> MessageTelemetryInfo {
         let modelSource: String
@@ -665,21 +1208,20 @@ enum FeatureTelemetry {
             capability = localModelCapability(effectiveModel)
         }
 
+        let token = messageSourceToken(
+            base: source, inWorkflow: inWorkflow, isSubagent: isSubagent, forSyncedDevice: forSyncedDevice)
+
         // Attach the onboarding brain choice only to chat-UI sends — it's a
         // funnel join for "did the user who picked path X send a message", and
-        // it would be misleading on HTTP-API / plugin traffic. The fallback
-        // keeps the dimension total: after the `none`/`pre_choice` writers,
-        // `unknown` should be unreachable, but omission would silently reopen
-        // the coverage gap this vocabulary exists to close.
-        let isChatUI: Bool = {
-            if case .chatUI = source { return true }
-            return false
-        }()
+        // it would be misleading on HTTP-API / plugin / workflow traffic. The
+        // fallback keeps the dimension total: after the `none`/`pre_choice`
+        // writers, `unknown` should be unreachable, but omission would
+        // silently reopen the coverage gap this vocabulary exists to close.
         let brainSource =
-            isChatUI ? (persistedBrainSource(defaults: defaults) ?? brainSourceUnknown) : nil
+            token == "chat_ui" ? (persistedBrainSource(defaults: defaults) ?? brainSourceUnknown) : nil
 
         return MessageTelemetryInfo(
-            source: sourceToken(source),
+            source: token,
             modelSource: modelSource,
             model: model,
             providerType: providerType,

@@ -301,14 +301,7 @@ struct ToolScopeGateRecoveryTests {
         }
         let customAgent = UUID()
 
-        for registered in [false, true] {
-            if registered {
-                FolderToolManager.shared.ensureFolderToolsRegistered()
-            } else {
-                FolderToolManager.shared._unregisterAllForTesting()
-            }
-            defer { if registered { FolderToolManager.shared._unregisterAllForTesting() } }
-
+        try await inBothFolderRegistrations { registered in
             let scope = ToolExecutionScope(exposed: [])
             scope.activate([exposedTool.name, "capabilities"])
             let recovery = ToolRegistry.shared.announcedToolCallRecovery(
@@ -381,7 +374,8 @@ struct ToolScopeGateRecoveryTests {
         let parsed = try envelope(result)
         #expect(parsed?["ok"] as? Bool == false)
         #expect(parsed?["kind"] as? String == "tool_not_found")
-        #expect(parsed?["retryable"] as? Bool == true)
+        // The named tool does not exist; repeating the same call cannot work.
+        #expect(parsed?["retryable"] as? Bool == false)
         let message = parsed?["message"] as? String ?? ""
         #expect(message.contains("search_and_extract"))
         #expect(message.contains("urls"))
@@ -404,6 +398,25 @@ struct ToolScopeGateRecoveryTests {
         #expect(!message.contains("search_and_extract"))
     }
 
+    /// Runs `body` with the folder tools unregistered, then registered.
+    /// Sandbox chats reuse those registry entries, so this holds the sandbox
+    /// lock and leaves them registered, as a running app always does.
+    private func inBothFolderRegistrations(
+        _ body: @MainActor @Sendable (_ registered: Bool) async throws -> Void
+    ) async throws {
+        try await SandboxTestLock.shared.run {
+            defer { FolderToolManager.shared.ensureFolderToolsRegistered() }
+            for registered in [false, true] {
+                if registered {
+                    FolderToolManager.shared.ensureFolderToolsRegistered()
+                } else {
+                    FolderToolManager.shared._unregisterAllForTesting()
+                }
+                try await body(registered)
+            }
+        }
+    }
+
     // MARK: - Workspace-tool dead end names the real next step
 
     @Test
@@ -417,15 +430,8 @@ struct ToolScopeGateRecoveryTests {
         // branch used to win, sending the model into a load the dynamic
         // gates refuse. The answer is keyed on the NAME, so it must be
         // byte-identical in BOTH registry states.
-        let scope = ToolExecutionScope(exposed: [])
-        for registered in [false, true] {
-            if registered {
-                FolderToolManager.shared.ensureFolderToolsRegistered()
-            } else {
-                FolderToolManager.shared._unregisterAllForTesting()
-            }
-            defer { if registered { FolderToolManager.shared._unregisterAllForTesting() } }
-
+        try await inBothFolderRegistrations { registered in
+            let scope = ToolExecutionScope(exposed: [])
             let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
                 try await ToolRegistry.shared.execute(
                     name: "file_write",
@@ -437,11 +443,72 @@ struct ToolScopeGateRecoveryTests {
             #expect(parsed?["retryable"] as? Bool == false, "registered=\(registered)")
             let message = parsed?["message"] as? String ?? ""
             #expect(message.contains("Folder chip"), "registered=\(registered)")
-            #expect(message.contains("share_artifact"), "registered=\(registered)")
+            #expect(!message.contains("share_artifact"), "registered=\(registered): not in this scope")
             #expect(
                 !message.contains("Call capabilities"),
                 "registered=\(registered): must never steer into a loader round-trip")
         }
+
+        let artifactScope = ToolExecutionScope(exposed: [])
+        artifactScope.activate(["share_artifact"])
+        let withArtifact = try await ChatExecutionContext.$toolExecutionScope.withValue(artifactScope) {
+            try await ToolRegistry.shared.execute(name: "file_write", argumentsJSON: "{}")
+        }
+        #expect((try envelope(withArtifact)?["message"] as? String ?? "").contains("share_artifact"))
+    }
+
+    // MARK: - The Orchestrator's refusals name its own tools
+
+    private func orchestratorScope() -> ToolExecutionScope {
+        let scope = ToolExecutionScope(exposed: [])
+        scope.activate(Array(ToolRegistry.orchestratorRoutingToolNames))
+        return scope
+    }
+
+    private func runAsOrchestrator(_ name: String) async throws -> [String: Any]? {
+        let scope = orchestratorScope()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                try await ToolRegistry.shared.execute(name: name, argumentsJSON: "{}")
+            }
+        }
+        return try envelope(result)
+    }
+
+    @Test
+    func orchestratorFolderToolCall_routesToTheFilesHelper() async throws {
+        for name in ["file_read", "file_write", "shell_run"] {
+            let parsed = try await runAsOrchestrator(name)
+            #expect(parsed?["ok"] as? Bool == false, "\(name)")
+            #expect(parsed?["retryable"] as? Bool == false, "\(name)")
+            let message = parsed?["message"] as? String ?? ""
+            #expect(message.contains("run_workflow"), "\(name): \(message)")
+            #expect(message.contains("\"Files\""), "\(name): \(message)")
+            #expect(!message.contains("share_artifact"), "\(name): \(message)")
+            #expect(!message.contains("Folder chip"), "\(name): \(message)")
+        }
+    }
+
+    @Test
+    func orchestratorConfigureToolCall_routesToTheConfigurator() async throws {
+        for name in ["osaurus_config", "osaurus_inspect"] {
+            let parsed = try await runAsOrchestrator(name)
+            #expect(parsed?["ok"] as? Bool == false, "\(name)")
+            #expect(parsed?["retryable"] as? Bool == false, "\(name)")
+            let message = parsed?["message"] as? String ?? ""
+            #expect(message.contains("configurator_handoff"), "\(name): \(message)")
+            #expect(!message.contains("Call capabilities"), "\(name): \(message)")
+        }
+    }
+
+    @Test
+    func orchestratorAppleAppToolCall_namesRunWorkflowAndConfigurator() async throws {
+        let parsed = try await runAsOrchestrator("calendar_events")
+        #expect(parsed?["ok"] as? Bool == false)
+        let message = parsed?["message"] as? String ?? ""
+        #expect(message.contains("run_workflow"), "\(message)")
+        #expect(message.contains("configurator_handoff"), "\(message)")
+        #expect(!message.contains("osaurus_config"), "\(message)")
     }
 
     @Test @MainActor
@@ -452,14 +519,7 @@ struct ToolScopeGateRecoveryTests {
         // which is provably dead for runtime-managed workspace tools —
         // unregistered they hit "not found", registered they hit the
         // dynamic-grant refusals or a false "callable NOW".
-        for registered in [false, true] {
-            if registered {
-                FolderToolManager.shared.ensureFolderToolsRegistered()
-            } else {
-                FolderToolManager.shared._unregisterAllForTesting()
-            }
-            defer { if registered { FolderToolManager.shared._unregisterAllForTesting() } }
-
+        try await inBothFolderRegistrations { registered in
             let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
                 try await CapabilitiesLoadTool().execute(
                     argumentsJSON: #"{"ids":["tool/file_write"]}"#
@@ -469,6 +529,122 @@ struct ToolScopeGateRecoveryTests {
             #expect(result.contains("Folder chip"), "registered=\(registered)")
             #expect(result.contains("share_artifact"), "registered=\(registered)")
             #expect(!result.contains("callable NOW"), "registered=\(registered)")
+        }
+    }
+
+    // MARK: - Read-only working folder is not "no folder" (#3387)
+
+    /// A read-only agent with its folder attached: the schema exposes only the read tools.
+    private func withReadOnlyFolderAgent(
+        readOnly: Bool = true,
+        _ body: @MainActor @Sendable (_ agentId: UUID, _ root: URL) async throws -> Void
+    ) async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            var agent = Agent(name: "ReadOnlyScopeProbe-\(UUID().uuidString.prefix(6))")
+            agent.settings.workingFolderReadOnly = readOnly
+            AgentManager.shared.add(agent)
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+            let root = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("ro-scope-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            try await body(agent.id, root)
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    @Test
+    func readOnlyFolderWrite_outsideScope_saysReadOnly_notNoFolder() async throws {
+        try await withReadOnlyFolderAgent { agentId, root in
+            let scope = ToolExecutionScope(exposed: ToolRegistry.shared.specs(forTools: ["file_read", "file_search"]))
+            for name in ["file_write", "shell_run", "file_copy"] {
+                let result = try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    try await ChatExecutionContext.$currentFolderRoot.withValue(root) {
+                        try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                            try await ToolRegistry.shared.execute(
+                                name: name,
+                                argumentsJSON: #"{"path":"test.txt","content":"x","command":"touch test.txt"}"#
+                            )
+                        }
+                    }
+                }
+                let parsed = try envelope(result)
+                #expect(parsed?["ok"] as? Bool == false, "\(name)")
+                #expect(parsed?["kind"] as? String == "rejected", "\(name)")
+                let message = parsed?["message"] as? String ?? ""
+                #expect(message.contains("read only"), "\(name): \(message)")
+                #expect(!message.contains("Folder chip"), "\(name): \(message)")
+                #expect(!message.contains("share_artifact"), "\(name): \(message)")
+            }
+            #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("test.txt").path))
+        }
+    }
+
+    @Test
+    func readOnlyFolderWriteLoad_saysReadOnly_notNoFolder() async throws {
+        try await withReadOnlyFolderAgent { agentId, root in
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                try await ChatExecutionContext.$currentFolderRoot.withValue(root) {
+                    try await CapabilitiesLoadTool().execute(argumentsJSON: #"{"ids":["tool/file_write"]}"#)
+                }
+            }
+            #expect(ToolEnvelope.isError(result), "\(result)")
+            #expect(result.contains("read only"), "\(result)")
+            #expect(!result.contains("Folder chip"), "\(result)")
+            #expect(!result.contains("callable NOW"), "\(result)")
+        }
+    }
+
+    // MARK: - Attached folder is not "no folder" (#3390)
+
+    @Test
+    func attachedFolderWorkspaceLoad_saysAlreadyCallable_notNoFolder() async throws {
+        try await withReadOnlyFolderAgent(readOnly: false) { agentId, root in
+            let scope = ToolExecutionScope(
+                exposed: ToolRegistry.shared.specs(forTools: Array(ToolRegistry.coreWorkspaceToolNames)))
+            for name in ToolRegistry.coreWorkspaceToolNames.sorted() {
+                let result = try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    try await ChatExecutionContext.$currentFolderRoot.withValue(root) {
+                        try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                            try await CapabilitiesLoadTool().execute(argumentsJSON: #"{"ids":["tool/\#(name)"]}"#)
+                        }
+                    }
+                }
+                #expect(!ToolEnvelope.isError(result), "\(name): \(result)")
+                #expect(result.contains("already loaded and callable"), "\(name): \(result)")
+                #expect(!result.contains("Folder chip"), "\(name): \(result)")
+                #expect(!result.contains("share_artifact"), "\(name): \(result)")
+            }
+        }
+    }
+
+    @Test
+    func workspaceLoad_withoutFolder_inScopedRequest_isStillRefused() async throws {
+        try await withReadOnlyFolderAgent(readOnly: false) { agentId, _ in
+            let scope = ToolExecutionScope(exposed: ToolRegistry.shared.specs(forTools: ["get_current_time"]))
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                    try await CapabilitiesLoadTool().execute(argumentsJSON: #"{"ids":["tool/file_write"]}"#)
+                }
+            }
+            // Folder-chip or sandbox-not-started wording, depending on whether this host can run the sandbox.
+            #expect(ToolEnvelope.isError(result), "\(result)")
+            #expect(!result.contains("already loaded and callable"), "\(result)")
+        }
+    }
+
+    @Test
+    func announcedRecovery_readOnlyFolder_doesNotClaimNoWorkspace() async throws {
+        let exposed: Set<String> = ["file_read", "file_search"]
+        try await withReadOnlyFolderAgent { agentId, _ in
+            let recovery = ToolRegistry.shared.announcedToolCallRecovery(
+                exposed: exposed, agentId: agentId, loaderPermitted: { _ in false })
+            #expect(recovery.workspaceBlocked.isEmpty, "\(recovery.workspaceBlocked)")
+        }
+        try await withReadOnlyFolderAgent(readOnly: false) { agentId, _ in
+            let recovery = ToolRegistry.shared.announcedToolCallRecovery(
+                exposed: exposed, agentId: agentId, loaderPermitted: { _ in false })
+            #expect(recovery.workspaceBlocked == ToolRegistry.coreWorkspaceToolNames.subtracting(exposed))
         }
     }
 

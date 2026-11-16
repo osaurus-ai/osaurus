@@ -3,21 +3,20 @@
 //  osaurus
 //
 //  The "Orchestrator" sidebar tab: identity and generation settings for
-//  the built-in Default agent (the Orchestrator) plus its delegation
-//  helpers (Spawn policy, budgets, and RAM-safety knobs).
+//  the built-in Default agent (the Orchestrator), its working folder, and a
+//  link to Agents → Delegation, where its allowed subagents and the
+//  delegation limits live (`DelegationSettingsView`).
 //
 //  Identity fields persist to `DefaultAgentConfiguration` with the same
-//  debounced load-modify-write pattern as Chat settings. The delegation
-//  card is the shared `SubagentSettingsSection`, whose configuration
-//  saves immediately through `SubagentConfigurationStore` (mirroring the
-//  behavior it had on the General tab before moving here).
+//  debounced load-modify-write pattern as Chat settings.
 //
 
 import SwiftUI
 
 struct OrchestratorSettingsView: View {
-    @EnvironmentObject private var server: ServerController
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var managementState = ManagementStateManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -27,13 +26,6 @@ struct OrchestratorSettingsView: View {
     @State private var tempTemperature: String = ""
     @State private var tempMaxTokens: String = ""
 
-    /// Built-in/main-chat Spawn policy plus system runtime knobs for subagent
-    /// helper jobs. Backed by `SubagentConfigurationStore`; saved immediately
-    /// on change, not through the debounced identity path.
-    @State private var subagentConfiguration = SubagentConfigurationStore.snapshot()
-    @State private var subagentConfigurationBaseline = SubagentConfigurationStore.snapshot()
-
-    @State private var hasAppeared = false
     @State private var successMessage: String?
 
     /// Baseline of the save-relevant identity fields as last loaded or
@@ -42,44 +34,31 @@ struct OrchestratorSettingsView: View {
     @State private var savedFormState: SaveableFormState?
     @State private var autoSaveTask: Task<Void, Never>?
 
-    /// Drives scroll-to + glow when a settings-search result lands on this tab.
-    @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
 
     // MARK: - Body
 
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
+            SettingsPage {
                 headerView
-                    .managerHeaderEntrance(hasAppeared: hasAppeared)
-
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
-                            capabilityStrip
-
-                            identitySection
-
-                            generationSection
-
-                            OrchestratorWorkingFolderSection()
-
-                            SubagentSettingsSection(configuration: $subagentConfiguration)
-                                .settingsLandingAnchor("settings.orchestrator.delegation")
-
-                            OrchestratorDelegationsSection()
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 24)
-                        .frame(maxWidth: .infinity)
-                    }
-                    .opacity(hasAppeared ? 1 : 0)
-                    .onChange(of: highlightCoordinator.pending) { _, id in
-                        scrollToLandingTarget(id, proxy: proxy)
-                    }
-                    .onAppear {
-                        scrollToLandingTarget(highlightCoordinator.pending, proxy: proxy)
-                    }
+            } content: {
+                capabilityStrip
+                identitySection
+                instructionsSection
+                generationSection
+                OrchestratorWorkingFolderSection()
+                subagentsLink
+                OrchestratorDelegationsSection()
+                SettingsDestructiveZone {
+                    SettingsDestructiveRow(
+                        title: "Restore Defaults",
+                        description:
+                            "Restore the Orchestrator's identity settings to defaults (saved automatically, like any change)",
+                        actionTitle: "Restore Defaults",
+                        severity: .warning,
+                        anchorId: "settings.orchestrator.restoreDefaults",
+                        action: resetToDefaults
+                    )
                 }
             }
 
@@ -88,61 +67,14 @@ struct OrchestratorSettingsView: View {
                     Spacer()
                     ThemedToastView(message, type: .success)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .padding(.bottom, 20)
+                        .padding(.bottom, theme.space.s16)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
-        .onAppear {
-            loadConfiguration()
-            let latest = SubagentConfigurationStore.snapshot()
-            subagentConfigurationBaseline = latest
-            subagentConfiguration = latest
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
-        }
-        // Delegation knobs persist immediately (not via the debounced
-        // identity save). The re-snapshot on the change notification keeps
-        // this in sync if an agent's Subagents tab edits the shared store.
-        .onChange(of: subagentConfiguration) { _, newValue in
-            // Only a direct edit of this form's batch limit may turn Server
-            // Concurrent Sessions from Automatic into an explicit number;
-            // store notifications update the baseline first, so mirrored
-            // values compare equal and never echo back as a user override.
-            let batchLimitWasExplicitlyEdited =
-                SpawnBatchConcurrencyContract.configuredLimit(for: newValue)
-                != SpawnBatchConcurrencyContract.configuredLimit(
-                    for: subagentConfigurationBaseline
-                )
-            let saved = SubagentConfigurationStore.saveEditorSnapshot(
-                newValue,
-                loadedBaseline: subagentConfigurationBaseline
-            )
-            subagentConfigurationBaseline = saved
-            if saved != newValue { subagentConfiguration = saved }
-            if batchLimitWasExplicitlyEdited {
-                Task { @MainActor in
-                    await server.applyMainChatBatchLimit(from: saved)
-                }
-            }
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
-        ) { _ in
-            let latest = SubagentConfigurationStore.snapshot()
-            let reconciled = SubagentConfiguration.mergingEditorSnapshot(
-                subagentConfiguration,
-                loadedBaseline: subagentConfigurationBaseline,
-                live: latest
-            )
-            subagentConfigurationBaseline = latest
-            if reconciled != subagentConfiguration {
-                subagentConfiguration = reconciled
-            }
-        }
+        .onAppear { loadConfiguration() }
         // Any edit to a save-relevant identity field reschedules the
         // debounced save.
         .onChange(of: currentFormState) { _, _ in scheduleAutoSave() }
@@ -153,31 +85,10 @@ struct OrchestratorSettingsView: View {
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Orchestrator"),
-            subtitle: L("Configure the built-in agent that sets up Osaurus and delegates work")
-        ) {
-            HeaderSecondaryButton("Restore Defaults", icon: "arrow.counterclockwise") {
-                resetToDefaults()
-            }
-            .help(
-                Text(
-                    "Restore the Orchestrator's identity settings to defaults (saved automatically, like any change)",
-                    bundle: .module
-                )
-            )
-        }
-    }
-
-    /// Scrolls a freshly-landed search target into view. The control itself
-    /// glows via its `settingsLandingAnchor`; this only handles positioning.
-    private func scrollToLandingTarget(_ id: String?, proxy: ScrollViewProxy) {
-        guard let id, id.hasPrefix("settings.") else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                proxy.scrollTo(id, anchor: .center)
-            }
-        }
+        SettingsPageHeader(
+            title: "Orchestrator",
+            subtitle: "Configure the built-in agent that sets up Osaurus and delegates work"
+        )
     }
 
     // MARK: - Capability Strip
@@ -186,154 +97,105 @@ struct OrchestratorSettingsView: View {
     /// does, what it can delegate, and what you can customize — each mapping
     /// onto a section below. Replaces prose so the page reads at a glance.
     private var capabilityStrip: some View {
-        HStack(alignment: .top, spacing: 12) {
-            capabilityTile(
+        SettingsFeatureCards(features: [
+            SettingsFeature(
                 icon: "slider.horizontal.3",
                 title: "Configures Osaurus",
                 caption: "Changes settings, downloads models, and connects providers for you."
-            )
-            capabilityTile(
+            ),
+            SettingsFeature(
                 icon: "point.3.connected.trianglepath.dotted",
                 title: "Delegates work",
-                caption: "Hands real tasks to the agents listed under Subagents; each runs with its own tools."
-            )
-            capabilityTile(
+                caption: "Hands real tasks to the agents allowed in Agents → Delegation; each runs with its own tools."
+            ),
+            SettingsFeature(
                 icon: "folder",
                 title: "Works in a folder",
                 caption: "Reads its Working Folder to brief subagents; subagents write deliverables there."
-            )
-        }
-        .fixedSize(horizontal: false, vertical: true)
+            ),
+        ])
     }
 
-    private func capabilityTile(
-        icon: String, title: LocalizedStringKey, caption: LocalizedStringKey
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(theme.accentColor.opacity(theme.isDark ? 0.16 : 0.10))
-                    Image(systemName: icon)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 22, height: 22)
+    // MARK: - Subagents Link
 
-                Text(title, bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
+    /// The Orchestrator's allowed subagents and delegation limits live on
+    /// Agents → Delegation, shared with every agent.
+    private var subagentsLink: some View {
+        SettingsSection(title: "Subagents") {
+            SettingsNavigationRow(
+                icon: ManagementTab.delegation.icon,
+                title: L("Allowed Subagents and Limits"),
+                subtitle: L("Which agents the Orchestrator hands work to, whether it asks first, and how much each may do. In Agents → Delegation."),
+                anchorId: "settings.orchestrator.subagents"
+            ) {
+                withAnimation(theme.motion.quick) { managementState.selectedTab = .delegation }
             }
-
-            Text(caption, bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Identity Section
 
-    /// Display name shown by the live avatar preview: the field's current
-    /// text, falling back to the built-in name while blank.
-    private var previewName: String {
-        let trimmed = tempDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Osaurus" : trimmed
+    private var identitySection: some View {
+        BuiltInAgentIdentitySection(
+            agentId: Agent.defaultId,
+            defaultName: "Osaurus",
+            name: $tempDisplayName,
+            nameHelp: "Optional. Shown in the agent picker and chat header. Leave blank to keep \"Osaurus\".",
+            nameAnchorId: "settings.orchestrator.name",
+            avatarAnchorId: "settings.orchestrator.avatar"
+        )
     }
 
-    @ViewBuilder private var identitySection: some View {
-        SettingsSection(title: "Identity", icon: "person.text.rectangle") {
-            VStack(alignment: .leading, spacing: 20) {
-                // The name is edited next to the face it belongs to: the
-                // avatar's tint tracks the typed name live, exactly as the
-                // agent picker and chat header will render it.
-                HStack(alignment: .center, spacing: 16) {
-                    AgentAvatarView(
-                        mascotId: Agent.default.avatar,
-                        name: previewName,
-                        tint: agentColorFor(previewName),
-                        diameter: 48,
-                        customImageURL: nil,
-                        monogramFontSize: 20,
-                        borderWidth: 0,
-                        bleedsToEdge: true
-                    )
-
-                    StyledSettingsTextField(
-                        label: "Name",
-                        text: $tempDisplayName,
-                        placeholder: "Osaurus",
-                        help: "Optional. Shown in the agent picker and chat header. Leave blank to keep \"Osaurus\".",
-                        anchorId: "settings.orchestrator.name"
-                    )
-                    .frame(maxWidth: 320)
-                }
-
-                StyledOrchestratorTextArea(
-                    label: "System Prompt",
-                    text: $tempSystemPrompt,
-                    placeholder: "Enter the Orchestrator's instructions...",
-                    hint: "Optional. Persona appended to the Orchestrator's built-in instructions."
-                )
-                .settingsLandingAnchor("settings.orchestrator.systemPrompt")
-            }
+    private var instructionsSection: some View {
+        SettingsSection(title: "Instructions") {
+            StyledOrchestratorTextArea(
+                label: "System Prompt",
+                text: $tempSystemPrompt,
+                placeholder: "Enter the Orchestrator's instructions...",
+                hint: "Optional. Persona appended to the Orchestrator's built-in instructions."
+            )
+            .settingsLandingAnchor("settings.orchestrator.systemPrompt")
         }
     }
 
     // MARK: - Generation Section
 
     @ViewBuilder private var generationSection: some View {
-        SettingsSection(title: "Model & Generation", icon: "slider.horizontal.3") {
-            VStack(alignment: .leading, spacing: 20) {
-                SettingsSubsection(label: "Model readiness") {
-                    OrchestratorModelReadinessRow()
-                }
+        SettingsSection(title: "Model & Generation") {
+            OrchestratorModelReadinessRow()
 
-                SettingsSliderField(
-                    label: "Temperature",
-                    help: "Randomness (0–2). Higher = more creative",
-                    text: $tempTemperature,
-                    range: 0 ... 2,
-                    step: 0.1,
-                    defaultValue: 0.7,
-                    formatString: "%.1f",
-                    anchorId: "settings.orchestrator.temperature"
-                )
+            SettingsSliderRow(
+                label: "Temperature",
+                help: "Randomness (0–2). Leave off to use the model's own default.",
+                text: $tempTemperature,
+                range: 0 ... 2,
+                step: 0.1,
+                defaultValue: 0.7,
+                formatString: "%.1f",
+                anchorId: "settings.orchestrator.temperature"
+            )
 
-                SettingsStepperField(
-                    label: "Max Output Tokens",
-                    help:
-                        "Optional per-response output cap for the Orchestrator. Leave blank to inherit the active model bundle's generation_config maximum. This is not the model context window or KV retention.",
-                    text: $tempMaxTokens,
-                    range: 1 ... 65536,
-                    step: 1024,
-                    defaultValue: 16384,
-                    anchorId: "settings.orchestrator.maxTokens"
-                )
-            }
+            SettingsStepperRow(
+                label: "Max Output Tokens",
+                help:
+                    "Optional per-response output cap for the Orchestrator. Leave blank to inherit the active model bundle's generation_config maximum. This is not the model context window or KV retention.",
+                text: $tempMaxTokens,
+                range: 1 ... 65536,
+                step: 1024,
+                defaultValue: 16384,
+                anchorId: "settings.orchestrator.maxTokens"
+            )
         }
     }
 
     // MARK: - Success Toast
 
     private func showSuccess(_ message: String) {
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             successMessage = message
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 successMessage = nil
             }
         }
@@ -362,6 +224,7 @@ struct OrchestratorSettingsView: View {
         tempSystemPrompt = ""
         tempTemperature = ""
         tempMaxTokens = ""
+        agentManager.setBuiltInMascot(Agent.defaultAgentStockAvatar, for: Agent.defaultId)
         showSuccess(L("Orchestrator settings restored to defaults"))
     }
 
@@ -450,50 +313,16 @@ struct OrchestratorSettingsView: View {
 // MARK: - Styled Text Area
 
 /// Themed multi-line text editor with placeholder + hint, matching the
-/// Chat tab's system-prompt editor styling.
-private struct StyledOrchestratorTextArea: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
+/// Chat tab's system-prompt editor styling. Shared with Settings → Architect.
+struct StyledOrchestratorTextArea: View {
     let label: String
     @Binding var text: String
     let placeholder: String
     let hint: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
-            ZStack(alignment: .topLeading) {
-                if text.isEmpty {
-                    Text(LocalizedStringKey(placeholder), bundle: .module)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
-                        .padding(.top, 12)
-                        .padding(.leading, 16)
-                        .allowsHitTesting(false)
-                }
-
-                TextEditor(text: $text)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 160, maxHeight: 300)
-                    .padding(12)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                    )
-            )
-
-            Text(LocalizedStringKey(hint), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
+        SettingsFieldRow(label: label, hint: hint) {
+            SettingsTextEditor(text: $text, placeholder: String(localized: String.LocalizationValue(placeholder), bundle: .module), minHeight: 160, maxHeight: 300, monospaced: true)
         }
     }
 }

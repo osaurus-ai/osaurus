@@ -10,12 +10,21 @@ import AppKit
 import AAInfographics
 import UniformTypeIdentifiers
 import WebKit
+import SwiftUI
+
+/// AX activation must present the same assigned menu as pointer activation.
+private final class InspectorChartTypePopup: NSPopUpButton {
+    weak var assignedTrigger: AssignedNativePicker<EmptyView>.AssignedPickerMenuTrigger?
+    override func accessibilityPerformPress() -> Bool {
+        assignedTrigger?.accessibilityPerformPress() ?? super.accessibilityPerformPress()
+    }
+}
 
 final class NativeChartView: NSView {
 
     private let card = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
-    private let typePicker = NSPopUpButton()
+    private let typePicker = InspectorChartTypePopup()
     private let downloadButton = NSButton()
     private let noteLabel = NSTextField(labelWithString: "")
     private let chartView = AAChartView()
@@ -24,6 +33,9 @@ final class NativeChartView: NSView {
     private var hasDrawn = false
     /// Skip redundant redraws (window focus, resize) when spec hasn't changed.
     private var lastSpec: ChartSpec?
+    private var lastStyleFingerprint: Int?
+    private var pickerHeightConstraint: NSLayoutConstraint?
+    private let inspectorPicker = AssignedNativePicker<EmptyView>.AssignedPickerMenuTrigger()
     /// Chart type chosen by the user via the picker; overrides spec.chartType until a new spec arrives.
     private var chartTypeOverride: String?
     /// Cached theme so the picker action can trigger a redraw with the same theme.
@@ -73,8 +85,6 @@ final class NativeChartView: NSView {
         wantsLayer = true
 
         card.wantsLayer = true
-        card.layer?.cornerRadius = 12
-        card.layer?.borderWidth = 1
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
         NSLayoutConstraint.activate([
@@ -84,7 +94,7 @@ final class NativeChartView: NSView {
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = ThemeManager.shared.chatTheme.nsFont(.label, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(titleLabel)
@@ -97,7 +107,7 @@ final class NativeChartView: NSView {
             item.image = SymbolImageCache.image(Self.symbol(for: type), accessibilityDescription: nil)
             typePicker.menu?.addItem(item)
         }
-        typePicker.font = .systemFont(ofSize: 11)
+        typePicker.font = ThemeManager.shared.chatTheme.nsFont(.footnote)
         typePicker.controlSize = .small
         typePicker.bezelStyle = .roundRect
         typePicker.translatesAutoresizingMaskIntoConstraints = false
@@ -126,7 +136,7 @@ final class NativeChartView: NSView {
         chartView.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(chartView)
 
-        noteLabel.font = .systemFont(ofSize: 11)
+        noteLabel.font = ThemeManager.shared.chatTheme.nsFont(.footnote)
         noteLabel.isHidden = true
         noteLabel.lineBreakMode = .byWordWrapping
         noteLabel.maximumNumberOfLines = 2
@@ -186,14 +196,19 @@ final class NativeChartView: NSView {
     /// re-attach to suppress the entry animation. Picker-driven redraws
     /// always animate (see `chartTypeChanged`).
     func configure(spec: ChartSpec, theme: any ThemeProtocol, animateInitialDraw: Bool = true) {
-        let bgColor = NSColor(theme.cardBackground)
+        let theme = theme.catalogFamily(39)
+        let styleChanged = lastStyleFingerprint != theme.renderFingerprint
+        let bgColor = NSColor(theme.surface.raised)
         let bgHex = bgColor.hexString
-        let textColor = NSColor(theme.primaryText)
+        let textColor = NSColor(theme.text.primary)
 
         card.layer?.backgroundColor = bgColor.cgColor
-        card.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(0.25).cgColor
+        card.catalogAssignmentTarget(["background", "border"].map { "component.library.39." + $0 }, name: "Chart container", theme: theme)
+        card.layer?.borderColor = NSColor(theme.border.subtle).cgColor
+        card.layer?.borderWidth = theme.stroke.default
+        card.layer?.cornerRadius = theme.radius.large
         titleLabel.textColor = textColor
-        noteLabel.textColor = NSColor(theme.secondaryText)
+        noteLabel.textColor = NSColor(theme.text.secondary)
 
         titleLabel.stringValue = spec.title ?? ""
         titleLabel.isHidden = (spec.title ?? "").isEmpty
@@ -214,31 +229,88 @@ final class NativeChartView: NSView {
         cardBottomToChartConstraint?.isActive = noteLabel.isHidden
 
         lastTheme = theme
+        applyInspectionStyle(theme)
 
-        // Skip chart redraw when spec hasn't changed (handles window focus / resize)
-        guard spec != lastSpec else { return }
+        // Style-only edits need a full options refresh, preserving the user's chart type.
+        let specChanged = spec != lastSpec
+        guard specChanged || styleChanged else { return }
+        lastStyleFingerprint = theme.renderFingerprint
         lastSpec = spec
-        chartTypeOverride = nil  // new spec from model — reset any user override
+        if specChanged { chartTypeOverride = nil }
 
         // Sync picker to the spec's chart type
-        if let idx = Self.chartTypes.firstIndex(of: spec.chartType) {
+        if let idx = Self.chartTypes.firstIndex(of: chartTypeOverride ?? spec.chartType) {
             typePicker.selectItem(at: idx)
         }
 
-        redraw(spec: spec, bgHex: bgHex, textHex: textColor.hexString, theme: theme, animate: animateInitialDraw)
+        var displayed = spec
+        if let chartTypeOverride { displayed.chartType = chartTypeOverride }
+        redraw(spec: displayed, bgHex: bgHex, textHex: textColor.hexString, theme: theme, forceFullRedraw: styleChanged, animate: hasDrawn ? false : animateInitialDraw)
     }
 
     func measuredCardHeight() -> CGFloat {
-        let p = Self.cardPadding
-        let headerH: CGFloat = 24  // picker height + 4pt gap
+        let theme = lastTheme ?? CustomizableTheme.light()
+        let p = NativeComponentInspectionStyle.metric(39, "padding", Self.cardPadding, theme)
+        let headerH = max(24, pickerHeightConstraint?.constant ?? 20) + NativeComponentInspectionStyle.metric(39, "gap", theme.space.s4, theme)
         var h = p + headerH
         h += Self.chartHeight
         if noteLabel.isHidden {
             h += p
         } else {
-            h += 6 + 16 + p
+            h += NativeComponentInspectionStyle.metric(39, "gap", theme.space.s6, theme) + max(16, noteLabel.intrinsicContentSize.height) + p
         }
         return h
+    }
+
+    private func applyInspectionStyle(_ theme: any ThemeProtocol) {
+        let p = NativeComponentInspectionStyle.metric(39, "padding", Self.cardPadding, theme)
+        let gap = NativeComponentInspectionStyle.metric(39, "gap", theme.space.s6, theme)
+        NativeComponentInspectionStyle.label(titleLabel, family: 39, property: "heading", theme: theme)
+        NativeComponentInspectionStyle.label(noteLabel, family: 39, property: "text", theme: theme)
+        NativeComponentInspectionStyle.button(typePicker, family: 39, property: "caption", theme: theme)
+        typePicker.contentTintColor = NSColor(theme.text.secondary)
+        typePicker.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
+        typePicker.isBordered = false
+        downloadButton.appearance = typePicker.appearance
+        downloadButton.contentTintColor = NSColor(theme.text.secondary)
+        downloadButton.image = NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: "Save chart as image")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [NSColor(theme.text.secondary)]))
+        // NSPopUpButton draws its selected menu item's title, rather than the
+        // NSButton attributedTitle used by the other native control adapter.
+        for item in typePicker.itemArray {
+            let label = NSTextField(labelWithString: item.title)
+            label.textColor = NSColor(theme.text.secondary)
+            NativeComponentInspectionStyle.label(label, family: 39, property: "caption", theme: theme)
+            item.attributedTitle = label.attributedStringValue
+        }
+        let minH = max(NativeComponentInspectionStyle.metric(39, "height", 20, theme), theme.assignedLineHeight(NativeComponentInspectionStyle.key(39, "caption"), fallback: 16), titleLabel.isHidden ? 0 : max(titleLabel.intrinsicContentSize.height, theme.assignedLineHeight(NativeComponentInspectionStyle.key(39, "heading"), fallback: 20)))
+        if pickerHeightConstraint == nil { pickerHeightConstraint = typePicker.heightAnchor.constraint(greaterThanOrEqualToConstant: minH); pickerHeightConstraint?.isActive = true }
+        pickerHeightConstraint?.constant = minH
+        cardBottomToNoteConstraint?.constant = p; cardBottomToChartConstraint?.constant = p
+        for c in card.constraints {
+            let view = c.firstItem as? NSView
+            if view === titleLabel || view === noteLabel {
+                if c.firstAttribute == .leading || c.firstAttribute == .top { c.constant = view === noteLabel && c.firstAttribute == .top ? gap : p }
+                if c.firstAttribute == .trailing { c.constant = -p }
+            }
+            if view === typePicker, c.firstAttribute == .top { c.constant = p }
+            if view === downloadButton, c.firstAttribute == .trailing { c.constant = -p }
+            if view === chartView, c.firstAttribute == .top { c.constant = gap }
+        }
+        for (index, item) in typePicker.itemArray.enumerated() { item.target = self; item.action = #selector(inspectorChartTypeSelected(_:)); item.tag = index }
+        inspectorPicker.popup = typePicker
+        typePicker.assignedTrigger = inspectorPicker
+        inspectorPicker.recipe = AssignedNativePicker<EmptyView>.TextRecipe(theme: theme, enabled: typePicker.isEnabled, family: 5, disabledMenuIndices: [])
+        inspectorPicker.frame = typePicker.bounds
+        inspectorPicker.autoresizingMask = [.width, .height]
+        inspectorPicker.setAccessibilityLabel(L("Chart type")); inspectorPicker.setAccessibilityValue(typePicker.title)
+        typePicker.refusesFirstResponder = true; typePicker.setAccessibilityElement(false)
+        if inspectorPicker.superview !== typePicker { typePicker.addSubview(inspectorPicker) }
+    }
+    @objc private func inspectorChartTypeSelected(_ item: NSMenuItem) {
+        typePicker.selectItem(at: item.tag)
+        inspectorPicker.setAccessibilityValue(typePicker.title)
+        chartTypeChanged()
     }
 
     // MARK: - Picker action
@@ -250,8 +322,8 @@ final class NativeChartView: NSView {
         var updated = spec
         updated.chartType = chartTypeOverride!
 
-        let bgHex = NSColor(theme.cardBackground).hexString
-        let textHex = NSColor(theme.primaryText).hexString
+        let bgHex = NSColor(theme.surface.raised).hexString
+        let textHex = NSColor(theme.text.primary).hexString
         redraw(spec: updated, bgHex: bgHex, textHex: textHex, theme: theme, forceFullRedraw: true)
     }
 
@@ -354,7 +426,7 @@ final class NativeChartView: NSView {
         theme: any ThemeProtocol,
         animate: Bool = true
     ) -> (AAOptions, [AASeriesElement]) {
-        let gridHex = NSColor(theme.primaryBorder).withAlphaComponent(0.2).hexString
+        let gridHex = NSColor(theme.border.subtle).hexString
 
         // Pie charts read each slice's label from a `name` field on the data
         // point itself — they ignore the model's `categories` array. Bar/line/etc.
@@ -405,6 +477,19 @@ final class NativeChartView: NSView {
             .lineColor(gridHex)
         options.legend?.itemStyle(AAStyle().color(textHex).fontSize(12).fontWeight(.regular))
 
+        let font = theme.assignedNativeFont(NativeComponentInspectionStyle.key(39, "caption"), fallback: theme.nsFont(.caption))
+        let recipe = theme.scaledTextStyle(.caption)
+        let family = font.fontName.hasPrefix(".") ? "-apple-system, BlinkMacSystemFont, sans-serif" : (font.familyName ?? "sans-serif")
+        let style: [String: Any] = ["color": NSColor(theme.text.secondary).hexString, "fontFamily": family, "fontSize": "\(font.pointSize)px", "fontWeight": String(recipe.weight), "letterSpacing": "\(theme.assignedTracking(NativeComponentInspectionStyle.key(39, "caption")) ?? 0)px", "lineHeight": "\(theme.assignedLineHeight(NativeComponentInspectionStyle.key(39, "caption"), fallback: 16))px"]
+        if let data = try? JSONSerialization.data(withJSONObject: style, options: [.sortedKeys]), let json = String(data: data, encoding: .utf8) {
+            options.afterDrawChartJavaScript = """
+            (function(){ const style = \(json); if(typeof Highcharts === 'undefined')return; Highcharts.charts.filter(Boolean).forEach(function(chart){chart.update({xAxis:{labels:{style:style}},yAxis:{labels:{style:style}},legend:{itemStyle:style},tooltip:{style:style},plotOptions:{series:{dataLabels:{style:style}}}},false);chart.redraw(false);}); })();
+            """
+        }
+        if spec.colorsTheme == nil, var palette = model.colorsTheme, !palette.isEmpty {
+            palette[0] = NSColor(theme.border.focus).hexString
+            options.colors = palette
+        }
         return (options, seriesElements)
     }
 }

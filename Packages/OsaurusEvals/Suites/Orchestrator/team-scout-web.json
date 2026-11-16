@@ -1,0 +1,35 @@
+{
+  "id": "orchestrator.team-scout-web",
+  "domain": "orchestrator",
+  "label": "orchestrator • a current-events question goes to Scout",
+  "query": "What happened with the James Webb Space Telescope this week? Find the latest news.",
+  "notes": "Routing on, with the day-one team (Planner, Courier, Keeper, Scout) created from the bundled templates in a scratch folder. Scout owns web research and takes the Research worker's asks while it is on the team, so the Orchestrator calls `run_workflow` with \"Scout\".",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Scout"
+          }
+        }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

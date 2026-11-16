@@ -11,8 +11,9 @@
 
 import Foundation
 
-struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
+struct SandboxPluginRegisterTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     let name = "sandbox_plugin_register"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.pluginRegister }
     let description =
         "Register a sandbox plugin you created. Reads `plugin.json` from your "
         + "`plugins/{plugin_id}/` directory, installs dependencies, and makes tools available "
@@ -23,6 +24,11 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
 
     /// Registration runs plugin setup scripts inside the agent home.
     var mutatesSandboxWorkspace: Bool { true }
+
+    /// Registering adds new tools for the rest of the session and runs the
+    /// plugin's setup, so the user confirms it.
+    var requirements: [String] { [] }
+    var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
 
     var parameters: JSONValue? {
         .object([
@@ -157,8 +163,14 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
         let pluginDir = OsaurusPaths.containerWorkspace()
             .appendingPathComponent("agents/\(agentName)/plugins/\(pluginId)")
         let pluginFile = pluginDir.appendingPathComponent("plugin.json")
+        let agentDir = OsaurusPaths.containerAgentDir(agentName)
 
-        guard FileManager.default.fileExists(atPath: pluginFile.path) else {
+        // The plugin dir is guest-writable; a linked `plugins/` or plugin
+        // dir would otherwise package host files into the recipe.
+        guard SandboxAgentPathScope.parentIsContained(pluginDir, within: agentDir),
+            SandboxAgentPathScope.isRealDirectory(pluginDir),
+            let data = SandboxAgentPathScope.readContained(pluginFile, within: pluginDir)
+        else {
             return failure(
                 kind: .executionError,
                 message: "plugin.json not found at plugins/\(pluginId)/plugin.json"
@@ -167,7 +179,6 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
 
         let plugin: SandboxPlugin
         do {
-            let data = try Data(contentsOf: pluginFile)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             plugin = try decoder.decode(SandboxPlugin.self, from: data)

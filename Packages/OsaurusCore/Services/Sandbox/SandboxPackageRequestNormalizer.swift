@@ -14,6 +14,7 @@ enum SandboxPackageRequestError: Error, Equatable, LocalizedError {
     case tooLong(index: Int, maximum: Int)
     case controlCharacter(index: Int)
     case optionInjection(index: Int)
+    case nonRegistrySource(index: Int)
 
     var errorDescription: String? {
         switch self {
@@ -31,6 +32,10 @@ enum SandboxPackageRequestError: Error, Equatable, LocalizedError {
             return
                 "`packages[\(index)]` starts with `-`. Package-manager options are not "
                 + "accepted as package names."
+        case .nonRegistrySource(let index):
+            return
+                "`packages[\(index)]` points at a URL, git repository, or file path. Only package "
+                + "names from the package registry are accepted, like `yt-dlp` or `numpy>=2`."
         }
     }
 }
@@ -76,9 +81,29 @@ struct SandboxPackageRequest: Sendable, Equatable {
             guard !value.hasPrefix("-") else {
                 throw SandboxPackageRequestError.optionInjection(index: index)
             }
+            guard isRegistrySpecifier(value) else {
+                throw SandboxPackageRequestError.nonRegistrySource(index: index)
+            }
             normalized.append(value)
         }
         return SandboxPackageRequest(packages: normalized)
+    }
+
+    /// A name (with optional extras, version, or tag) the manager resolves
+    /// from its registry. URLs and schemes (`git+`, `https:`, `file:`,
+    /// `github:`), local paths, and archive files would install code the
+    /// declaration never names, outside the registry the egress policy
+    /// allows. The only `/` accepted is an npm scope, `@scope/name`.
+    static func isRegistrySpecifier(_ value: String) -> Bool {
+        let lower = value.lowercased()
+        if lower.contains(":") { return false }
+        if lower.hasPrefix(".") || lower.hasPrefix("~") || lower.hasPrefix("/") { return false }
+        if lower.contains("/") {
+            let parts = lower.split(separator: "/", omittingEmptySubsequences: false)
+            guard parts.count == 2, parts[0].hasPrefix("@"), parts[0].count > 1, !parts[1].isEmpty else { return false }
+        }
+        let archives = [".whl", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".zip", ".apk"]
+        return !archives.contains { lower.hasSuffix($0) }
     }
 
     /// POSIX single-quote encoding. Embedded apostrophes close the quoted

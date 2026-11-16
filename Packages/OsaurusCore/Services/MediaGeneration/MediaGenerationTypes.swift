@@ -349,6 +349,14 @@ struct MediaImageGenerationRequest: Sendable, Equatable {
     var seed: Int?
     var count: Int
     var format: ImageOutputFormat
+    var sampler: String? = nil
+    var scheduler: String? = nil
+    var shift: Float? = nil
+    var seeds: [UInt64]? = nil
+    var batchSize: Int = 1
+    var previewInterval: Int? = nil
+    var previewMaxPixel: Int = 256
+    var adapters: [ImageAdapterParameters] = []
 }
 
 struct MediaVideoGenerationRequest: Sendable, Equatable {
@@ -361,10 +369,30 @@ struct MediaVideoGenerationRequest: Sendable, Equatable {
     var aspectRatio: String?
     var resolution: String?
     var audio: Bool?
+    var width: Int? = nil
+    var height: Int? = nil
+    var frameCount: Int? = nil
+    var fps: Int? = nil
+    var steps: Int? = nil
+    var guidance: Float? = nil
+    var seed: UInt64? = nil
 }
 
 struct MediaVideoQuote: Codable, Sendable, Equatable {
     var usd: Double
+}
+
+struct VideoEffectiveParameters: Codable, Sendable, Equatable {
+    var width: Int
+    var height: Int
+    var frameCount: Int
+    var fps: Int
+    var steps: Int
+    var guidance: Float
+    var seed: UInt64
+    var sampler: String?
+    var scheduler: String?
+    var shift: Float?
 }
 
 struct GeneratedMedia: Sendable, Equatable {
@@ -373,6 +401,7 @@ struct GeneratedMedia: Sendable, Equatable {
     var modelID: String
     var kind: MediaGenerationKind
     var settledCostUSD: Double? = nil
+    var effectiveVideo: VideoEffectiveParameters? = nil
 }
 
 /// Price-affecting video fields bound to an HTTP quote receipt. Prompts and

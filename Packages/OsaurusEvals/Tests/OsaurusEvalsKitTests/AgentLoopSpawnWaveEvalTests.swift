@@ -167,6 +167,55 @@ struct AgentLoopSpawnWaveEvalTests {
         #expect(result.note.contains("waveSizes=[2]"))
     }
 
+    /// `spawn_agent` accepts a name, a UUID or an address; a case that pins
+    /// the fixture UUID must still pass when the model addressed the worker
+    /// by its visible name and the runtime resolved it to that UUID (Raptor
+    /// nothink lane, `route-by-agent-description`, 2026-09-29). A different
+    /// resolved worker still fails.
+    @MainActor
+    @Test func expectedTargetsAcceptResolvedNameOrUUID() {
+        func resolvedEnvelope(agentName: String, agentId: String) -> String {
+            ToolEnvelope.success(
+                tool: "spawn_agent",
+                result: [
+                    "kind": "spawn_result",
+                    "model": "test/math-model",
+                    "agent": agentName,
+                    "agent_id": agentId,
+                    "summary": "42",
+                    "session_id": UUID().uuidString,
+                    "needs_input": false,
+                ]
+            )
+        }
+        let byName = Self.transcript([
+            Self.call(
+                agent: "Agent B", input: "17 + 25",
+                result: resolvedEnvelope(agentName: "Agent B", agentId: Self.writingID),
+                step: 1
+            )
+        ])
+        let assertion = EvalCase.AgentLoopExpectations.SpawnWaveAssertion(
+            exactCallCount: 1,
+            expectedTargets: [Self.writingID],
+            expectedSucceeded: 1,
+            expectedRows: [.init(target: Self.writingID, ok: true)]
+        )
+        let scored = EvalRunner.scoreSpawnWave(assertion, transcript: byName)
+        #expect(scored.passed, "\(scored.note)")
+
+        let wrongWorker = Self.transcript([
+            Self.call(
+                agent: "Agent A", input: "17 + 25",
+                result: resolvedEnvelope(agentName: "Agent A", agentId: Self.mathID),
+                step: 1
+            )
+        ])
+        let wrong = EvalRunner.scoreSpawnWave(assertion, transcript: wrongWorker)
+        #expect(!wrong.passed)
+        #expect(wrong.note.contains("targets"))
+    }
+
     @MainActor
     @Test func sequentialCallsAreTwoWavesNotOne() {
         let sequential = Self.transcript([
@@ -225,6 +274,90 @@ struct AgentLoopSpawnWaveEvalTests {
         #expect(!scored.passed)
         #expect(scored.note.contains("failed 0 != 1"))
         #expect(scored.note.contains("row[1].ok"))
+    }
+
+    /// `continue` contract rows: row 0 is a NEEDS INPUT result carrying a
+    /// session_id, row 1 continues THAT session (case-insensitive) and
+    /// resolves. A second call that opens a fresh worker instead of
+    /// continuing, or a row that lacks a session_id, must fail the row.
+    @MainActor
+    @Test func continueRowsScoreSessionIdNeedsInputAndContinuation() {
+        let sessionId = UUID().uuidString
+        let needsInput = ToolEnvelope.success(
+            tool: "spawn_agent",
+            result: [
+                "kind": "spawn_result", "model": "m", "summary": "NEEDS INPUT: which color?",
+                "session_id": sessionId, "needs_input": true,
+            ])
+        let resolved = ToolEnvelope.success(
+            tool: "spawn_agent",
+            result: [
+                "kind": "spawn_result", "model": "m", "summary": "COLOR_BLUE",
+                "session_id": sessionId, "needs_input": false,
+            ])
+        func continuing(_ id: String, result: String, step: Int) -> AgentLoopTranscript.ToolInvocation {
+            let args = "{\"continue\":\"\(id)\",\"input\":\"blue\"}"
+            return .init(
+                name: "spawn_agent", arguments: args, resultPreview: String(result.prefix(300)),
+                wasDeduped: false, wasError: false, step: step,
+                spawnCall: AgentLoopTranscript.spawnCallObservation(
+                    tool: "spawn_agent", arguments: args, result: result),
+                spawnSummary: AgentLoopTranscript.spawnSummary(from: result, tool: "spawn_agent"))
+        }
+        let assertion = EvalCase.AgentLoopExpectations.SpawnWaveAssertion(
+            exactCallCount: 2,
+            expectedWaveSizes: [1, 1],
+            expectedRows: [
+                .init(ok: true, hasSessionId: true, needsInput: true),
+                .init(ok: true, summaryEquals: "COLOR_BLUE", hasSessionId: true,
+                      continuesEarlierRow: true, needsInput: false),
+            ]
+        )
+        let good = Self.transcript([
+            Self.call(agent: Self.mathID, input: "color token", result: needsInput, step: 1),
+            continuing(sessionId.lowercased(), result: resolved, step: 2),
+        ])
+        let scored = EvalRunner.scoreSpawnWave(assertion, transcript: good)
+        #expect(scored.passed, "\(scored.note)")
+
+        // Fresh worker instead of `continue` → continuation row fails.
+        let fresh = Self.transcript([
+            Self.call(agent: Self.mathID, input: "color token", result: needsInput, step: 1),
+            Self.call(agent: Self.mathID, input: "blue", result: resolved, step: 2),
+        ])
+        let freshScored = EvalRunner.scoreSpawnWave(assertion, transcript: fresh)
+        #expect(!freshScored.passed)
+        #expect(freshScored.note.contains("row[1]"))
+
+        // `continue` pointing at an id no earlier row returned → fails.
+        let stranger = Self.transcript([
+            Self.call(agent: Self.mathID, input: "color token", result: needsInput, step: 1),
+            continuing(UUID().uuidString, result: resolved, step: 2),
+        ])
+        #expect(!EvalRunner.scoreSpawnWave(assertion, transcript: stranger).passed)
+
+        // needs_input flag mismatch (worker answered without asking) → row 0 fails.
+        let noAsk = Self.transcript([
+            Self.call(agent: Self.mathID, input: "color token", result: resolved, step: 1),
+            continuing(sessionId, result: resolved, step: 2),
+        ])
+        let noAskScored = EvalRunner.scoreSpawnWave(assertion, transcript: noAsk)
+        #expect(!noAskScored.passed)
+        #expect(noAskScored.note.contains("needs_input"))
+
+        // Background ack row: ok + session_id present, no summary.
+        let ack = SubagentSession.backgroundAck(tool: "spawn_agent", helper: "Worker", sessionId: UUID())
+        let ackAssertion = EvalCase.AgentLoopExpectations.SpawnWaveAssertion(
+            exactCallCount: 1, expectedRows: [.init(ok: true, hasSessionId: true)])
+        let ackTranscript = Self.transcript([
+            Self.call(agent: Self.mathID, input: "bg", result: ack, step: 1)
+        ])
+        #expect(EvalRunner.scoreSpawnWave(ackAssertion, transcript: ackTranscript).passed)
+        let noIdAck = SubagentSession.backgroundAck(tool: "spawn_agent", helper: "Worker", sessionId: nil)
+        let noIdTranscript = Self.transcript([
+            Self.call(agent: Self.mathID, input: "bg", result: noIdAck, step: 1)
+        ])
+        #expect(!EvalRunner.scoreSpawnWave(ackAssertion, transcript: noIdTranscript).passed)
     }
 
     @MainActor

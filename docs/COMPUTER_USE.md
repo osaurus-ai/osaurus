@@ -54,7 +54,7 @@ gate allows the action, and whether the action actually landed.
 - **Runtime authorization (`#2258`).** `ComputerUseKind.resolveModel` re-checks
   the owning agent on every invocation and refuses with a **stage-specific**
   message: Default agent → "switch to a custom agent"; unknown agent; Tools off
-  → "turn Tools on"; flag off → "enable it under Agents → Configure → Subagents".
+  → "turn Tools on"; flag off → "enable it under Agents → the agent → Abilities → Subagents → Computer Use".
   The agent comes from `SubagentScope.current()`, which falls back to the
   Default agent when `ChatExecutionContext.currentAgentId` is unbound — so a
   surface that wants Computer Use must bind the custom agent id (the chat turn,
@@ -66,8 +66,8 @@ gate allows the action, and whether the action actually landed.
 - **Where the Orchestrator stands.** The built-in main chat never gets
   `computer_use`, and an ephemeral spawned worker strips it too. The two paths
   to drive apps are chatting with the custom agent directly, or adding that
-  agent to Settings → Delegation → Main Chat Spawn so the Orchestrator can
-  delegate to it (delegated runs keep the agent's full tool surface).
+  agent to Settings → Agents → Delegation → **Allowed subagents** so the
+  Orchestrator can delegate to it (delegated runs keep the agent's full tool surface).
 - **Permissions.** Conforms to `PermissionedTool` and requires **Accessibility**
   (`SystemPermission.accessibility`). `ToolRegistry.runPermissionGate` preflights
   the permission before `execute` runs, failing cleanly (`kind: .unavailable`)
@@ -232,7 +232,7 @@ scrubbing:
   - **`.allText` (default for cloud)** — paints opaque boxes over **every**
     recognized text region, so nothing readable leaves the device. This is what
     a consented cloud screenshot uses out of the box.
-  - **`.pii`** (opt-in via Settings → Computer Use → *Mask only detected
+  - **`.pii`** (opt-in via Settings → Computer & Browser Use → *Mask only detected
     sensitive text*) — masks only regions whose text matched a detector. For
     parity with outbound text filtering, the cloud path runs **both** the
     `RegexEntityDetector` layer built from the **user's configured Privacy
@@ -271,12 +271,12 @@ perception ladder has escalated past `ax`.
 
 Separate from the `computer_use` tool, **Screen context** gives the assistant
 ambient awareness of what you're doing *without driving anything*. It's a
-**per-agent** option nested under Computer Use (Agents → Configure → Subagents →
+**per-agent** option nested under Computer Use (Agents → the agent → Abilities → Subagents →
 *Computer Use* → *Share screen context*), **on by default** once an agent has
 Computer Use enabled. The effective value is gated by the per-agent
 `computerUseEnabled` (`screenContextEnabled && computerUseEnabled`), so an agent
 without Computer Use — including the built-in Default agent — never injects screen
-context. Settings → Computer Use → *Screen context* keeps an explainer and a live
+context. Settings → Computer & Browser Use → *Screen context* keeps an explainer and a live
 preview, but the on/off control lives on each agent.
 
 When enabled, a distilled, text-only snapshot of your screen is **frozen** on the
@@ -407,7 +407,7 @@ Vivaldi / Opera).
 
 ## UI surfaces
 
-- **Settings → Computer Use** (`Views/Settings/ComputerUseSettingsView.swift`) —
+- **Settings → Computer & Browser Use** (`Views/Settings/ComputerUseSettingsView.swift`) —
   global preset picker, per-app overrides (the picker is filtered to presets at
   least as strict as the global default, since a looser per-app rule would
   silently no-op), app allowlist, the **Cloud vision** consent toggle (off by
@@ -416,7 +416,7 @@ Vivaldi / Opera).
   Recording dependency, the **Screen context** explainer + live preview (the
   on/off control is per-agent — see below), Accessibility / Screen Recording
   permission rows, and an "Enabling Computer Use" explainer.
-- **Per-agent** (Agents → Configure → Subagents → *Computer Use*) — the
+- **Per-agent** (Agents → the agent → Abilities → Subagents → *Computer Use*) — the
   `computerUseEnabled` toggle, and nested under it the **Share screen context**
   toggle (`screenContextEnabled`, on by default) and the per-agent autonomy
   **ceiling** picker. Custom agents only.

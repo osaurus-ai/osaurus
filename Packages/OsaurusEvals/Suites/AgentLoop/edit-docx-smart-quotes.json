@@ -1,0 +1,49 @@
+{
+  "id": "agent_loop.edit-docx-smart-quotes",
+  "domain": "agent_loop",
+  "label": "agent loop • edit a .docx paragraph whose stored text has Word smart quotes and an em dash",
+  "query": "In memo.docx, in the paragraph about the payment provider, replace the quoted term \"go-live\" (including its quotes) with the plain word launch, so the sentence reads: The migration to the new payment provider is on track - the launch remains scheduled for April 14. Don't change anything else in the memo.",
+  "notes": "The stored paragraph uses “ ” curly quotes and an em dash, and Word split it across two runs. A model that types straight quotes and a hyphen must still succeed in one or two calls: DOCXEditor's normalized-punctuation cascade matches the paragraph, and the result says so. Assertions: 'launch remains scheduled for April 14' landed (with or without the article), the curly-quoted term is gone, and the untouched heading is intact.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "memo.docx",
+        "contentsFromFixture": "Documents/memo.docx"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "maxToolCalls": 6,
+      "mustCallTools": [
+        "file_edit"
+      ],
+      "mustNotCallTools": [
+        "shell_run",
+        "file_write"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_edit",
+          "minCalls": 1,
+          "maxCalls": 3,
+          "maxErrors": 1,
+          "argsMustContain": "memo.docx"
+        }
+      ],
+      "files": [
+        {
+          "path": "memo.docx",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "python3 -c \"import zipfile,re; x=zipfile.ZipFile('memo.docx').read('word/document.xml').decode(); t=''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', x)); assert 'launch remains scheduled for April 14' in t, t; assert '\\u201cgo-live\\u201d' not in t and 'go-live' not in t, t; assert 'Vendor Update Memo' in t and 'Status: Draft' in t, t\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

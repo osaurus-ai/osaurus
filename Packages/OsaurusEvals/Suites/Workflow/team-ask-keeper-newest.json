@@ -1,0 +1,65 @@
+{
+  "id": "workflow.team-ask-keeper-newest",
+  "domain": "workflow",
+  "label": "workflow • prepared ask: summarize the newest document",
+  "query": "prepared ask: summarize the newest document",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-keeper-newest",
+      "input": {},
+      "toolResults": {
+        "list": {
+          "kind": "directory",
+          "entries": [
+            {
+              "name": "IMG_2041.jpg",
+              "path": "IMG_2041.jpg",
+              "type": "file",
+              "modified": "{{date:today_start+660m}}"
+            },
+            {
+              "name": "Lease-2027.pdf",
+              "path": "Lease-2027.pdf",
+              "type": "file",
+              "modified": "{{date:today_start+600m}}"
+            }
+          ]
+        },
+        "read": {
+          "kind": "file",
+          "path": "Lease-2027.pdf",
+          "content": "Residential lease for 12 Elm Street. Rent is $2,150 per month, due on the 1st. Signature required by November 15."
+        }
+      },
+      "toolArguments": {
+        "list": {
+          "path": ".",
+          "max_depth": 1,
+          "sort": "recent"
+        },
+        "read": {
+          "path": "Lease-2027.pdf",
+          "max_chars": 12000
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "lease"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

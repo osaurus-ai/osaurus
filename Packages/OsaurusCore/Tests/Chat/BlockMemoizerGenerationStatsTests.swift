@@ -49,11 +49,50 @@ struct BlockMemoizerGenerationStatsTests {
         #expect(memoizer.blocks(from: [turn], streamingTurnId: nil, agentName: "Assistant") == before)
     }
 
+    @Test
+    func imageProgressReplacementsRefreshAtEveryStep() {
+        let turn = ChatTurn(role: .assistant, content: "")
+        let memoizer = BlockMemoizer()
+        for step in 1 ... 16 {
+            let status = "Generating image… \(step)/16"
+            turn.content = status
+            let blocks = memoizer.blocks(
+                from: [turn], streamingTurnId: turn.id, activeTurnId: turn.id,
+                agentName: "Assistant"
+            )
+            #expect(blocks.contains {
+                if case let .paragraph(_, text, _, _) = $0.kind { return text == status }
+                return false
+            })
+            #expect(memoizer.blocks(
+                from: [turn], streamingTurnId: turn.id, activeTurnId: turn.id,
+                agentName: "Assistant"
+            ) == blocks)
+        }
+    }
+
+    @Test
+    func sameLengthReplacementAndAppendRefreshWithoutChangingTurnIdentity() {
+        let turn = ChatTurn(role: .assistant, content: "blue")
+        let memoizer = BlockMemoizer()
+        _ = memoizer.blocks(from: [turn], streamingTurnId: turn.id, agentName: "Assistant")
+        turn.content = "gold"
+        turn.appendContent("!")
+        for expected in ["gold!", "green"] {
+            turn.content = expected
+            let blocks = memoizer.blocks(from: [turn], streamingTurnId: turn.id, agentName: "Assistant")
+            #expect(blocks.contains {
+                if case let .paragraph(_, text, _, _) = $0.kind { return text == expected }
+                return false
+            })
+        }
+    }
+
     private func statistics(in blocks: [ContentBlock]) throws -> (
         ttft: TimeInterval?, rate: Double?, count: Int?, unclosed: Bool, load: TimeInterval?
     ) {
         let stats = blocks.compactMap { block -> (TimeInterval?, Double?, Int?, Bool, TimeInterval?)? in
-            guard case let .generationStats(ttft, rate, count, unclosed, load, _) = block.kind else { return nil }
+            guard case let .generationStats(ttft, rate, count, unclosed, load, _, _) = block.kind else { return nil }
             return (ttft, rate, count, unclosed, load)
         }
         return try #require(stats.first)

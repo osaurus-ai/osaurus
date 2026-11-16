@@ -170,6 +170,10 @@ public actor KnowledgeIndexService {
             summary.pruned += 1
         }
 
+        // Parsing completion never implies embedding completion. The durable
+        // vector receipts also recover unchanged documents after restart.
+        await KnowledgeSearchService.shared.indexPendingChunks(collectionId: collectionId)
+
         KnowledgeLogger.index.info(
             "Indexed collection \(collection.name, privacy: .public): \(summary.indexed) indexed, \(summary.skipped) unchanged, \(summary.pruned) pruned, \(summary.failed) failed"
         )

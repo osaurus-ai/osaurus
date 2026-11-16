@@ -114,6 +114,256 @@ struct SandboxStartupMetricsTests {
     }
 
     @Test
+    func failureSamples_roundTripNewDimensionsAndDecodeLegacyShape() async throws {
+        try await withStore {
+            SandboxStartupMetricsStore.recordFailure(
+                SandboxStartupFailureSample(
+                    recordedAt: Date(timeIntervalSince1970: 10),
+                    category: "agent_provision_failed",
+                    backend: "vm",
+                    phase: "agent_provision.bootstrap_script",
+                    errorClass: "sandbox_user_creation_failed",
+                    trigger: "on_demand",
+                    coldStart: true
+                )
+            )
+            let stored = SandboxStartupMetricsStore.loadFailures()
+            #expect(stored.count == 1)
+            #expect(stored[0].errorClass == "sandbox_user_creation_failed")
+            #expect(stored[0].trigger == "on_demand")
+            #expect(stored[0].coldStart == true)
+
+            // A file written by a build that predates the new fields must
+            // still decode (fields are optional) rather than wiping history.
+            let legacy = """
+                [{"backend":"vm","category":"runtime_start_failed","phase":"runtime_start","recordedAt":0}]
+                """
+            try Data(legacy.utf8).write(
+                to: OsaurusPaths.container().appendingPathComponent("startup-failures.json")
+            )
+            let decoded = SandboxStartupMetricsStore.loadFailures()
+            #expect(decoded.count == 1)
+            #expect(decoded[0].category == "runtime_start_failed")
+            #expect(decoded[0].errorClass == nil)
+            #expect(decoded[0].trigger == nil)
+            #expect(decoded[0].coldStart == nil)
+        }
+    }
+
+    @Test
+    func failureTelemetryTokens_refinePhaseByProvisionStep() {
+        for step in SandboxProvisionStepError.Step.allCases {
+            let tokens = SandboxToolRegistrar.failureTelemetryTokens(
+                kind: .provisioningFailed,
+                backend: .virtualMachine,
+                provisionStep: step
+            )
+            #expect(tokens.category == "agent_provision_failed")
+            #expect(tokens.phase == "agent_provision.\(step.rawValue)")
+        }
+        // The step only refines the provisioning kind; startup kinds keep
+        // their own phase even if a step is (incorrectly) supplied.
+        #expect(
+            SandboxToolRegistrar.failureTelemetryTokens(
+                kind: .startupFailed,
+                backend: .virtualMachine,
+                provisionStep: .bootstrapExec
+            ).phase == "runtime_start"
+        )
+    }
+
+    @Test
+    func failureErrorClass_mapsToClosedVocabulary() {
+        let classes = Set(SandboxToolRegistrar.failureErrorClasses)
+        func check(_ error: Error?, _ expected: String) {
+            let token = SandboxToolRegistrar.failureErrorClass(for: error)
+            #expect(token == expected, "\(String(describing: error))")
+            #expect(classes.contains(token), "\(token) must be in the closed list")
+        }
+
+        check(nil, "none")
+        check(SandboxError.unavailable, "sandbox_unavailable")
+        check(SandboxError.containerNotRunning, "sandbox_container_not_running")
+        check(SandboxError.provisionFailed("x"), "sandbox_provision_failed")
+        check(SandboxError.startFailed("hint"), "sandbox_start_failed")
+        check(SandboxError.userCreationFailed("adduser: bad"), "sandbox_user_creation_failed")
+        check(SandboxError.execFailed("x"), "sandbox_exec_failed")
+        check(SandboxError.timeout, "sandbox_timeout")
+        check(SandboxError.ownershipConflict("PID 1"), "sandbox_ownership_conflict")
+        check(SandboxError.integrityCheckFailed("sha"), "sandbox_integrity_check_failed")
+        check(CancellationError(), "cancelled")
+
+        // `friendlyError` wraps the original in `startFailed`; the original
+        // must win so EEXIST stays distinguishable from EADDRINUSE.
+        check(
+            SandboxError.startFailed("Stale state", underlying: POSIXError(.EEXIST)),
+            "posix_eexist"
+        )
+        check(
+            SandboxError.startFailed("Port", underlying: POSIXError(.EADDRINUSE)),
+            "posix_eaddrinuse"
+        )
+        check(POSIXError(.EBUSY), "posix_ebusy")
+        check(POSIXError(.EACCES), "posix_eacces")
+        check(POSIXError(.EPERM), "posix_eperm")
+        check(POSIXError(.ENOSPC), "posix_enospc")
+        check(POSIXError(.EIO), "posix_other")
+
+        check(URLError(.notConnectedToInternet), "url_offline")
+        check(URLError(.timedOut), "url_timeout")
+        check(URLError(.cannotFindHost), "url_dns")
+        check(URLError(.badServerResponse), "url_other")
+
+        check(
+            NSError(domain: NSCocoaErrorDomain, code: NSFileWriteFileExistsError),
+            "cocoa_file_exists"
+        )
+        check(
+            NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError),
+            "cocoa_out_of_space"
+        )
+        check(
+            NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError),
+            "cocoa_no_permission"
+        )
+        check(NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError), "cocoa_other")
+
+        struct GRPCStatusLike: Error, CustomStringConvertible {
+            var description: String { "GRPCStatus(code: unavailable)" }
+        }
+        struct VmnetLike: Error, CustomStringConvertible {
+            var description: String { "vmnet_start_interface failed" }
+        }
+        struct Opaque: Error {}
+        check(GRPCStatusLike(), "sdk_grpc")
+        check(VmnetLike(), "sdk_vmnet")
+        check(Opaque(), "other")
+    }
+
+    @Test
+    func provisionStepError_classifiesBootstrapThrows() {
+        #expect(
+            SandboxProvisionStepError.classifyBootstrapError(
+                SandboxError.userCreationFailed("adduser")
+            ) == .bootstrapScript
+        )
+        #expect(
+            SandboxProvisionStepError.classifyBootstrapError(SandboxError.timeout)
+                == .bootstrapTimeout
+        )
+        #expect(
+            SandboxProvisionStepError.classifyBootstrapError(SandboxError.containerNotRunning)
+                == .bootstrapExec
+        )
+        struct Transport: Error {}
+        #expect(
+            SandboxProvisionStepError.classifyBootstrapError(Transport()) == .bootstrapExec
+        )
+        // The wrapper surfaces the underlying message to the user.
+        let wrapped = SandboxProvisionStepError(
+            step: .bootstrapScript,
+            underlying: SandboxError.userCreationFailed("adduser: exists")
+        )
+        #expect(wrapped.localizedDescription.contains("adduser: exists"))
+    }
+
+    @Test
+    func provisionStepError_namesTheFailedScriptLineAndHidesTheMarker() {
+        let marker = SandboxProvisionStepError.bootstrapStepMarker
+        let failed = SandboxProvisionStepError(
+            step: .bootstrapScript,
+            underlying: SandboxError.userCreationFailed("install: can't chown\n\(marker)plugins_dir\n")
+        )
+        #expect(failed.bootstrapStep == .pluginsDir)
+        #expect(!failed.localizedDescription.contains(marker))
+        #expect(failed.localizedDescription.contains("install: can't chown"))
+
+        let unmarked = SandboxProvisionStepError(
+            step: .bootstrapScript, underlying: SandboxError.userCreationFailed("killed"))
+        #expect(unmarked.bootstrapStep == .unknown)
+        let bogus = SandboxProvisionStepError(
+            step: .bootstrapScript, underlying: SandboxError.userCreationFailed("\(marker)rm -rf"))
+        #expect(bogus.bootstrapStep == .unknown)
+        let transport = SandboxProvisionStepError(step: .bootstrapExec, underlying: SandboxError.timeout)
+        #expect(transport.bootstrapStep == nil)
+    }
+
+    @Test
+    func bootstrapScript_marksEveryStepBeforeItRuns() {
+        let script = SandboxManager.agentBootstrapScript(
+            agentName: "abc", homeDir: "/workspace/agents/abc", bridgeTokenDir: "/run/osaurus",
+            token: "tok", soulSeedBody: "# soul")
+        let lines = script.split(separator: "\n").map(String.init)
+        let marks = lines.filter { $0.hasPrefix("STEP=") }.map { String($0.dropFirst(5)) }
+        #expect(marks == SandboxProvisionStepError.BootstrapStep.allCases.filter { $0 != .unknown }.map(\.rawValue))
+        #expect(script.contains("trap 'rc=$?; [ \"$rc\" -eq 0 ] || echo \"\(SandboxProvisionStepError.bootstrapStepMarker)$STEP\" >&2' EXIT"))
+        // Each mark precedes the command it names.
+        let index = { (needle: String) in lines.firstIndex { $0.contains(needle) } ?? -1 }
+        #expect(index("STEP=adduser") < index("adduser -D"))
+        #expect(index("STEP=plugins_dir") < index("install -d"))
+        #expect(index("STEP=token_write") < index("umask 0077"))
+        #expect(index("STEP=soul_seed") < index("SOUL_EOF"))
+    }
+
+    @Test
+    func perBootSetup_clearsStaleUserAdminLocksBeforeAnythingElse() {
+        let lines = SandboxManager.perBootSetupScript.split(separator: "\n").map(String.init)
+        #expect(lines.first == "set -e")
+        #expect(lines.dropFirst().first == "rm -f /etc/passwd+ /etc/group+ /etc/shadow+")
+    }
+
+    @Test
+    func userAdminFailure_namesFullDiskAndStaleLockAndKeepsTheStepMarker() {
+        let marker = SandboxProvisionStepError.bootstrapStepMarker
+        let enospc = "adduser: write error: No space left on device\n\(marker)adduser\n"
+
+        let hostFull = SandboxManager.userAdminFailureMessage(enospc, hostFreeBytes: 200 << 20)
+        #expect(hostFull.hasPrefix("Your Mac is out of disk space"))
+        let envFull = SandboxManager.userAdminFailureMessage(enospc, hostFreeBytes: 50 << 30)
+        #expect(envFull.hasPrefix("This agent's sandbox environment is full"))
+        #expect(SandboxManager.userAdminFailureMessage(enospc, hostFreeBytes: nil) == envFull)
+
+        let failed = SandboxProvisionStepError(step: .bootstrapScript, underlying: SandboxError.userCreationFailed(hostFull))
+        #expect(failed.bootstrapStep == .adduser)
+        #expect(!failed.localizedDescription.contains(marker))
+
+        let locked = SandboxManager.userAdminFailureMessage(
+            "adduser: can't create '/etc/passwd+': File exists\n", hostFreeBytes: nil)
+        #expect(locked.hasPrefix("An earlier change to this agent's sandbox users was interrupted"))
+
+        #expect(SandboxManager.userAdminFailureMessage("killed\n", hostFreeBytes: 0) == "killed\n")
+    }
+
+    @Test
+    func failureSummary_listsTokensOnly() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let full = SandboxStartupFailureSample(
+            recordedAt: now.addingTimeInterval(-3600),
+            category: "agent_provision_failed",
+            backend: "vm",
+            phase: "agent_provision.bootstrap_exec",
+            errorClass: "sandbox_timeout",
+            trigger: "agent_switch",
+            coldStart: false
+        )
+        let summary = SandboxStartupMetricsStore.failureSummary(full, now: now)
+        #expect(summary.hasPrefix("Last failure: agent_provision_failed · agent_provision.bootstrap_exec"))
+        #expect(summary.contains("sandbox_timeout"))
+        #expect(summary.contains("agent_switch"))
+        #expect(summary.contains("warm"))
+        #expect(summary.contains("vm"))
+
+        let legacy = SandboxStartupFailureSample(
+            recordedAt: now,
+            category: "runtime_start_failed",
+            backend: "seatbelt",
+            phase: "runtime_start"
+        )
+        let legacySummary = SandboxStartupMetricsStore.failureSummary(legacy, now: now)
+        #expect(legacySummary.contains("runtime_start_failed · runtime_start · seatbelt"))
+    }
+
+    @Test
     func failureTelemetryTokens_useClosedVocabulary() {
         #expect(
             SandboxToolRegistrar.failureTelemetryTokens(

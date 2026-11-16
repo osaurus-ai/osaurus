@@ -300,7 +300,9 @@ enum TelegramUpdateNormalizer {
         )
     }
 
-    static func storedMessage(_ event: TelegramNormalizedInboundEvent) -> AgentChannelStoredMessage {
+    static func storedMessage(
+        _ event: TelegramNormalizedInboundEvent, connectionId: String = connectionId
+    ) -> AgentChannelStoredMessage {
         AgentChannelStoredMessage(
             connectionId: connectionId,
             roomId: event.roomId,
@@ -396,8 +398,9 @@ final class TelegramConnectionService: @unchecked Sendable {
         messageStore: AgentChannelMessageStore.shared
     )
 
-    private static let connectionId = nativeConnectionId
-
+    /// The bot's channel connection: `telegram` for the primary bot,
+    /// `telegram-<session>` for the others (`ChannelAccounts`).
+    let connectionId: String
     private let client: TelegramAPIClientProtocol
     private let credentialStore: any TelegramCredentialStorage
     private let messageStore: AgentChannelMessageStore?
@@ -414,12 +417,14 @@ final class TelegramConnectionService: @unchecked Sendable {
     private var botReactionByMessage: [String: TelegramReactionPayload] = [:]
 
     init(
+        connectionId: String = TelegramConnectionService.nativeConnectionId,
         client: TelegramAPIClientProtocol,
         credentialStore: any TelegramCredentialStorage = KeychainTelegramCredentialStorage(),
         messageStore: AgentChannelMessageStore? = nil,
         recordMessageSnapshotsInline: Bool = false,
         activityCenter: AgentChannelInboundActivityCenter = .shared
     ) {
+        self.connectionId = connectionId
         self.client = client
         self.credentialStore = credentialStore
         self.messageStore = messageStore
@@ -428,12 +433,12 @@ final class TelegramConnectionService: @unchecked Sendable {
     }
 
     func configuration() -> TelegramConnectionConfiguration {
-        TelegramConnectionConfigurationStore.load()
+        TelegramConnectionConfigurationStore.load(connectionId: connectionId)
     }
 
     func saveConfiguration(_ configuration: TelegramConnectionConfiguration) throws {
         do {
-            try TelegramConnectionConfigurationStore.save(configuration)
+            try TelegramConnectionConfigurationStore.save(configuration, connectionId: connectionId)
         } catch {
             throw TelegramConnectionServiceError.configurationSaveFailed(error.localizedDescription)
         }
@@ -703,7 +708,7 @@ final class TelegramConnectionService: @unchecked Sendable {
             guard let messageStore else { return [] }
             do {
                 try messageStore.openIfNeeded()
-                return try messageStore.roomSummaries(connectionId: Self.connectionId)
+                return try messageStore.roomSummaries(connectionId: connectionId)
             } catch {
                 return []
             }
@@ -795,7 +800,7 @@ final class TelegramConnectionService: @unchecked Sendable {
         }
         try messageStore.openIfNeeded()
         let rows = try messageStore.recentMessages(
-            connectionId: Self.connectionId,
+            connectionId: connectionId,
             roomId: chatId,
             limit: safeLimit
         )
@@ -836,7 +841,7 @@ final class TelegramConnectionService: @unchecked Sendable {
 
         for chatId in allowedChats {
             let rows = try messageStore.recentMessages(
-                connectionId: Self.connectionId,
+                connectionId: connectionId,
                 roomId: chatId,
                 limit: safeLimit
             )
@@ -905,7 +910,7 @@ final class TelegramConnectionService: @unchecked Sendable {
                 )
             }
             await sendGate.finish(chatId: chatId)
-            recordMessages(messages.map { Self.storedMessage($0, roomId: chatId, direction: .outbound) })
+            recordMessages(messages.map { Self.storedMessage($0, connectionId: connectionId, roomId: chatId, direction: .outbound) })
             var result: [String: Any] = [
                 "kind": "telegram_message_sent",
                 "chat_id": chatId,
@@ -946,7 +951,7 @@ final class TelegramConnectionService: @unchecked Sendable {
             parseMode: "HTML",
             token: token
         )
-        recordMessages([Self.storedMessage(message, roomId: chatId, direction: .outbound)])
+        recordMessages([Self.storedMessage(message, connectionId: connectionId, roomId: chatId, direction: .outbound)])
         return [
             "kind": "telegram_message_edited",
             "chat_id": chatId,
@@ -1049,7 +1054,7 @@ final class TelegramConnectionService: @unchecked Sendable {
         }
         try messageStore.openIfNeeded()
         let cursor = try messageStore.cursor(
-            connectionId: Self.connectionId,
+            connectionId: connectionId,
             roomId: Self.updatesCursorRoomId
         )
         let offset = cursor.flatMap(Int64.init)
@@ -1095,7 +1100,7 @@ final class TelegramConnectionService: @unchecked Sendable {
             switch item {
             case .result(let result):
                 await activityCenter.record(
-                    connectionId: Self.connectionId,
+                    connectionId: connectionId,
                     providerEventId: result.providerEventId,
                     stage: .rejected,
                     reason: result.reason
@@ -1103,13 +1108,13 @@ final class TelegramConnectionService: @unchecked Sendable {
                 results.append(result)
             case .event(let event):
                 await activityCenter.record(
-                    connectionId: Self.connectionId,
+                    connectionId: connectionId,
                     providerEventId: event.providerEventId,
                     stage: .received
                 )
                 let authorization = try authorizationService.authorizeInboundMessage(
                     AgentChannelInboundMessageAuthorizationRequest(
-                        connectionId: Self.connectionId,
+                        connectionId: connectionId,
                         providerEventId: event.providerEventId,
                         providerMessageId: event.providerMessageId,
                         spaceId: "telegram",
@@ -1121,15 +1126,15 @@ final class TelegramConnectionService: @unchecked Sendable {
                     messageStore: messageStore
                 )
                 let receive = try messageStore.recordReceiveEvent(
-                    connectionId: Self.connectionId,
+                    connectionId: connectionId,
                     providerEventId: event.providerEventId,
                     authorization: authorization,
-                    message: TelegramUpdateNormalizer.storedMessage(event)
+                    message: TelegramUpdateNormalizer.storedMessage(event, connectionId: connectionId)
                 )
                 if receive.messageInserted { inserted += 1 }
                 if receive.disposition == .accepted {
                     await activityCenter.record(
-                        connectionId: Self.connectionId,
+                        connectionId: connectionId,
                         providerEventId: event.providerEventId,
                         stage: .stored
                     )
@@ -1139,7 +1144,7 @@ final class TelegramConnectionService: @unchecked Sendable {
                     switch submission {
                     case .dispatched(let target, let rule):
                         await activityCenter.record(
-                            connectionId: Self.connectionId,
+                            connectionId: connectionId,
                             providerEventId: event.providerEventId,
                             stage: .dispatched,
                             reason: await AgentChannelInboundActivityPresentation.dispatchReason(
@@ -1147,9 +1152,16 @@ final class TelegramConnectionService: @unchecked Sendable {
                                 rule: rule
                             )
                         )
+                    case .fired(let eventNames, _):
+                        await activityCenter.record(
+                            connectionId: connectionId,
+                            providerEventId: event.providerEventId,
+                            stage: .dispatched,
+                            reason: AgentChannelInboundActivityPresentation.firedReason(eventNames: eventNames)
+                        )
                     case .suppressed(let reason):
                         await activityCenter.record(
-                            connectionId: Self.connectionId,
+                            connectionId: connectionId,
                             providerEventId: event.providerEventId,
                             stage: .dispatchSuppressed,
                             reason: reason
@@ -1157,7 +1169,7 @@ final class TelegramConnectionService: @unchecked Sendable {
                     }
                 } else {
                     await activityCenter.record(
-                        connectionId: Self.connectionId,
+                        connectionId: connectionId,
                         providerEventId: event.providerEventId,
                         stage: .rejected,
                         reason: receive.authorizationReason
@@ -1176,7 +1188,7 @@ final class TelegramConnectionService: @unchecked Sendable {
         }
         if source == "long_poll", let maxUpdateId {
             try messageStore.upsertCursor(
-                connectionId: Self.connectionId,
+                connectionId: connectionId,
                 roomId: Self.updatesCursorRoomId,
                 cursor: "\(maxUpdateId + 1)"
             )
@@ -1196,19 +1208,12 @@ final class TelegramConnectionService: @unchecked Sendable {
         _ event: TelegramNormalizedInboundEvent,
         configuration: TelegramConnectionConfiguration
     ) async -> AgentChannelInboundRelaySubmission {
-        let settings = configuration.inboundDispatch
-        guard settings.isConfigured else {
-            return .suppressed("inbound_dispatch_not_configured")
-        }
-        guard !settings.requireMention else {
-            return .suppressed("telegram_mention_detection_unavailable")
-        }
         guard let senderId = event.senderId else {
             return .suppressed("inbound_sender_missing")
         }
         let identity = ChannelIdentity(
             kind: .telegram,
-            installationId: Self.connectionId,
+            installationId: connectionId,
             groupId: event.roomId,
             sender: ChannelSenderMetadata(
                 senderId: senderId,
@@ -1217,30 +1222,26 @@ final class TelegramConnectionService: @unchecked Sendable {
             trustLevel: .verified
         )
         let replyToMessageId = Int(event.providerMessageId)
-        let responder: AgentChannelInboundReplyHandler?
-        if settings.autoReplyEnabled {
-            responder = { [weak self] reply in
-                guard let self else {
-                    throw TelegramConnectionServiceError.api(
-                        "Telegram connection was released before replying."
-                    )
-                }
-                _ = try await self.sendMessage(
-                    TelegramWriteRequest(
-                        chatId: event.roomId,
-                        text: self.redactSecrets(in: reply),
-                        replyToMessageId: replyToMessageId,
-                        confirmSend: true
-                    )
+        let responder: AgentChannelInboundReplyHandler = { [weak self] reply in
+            guard let self else {
+                throw TelegramConnectionServiceError.api(
+                    "Telegram connection was released before replying."
                 )
             }
-        } else {
-            responder = nil
+            _ = try await self.sendMessage(
+                TelegramWriteRequest(
+                    chatId: event.roomId,
+                    text: self.redactSecrets(in: reply),
+                    replyToMessageId: replyToMessageId,
+                    confirmSend: true
+                )
+            )
         }
-        return await AgentChannelInboundRelay.shared.submit(
-            AgentChannelInboundRelayRequest(
+        return await EventManager.shared.ingestChannelMessage(
+            ChannelInboundMessage(
                 identity: identity,
-                connectionId: Self.connectionId,
+                kind: .telegram,
+                connectionId: connectionId,
                 providerEventId: event.providerEventId,
                 providerRoute: AgentChannelProviderRoute(
                     conversationId: event.roomId,
@@ -1248,7 +1249,6 @@ final class TelegramConnectionService: @unchecked Sendable {
                 ),
                 content: event.content,
                 attachments: event.attachments,
-                settings: settings,
                 sourceLabel: "Telegram chat \(event.roomId), sender \(senderId)",
                 reply: responder
             )
@@ -1387,6 +1387,7 @@ final class TelegramConnectionService: @unchecked Sendable {
 
     private static func storedMessage(
         _ message: TelegramMessage,
+        connectionId: String,
         roomId: String? = nil,
         direction: AgentChannelStoredMessageDirection
     ) -> AgentChannelStoredMessage {
@@ -1497,7 +1498,7 @@ actor TelegramLongPollTransportRuntime {
         self.backoffPolicy = backoffPolicy
         self.sleeper = sleeper
         self.lastHealth = AgentChannelTransportHealthState(
-            connectionId: TelegramConnectionService.nativeConnectionId,
+            connectionId: service.connectionId,
             transportId: Self.transportId,
             provider: .telegram,
             status: .idle,
@@ -1527,7 +1528,7 @@ actor TelegramLongPollTransportRuntime {
         consecutiveFailures = 0
         await publish(
             AgentChannelTransportHealthState(
-                connectionId: TelegramConnectionService.nativeConnectionId,
+                connectionId: service.connectionId,
                 transportId: Self.transportId,
                 provider: .telegram,
                 status: .idle,
@@ -1549,7 +1550,7 @@ actor TelegramLongPollTransportRuntime {
             consecutiveFailures = 0
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    connectionId: service.connectionId,
                     transportId: Self.transportId,
                     provider: .telegram,
                     status: .disabled,
@@ -1566,7 +1567,7 @@ actor TelegramLongPollTransportRuntime {
             consecutiveFailures = 0
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    connectionId: service.connectionId,
                     transportId: Self.transportId,
                     provider: .telegram,
                     status: .disabled,
@@ -1588,7 +1589,7 @@ actor TelegramLongPollTransportRuntime {
             consecutiveFailures = 0
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    connectionId: service.connectionId,
                     transportId: Self.transportId,
                     provider: .telegram,
                     status: .healthy,
@@ -1621,7 +1622,7 @@ actor TelegramLongPollTransportRuntime {
             }
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    connectionId: service.connectionId,
                     transportId: Self.transportId,
                     provider: .telegram,
                     status: .conflict,
@@ -1652,7 +1653,7 @@ actor TelegramLongPollTransportRuntime {
             )
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    connectionId: service.connectionId,
                     transportId: Self.transportId,
                     provider: .telegram,
                     status: .degraded,
@@ -1677,7 +1678,7 @@ actor TelegramLongPollTransportRuntime {
             let delay = backoffPolicy.delay(consecutiveFailures: consecutiveFailures, jitter: jitter)
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    connectionId: service.connectionId,
                     transportId: Self.transportId,
                     provider: .telegram,
                     status: .failed,

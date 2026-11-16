@@ -16,7 +16,7 @@ import Testing
 /// audio + video paths via vmlx's `UserInput.audios` / `.videos` fields.
 ///
 /// Without these tests, a refactor that drops the new cases or the
-/// extraction wiring (e.g. someone "simplifies" the `mapOpenAIChatToMLX`
+/// extraction wiring (e.g. someone "simplifies" the `makeMLXChatMessages`
 /// switch and forgets to re-pass `audios:` to `Chat.Message.init`) would
 /// be invisible at compile time — vmlx accepts the omitted parameter as
 /// the default `[]` — and silently route every audio request as
@@ -131,9 +131,9 @@ struct MultimodalContentPartTests {
         #expect(urls == ["https://a/1.mp4", "https://a/2.mp4"])
     }
 
-    // MARK: - mapOpenAIChatToMLX wiring
+    // MARK: - makeMLXChatMessages wiring
 
-    @Test("mapOpenAIChatToMLX forwards videos to Chat.Message.videos")
+    @Test("makeMLXChatMessages forwards videos to Chat.Message.videos")
     func mapping_forwardsVideos() throws {
         let json = """
             [{
@@ -146,7 +146,7 @@ struct MultimodalContentPartTests {
             """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = try ModelRuntime.makeMLXChatMessages(msgs)
         #expect(mapped.count == 1)
         #expect(mapped[0].videos.count == 1)
         // Video came in as an `https:` URL — it should propagate as
@@ -158,7 +158,7 @@ struct MultimodalContentPartTests {
         #expect(u.absoluteString == "https://example.com/clip.mp4")
     }
 
-    @Test("mapOpenAIChatToMLX materializes input_audio data into temp file URL")
+    @Test("makeMLXChatMessages materializes input_audio data into temp file URL")
     func mapping_audioMaterializesTempFile() throws {
         // 4 bytes of bogus PCM. We're not asserting decodability here —
         // vmlx's `nemotronOmniLoadAudioFile` is what does the AVAudioConverter
@@ -177,7 +177,7 @@ struct MultimodalContentPartTests {
             """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = try ModelRuntime.makeMLXChatMessages(msgs)
         #expect(mapped.count == 1)
         #expect(mapped[0].audios.count == 1)
         guard case .url(let u) = mapped[0].audios[0] else {
@@ -194,7 +194,7 @@ struct MultimodalContentPartTests {
         try? FileManager.default.removeItem(at: u)
     }
 
-    @Test("mapOpenAIChatToMLX decodes valid WAV input_audio into samples")
+    @Test("makeMLXChatMessages decodes valid WAV input_audio into samples")
     func mapping_audioWavDecodesToSamples() throws {
         let snapshot = LiveVoiceAudioSnapshot(
             samples: [-1.0, 0.0, 1.0],
@@ -211,7 +211,7 @@ struct MultimodalContentPartTests {
             """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = try ModelRuntime.makeMLXChatMessages(msgs)
 
         #expect(mapped.count == 1)
         #expect(mapped[0].audios.count == 1)
@@ -226,7 +226,7 @@ struct MultimodalContentPartTests {
         #expect(abs(samples[2] - 1.0) < 0.0001)
     }
 
-    @Test("mapOpenAIChatToMLX uses local live audio samples when present")
+    @Test("makeMLXChatMessages uses local live audio samples when present")
     func mapping_usesLocalLiveAudioSamples() throws {
         let fallbackBytes = Data([0x52, 0x49, 0x46, 0x46])
         let message = ChatMessage(
@@ -244,7 +244,7 @@ struct MultimodalContentPartTests {
             videos: []
         )
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([message])
+        let mapped = try ModelRuntime.makeMLXChatMessages([message])
 
         #expect(mapped[0].audios.count == 2)
         guard case .samples(let samples, let sampleRate) = mapped[0].audios[1] else {
@@ -256,7 +256,7 @@ struct MultimodalContentPartTests {
     }
 
     @Test(
-        "mapOpenAIChatToMLX prefers fresh preencoded live audio",
+        "makeMLXChatMessages prefers fresh preencoded live audio",
         .disabled("Requires an MLXArray fixture; local SwiftPM tests cannot load default.metallib.")
     )
     func mapping_prefersFreshPreencodedLiveAudio() throws {
@@ -288,7 +288,7 @@ struct MultimodalContentPartTests {
             videos: []
         )
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([message])
+        let mapped = try ModelRuntime.makeMLXChatMessages([message])
 
         guard case .preEncoded(let mappedSamples, let sampleRate, let mappedEmbedding) = mapped[0].audios[0] else {
             Issue.record("fresh live audio embedding should be forwarded as preEncoded")
@@ -300,7 +300,7 @@ struct MultimodalContentPartTests {
     }
 
     @Test(
-        "mapOpenAIChatToMLX ignores stale preencoded live audio",
+        "makeMLXChatMessages ignores stale preencoded live audio",
         .disabled("Requires an MLXArray fixture; local SwiftPM tests cannot load default.metallib.")
     )
     func mapping_ignoresStalePreencodedLiveAudio() throws {
@@ -331,7 +331,7 @@ struct MultimodalContentPartTests {
             videos: []
         )
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([message])
+        let mapped = try ModelRuntime.makeMLXChatMessages([message])
 
         guard case .samples(let mappedSamples, let sampleRate) = mapped[0].audios[0] else {
             Issue.record("stale live audio embedding should fall back to samples")
@@ -368,7 +368,7 @@ struct MultimodalContentPartTests {
             """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = try ModelRuntime.makeMLXChatMessages(msgs)
         #expect(mapped.count == 1)
         #expect(mapped[0].videos.count == 1)
         #expect(mapped[0].audios.count == 1)
@@ -419,7 +419,7 @@ struct MultimodalContentPartTests {
             """.data(using: .utf8)!
 
         let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX(msgs)
+        let mapped = try ModelRuntime.makeMLXChatMessages(msgs)
         #expect(mapped.count == 4)
         // Only the user message should have audio, but every role-branch
         // must compile against the new `audios:` parameter — that's what

@@ -13,6 +13,8 @@ import SwiftUI
 /// Notification posted when the active agent changes or an agent is updated
 extension Notification.Name {
     static let activeAgentChanged = Notification.Name("activeAgentChanged")
+    /// Posted when the agent NEW chats open with (`new_chat_agent`) changes.
+    static let newChatAgentChanged = Notification.Name("newChatAgentChanged")
     static let agentUpdated = Notification.Name("agentUpdated")
     /// Posted from `AgentManager.add(_:)` after the new agent is persisted
     /// and an address has been assigned (best effort). `userInfo["agentId"]`
@@ -22,9 +24,8 @@ extension Notification.Name {
     static let agentAdded = Notification.Name("agentAdded")
     /// Posted from `AgentManager.delete(id:)` after the agent record is
     /// removed. `userInfo["agentId"]` is the deleted agent's UUID.
-    /// Subscribed by `PluginManager` to push `tunnel_url=""` (so plugins
-    /// like Telegram can deregister webhooks) and to clean up per-agent
-    /// keychain secrets that would otherwise be orphaned.
+    /// Subscribed by `PluginManager` to push `tunnel_url=""` so plugins
+    /// like Telegram can deregister webhooks.
     static let agentRemoved = Notification.Name("agentRemoved")
     /// Posted by notification-tap handlers (and any future deep-link
     /// router) to drive `AgentsView` and `AgentDetailView` to a
@@ -61,7 +62,30 @@ public final class AgentManager: ObservableObject {
             // the moment the cached existence probes can become wrong.
             AvatarExistenceCache.shared.invalidateAll()
             syncIdentityRegistry()
+            Self.refreshAgentNameCache(agents)
         }
+    }
+
+    // MARK: - Nonisolated name lookup (activity log attribution)
+
+    /// `id -> name` mirror readable off the main actor. The Insights
+    /// emitters run on detached producer tasks and need a display name for
+    /// the agent that drove a request without hopping to main.
+    private nonisolated(unsafe) static var agentNameCache: [UUID: String] = [:]
+    private nonisolated static let agentNameLock = NSLock()
+
+    private nonisolated static func refreshAgentNameCache(_ agents: [Agent]) {
+        let snapshot = Dictionary(agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        agentNameLock.lock()
+        agentNameCache = snapshot
+        agentNameLock.unlock()
+    }
+
+    /// Display name for an agent id, or nil when unknown. Safe from any thread.
+    public nonisolated static func agentDisplayName(for id: UUID) -> String? {
+        agentNameLock.lock()
+        defer { agentNameLock.unlock() }
+        return agentNameCache[id]
     }
 
     /// `id -> agents` offset, so `agent(for:)` is a dictionary hit.
@@ -101,7 +125,7 @@ public final class AgentManager: ObservableObject {
 
     /// Mirror the current agents' crypto addresses / key indices into the
     /// thread-safe `AgentIdentityRegistry` so the off-main `APIKeyValidator`
-    /// builder can accept agent-scoped tokens (e.g. keys minted by `/pair`).
+    /// builder can accept agent-scoped tokens (e.g. keys minted by `/pair-invite`).
     private func syncIdentityRegistry() {
         var addresses: Set<String> = []
         var indices: Set<UInt32> = []
@@ -123,12 +147,29 @@ public final class AgentManager: ObservableObject {
         APIKeyValidatorEpoch.shared.bump()
     }
 
-    /// The currently active agent ID
+    /// The agent in the FOREGROUND chat window — moved by the chat picker,
+    /// `/agent`, and `ChatWindowState.switchAgent`. Sandbox tool registration,
+    /// MCP probes and plugin hosts key on it as "the agent the user is
+    /// looking at". It is NOT what a brand-new chat opens with; that is
+    /// `newChatAgentId`.
     @Published public private(set) var activeAgentId: UUID = Agent.defaultId
 
     /// The currently active agent
     public var activeAgent: Agent {
         agents.first { $0.id == activeAgentId } ?? Agent.default
+    }
+
+    /// The agent NEW chats open with (a new window, the menu-bar chat, the
+    /// "Ask Osaurus" App Intent). Defaults to the Orchestrator and changes
+    /// ONLY through an explicit `new_chat_agent` apply / `setNewChatAgent`:
+    /// browsing to a custom agent's chat (`switchAgent`) must never re-target
+    /// the next chat away from the Orchestrator, which is what happened while
+    /// this and `activeAgentId` were one value.
+    @Published public private(set) var newChatAgentId: UUID = Agent.defaultId
+
+    /// The agent NEW chats open with.
+    public var newChatAgent: Agent {
+        agents.first { $0.id == newChatAgentId } ?? Agent.default
     }
 
     /// Agents currently flagged as "approaching their storage
@@ -159,6 +200,13 @@ public final class AgentManager: ObservableObject {
 
     private init() {
         refresh()
+        // Not inline: the migration's saves notify observers and schedule
+        // work that read `AgentManager.shared`, which is still mid-
+        // initialization here (a recursive dispatch_once traps).
+        Task { @MainActor [weak self] in
+            self?.migrateClaudeCodeModelsToHarness()
+            self?.reassignDuplicateAddressesInBackground()
+        }
 
         // Load saved active agent
         if let savedId = loadActiveAgentId() {
@@ -166,6 +214,14 @@ public final class AgentManager: ObservableObject {
             if agents.contains(where: { $0.id == savedId }) {
                 activeAgentId = savedId
             }
+        }
+        // The new-chat agent is its own persisted choice. Nothing is
+        // inferred from `activeAgentId` (that would re-create the "browsed
+        // to a custom agent → every new chat opens there" behavior); an
+        // install that never applied `new_chat_agent` opens on the
+        // Orchestrator.
+        if let savedId = loadNewChatAgentId(), agents.contains(where: { $0.id == savedId }) {
+            newChatAgentId = savedId
         }
 
         // Auto-grow per-agent enabled tool sets when new tools register so users
@@ -281,7 +337,10 @@ public final class AgentManager: ObservableObject {
             updated.settings.spawnableAgentIDs = updated.settings.spawnableAgentIDs.filter {
                 liveIDs.contains($0)
             }
-            if updated.settings != agent.settings {
+            if let avatar = agent.avatar, let stock = AgentMascot.retiredIDs[avatar] {
+                updated.avatar = stock.rawValue
+            }
+            if updated.settings != agent.settings || updated.avatar != agent.avatar {
                 AgentStore.save(updated)
             }
             return updated
@@ -362,22 +421,30 @@ public final class AgentManager: ObservableObject {
         }
     }
 
+    /// Set the agent NEW chats open with (`new_chat_agent`). Falls back to
+    /// the Orchestrator when the agent does not exist.
+    public func setNewChatAgent(_ id: UUID) {
+        let targetId = agents.contains(where: { $0.id == id }) ? id : Agent.defaultId
+        guard newChatAgentId != targetId else { return }
+        newChatAgentId = targetId
+        saveNewChatAgentId(targetId)
+        NotificationCenter.default.post(name: .newChatAgentChanged, object: nil)
+    }
+
     /// Create a new agent
     @discardableResult
     public func create(
         name: String,
         description: String = "",
         systemPrompt: String = "",
-        themeId: UUID? = nil,
         defaultModel: String? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil
     ) -> Agent {
         let agent = Self.newCustomAgentRecord(
             name: name,
-            description: description,
+            description: AgentDescriptionPolicy.normalized(description),
             systemPrompt: systemPrompt,
-            themeId: themeId,
             defaultModel: defaultModel,
             temperature: temperature,
             maxTokens: maxTokens
@@ -393,7 +460,6 @@ public final class AgentManager: ObservableObject {
         name: String,
         description: String = "",
         systemPrompt: String = "",
-        themeId: UUID? = nil,
         defaultModel: String? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
@@ -404,7 +470,6 @@ public final class AgentManager: ObservableObject {
             name: name,
             description: description,
             systemPrompt: systemPrompt,
-            themeId: themeId,
             defaultModel: defaultModel,
             temperature: temperature,
             maxTokens: maxTokens,
@@ -413,6 +478,53 @@ public final class AgentManager: ObservableObject {
             updatedAt: now,
             autonomousExec: Self.sandboxDefaultAutonomousExec
         )
+    }
+
+    /// Creates an agent from the paired phone (`POST /agents`) with every
+    /// capability off; see `phoneAgentRecord`.
+    public func createFromPhone(
+        name: String,
+        description: String = "",
+        systemPrompt: String = "",
+        defaultModel: String? = nil
+    ) -> Agent {
+        let agent = Self.phoneAgentRecord(
+            name: name,
+            description: AgentDescriptionPolicy.normalized(description),
+            systemPrompt: systemPrompt,
+            defaultModel: defaultModel
+        )
+        add(agent)
+        return agent
+    }
+
+    /// A custom agent made on the phone. Nothing starts on (tools, web
+    /// search, memory, the sandbox): each is a deliberate switch the user
+    /// turns on afterwards, from the Mac's agent settings or from the
+    /// phone's (`PATCH /agents/{id}`, which only arrives over the Secure
+    /// Channel), never a default that comes with typing a name. The
+    /// Orchestrator and the Mac's own create flow keep the usual defaults.
+    static func phoneAgentRecord(
+        name: String,
+        description: String = "",
+        systemPrompt: String = "",
+        defaultModel: String? = nil,
+        now: Date = Date()
+    ) -> Agent {
+        var agent = newCustomAgentRecord(
+            name: name,
+            description: description,
+            systemPrompt: systemPrompt,
+            defaultModel: defaultModel,
+            now: now
+        )
+        agent.toolsEnabled = false
+        agent.memoryEnabled = false
+        // An explicit opt-out: nil would resolve to on where the sandbox runs.
+        agent.autonomousExec = AutonomousExecConfig(enabled: false)
+        agent.settings.webSearchEnabled = false
+        agent.settings.screenContextEnabled = false
+        return agent
     }
 
     /// Build the record used by the Agents UI's duplicate action.
@@ -429,11 +541,14 @@ public final class AgentManager: ObservableObject {
             id: UUID(),
             name: name,
             description: agent.description,
+            generatedDescription: agent.generatedDescription,
+            generatedDescriptionPromptHash: agent.generatedDescriptionPromptHash,
             systemPrompt: agent.systemPrompt,
-            themeId: agent.themeId,
             defaultModel: agent.defaultModel,
+            modelLocked: agent.modelLocked,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
+            generationSettings: agent.generationSettings,
             chatQuickActions: agent.chatQuickActions,
             chatGreeting: agent.chatGreeting,
             chatSubtitle: agent.chatSubtitle,
@@ -442,6 +557,7 @@ public final class AgentManager: ObservableObject {
             updatedAt: now,
             autonomousExec: agent.autonomousExec,
             claudeCode: agent.claudeCode,
+            runtime: agent.runtime,
             pluginInstructions: agent.pluginInstructions,
             // Capability configuration is part of what "duplicate" means: a
             // MANUAL agent's copy used to come back AUTO with the whole
@@ -450,24 +566,44 @@ public final class AgentManager: ObservableObject {
             // list was written and never joined it.
             toolSelectionMode: agent.toolSelectionMode,
             manualToolNames: agent.manualToolNames,
+            skillNames: agent.skillNames,
             toolsEnabled: agent.toolsEnabled,
             memoryEnabled: agent.memoryEnabled,
             avatar: agent.avatar,
             autoSpeak: agent.autoSpeak,
             ttsVoice: agent.ttsVoice,
-            settings: agent.settings
+            settings: agent.settings,
+            // A copy of a template-made agent is still that template's kin.
+            sourceTemplateName: agent.sourceTemplateName
         )
     }
 
+    /// Whether a custom agent already uses `name`, ignoring case and
+    /// surrounding whitespace. New Agent cannot create a second one.
+    func isCustomAgentNameTaken(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return agents.contains {
+            !$0.isBuiltIn
+                && $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(trimmed) == .orderedSame
+        }
+    }
+
     /// Save a pre-built agent, refresh the list, and assign a cryptographic address.
-    public func add(_ agent: Agent) {
+    public func add(_ agent: Agent, telemetryOrigin: String? = nil) {
         AgentStore.save(agent)
         refresh()
         registerInDefaultSpawnPool(agent)
-        // KPI: a user-created agent. Count only — no name or configuration.
-        // Built-in agents are seeded by the app, not created by the user.
+        // KPI: a user-created agent, plus how many agents the install now
+        // has (`refresh()` above already picked up the new record). No name
+        // or configuration. Built-in agents are seeded by the app, not
+        // created by the user.
         if !agent.isBuiltIn {
-            FeatureTelemetry.agentCreated()
+            FeatureTelemetry.agentCreated(
+                numberOfAgents: agents.count,
+                origin: telemetryOrigin ?? TelemetryContext.agentCreationOrigin ?? "user"
+            )
         }
         assignAddressInBackground(to: agent)
         // Notify subscribers (e.g. PluginManager) so plugins get an
@@ -478,6 +614,7 @@ public final class AgentManager: ObservableObject {
             object: nil,
             userInfo: ["agentId": agent.id]
         )
+        AgentDescriptionBackfill.shared.scheduleIfNeeded(agent.id)
     }
 
     /// Restore a preserved legacy agent backup and publish it like a newly
@@ -516,6 +653,11 @@ public final class AgentManager: ObservableObject {
                 config.spawnableAgentIDs.append(agent.id)
             }
         }
+        // Same universal creation hook doubles as the first-run setup
+        // marker: the agent stays flagged until a readiness check passes
+        // or the user finishes the setup checklist (see
+        // `SetupStateStore` / `SetupChecker`).
+        SetupStateStore.shared.markNeedsSetup(agent.id)
     }
 
     /// Set or replace the custom avatar image for `agentId`. Writes the bytes
@@ -541,6 +683,84 @@ public final class AgentManager: ObservableObject {
         AgentStore.removeCustomAvatar(for: agentId)
         agent.customAvatarFilename = nil
         update(agent)
+    }
+
+    // MARK: - Built-in agent avatars
+
+    /// Built-ins with an editable avatar. Their identity lives in config
+    /// stores, not `Agent.json`, so they have their own write path.
+    public static func hasEditableBuiltInAvatar(_ agentId: UUID) -> Bool {
+        agentId == Agent.defaultId || agentId == Agent.architectId
+    }
+
+    /// Picks a bundled mascot for the Orchestrator or Architect and drops
+    /// any custom image, so the mascot is what renders. Picking the stock
+    /// mascot stores nothing.
+    public func setBuiltInMascot(_ mascotId: String, for agentId: UUID) {
+        guard Self.hasEditableBuiltInAvatar(agentId) else { return }
+        let stock = agentId == Agent.defaultId ? Agent.defaultAgentStockAvatar : Agent.architectStockAvatar
+        let avatar = mascotId == stock ? nil : mascotId
+        removeBuiltInAvatarFile(for: agentId)
+        updateBuiltInIdentity(agentId) { config in
+            config.avatar = avatar
+            config.customAvatarFilename = nil
+        }
+    }
+
+    /// Stores `data` as the custom avatar image for the Orchestrator or
+    /// Architect. Returns true on success.
+    @discardableResult
+    public func setBuiltInCustomAvatar(_ data: Data, ext: String, for agentId: UUID) -> Bool {
+        guard Self.hasEditableBuiltInAvatar(agentId),
+            let filename = AgentStore.writeCustomAvatar(data, ext: ext, for: agentId)
+        else { return false }
+        updateBuiltInIdentity(agentId) { $0.customAvatarFilename = filename }
+        if let url = agent(for: agentId)?.customAvatarURL {
+            AvatarImageCache.shared.invalidate(url: url)
+        }
+        return true
+    }
+
+    /// Removes the custom avatar image, back to the chosen mascot.
+    public func clearBuiltInCustomAvatar(for agentId: UUID) {
+        guard Self.hasEditableBuiltInAvatar(agentId) else { return }
+        removeBuiltInAvatarFile(for: agentId)
+        updateBuiltInIdentity(agentId) { $0.customAvatarFilename = nil }
+    }
+
+    private func removeBuiltInAvatarFile(for agentId: UUID) {
+        if let url = agent(for: agentId)?.customAvatarURL {
+            AvatarImageCache.shared.invalidate(url: url)
+        }
+        AgentStore.removeCustomAvatar(for: agentId)
+    }
+
+    private func updateBuiltInIdentity(
+        _ agentId: UUID,
+        _ change: (inout BuiltInAvatarFields) -> Void
+    ) {
+        if agentId == Agent.defaultId {
+            var config = DefaultAgentConfigurationStore.load()
+            var fields = BuiltInAvatarFields(avatar: config.avatar, customAvatarFilename: config.customAvatarFilename)
+            change(&fields)
+            config.avatar = fields.avatar
+            config.customAvatarFilename = fields.customAvatarFilename
+            DefaultAgentConfigurationStore.save(config)
+        } else {
+            ArchitectConfigurationStore.update { config in
+                var fields = BuiltInAvatarFields(
+                    avatar: config.avatar, customAvatarFilename: config.customAvatarFilename)
+                change(&fields)
+                config.avatar = fields.avatar
+                config.customAvatarFilename = fields.customAvatarFilename
+            }
+        }
+        refresh()
+    }
+
+    private struct BuiltInAvatarFields {
+        var avatar: String?
+        var customAvatarFilename: String?
     }
 
     /// Assign sequential `order` values (0...N-1) to custom agents in the
@@ -582,6 +802,16 @@ public final class AgentManager: ObservableObject {
         }
         var updated = agent
         updated.updatedAt = Date()
+        // A background summary describes one system prompt. If this save
+        // changed the prompt, the summary is stale routing metadata: drop it
+        // here so no caller (Configure, declarative apply, tools) can leave
+        // it behind; the backfill below regenerates it.
+        if updated.generatedDescription != nil,
+            updated.generatedDescriptionPromptHash != AgentDescriptionPolicy.promptHash(updated.systemPrompt)
+        {
+            updated.generatedDescription = nil
+            updated.generatedDescriptionPromptHash = nil
+        }
         AgentStore.save(updated)
         refresh()
         // Push the storage limit + soft-warn threshold down to any
@@ -597,6 +827,7 @@ public final class AgentManager: ObservableObject {
             percent: updated.settings.limits.storageWarnPercent
         )
         NotificationCenter.default.post(name: .agentUpdated, object: agent.id)
+        AgentDescriptionBackfill.shared.scheduleIfNeeded(agent.id)
     }
 
     /// Derive and assign a cryptographic address for an agent.
@@ -633,7 +864,9 @@ public final class AgentManager: ObservableObject {
     /// synchronous result before continuing.
     func assignAddressInBackground(to agent: Agent) {
         guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
-        let path = nextUnusedKeyPath()
+        let claims = identityClaims()
+        let deviceScope = Self.currentDeviceScope()
+        let path = Self.firstUnclaimedPath(indexes: claims.indexes, deviceScope: deviceScope)
         // Park the reservation immediately (address comes later) so another
         // creation in the same window gets the next index.
         if var reserving = self.agent(for: agent.id), reserving.agentIndex == nil {
@@ -641,6 +874,7 @@ public final class AgentManager: ObservableObject {
             reserving.agentDeviceScope = path.deviceScope
             update(reserving)
         }
+        let agentId = agent.id
         Task.detached(priority: .userInitiated) {
             guard MasterKey.exists() else { return }
             let context = LAContext()
@@ -648,16 +882,28 @@ public final class AgentManager: ObservableObject {
             context.interactionNotAllowed = true
             guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
             defer { masterKeyData.zeroOut() }
-            guard let address = try? AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
+            guard
+                let minted = try? Self.deriveUnclaimedIdentity(
+                    masterKey: masterKeyData, claims: claims, deviceScope: deviceScope)
             else { return }
             await MainActor.run {
-                guard var current = AgentManager.shared.agent(for: agent.id),
-                    current.agentAddress == nil
-                else { return }
-                current.agentIndex = path.index
-                current.agentDeviceScope = path.deviceScope
-                current.agentAddress = address
-                AgentManager.shared.update(current)
+                let manager = AgentManager.shared
+                guard var current = manager.agent(for: agentId), current.agentAddress == nil else { return }
+                // Another mint may have landed on the same slot while this
+                // one derived off-main; take a fresh one instead.
+                let taken = manager.agents.contains { other in
+                    other.id != agentId
+                        && (other.agentAddress?.lowercased() == minted.address.lowercased()
+                            || other.agentIndex == minted.path.index)
+                }
+                guard !taken else {
+                    manager.assignAddressInBackground(to: current)
+                    return
+                }
+                current.agentIndex = minted.path.index
+                current.agentDeviceScope = minted.path.deviceScope
+                current.agentAddress = minted.address
+                manager.update(current)
             }
         }
     }
@@ -672,8 +918,8 @@ public final class AgentManager: ObservableObject {
         guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
         defer { masterKeyData.zeroOut() }
 
-        let path = nextUnusedKeyPath()
-        let address = try AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
+        let (path, address) = try Self.deriveUnclaimedIdentity(
+            masterKey: masterKeyData, claims: identityClaims(), deviceScope: Self.currentDeviceScope())
 
         var updated = agent
         updated.agentIndex = path.index
@@ -709,8 +955,8 @@ public final class AgentManager: ObservableObject {
         var masterKeyData = try MasterKey.getPrivateKey(context: context)
         defer { masterKeyData.zeroOut() }
 
-        let path = nextUnusedKeyPath()
-        let newAddress = try AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
+        let (path, newAddress) = try Self.deriveUnclaimedIdentity(
+            masterKey: masterKeyData, claims: identityClaims(), deviceScope: Self.currentDeviceScope())
         let previousAddress = agent.agentAddress
 
         var updated = agent
@@ -776,24 +1022,120 @@ public final class AgentManager: ObservableObject {
         return repaired
     }
 
+    /// Give every agent that shares its address with an older agent
+    /// (`IdentityHealthCheck.duplicateAddressAgents`) a fresh one. Records
+    /// minted while a build couldn't read every agent file reused the same
+    /// slot, so two agents answered to one address.
+    ///
+    /// The record changes only once a new address is derived (non-interactive
+    /// master-key read; a no-op without one). Keys for the old address are
+    /// NOT revoked: that audience still belongs to the agent that keeps it.
+    /// The re-addressed agent keeps its Remote Access setting, now served
+    /// under its new address.
+    func reassignDuplicateAddressesInBackground() {
+        let duplicateIds = IdentityHealthCheck.duplicateAddressAgents(agents).map(\.id)
+        guard !duplicateIds.isEmpty else { return }
+        let claims = identityClaims()
+        let deviceScope = Self.currentDeviceScope()
+        Task.detached(priority: .utility) {
+            guard MasterKey.exists() else { return }
+            let context = LAContext()
+            context.touchIDAuthenticationAllowableReuseDuration = 300
+            context.interactionNotAllowed = true
+            guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
+            defer { masterKeyData.zeroOut() }
+            var claimed = claims
+            var minted: [(id: UUID, path: AgentKeyPath, address: OsaurusID)] = []
+            for id in duplicateIds {
+                guard
+                    let identity = try? Self.deriveUnclaimedIdentity(
+                        masterKey: masterKeyData, claims: claimed, deviceScope: deviceScope)
+                else { return }
+                claimed.indexes.insert(identity.path.index)
+                claimed.addresses.insert(identity.address.lowercased())
+                minted.append((id, identity.path, identity.address))
+            }
+            await MainActor.run { [minted] in
+                AgentManager.shared.applyReassignedAddresses(minted)
+            }
+        }
+    }
+
+    func applyReassignedAddresses(_ minted: [(id: UUID, path: AgentKeyPath, address: OsaurusID)]) {
+        for entry in minted {
+            let stillDuplicate = IdentityHealthCheck.duplicateAddressAgents(agents).contains { $0.id == entry.id }
+            guard stillDuplicate, var current = agent(for: entry.id), agent(byAddress: entry.address) == nil,
+                !agents.contains(where: { $0.agentIndex == entry.path.index })
+            else { continue }
+            let previous = current.agentAddress ?? ""
+            current.agentIndex = entry.path.index
+            current.agentDeviceScope = entry.path.deviceScope
+            current.agentAddress = entry.address
+            update(current)
+            // After the address change, so the old address resolves to the
+            // agent that kept it.
+            RelayTunnelManager.shared.handleAddressReassigned(agentId: entry.id, sharedAddress: previous)
+            MobileConnectLog.write(
+                "identity: \(entry.id.uuidString) shared \(previous.lowercased()) with an older agent; "
+                    + "gave it \(entry.address.lowercased())"
+            )
+        }
+    }
+
+    /// Indices and addresses a freshly minted identity must not reuse: every
+    /// loaded agent's, plus those of agent files this build can't decode
+    /// (`AgentStore.reservedIdentities`).
+    struct IdentityClaims: Sendable {
+        var indexes: Set<UInt32>
+        var addresses: Set<String>
+    }
+
+    func identityClaims() -> IdentityClaims {
+        let reserved = AgentStore.reservedIdentities()
+        return IdentityClaims(
+            indexes: Set(agents.compactMap(\.agentIndex)).union(reserved.compactMap(\.index)),
+            addresses: Set(agents.compactMap { $0.agentAddress?.lowercased() })
+                .union(reserved.compactMap { $0.address?.lowercased() })
+        )
+    }
+
+    private static func currentDeviceScope() -> String? {
+        guard let scope = try? DeviceKey.currentDeviceId(), !scope.isEmpty else { return nil }
+        return scope
+    }
+
     /// The key path a freshly minted (or rotated) agent identity uses: the
     /// device-scoped v2 layout under this device's ID, at the first index
-    /// not already used by any agent in the list. Indices are never reused
-    /// because previously-derived addresses may still be referenced by
-    /// external clients holding osk-v1 tokens.
+    /// not already claimed. Indices are never reused because
+    /// previously-derived addresses may still be referenced by external
+    /// clients holding osk-v1 tokens.
     ///
     /// Device scoping is what keeps two devices sharing one master from
     /// minting the same address for their respective agent #N. Falls back to
     /// the legacy master-global layout only when this device has no device
     /// ID yet (identity setup normally attests before any agent is minted).
-    private func nextUnusedKeyPath() -> AgentKeyPath {
-        let used = Set(agents.compactMap(\.agentIndex))
+    nonisolated static func firstUnclaimedPath(indexes: Set<UInt32>, deviceScope: String?) -> AgentKeyPath {
         var index: UInt32 = 0
-        while used.contains(index) { index += 1 }
-        if let scope = try? DeviceKey.currentDeviceId(), !scope.isEmpty {
-            return .deviceScoped(index: index, deviceScope: scope)
-        }
+        while indexes.contains(index) { index += 1 }
+        if let deviceScope { return .deviceScoped(index: index, deviceScope: deviceScope) }
         return .legacy(index: index)
+    }
+
+    /// The first key path whose index and derived address no agent claims.
+    /// An index can be free while its address is not: a record minted by a
+    /// build that couldn't see every agent file may already hold it.
+    nonisolated static func deriveUnclaimedIdentity(
+        masterKey: Data,
+        claims: IdentityClaims,
+        deviceScope: String?
+    ) throws -> (path: AgentKeyPath, address: OsaurusID) {
+        var indexes = claims.indexes
+        while true {
+            let path = firstUnclaimedPath(indexes: indexes, deviceScope: deviceScope)
+            let address = try AgentKey.deriveAddress(masterKey: masterKey, path: path)
+            if !claims.addresses.contains(address.lowercased()) { return (path, address) }
+            indexes.insert(path.index)
+        }
     }
 
     /// Revoke every still-active osk-v1 access key whose audience matches
@@ -816,6 +1158,10 @@ public final class AgentManager: ObservableObject {
         if activeAgentId == id {
             setActiveAgent(Agent.defaultId)
         }
+        // …and new chats fall back to the Orchestrator.
+        if newChatAgentId == id {
+            setNewChatAgent(Agent.defaultId)
+        }
 
         // Drop the agent from the DEFAULT / main-chat spawn pool. Agent
         // UUIDs are never reused, so a stale entry would keep the
@@ -824,6 +1170,7 @@ public final class AgentManager: ObservableObject {
         _ = SubagentConfigurationStore.mutate { config in
             config.spawnableAgentIDs.removeAll { $0 == id }
         }
+        SetupStateStore.shared.clear(id)
         // …and from every remaining custom agent's own allow-list, so no
         // launcher anywhere keeps advertising a target that no longer exists.
         pruneSpawnableAgentID(id)
@@ -832,18 +1179,18 @@ public final class AgentManager: ObservableObject {
 
         // Tear down plugin state FIRST and wait for it to finish. Plugins
         // deregister webhooks inside `on_config_changed(tunnel_url="")`
-        // and read their per-agent config (e.g. Telegram's `bot_token`)
-        // while doing so — the secrets must still exist at that point.
-        // Sweeping the keychain before this call left webhooks registered
-        // upstream forever because the plugin found no token to
-        // deregister with.
+        // and read their per-agent keys and config while doing so, so both
+        // must still exist at that point.
         await PluginManager.shared.tearDownPluginsForRemovedAgent(agentId: id)
 
-        // Sweep every plugin's per-agent secrets for this agent. Without
-        // this, deleting an agent would leave its `bot_token` / OAuth
-        // credentials / `tunnel_url` / etc. in Keychain Access forever.
-        // Done only AFTER plugin teardown completed (see above).
-        ToolSecretsKeychain.deleteAllSecrets(forAgent: id)
+        // The agent's plugin config (`tunnel_url`, undeclared `config_set`
+        // values, and plugin secrets saved before Keys) would otherwise
+        // stay in the Keychain with no owner.
+        await Task.detached(priority: .utility) { ToolSecretsKeychain.deleteAllSecrets(forAgent: id) }.value
+        // The agent's own keys. Keys shared with all agents are untouched.
+        await CredentialStore.current.perform { $0.deleteAll(agentId: id) }
+        // Its sign-in session picks; the sessions stay for other agents.
+        SignInSessionStore.shared.removeAgent(id)
 
         // Remove the agent's proactive channel destinations. Agent UUIDs
         // are never reused, so leaving the bindings behind would only
@@ -919,32 +1266,6 @@ public final class AgentManager: ObservableObject {
         }
     }
 
-    /// Create the three starter agents (Coder, Researcher, Writer) from
-    /// `AgentStarterTemplate` and add them to the Orchestrator's pool. Skips
-    /// a template whose name already exists (case-insensitive) so the action
-    /// is idempotent. New agents inherit the Orchestrator's current model so
-    /// delegation never triggers a model swap out of the box.
-    @discardableResult
-    func createStarterAgents(
-        _ templates: [AgentStarterTemplate] = [.coder, .researcher, .writer]
-    ) -> [Agent] {
-        let existing = Set(agents.map { $0.name.lowercased() })
-        let model = orchestratorModelForNewAgents()
-        var created: [Agent] = []
-        for template in templates where template != .blank {
-            let name = template.defaultName
-            guard !existing.contains(name.lowercased()) else { continue }
-            let agent = create(
-                name: name,
-                description: template.tagline,
-                systemPrompt: template.systemPrompt,
-                defaultModel: model
-            )
-            created.append(agent)
-        }
-        return created
-    }
-
     /// The model a new agent inherits when none is given: the Orchestrator's
     /// current model (falling back to the chat default). Same-model workers
     /// never trigger a local model swap out of the box.
@@ -990,6 +1311,17 @@ public final class AgentManager: ObservableObject {
     private func saveActiveAgentId(_ id: UUID) {
         UserDefaults.standard.set(id.uuidString, forKey: Self.activeAgentKey)
     }
+
+    private static let newChatAgentKey = "newChatAgentId"
+
+    private func loadNewChatAgentId() -> UUID? {
+        guard let string = UserDefaults.standard.string(forKey: Self.newChatAgentKey) else { return nil }
+        return UUID(uuidString: string)
+    }
+
+    private func saveNewChatAgentId(_ id: UUID) {
+        UserDefaults.standard.set(id.uuidString, forKey: Self.newChatAgentKey)
+    }
 }
 
 // MARK: - Agent Configuration Helpers
@@ -1028,14 +1360,32 @@ extension AgentManager {
     /// own persisted value; an agent with no explicit choice defaults ON
     /// where the sandbox is supported — the chat chip is gone, so agent
     /// settings is the opt-out (which persists an explicit `enabled: false`).
+    ///
+    /// Reads availability from `SandboxManager.State.shared.availability` — the
+    /// @MainActor-cached value seeded at launch — rather than calling
+    /// `SandboxManager.resolveAvailability()` directly. The direct call crosses
+    /// a Swift actor boundary synchronously, blocking the main thread whenever
+    /// this is evaluated during SwiftUI body rendering (e.g. FloatingInputCard).
+    @MainActor
     public func effectiveAutonomousExec(for agentId: UUID) -> AutonomousExecConfig? {
+        let availability = SandboxManager.State.shared.availability
+        if agentId == BuiltInWorker.code.agentId {
+            return Self.codeWorkerAutonomousExec(availability: availability)
+        }
         guard let agent = agent(for: agentId) else {
             return nil
         }
-        return Self.resolvedAutonomousExec(
-            for: agent,
-            availability: SandboxManager.resolveAvailability()
-        )
+        return Self.resolvedAutonomousExec(for: agent, availability: availability)
+    }
+
+    /// The code worker has no `Agent.json` and no Sandbox settings to edit:
+    /// it may write, run, and install, never create plugins or call the host
+    /// back, and its network is whatever the container's other members allow.
+    static func codeWorkerAutonomousExec(availability: SandboxAvailability) -> AutonomousExecConfig? {
+        guard availability.isAvailable else { return nil }
+        return AutonomousExecConfig(
+            enabled: true, pluginCreate: false, sandboxNetworkEnabled: true, sandboxAllowedDomains: nil,
+            backgroundProcessEnabled: false, hostServicesEnabled: false)
     }
 
     /// Pure policy seam used by effective resolution and rollout tests.
@@ -1045,8 +1395,11 @@ extension AgentManager {
     ) -> AutonomousExecConfig? {
         // Single resolution point, so hard-off here also stops
         // `SandboxToolRegistrar` from provisioning a VM for the Default agent.
-        if agent.id == Agent.defaultId {
+        if agent.id == Agent.defaultId || agent.id == Agent.architectId {
             return nil
+        }
+        if agent.id == BuiltInWorker.code.agentId {
+            return codeWorkerAutonomousExec(availability: availability)
         }
 
         if let config = agent.autonomousExec {
@@ -1107,6 +1460,19 @@ extension AgentManager {
             return (config.workingFolderBookmark, config.workingFolderPath)
         }
         guard let agent = agent(for: agentId) else { return nil }
+        return workingFolder(for: agent)
+    }
+
+    /// Agent-instance overload that avoids a second `agents` array access.
+    /// Pass a pre-fetched `Agent` value to skip the `agent(for:)` lookup (and
+    /// the associated `@Published` property read) when iterating over a
+    /// snapshot of the agents array.
+    func workingFolder(for agent: Agent) -> (bookmark: Data?, path: String?)? {
+        if agent.id == Agent.defaultId {
+            let config = DefaultAgentConfigurationStore.load()
+            guard config.hasWorkingFolder else { return nil }
+            return (config.workingFolderBookmark, config.workingFolderPath)
+        }
         let hasFolder =
             agent.workingFolderBookmark != nil || agent.workingFolderPath?.isEmpty == false
         guard hasFolder else { return nil }
@@ -1164,6 +1530,7 @@ extension AgentManager {
         if agentId == Agent.defaultId {
             return DefaultAgentConfigurationStore.load().claudeCode ?? .default
         }
+        if agentId == Agent.architectId { return ArchitectConfigurationStore.load().claudeCode ?? .default }
         return agent(for: agentId)?.claudeCode ?? .default
     }
 
@@ -1177,6 +1544,8 @@ extension AgentManager {
             defaultConfig.claudeCode = config
             DefaultAgentConfigurationStore.save(defaultConfig)
             NotificationCenter.default.post(name: .agentUpdated, object: agentId)
+        } else if agentId == Agent.architectId {
+            ArchitectConfigurationStore.update { $0.claudeCode = config }
         } else {
             guard var agent = agent(for: agentId) else { return }
             agent.claudeCode = config
@@ -1191,7 +1560,15 @@ extension AgentManager {
     /// coalesced first-use task, so UI success means real tools are ready.
     /// Provisioning itself still has one owner (`SandboxToolRegistrar`);
     /// this manager never races a direct `ensureProvisioned` call against it.
-    public func updateAutonomousExec(_ config: AutonomousExecConfig?, for agentId: UUID) async throws {
+    /// `waitForSandbox: false` saves the switch and starts the sandbox without
+    /// waiting for it, as the paired phone needs: a cold boot can download for
+    /// minutes, longer than its request lives. A failure is then only logged,
+    /// as it is for the Mac's own launch-time boot.
+    public func updateAutonomousExec(
+        _ config: AutonomousExecConfig?,
+        for agentId: UUID,
+        waitForSandbox: Bool = true
+    ) async throws {
         let wasEnabled = effectiveAutonomousExec(for: agentId)?.enabled ?? false
         let willBeEnabled = config?.enabled ?? false
 
@@ -1214,33 +1591,26 @@ extension AgentManager {
             // provisioning if needed), bypassing the `setupComplete` gate that
             // keeps the default-ON chip from auto-downloading at launch.
             // `provisionOnDemand` resets the startup-failure tracking for us.
-            try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
-        }
-
-        // Mirror the per-agent egress choice onto the shared sandbox config
-        // so the next VM (re)boot honors it. The sandbox VM is shared across
-        // agents and network is a boot-time property, so this is
-        // last-writer-wins: the agent that (re)provisions the VM sets its
-        // egress, and switching to an agent with a different preference takes
-        // effect on the next provision, not mid-session.
-        if let config {
-            var sandboxConfig = SandboxConfigurationStore.load()
-            let desired = SandboxManager.reconciledNetworkSettings(
-                agentNetworkEnabled: config.sandboxNetworkEnabled,
-                allowedDomains: config.sandboxAllowedDomains
-            )
-            if sandboxConfig.network != desired.network
-                || sandboxConfig.allowedDomains != desired.allowedDomains
-            {
-                sandboxConfig.network = desired.network
-                sandboxConfig.allowedDomains = desired.allowedDomains
-                SandboxConfigurationStore.save(sandboxConfig)
+            if waitForSandbox {
+                try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+            } else {
+                Task { @MainActor in
+                    do {
+                        try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+                    } catch {
+                        print("[Osaurus] Sandbox failed to start for agent \(agentId): \(error)")
+                    }
+                }
             }
         }
+
     }
 
     /// Get the effective system prompt for an agent (combining with global if needed)
     public func effectiveSystemPrompt(for agentId: UUID) -> String {
+        if agentId == Agent.configuratorId {
+            return ConfiguratorConfigurationStore.load().systemPrompt
+        }
         guard let agent = agent(for: agentId) else {
             return DefaultAgentConfigurationStore.load().systemPrompt
         }
@@ -1253,6 +1623,12 @@ extension AgentManager {
             return DefaultAgentConfigurationStore.load().systemPrompt
         }
 
+        // The Architect's extra instructions, appended after its fixed
+        // persona by `SystemPromptComposer`.
+        if agent.id == Agent.architectId {
+            return ArchitectConfigurationStore.load().systemPrompt
+        }
+
         // Custom agents use their own system prompt
         return agent.systemPrompt
     }
@@ -1261,12 +1637,32 @@ extension AgentManager {
     /// For custom agents without a model set, falls back to global "new agent" default
     public func effectiveModel(for agentId: UUID) -> String? {
         let defaultAgentModel = DefaultAgentConfigurationStore.load().defaultModel
+        if agentId == Agent.configuratorId {
+            return ConfiguratorConfigurationStore.load().resolvedModel
+                ?? defaultAgentModel
+                ?? ChatConfigurationStore.load().defaultModel
+        }
         guard let agent = agent(for: agentId) else {
             return defaultAgentModel ?? ChatConfigurationStore.load().defaultModel
         }
+        return effectiveModel(for: agent, defaultAgentModel: defaultAgentModel)
+    }
+
+    /// Agent-instance overload that avoids a second `agents` array access.
+    /// Pass a pre-fetched `Agent` value to skip the `agent(for:)` lookup (and
+    /// the associated `@Published` property read) when iterating over a
+    /// snapshot of the agents array.
+    func effectiveModel(for agent: Agent, defaultAgentModel: String? = nil) -> String? {
+        let defaultAgentModel = defaultAgentModel ?? DefaultAgentConfigurationStore.load().defaultModel
 
         if agent.id == Agent.defaultId {
             return defaultAgentModel
+        }
+
+        if agent.id == Agent.architectId {
+            return ArchitectConfigurationStore.load().model
+                ?? defaultAgentModel
+                ?? ChatConfigurationStore.load().defaultModel
         }
 
         // Custom agent: prefer agent's own model. When unset, fall back to
@@ -1278,8 +1674,27 @@ extension AgentManager {
             ?? defaultAgentModel
     }
 
+    /// The model every chat with this agent must run on, or nil when the
+    /// agent is not locked. Only a custom agent on the built-in loop with
+    /// its own `defaultModel` can be locked; a lock with nothing to lock to
+    /// is no lock.
+    public func lockedModel(for agentId: UUID?) -> String? {
+        guard let agentId, let agent = agent(for: agentId) else { return nil }
+        return Self.lockedModel(of: agent)
+    }
+
+    static func lockedModel(of agent: Agent) -> String? {
+        guard agent.modelLocked == true, !agent.isBuiltIn, (agent.runtime ?? .builtIn) == .builtIn,
+            let model = agent.defaultModel?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty
+        else { return nil }
+        return model
+    }
+
     /// Get the effective temperature for an agent
     public func effectiveTemperature(for agentId: UUID) -> Float? {
+        if agentId == Agent.configuratorId {
+            return ConfiguratorConfigurationStore.load().temperature
+        }
         guard let agent = agent(for: agentId) else {
             return DefaultAgentConfigurationStore.load().temperature
         }
@@ -1304,6 +1719,52 @@ extension AgentManager {
         return agent.maxTokens
     }
 
+    /// Custom-agent overrides only; the built-in agent keeps its existing configuration contract.
+    public func effectiveGenerationSettings(for agentId: UUID) -> AgentGenerationSettings? {
+        guard let agent = agent(for: agentId), agent.id != Agent.defaultId else { return nil }
+        return agent.generationSettings
+    }
+
+    /// The chat picker edits an existing agent override, never the shared Server mode.
+    /// Nil removes only this override; unrelated saved generation fields remain intact.
+    public func updateSpeculativeDecoding(_ enabled: Bool?, for agentId: UUID) {
+        updateGenerationSettings(for: agentId) { $0.speculativeDecoding = enabled }
+    }
+
+    /// Existing agent reasoning overrides stay on the agent when edited in chat.
+    /// Switching control kind replaces only reasoning fields, including their JSON aliases.
+    public func updateReasoning(enableThinking: Bool?, effort: String?, for agentId: UUID) {
+        updateGenerationSettings(for: agentId) { settings in
+            settings.enableThinking = enableThinking
+            settings.reasoningEffort = effort
+            if var kwargs = settings.templateKwargs {
+                for key in ["enable_thinking", "thinking", "reasoning_effort"] {
+                    kwargs.removeValue(forKey: key)
+                }
+                settings.templateKwargs = kwargs.isEmpty ? nil : kwargs
+            }
+        }
+    }
+
+    private func updateGenerationSettings(
+        for agentId: UUID, _ update: (inout AgentGenerationSettings) -> Void
+    ) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
+        var settings = agent.generationSettings ?? AgentGenerationSettings()
+        update(&settings)
+        guard settings != (agent.generationSettings ?? AgentGenerationSettings()) else { return }
+        agent.generationSettings = settings.isEmpty ? nil : settings
+        agent.updatedAt = Date()
+        AgentStore.save(agent)
+        // A picker action changes one record; avoid re-reading every agent on the UI thread.
+        if let index = agentIndex[agentId], agents.indices.contains(index) {
+            var updatedAgents = agents
+            updatedAgents[index] = agent
+            installAgentSnapshot(updatedAgents)
+        }
+        NotificationCenter.default.post(name: .agentUpdated, object: agentId)
+    }
+
     /// Resolve every per-agent capability flag in one place, applying the
     /// default-agent overrides and global memory switch centrally. This is
     /// the single source of truth; the narrower `effective*` accessors and
@@ -1315,6 +1776,15 @@ extension AgentManager {
     /// default agent is locked to its fixed baseline.
     public func effectiveCapabilities(for agentId: UUID) -> AgentCapabilities {
         let globalMemoryEnabled = MemoryConfigurationStore.load().enabled
+
+        // The Configurator's New Agent chat: tools on (its surface is fixed
+        // in the composer), no memory recorded or injected.
+        if agentId == Agent.configuratorId {
+            return AgentCapabilities(
+                toolsEnabled: true, memoryEnabled: false, dbEnabled: false, renderChartEnabled: false,
+                speakEnabled: false, searchMemoryEnabled: false, webSearchEnabled: false,
+                selfSchedulingEnabled: false, enabledAppleApps: [])
+        }
 
         // Unknown agent or the default agent: baseline capabilities (tools
         // always available, memory from the global switch,
@@ -1337,7 +1807,11 @@ extension AgentManager {
                 // Like Computer Use, Browser Use is a custom-agent capability:
                 // the Default agent is locked to its fixed baseline and never
                 // gets browser access.
-                browserUseEnabled: false
+                browserUseEnabled: false,
+                // Apple app tools are custom-agent capabilities too: the
+                // Default agent provisions them on other agents through
+                // `osaurus_config` and never calls them itself.
+                enabledAppleApps: []
             )
         }
 
@@ -1368,7 +1842,13 @@ extension AgentManager {
             knowledgeCollectionIds: agent.settings.knowledgeCollectionIds,
             // Curator is a child of the knowledge opt-in.
             knowledgeCuratorEnabled: agent.settings.knowledgeEnabled
-                && agent.settings.knowledgeCuratorEnabled
+                && agent.settings.knowledgeCuratorEnabled,
+            enabledAppleApps: agent.settings.enabledAppleApps,
+            calculatorEnabled: agent.settings.calculatorEnabled,
+            redactionToolsEnabled: agent.settings.redactionToolsEnabled,
+            taskChecklistEnabled: agent.settings.taskChecklistEnabled,
+            clarifyEnabled: agent.settings.clarifyEnabled,
+            artifactsEnabled: agent.settings.artifactsEnabled
         )
     }
 
@@ -1436,20 +1916,6 @@ extension AgentManager {
         return agent.manualToolNames
     }
 
-    /// Get the theme ID for an agent (nil if agent uses global theme)
-    public func themeId(for agentId: UUID) -> UUID? {
-        guard let agent = agent(for: agentId) else {
-            return nil
-        }
-
-        // Default agent uses global theme
-        if agent.id == Agent.defaultId {
-            return nil
-        }
-
-        return agent.themeId
-    }
-
     /// Seed an agent's enabled tool set from the live registry the first time
     /// the user opens the new capability picker. Idempotent: only writes when the field
     /// is `nil`. Without seeding, `nil` would mean "no allowlist" at runtime — i.e. the
@@ -1477,7 +1943,11 @@ extension AgentManager {
     }
 
     /// Update the agent's enabled tool allowlist (used by the capability picker).
+    /// Built-in Apple tool names are never stored here: their only switch is
+    /// `settings.enabledAppleApps` (per app), so a stale allowlist entry can
+    /// never disagree with the Abilities toggle.
     public func updateEnabledToolNames(_ names: [String], for agentId: UUID) {
+        let names = Self.strippingAppleToolNames(names)
         if agentId == Agent.defaultId {
             var config = DefaultAgentConfigurationStore.load()
             config.manualToolNames = names
@@ -1487,6 +1957,47 @@ extension AgentManager {
         }
         guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
         agent.manualToolNames = names
+        update(agent)
+    }
+
+    /// Replace the installed workflows a custom agent may call, each as its
+    /// own `workflow_<slug>` tool. Built-ins are refused: the Orchestrator
+    /// reaches workflows through `run_workflow`, the Architect never calls them.
+    public func updateEnabledWorkflowIDs(_ ids: [UUID], for agentId: UUID) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
+        var seen = Set<UUID>()
+        let unique = ids.filter { seen.insert($0).inserted }
+        guard agent.settings.enabledWorkflowIDs != unique else { return }
+        agent.settings.enabledWorkflowIDs = unique
+        update(agent)
+    }
+
+    /// Disable a deleted workflow on every agent.
+    public func removeWorkflowFromAllAgents(_ workflowID: UUID) {
+        for agent in agents where agent.settings.enabledWorkflowIDs.contains(workflowID) {
+            updateEnabledWorkflowIDs(agent.settings.enabledWorkflowIDs.filter { $0 != workflowID }, for: agent.id)
+        }
+    }
+
+    /// Drop built-in Apple tool names from a manual allowlist.
+    static func strippingAppleToolNames(_ names: [String]) -> [String] {
+        names.filter { !AppleApp.allToolNames.contains($0) }
+    }
+
+    /// Replace the built-in Apple app families a custom agent may use. Written
+    /// by the Tools picker's Apple groups (per app, never per tool). The
+    /// Default agent never carries Apple tools, so it is refused here like
+    /// every other built-in. Any Apple tool name that leaked into the manual
+    /// allowlist (older builds, hand-edited config) is removed at the same
+    /// time so the toggle stays the single source of truth.
+    public func updateEnabledAppleApps(_ apps: Set<AppleApp>, for agentId: UUID) {
+        guard agentId != Agent.defaultId,
+            var agent = agent(for: agentId), !agent.isBuiltIn
+        else { return }
+        let cleaned = agent.manualToolNames.map(Self.strippingAppleToolNames)
+        guard agent.settings.enabledAppleApps != apps || cleaned != agent.manualToolNames else { return }
+        agent.settings.enabledAppleApps = apps
+        agent.manualToolNames = cleaned
         update(agent)
     }
 
@@ -1626,6 +2137,11 @@ extension AgentManager {
             return
         }
 
+        if agentId == Agent.architectId {
+            ArchitectConfigurationStore.update { $0.model = model }
+            return
+        }
+
         // Handle custom agents
         guard var agent = agent(for: agentId) else { return }
         guard !agent.isBuiltIn else {
@@ -1647,6 +2163,36 @@ extension AgentManager {
         } else {
             refresh()
         }
+    }
+
+    /// Turn Lock Model on or off for a custom agent.
+    public func updateModelLocked(for agentId: UUID, locked: Bool) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, (agent.modelLocked == true) != locked else { return }
+        agent.modelLocked = locked ? true : nil
+        update(agent)
+    }
+
+    /// Custom agents only: built-in agents always follow the global approval
+    /// settings (`ToolApprovalResolver.scope`).
+    public func updateToolApprovalMode(for agentId: UUID, mode: AgentToolApprovalMode) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, agent.settings.toolApprovalMode != mode else { return }
+        agent.settings.toolApprovalMode = mode
+        update(agent)
+    }
+
+    /// Sets or, with nil, clears this agent's own policy for one tool.
+    public func updateToolPolicy(for agentId: UUID, tool: String, policy: ToolPermissionPolicy?) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, agent.settings.toolPolicies[tool] != policy else {
+            return
+        }
+        agent.settings.toolPolicies[tool] = policy
+        update(agent)
+    }
+
+    public func resetToolPolicies(for agentId: UUID) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, !agent.settings.toolPolicies.isEmpty else { return }
+        agent.settings.toolPolicies = [:]
+        update(agent)
     }
 
 }

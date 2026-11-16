@@ -58,6 +58,10 @@ public struct RemoteAgent: Codable, Identifiable, Sendable, Equatable {
     /// managed without waiting for a roster fetch. nil = shared directly.
     /// Backfilled from the roster for pairings that predate this field.
     public var workspaceId: String?
+    /// Set when the owner's Osaurus refused this pairing's access key (the
+    /// guest link was revoked). Cleared by the next successful connect.
+    /// Only meaningful for direct shares; workspace pairings re-pair.
+    public var accessRevokedAt: Date?
 
     public init(
         id: UUID = UUID(),
@@ -115,5 +119,38 @@ extension RemoteAgent {
         let prefix = raw.prefix(6)
         let suffix = raw.suffix(4)
         return "\(prefix)…\(suffix)"
+    }
+}
+
+// MARK: - PairedRelayAgent
+
+/// A remote Osaurus agent that is persistently paired and reachable via the relay tunnel.
+public struct PairedRelayAgent: Identifiable, Equatable, Sendable {
+    /// The UUID of the agent on the remote Osaurus server.
+    public let id: UUID
+    /// Display name of the remote agent.
+    public let name: String
+    /// The crypto address (e.g. "0x...") used to construct the relay tunnel URL.
+    public let remoteAgentAddress: String
+    /// The local provider ID used to connect to this agent.
+    public let providerId: UUID
+    /// Mascot avatar id (e.g. "green") from the persisted `RemoteAgent` record
+    /// (refreshed from the agent's live metadata on connect), so the picker can
+    /// render the agent's own avatar instead of a generic glyph. nil = monogram
+    /// fallback on the name (e.g. a paired agent that hasn't connected yet).
+    public let avatar: String?
+
+    public init(
+        id: UUID,
+        name: String,
+        remoteAgentAddress: String,
+        providerId: UUID,
+        avatar: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.remoteAgentAddress = remoteAgentAddress
+        self.providerId = providerId
+        self.avatar = avatar
     }
 }

@@ -23,7 +23,7 @@ struct ConnectionSection: View {
             status: .engineReady,
             blurb: "Where Osaurus listens for client requests. Changes restart the server."
         ) {
-            SettingsStepperField(
+            SettingsStepperRow(
                 label: "Listening Port",
                 help: "Most clients default to 1337 (Osaurus) or 11434 (Ollama-compatible).",
                 text: $portText,
@@ -34,7 +34,7 @@ struct ConnectionSection: View {
             .onChange(of: portText) { _, _ in commitPort() }
 
             SettingsToggle(
-                title: L("Expose to Network"),
+                title: "Expose to Network",
                 description:
                     "Off binds to 127.0.0.1 (this Mac only). On binds to 0.0.0.0 so phones, iPads, and other devices on your network can connect.",
                 isOn: Binding(
@@ -43,16 +43,16 @@ struct ConnectionSection: View {
                 )
             )
 
-            StyledSettingsTextField(
+            SettingsTextFieldRow(
                 label: "Allowed Origins (CORS)",
                 text: $corsText,
                 placeholder: "* or https://app.example.com, https://other.example.com",
                 help:
-                    "Browser apps only. Loopback is always allowed. Use * to allow any origin; comma-separated otherwise."
+                    "Browser apps only. Loopback is always allowed. Use * to allow any origin; comma-separated otherwise.",
+                monospaced: true
             )
             .onChange(of: corsText) { _, _ in commitCors() }
 
-            SettingsDivider()
 
             OptionalStringField(
                 label: "Served Model Name",

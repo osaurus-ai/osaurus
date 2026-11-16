@@ -115,12 +115,14 @@ struct AgentLoopPolicy: Sendable {
 
 /// The composed message array for one model step, plus whether even a
 /// fully-compacted transcript exceeds the history budget. Returned by the
-/// `buildMessages` hook so the driver can end the run with `.overBudget`
-/// instead of sending a doomed request.
+/// `buildMessages` hook for diagnostics only. Estimates must never refuse
+/// a request; only the runtime can determine whether it actually fits.
 struct AgentLoopIterationInput {
     var messages: [ChatMessage]
     /// True when the protected first message + recent tail ALONE exceed
-    /// the history budget after every compaction lever was exhausted.
+    /// estimated history budget after every compaction lever was exhausted.
+    /// Advisory only, including when the window comes from model metadata:
+    /// message costs and the safety margin are still heuristic.
     var overBudget: Bool = false
 }
 
@@ -134,10 +136,6 @@ enum AgentLoopModelStep {
     /// mid-tool-args) and wants the same iteration replayed without
     /// charging the iteration budget.
     case retryWithoutCharge
-    /// A streamed tool call exceeded the bounded argument buffer before it
-    /// became executable. The driver gives the model one typed retry with
-    /// chunking guidance instead of decoding an unbounded file payload.
-    case oversizedToolCall(toolName: String?, argumentCharacters: Int)
     /// The runtime hit its output-token ceiling after beginning a streamed
     /// tool envelope but before committing an executable invocation. Unlike
     /// ordinary length exhaustion, this is a typed protocol failure and gets
@@ -175,11 +173,6 @@ enum AgentLoopModelStep {
     /// and because the announcement is a preamble rather than an answer, the
     /// retry's tool call reads as the natural continuation of it.
     case announcedToolCall
-    /// The stream consumer cut the turn short because the model collapsed
-    /// into a phrase-repetition loop. Recoverable once: the repeat is a
-    /// decoding failure, not an answer, so ending here would present a wall
-    /// of the same sentence as the response.
-    case repetitionLoop(phrase: String?)
     /// The turn ended by asking the user for permission to carry on ("would
     /// you like me to continue?") instead of carrying on. Only a stall when
     /// tracked work is still pending — the driver checks that before
@@ -218,16 +211,8 @@ enum AgentLoopModelStep {
         unclosedReasoning: Bool = false,
         requiresVisibleFinalResponse: Bool,
         toolsWereOffered: Bool = false,
-        content: String? = nil,
-        repetitionLoopPhrase: String? = nil
+        content: String? = nil
     ) -> Self {
-        // Checked before `stopReason`: the consumer stopped reading, so the
-        // reported terminal reason describes a stream nobody finished. A
-        // repeated sentence is never a usable answer regardless of how the
-        // generation would otherwise have ended.
-        if let repetitionLoopPhrase {
-            return .repetitionLoop(phrase: repetitionLoopPhrase.isEmpty ? nil : repetitionLoopPhrase)
-        }
         if stopReason == "length" {
             return .lengthExhausted
         }
@@ -429,11 +414,6 @@ enum AgentLoopModelStep {
     }
 }
 
-struct OversizedStreamingToolCall: Error, Sendable {
-    let toolName: String?
-    let argumentCharacters: Int
-}
-
 /// Whether a surface owes the user a normal visible answer after a
 /// reasoning-only model stop. Merely advertising tool schemas is not evidence
 /// that an agent/tool workflow occurred: ordinary direct chats may expose
@@ -518,9 +498,12 @@ struct AgentLoopHooks {
     /// for this iteration; the surface decides placement and persistence
     /// (chat appends transiently, HTTP/plugin persist into their arrays).
     /// Set `overBudget` on the returned input when even fully-compacted
-    /// history cannot fit — the driver ends the run with `.overBudget`
-    /// instead of sending a doomed request.
-    var buildMessages: (_ notices: [String]) async -> AgentLoopIterationInput
+    /// history exceeds the estimate. This is advisory: the runtime must
+    /// receive the request and report any real context-limit error.
+    /// This runs between drained model steps and fully recorded tool batches.
+    /// LLM compaction can be awaited here; failures propagate before the next
+    /// model request, without introducing a second history-rendering pass.
+    var buildMessages: (_ notices: [String]) async throws -> AgentLoopIterationInput
 
     /// Perform one model step (request build + stream/complete + delta
     /// routing) and classify the outcome. Thrown errors abort the run and
@@ -576,8 +559,10 @@ struct AgentLoopHooks {
     var executeBatch:
         ((_ calls: [(invocation: ServiceToolInvocation, callId: String)]) async -> [AgentLoopToolExecution])?
 
-    /// Called after a full batch is processed (and on batch-mode early
-    /// stops via `finishBatch`), with outcomes in original model order.
+    /// Called once after a full batch or an early serial/batch stop, with
+    /// processed outcomes in original model order. Unexecuted calls are not
+    /// represented as executed outcomes; surface intercepts retain ownership
+    /// of their own terminal result.
     /// HTTP appends its assistant `tool_calls` message + tool results
     /// here; chat persists its hidden tool turns here so transcript order
     /// always matches the model's call order.
@@ -607,6 +592,9 @@ struct AgentLoopHooks {
     /// a tool turn; this hook closes the visible assistant turn without
     /// asking the model to guess about a denied or failed side effect.
     var emitToolRejectionText: ((_ text: String) async -> Void)?
+
+    /// Terminal envelope provenance, captured before its visible summary.
+    var recordTerminalToolRejection: ((_ envelope: String) async -> Void)?
 
     /// Diagnostics side channel, fired once immediately before the run
     /// returns. Optional and observational: the loop's behaviour is
@@ -657,9 +645,14 @@ struct AgentLoopHooks {
     /// `authorizedToolNames`.
     var announcedToolCallRecovery: (() -> AgentToolLoop.AnnouncedToolCallRecovery?)?
 
+    /// How the run ended, for the Orchestrator's session-state extraction:
+    /// called once on an ordinary final, or once at the step cap. Assigned
+    /// after construction like `authorizedToolNames`.
+    var noteTurnEnding: ((_ ending: TurnEnding) async -> Void)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
-        buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
+        buildMessages: @escaping (_ notices: [String]) async throws -> AgentLoopIterationInput,
         modelStep: @escaping (_ messages: [ChatMessage], _ iteration: Int) async throws -> AgentLoopModelStep,
         prepareIncompleteReasoningContinuation: (() async -> Void)? = nil,
         prepareTrackedTaskContinuation: (() async -> Void)? = nil,
@@ -883,8 +876,8 @@ enum AgentLoopBudget {
         /// The NON-compactable prefix (system prompt, tools, memory,
         /// input — everything except conversation history and generated
         /// output, which compaction can trim) plus the response
-        /// reservation exceeds the effective budget. Such a request fails
-        /// no matter how much history is compacted.
+        /// reservation exceeds the estimated effective budget. Advisory
+        /// only: this estimate cannot establish that a request will fail.
         var hardOverflow: Bool
 
         static let empty = Assessment(usageRatio: nil, nearLimit: false, hardOverflow: false)
@@ -1006,10 +999,9 @@ enum AgentLoopBudget {
     /// Chat follows the same contract inline (it interleaves compaction
     /// telemetry and the mid-run token notice between the two steps).
     ///
-    /// The returned input carries `overBudget` (trimmed transcript still
-    /// exceeds the history budget after every compaction lever) so the
-    /// driver can end the run with `.overBudget` instead of sending a
-    /// doomed request.
+    /// The returned input carries an advisory `overBudget` estimate after
+    /// trimming. It does not authorize refusal, even for a known window;
+    /// the actual tokenizer, template, and runtime decide whether it fits.
     static func composeIterationMessages(
         _ messages: [ChatMessage],
         notices: [String],
@@ -1151,10 +1143,8 @@ enum AgentToolLoop {
         case iterationCapReached
         /// `isCancelled` returned true.
         case cancelled
-        /// `buildMessages` reported that even fully-compacted history
-        /// cannot fit the budget. The run ends WITHOUT a model step; the
-        /// surface emits a distinct "context cannot fit" envelope instead
-        /// of sending a doomed request.
+        /// Legacy surface error classification. The driver never returns
+        /// this from heuristic budget estimates; runtime errors propagate.
         case overBudget
         /// Empty-turn recovery exhausted after at least one tool result had
         /// already landed, so the task may be truncated rather than merely blank.
@@ -1162,14 +1152,11 @@ enum AgentToolLoop {
         /// The model exhausted the configured output-token budget without an
         /// executable tool call. Any visible partial text is preserved.
         case lengthExhausted
-        /// A tool call repeatedly exceeded the bounded streaming-argument
-        /// contract and never became executable.
-        case oversizedToolCallExhausted
         /// A streamed tool envelope repeatedly hit the model output ceiling
         /// before becoming executable.
         case truncatedToolCallExhausted
-        /// The model degenerated into a phrase-repetition loop and the bounded
-        /// retry did not recover it.
+        /// Legacy diagnostic value retained for existing consumers. Content
+        /// repetition no longer cancels generation or starts a recovery retry.
         case repetitionLoopExhausted
         /// Bounded recovery could not turn reasoning-only/unclosed output into
         /// a user-visible final answer.
@@ -1220,6 +1207,7 @@ enum AgentToolLoop {
         var emptyTurn: Int = 0
         var announcedToolCall: Int = 0
         var continuationRequest: Int = 0
+        /// Legacy telemetry field; no content-repetition recovery is emitted.
         var repetitionLoop: Int = 0
         var incompleteReasoning: Int = 0
 
@@ -1345,9 +1333,18 @@ enum AgentToolLoop {
         if !recovery.workspaceBlocked.isEmpty {
             text += " " + recovery.workspaceBlocked.sorted().joined(separator: ", ")
                 + " need a workspace attached to THIS chat and there is none, so no call can write, read or run "
-                + "files here; do not announce that again. Tell the user to attach a folder via the Folder chip "
-                + "(or enable Autonomous execution) and give them the content directly in your answer"
-                + (recovery.exposed.contains("share_artifact") ? " (share_artifact can carry it)." : ".")
+                + "files here; do not announce that again. "
+            // The picker-backed ask is the one actionable step when it is in
+            // the schema; otherwise the user has to reach for the chip.
+            if recovery.exposed.contains(PromptWorkingFolderTool.toolName) {
+                text += "Call prompt_working_folder now to open a folder picker for the user — the run "
+                    + "continues with the file tools once they pick; if they cancel, the turn ends "
+                    + "with a notice and the content can go directly in your next answer"
+            } else {
+                text += "Tell the user to attach a folder via the Folder chip "
+                    + "(or enable Autonomous execution) and give them the content directly in your answer"
+            }
+            text += recovery.exposed.contains("share_artifact") ? " (share_artifact can carry it)." : "."
         }
         text += " If what you described needs a tool in none of these groups, say plainly that you cannot do it "
             + "in this chat and give the user the result you have."
@@ -1374,26 +1371,6 @@ enum AgentToolLoop {
             + "instead of asking in prose."
     }
 
-    /// One retry. A model that degenerated once usually degenerates again,
-    /// and each attempt costs the user real wall-clock time.
-    static let maxRepetitionLoopRetries = 1
-
-    static func repetitionLoopNotice(phrase: String?) -> String {
-        let quoted = phrase.map { " (\"\($0)\")" } ?? ""
-        return
-            "[System Notice] Your previous turn repeated the same sentence\(quoted) over and over "
-            + "and was stopped. Repeating a plan is not progress. Do exactly ONE concrete thing "
-            + "now: emit a single tool call, or state plainly what is blocking you. Do not restate "
-            + "what you are about to do."
-    }
-
-    /// Shown when the retry degenerates too. Honest about what happened
-    /// rather than leaving a wall of repeated text as the answer.
-    static let repetitionLoopFallback =
-        "The model got stuck repeating itself and the response was stopped. "
-        + "This usually means the task is too large for one turn — try narrowing it to a single "
-        + "step, or switch to a different model."
-
     static let emptyToolTaskFallback =
         "The model returned empty output after tool execution. The agent task may be incomplete; retry with less context or continue from the latest tool result."
 
@@ -1402,26 +1379,11 @@ enum AgentToolLoop {
         + "The agent task is incomplete; increase Max Tokens, disable Thinking for this task, "
         + "or continue from the latest tool result."
 
-    // This bounds the serialized JSON envelope, not just `content`. A valid
-    // 30,000-character write made entirely of quotes or backslashes expands
-    // to roughly 60K after JSON escaping, plus path/mode framing.
-    static let maxStreamingToolArgumentCharacters = 65_536
-    static let maxOversizedToolCallRetries = 1
+    // There is deliberately no cap on streamed tool-call argument size. A
+    // 64 KiB "streaming envelope" bound used to abort any larger tool call
+    // mid-stream; the model's own output-token ceiling is the only limit,
+    // and when that cuts a call short `truncatedToolCallNotice` below says so.
     static let maxTruncatedToolCallRetries = 1
-
-    static func oversizedToolCallNotice(toolName: String?, argumentCharacters: Int) -> String {
-        let tool = toolName?.isEmpty == false ? "`\(toolName!)`" : "tool"
-        return
-            "[System Notice] The previous \(tool) call exceeded the \(argumentCharacters)-character "
-            + "streaming argument limit before it became executable. Retry with smaller calls. "
-            + "Keep each content chunk under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters. "
-            + "For a large file, write the first chunk with `file_write`, then use "
-            + "`file_write` with `mode: \"append\"` for later chunks."
-    }
-
-    static let oversizedToolCallFallback =
-        "The model repeatedly produced an oversized tool call that could not execute. "
-        + "The task is incomplete; retry with a smaller output or split large file writes into chunks."
 
     static func truncatedToolCallNotice(toolName: String?, argumentCharacters: Int) -> String {
         let tool = toolName?.isEmpty == false ? "`\(toolName!)`" : "tool"
@@ -1474,7 +1436,7 @@ enum AgentToolLoop {
     /// unfinished at the hard agent-step cap. This is driven by typed Todo
     /// state, never by classifying the model's prose.
     static func unfinishedTodoCapFallback(pending: Int) -> String {
-        "The agent reached the configured step limit with \(pending) todo item\(pending == 1 ? "" : "s") still unfinished. The task is incomplete; continue from the latest completed step or increase Max Agent Steps in Chat settings."
+        "The agent reached the configured step limit with \(pending) todo item\(pending == 1 ? "" : "s") still unfinished. The task is incomplete; continue from the latest completed step or increase Max Tool Attempts under Settings → Chat → Advanced."
     }
 
     /// The iteration-budget warning staged when the remaining budget
@@ -1551,25 +1513,6 @@ enum AgentToolLoop {
         + "using only tool results already present. Do not emit or imitate a tool call or "
         + "tool-result payload, do not claim an unexecuted step succeeded, and explicitly "
         + "identify any requested step that remains unfinished."
-
-    /// The mid-run near-limit notice (history estimate crossed ~90% of the
-    /// history budget). When a spawn tool is visible in the schema, the
-    /// notice also nudges delegation: offloading the remaining bulk
-    /// reading/research to a worker costs the parent a digest instead of
-    /// the whole transcript — exactly what a tight window needs. The nudge
-    /// is advisory (same posture as the task-state bias notices).
-    static func contextNearLimitNotice(spawnAvailable: Bool) -> String {
-        var notice =
-            "[System Notice] Context is nearly full — older messages are being compacted. "
-            + "Wrap up the current work and provide a summary."
-        if spawnAvailable {
-            notice +=
-                " If substantial reading, research, or summarization remains, delegate it via "
-                + "your spawn tool with a self-contained input — the returned digest costs a "
-                + "fraction of doing that work inline here."
-        }
-        return notice
-    }
 
     /// Staged once per run, the first time a data-movement step is refunded,
     /// so the model learns it can lean on bulk loads without burning budget.
@@ -1650,7 +1593,7 @@ enum AgentToolLoop {
         switch kind {
         case .invalidArgs, .notFound, .unavailable:
             return false
-        case .rejected, .timeout, .executionError, .toolNotFound, .userDenied:
+        case .rejected, .timeout, .executionError, .toolNotFound, .userDenied, .permissionDenied:
             return true
         }
     }
@@ -1719,7 +1662,7 @@ enum AgentToolLoop {
         guard windowSource == .userCap else { return overBudgetMessage }
         return
             "Context window cannot fit this request. The limit in force is your "
-            + "Context Window Cap (Settings → Server → Cache → Context & KV Policy), "
+            + "Context Window Cap (Settings → Server → Server Settings → Cache → Context Window Cap (tokens)), "
             + "not the model's own window — raise or clear it, or shorten the input."
     }
 
@@ -1833,8 +1776,8 @@ enum AgentToolLoop {
             }
         }
 
-        // One batch id for the whole wave so multi-file operations group
-        // in the file-operation undo log (`FileOperation.batchId`).
+        // One batch id for the whole wave so its tool calls can be
+        // correlated downstream.
         let indexed: [(Int, AgentLoopToolExecution)] = await ChatExecutionContext.$currentBatchId
             .withValue(UUID()) {
                 await ChatExecutionContext.$spawnWave.withValue(spawnWave) {
@@ -1912,12 +1855,13 @@ enum AgentToolLoop {
                 continue
             }
             do {
-                try await scoped {
+                let skipReason = try await scoped {
                     try await ToolRegistry.shared.resolvePermissionGate(
                         name: call.invocation.toolName,
                         argumentsJSON: call.invocation.jsonArguments
                     )
                 }
+                ToolApprovalAudit.record(skipReason, callId: call.callId)
                 approved.append((slot, call.invocation, call.callId))
             } catch {
                 executions[slot] = AgentLoopToolExecution(
@@ -1953,12 +1897,16 @@ enum AgentToolLoop {
     /// serial model-order execution — running siblings in parallel would
     /// let calls AFTER the intercept execute and land in history, where
     /// the serial path stops immediately.
-    static let interceptToolNames: Set<String> = ["complete", "clarify"]
+    static let interceptToolNames: Set<String> = [
+        "complete", "clarify", PromptWorkingFolderTool.toolName, WorkflowProposeSaveTool.toolName,
+    ]
 
     /// Agent-loop control calls are not user-task actions and therefore do
     /// not consume the structural tracking threshold. `share_artifact` is an
     /// action because it performs the requested delivery.
-    static let taskTrackingControlToolNames: Set<String> = ["todo", "complete", "clarify"]
+    static let taskTrackingControlToolNames: Set<String> = [
+        "todo", "complete", "clarify", PromptWorkingFolderTool.toolName,
+    ]
 
     static let taskTrackingRequiredReason = "task_tracking_required"
     static let todoProgressUpdateRequiredReason = "todo_progress_update_required"
@@ -2198,7 +2146,11 @@ enum AgentToolLoop {
     static func containsIntercept(
         _ calls: [(invocation: ServiceToolInvocation, callId: String)]
     ) -> Bool {
-        calls.contains { interceptToolNames.contains($0.invocation.toolName) }
+        calls.contains {
+            interceptToolNames.contains($0.invocation.toolName)
+                // A Work Mode workflow call can park and end the run.
+                || WorkflowToolCall.isWorkflowCall($0.invocation.toolName)
+        }
     }
 
     /// Whether a tool execution produced a SUCCESSFUL intercept — the
@@ -2373,11 +2325,37 @@ enum AgentToolLoop {
     /// `isolation` inherits the caller's actor isolation (`#isolation`) so
     /// non-Sendable hooks/state never cross an isolation boundary: chat
     /// drives the loop on the MainActor; HTTP/plugin drive it nonisolated.
+    ///
+    /// The whole run holds the local models it generates with resident
+    /// (`ConversationResidencyHold`): a tool that runs longer than the idle
+    /// setting no longer unloads the model between two steps of one turn. The
+    /// hold is released on every exit path (result, throw, cancellation), and
+    /// the idle timer then counts from the loop's end.
     static func run(
         policy: AgentLoopPolicy,
         state: AgentTaskState,
         hooks: AgentLoopHooks,
         isolation: isolated (any Actor)? = #isolation
+    ) async throws -> RunResult {
+        let hold = ConversationResidencyHold()
+        let result: RunResult
+        do {
+            result = try await ConversationResidencyHoldContext.$current.withValue(hold) {
+                try await runHoldingResidency(policy: policy, state: state, hooks: hooks, isolation: isolation)
+            }
+        } catch {
+            await ModelRuntime.shared.releaseConversationResidencyHold(hold)
+            throw error
+        }
+        await ModelRuntime.shared.releaseConversationResidencyHold(hold)
+        return result
+    }
+
+    private static func runHoldingResidency(
+        policy: AgentLoopPolicy,
+        state: AgentTaskState,
+        hooks: AgentLoopHooks,
+        isolation: isolated (any Actor)?
     ) async throws -> RunResult {
         var iteration = 0
         // The `tool_not_found` notice lists what the request may execute;
@@ -2446,8 +2424,6 @@ enum AgentToolLoop {
         // Consecutive announce-only turns (visible "let me…" preamble, no
         // call). Reset by any productive turn, for the same reason.
         var consecutiveAnnouncedToolCalls = 0
-        // Total repetition-loop recoveries this run.
-        var repetitionLoopRetries = 0
         // Consecutive "shall I continue?" hand-backs this run.
         var consecutiveContinuationRequests = 0
         // Total (not merely consecutive) reasoning-only recovery attempts.
@@ -2477,7 +2453,6 @@ enum AgentToolLoop {
                         emptyTurn: totalEmptyTurnRetries,
                         announcedToolCall: totalAnnouncedToolCallRetries,
                         continuationRequest: totalContinuationRequestRetries,
-                        repetitionLoop: repetitionLoopRetries,
                         incompleteReasoning: incompleteReasoningRetries)))
         }
 
@@ -2485,6 +2460,7 @@ enum AgentToolLoop {
         /// cancellation has been checked, so Stop/cancel retains its own
         /// terminal semantics and never gains a synthetic denial message.
         func emitToolRejection(_ outcome: AgentLoopToolOutcome) async {
+            await hooks.recordTerminalToolRejection?(outcome.result)
             await hooks.emitToolRejectionText?(ToolEnvelope.failureMessage(outcome.result))
         }
         /// Under `wrapsUpIncompleteWork`, a stop caused by a replayed
@@ -2502,10 +2478,6 @@ enum AgentToolLoop {
             return Self.repeatedRetrievalWrapUpNotice(
                 tool: outcome.invocation.toolName, failures: replays + 1)
         }
-        // Total oversized streamed-call recoveries. One typed retry gives a
-        // model a chance to switch to bounded/chunked writes without allowing
-        // another unbounded decode loop.
-        var oversizedToolCallRetries = 0
         // Separate from ordinary length exhaustion: only a stream that began
         // a real tool envelope receives this bounded protocol retry.
         var truncatedToolCallRetries = 0
@@ -2561,7 +2533,13 @@ enum AgentToolLoop {
             nil
         }
 
-        while iteration < policy.maxIterations {
+        while true {
+            if iteration >= policy.maxIterations {
+                if let note = hooks.noteTurnEnding, !(await hooks.isCancelled()) {
+                    await note(.iterationCap)
+                }
+                break
+            }
             if await hooks.isCancelled() {
                 return RunResult(exit: .cancelled, iterations: iteration)
             }
@@ -2581,13 +2559,15 @@ enum AgentToolLoop {
                 notices.append(n)
                 pendingTodoNotice = nil
             }
-            let input = await hooks.buildMessages(notices)
-            if input.overBudget {
-                // Even fully-compacted history can't fit — the request is
-                // doomed. End cleanly before the model step; the failed
-                // build doesn't charge the iteration budget.
-                return RunResult(exit: .overBudget, iterations: iteration - 1)
+            let input = try await hooks.buildMessages(notices)
+            if await hooks.isCancelled() {
+                return RunResult(exit: .cancelled, iterations: iteration - 1)
             }
+            // Budget estimates advise compaction and diagnostics, never
+            // admission. Even a metadata-sourced window is compared against
+            // heuristic token counts, reservations, and a safety margin.
+            // Unknown windows must also reach the runtime; its real context
+            // error propagates through modelStep's normal error path.
 
             let step = try await hooks.modelStep(input.messages, iteration)
             // `modelStep` may return because the user pressed Stop and the
@@ -2614,7 +2594,8 @@ enum AgentToolLoop {
                     let visibleText = await finalVisibleText(),
                     let notice = GroundedConfigClaimCheck.notice(
                         finalText: visibleText,
-                        hasGroundedApply: hasGroundedConfigApply
+                        hasGroundedApply: hasGroundedConfigApply,
+                        viaHandoff: ChatExecutionContext.currentAgentId == Agent.defaultId
                     )
                 {
                     groundedClaimRetries += 1
@@ -2687,6 +2668,7 @@ enum AgentToolLoop {
                     iteration -= 1
                     continue
                 }
+                await hooks.noteTurnEnding?(.finalText)
                 // An ordinary model final is authoritative. Todo is visible
                 // progress metadata; it must never override EOS/stop and make
                 // the driver regenerate the same answer until the step cap.
@@ -2700,19 +2682,6 @@ enum AgentToolLoop {
                 // slots were cleared before the stream error surfaced.
                 iteration -= 1
                 continue
-
-            case .oversizedToolCall(let toolName, let argumentCharacters):
-                oversizedToolCallRetries += 1
-                if oversizedToolCallRetries <= Self.maxOversizedToolCallRetries {
-                    replaceStateNotice(Self.oversizedToolCallNotice(
-                        toolName: toolName,
-                        argumentCharacters: argumentCharacters
-                    ))
-                    iteration -= 1
-                    continue
-                }
-                await hooks.emitFallbackText?(Self.oversizedToolCallFallback)
-                return RunResult(exit: .oversizedToolCallExhausted, iterations: iteration)
 
             case .truncatedToolCall(let toolName, let argumentCharacters):
                 truncatedToolCallRetries += 1
@@ -2810,17 +2779,6 @@ enum AgentToolLoop {
                 // on once we have tried twice.
                 await recordExit(.finalResponse, .continuationRequestRecoveryExhausted)
                 return RunResult(exit: .finalResponse, iterations: iteration)
-
-            case .repetitionLoop(let phrase):
-                repetitionLoopRetries += 1
-                if repetitionLoopRetries <= Self.maxRepetitionLoopRetries {
-                    replaceStateNotice(Self.repetitionLoopNotice(phrase: phrase))
-                    // Not charged against the tool-iteration budget.
-                    iteration -= 1
-                    continue
-                }
-                await hooks.emitFallbackText?(Self.repetitionLoopFallback)
-                return RunResult(exit: .repetitionLoopExhausted, iterations: iteration)
 
             case .lengthExhausted:
                 // `stop=length` is authoritative. Do not mislabel a
@@ -3230,6 +3188,7 @@ enum AgentToolLoop {
                     var batchHasPrecedingParseableTodo = false
                     for invocation in invocations {
                         if await hooks.isCancelled() {
+                            await hooks.onBatchComplete(outcomes)
                             return RunResult(exit: .cancelled, iterations: iteration)
                         }
                         let callId = Self.callId(for: invocation)
@@ -3384,6 +3343,7 @@ enum AgentToolLoop {
                                     return RunResult(
                                         exit: .finalResponse, iterations: iteration, wrapUpNotice: notice)
                                 }
+                                await hooks.onBatchComplete(outcomes)
                                 await emitToolRejection(outcome)
                                 return RunResult(exit: .toolRejected, iterations: iteration)
                             }
@@ -3412,6 +3372,7 @@ enum AgentToolLoop {
                         // run before the call is recorded — the intercept already
                         // wrote its own history.
                         if execution.endRun {
+                            await hooks.onBatchComplete(outcomes)
                             return RunResult(exit: .endedBySurface, iterations: iteration)
                         }
 
@@ -3438,11 +3399,13 @@ enum AgentToolLoop {
                         )
 
                         if await hooks.isCancelled() {
+                            await hooks.onBatchComplete(outcomes)
                             return RunResult(exit: .cancelled, iterations: iteration)
                         }
                         if policy.stopOnToolRejection,
                             Self.shouldStopAfterToolOutcome(outcomes[outcomes.count - 1])
                         {
+                            await hooks.onBatchComplete(outcomes)
                             await emitToolRejection(outcomes[outcomes.count - 1])
                             return RunResult(exit: .toolRejected, iterations: iteration)
                         }

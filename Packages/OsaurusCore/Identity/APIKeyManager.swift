@@ -125,13 +125,15 @@ public final class APIKeyManager: @unchecked Sendable {
     public func revoke(id: UUID) {
         ensureLoadedFromKeychain()
 
-        queue.sync(flags: .barrier) {
-            guard let index = keys.firstIndex(where: { $0.id == id }) else { return }
+        let nonce: String? = queue.sync(flags: .barrier) {
+            guard let index = keys.firstIndex(where: { $0.id == id }) else { return nil }
             let key = keys[index]
             RevocationStore.shared.revokeKey(address: key.iss, nonce: key.nonce)
             keys[index] = key.withRevoked()
             Self.saveToKeychain(keys)
+            return key.nonce
         }
+        if let nonce { InvitePeerIdentityStore.remove(keyNonce: nonce) }
         APIKeyValidatorEpoch.shared.bump()
     }
 
@@ -139,15 +141,19 @@ public final class APIKeyManager: @unchecked Sendable {
     public func revokeAll(forAddress address: OsaurusID) {
         ensureLoadedFromKeychain()
 
-        queue.sync(flags: .barrier) {
+        let nonces: [String] = queue.sync(flags: .barrier) {
             let currentCounter = CounterStore.shared.current
             RevocationStore.shared.revokeAllBefore(address: address, counter: currentCounter)
+            var revoked: [String] = []
             keys = keys.map { key in
                 guard key.iss.lowercased() == address.lowercased(), !key.revoked else { return key }
+                revoked.append(key.nonce)
                 return key.withRevoked()
             }
             Self.saveToKeychain(keys)
+            return revoked
         }
+        InvitePeerIdentityStore.remove(keyNonces: nonces)
         APIKeyValidatorEpoch.shared.bump()
     }
 
@@ -156,13 +162,15 @@ public final class APIKeyManager: @unchecked Sendable {
     public func delete(id: UUID) {
         ensureLoadedFromKeychain()
 
-        queue.sync(flags: .barrier) {
-            guard let index = keys.firstIndex(where: { $0.id == id }) else { return }
+        let nonce: String? = queue.sync(flags: .barrier) {
+            guard let index = keys.firstIndex(where: { $0.id == id }) else { return nil }
             let key = keys[index]
             RevocationStore.shared.revokeKey(address: key.iss, nonce: key.nonce)
             keys.remove(at: index)
             Self.saveToKeychain(keys)
+            return key.nonce
         }
+        if let nonce { InvitePeerIdentityStore.remove(keyNonce: nonce) }
         APIKeyValidatorEpoch.shared.bump()
     }
 
@@ -214,10 +222,13 @@ public final class APIKeyManager: @unchecked Sendable {
     // MARK: - Delete All
 
     public func deleteAll() {
-        queue.sync(flags: .barrier) {
+        let nonces: [String] = queue.sync(flags: .barrier) {
+            let all = keys.map(\.nonce)
             keys.removeAll()
             Self.saveToKeychain(keys)
+            return all
         }
+        InvitePeerIdentityStore.remove(keyNonces: nonces)
         APIKeyValidatorEpoch.shared.bump()
     }
 

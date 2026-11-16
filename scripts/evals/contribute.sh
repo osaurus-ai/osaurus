@@ -21,7 +21,7 @@ set -uo pipefail
 #     judge graded it. Without one, rubric grades are weaker (flagged as a
 #     caveat in the leaderboard).
 #   - Set KV_REGIME=memory-only|disk-l2|paged to record the cache regime.
-#   - Remote models (e.g. xai/grok-4.3) need the matching <PREFIX>_API_KEY.
+#   - Remote models (e.g. xai/grok-4.7) need the matching <PREFIX>_API_KEY.
 #   - PR=1 automates the submission end-to-end with the GitHub CLI (`gh`):
 #     branch → commit (ONLY the contribution file) → push (forking first when
 #     you don't have push access) → `gh pr create`. See COMMUNITY_EVALS.md.

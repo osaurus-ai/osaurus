@@ -49,7 +49,14 @@
         /// lifetime.
         public let transport: StdioTransport
 
-        public init(provider: MCPProvider) throws {
+        /// Preferred entry point: resolves the user's login-shell PATH off the main thread first (cached after
+        /// the first call) so version-manager toolchains are visible to the child (#3024).
+        public static func make(provider: MCPProvider) async throws -> MCPStdioHostRunner {
+            let loginShellEntries = await LoginShellPath.shared.entries()
+            return try MCPStdioHostRunner(provider: provider, loginShellEntries: loginShellEntries)
+        }
+
+        public init(provider: MCPProvider, loginShellEntries: [String]? = LoginShellPath.cachedEntries) throws {
             guard !provider.command.isEmpty else {
                 throw MCPStdioTransportError.missingCommand
             }
@@ -57,11 +64,20 @@
             self.command = provider.command
             self.args = provider.args
 
-            let mergedEnv = Self.buildEnv(provider: provider)
+            var mergedEnv = Self.buildEnv(provider: provider, loginShellEntries: loginShellEntries)
             let executablePath = try Self.resolveExecutablePath(
                 command: Self.expandUserPath(provider.command),
                 env: mergedEnv
             )
+            // `#!/usr/bin/env node` needs `node` on the CHILD's PATH; a full path to a version-manager `npx`
+            // alone is not enough. Put the script's own directory first when its interpreter sits beside it,
+            // unless the user set PATH explicitly for this provider.
+            if provider.resolvedEnv()["PATH"] == nil,
+                let sibling = ExecutableLocator.envShebangSiblingDirectory(executable: executablePath)
+            {
+                let rest = (mergedEnv["PATH"] ?? "").split(separator: ":").map(String.init).filter { $0 != sibling }
+                mergedEnv["PATH"] = ([sibling] + rest).joined(separator: ":")
+            }
 
             let stdinPipe = Pipe()
             let stdoutPipe = Pipe()
@@ -96,12 +112,19 @@
         /// Process env = inherited app env merged with the provider's
         /// own env (plain + Keychain-resolved secrets). Provider entries
         /// win on key conflicts.
-        private static func buildEnv(provider: MCPProvider) -> [String: String] {
+        /// The child's PATH is the login shell's PATH plus the inherited one and the fallbacks — the same path
+        /// the command was found on, so its shebang interpreter is found too. An explicit provider PATH wins as is.
+        private static func buildEnv(provider: MCPProvider, loginShellEntries: [String]?) -> [String: String] {
             var env = ProcessInfo.processInfo.environment
+            env["PATH"] = ExecutableLocator.childPath(inherited: env, loginShellEntries: loginShellEntries)
             for (key, value) in provider.resolvedEnv() {
                 env[key] = value
             }
             return env
+        }
+
+        static func buildEnvForTesting(provider: MCPProvider, loginShellEntries: [String]?) -> [String: String] {
+            buildEnv(provider: provider, loginShellEntries: loginShellEntries)
         }
 
         /// Resolve `command` to an absolute path the kernel can exec, mapping

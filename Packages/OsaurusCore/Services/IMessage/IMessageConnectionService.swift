@@ -1083,6 +1083,13 @@ final class IMessageConnectionService: @unchecked Sendable {
                             rule: rule
                         )
                     )
+                case .fired(let eventNames, _):
+                    await activityCenter.record(
+                        connectionId: Self.nativeConnectionId,
+                        providerEventId: event.providerEventId,
+                        stage: .dispatched,
+                        reason: AgentChannelInboundActivityPresentation.firedReason(eventNames: eventNames)
+                    )
                 case .suppressed(let reason):
                     await activityCenter.record(
                         connectionId: Self.nativeConnectionId,
@@ -1115,13 +1122,6 @@ final class IMessageConnectionService: @unchecked Sendable {
         _ event: IMessageNormalizedInboundEvent,
         config: IMessageConnectionConfiguration
     ) async -> AgentChannelInboundRelaySubmission {
-        let settings = config.inboundDispatch
-        guard settings.isConfigured else {
-            return .suppressed("inbound_dispatch_not_configured")
-        }
-        guard !settings.requireMention else {
-            return .suppressed("imessage_mention_detection_unavailable")
-        }
         guard let senderId = event.senderId else {
             return .suppressed("inbound_sender_missing")
         }
@@ -1132,26 +1132,33 @@ final class IMessageConnectionService: @unchecked Sendable {
             sender: ChannelSenderMetadata(senderId: senderId, displayName: event.authorName),
             trustLevel: .verified
         )
-        let responder: AgentChannelInboundReplyHandler?
-        if settings.autoReplyEnabled {
-            responder = { [weak self] reply in
-                guard let self else {
-                    throw IMessageConnectionServiceError.helper(
-                        "iMessage connection was released before replying."
-                    )
-                }
-                _ = try await self.sendMessage(
-                    chatId: event.roomId,
-                    content: reply,
-                    confirmSend: true
+        let responder: AgentChannelInboundReplyHandler = { [weak self] reply in
+            guard let self else {
+                throw IMessageConnectionServiceError.helper(
+                    "iMessage connection was released before replying."
                 )
             }
-        } else {
-            responder = nil
+            _ = try await self.sendMessage(
+                chatId: event.roomId,
+                content: reply,
+                confirmSend: true
+            )
         }
-        return await AgentChannelInboundRelay.shared.submit(
-            AgentChannelInboundRelayRequest(
+        let attachmentResponder: AgentChannelInboundAttachmentReplyHandler = { [weak self] path, caption in
+            guard let self else {
+                throw IMessageConnectionServiceError.helper(
+                    "iMessage connection was released before replying."
+                )
+            }
+            _ = try await self.sendAttachment(chatId: event.roomId, path: path, confirmSend: true)
+            if let caption, !caption.isEmpty {
+                _ = try await self.sendMessage(chatId: event.roomId, content: caption, confirmSend: true)
+            }
+        }
+        return await EventManager.shared.ingestChannelMessage(
+            ChannelInboundMessage(
                 identity: identity,
+                kind: .imessage,
                 connectionId: Self.nativeConnectionId,
                 providerEventId: event.providerEventId,
                 providerRoute: AgentChannelProviderRoute(
@@ -1160,9 +1167,9 @@ final class IMessageConnectionService: @unchecked Sendable {
                 ),
                 content: event.content,
                 attachments: event.attachments,
-                settings: settings,
                 sourceLabel: "iMessage chat \(event.roomId), sender \(senderId)",
-                reply: responder
+                reply: responder,
+                replyAttachment: attachmentResponder
             )
         )
     }

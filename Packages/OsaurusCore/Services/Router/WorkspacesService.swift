@@ -24,6 +24,10 @@ final class WorkspacesService: ObservableObject {
 
     @Published private(set) var workspaces: [OsaurusRouterWorkspaceSummary] = []
     @Published private(set) var isLoadingWorkspaces = false
+    /// True once `refreshWorkspaces` has delivered a list at least once (even
+    /// an empty one). Lets the tab show loading skeletons only for the very
+    /// first fetch and keep a settled empty state through later refreshes.
+    @Published private(set) var hasLoadedWorkspaces = false
     /// The caller's account-level billing picture: owner subscription (if
     /// any, with trial state), owned/billed counts, and trial eligibility.
     /// Best-effort — refreshed alongside the list, never an error banner.
@@ -108,20 +112,26 @@ final class WorkspacesService: ObservableObject {
     private var confirmationPollCount = 0
     private static let maxConfirmationPolls = 10
 
-    /// Root refresh throttle for activation-driven polling (membership
-    /// changes have no server push). Internal (not private) so throttle
-    /// tests can backdate it instead of sleeping through the real interval.
+    /// When the list was last installed from any source (own fetch, roster
+    /// hand-off, sync snapshot). Internal so tests can read/backdate it.
     var lastRootRefresh: Date?
-    private static let activationRefreshInterval: TimeInterval = 60
 
     /// Seam for osaurus.ai / Billing Portal redirects; tests capture the
     /// URL instead of opening a real browser.
     var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
-    /// UserDefaults key for the per-agent workspace-billing map:
-    /// `[agentAddressLowercased: workspaceId]`. Read (nonisolated) by the router
-    /// request builder to attach `workspace_context`.
+    /// UserDefaults key for the per-agent workspace-billing map, keyed by the
+    /// agent's UUID (shape documented on `workspaceContext(forAgentId:)`).
+    /// Read (nonisolated) by the router request builder to attach
+    /// `workspace_context`.
     nonisolated static let agentBillingDefaultsKey = "ai.osaurus.teams.agentBilling"
+
+    /// UserDefaults key for the per-agent pool-billing opt-out: `[agentUUIDString]`.
+    /// Pool billing is ON by default for every own agent shared into a
+    /// workspace; turning the "Bill the workspace pool" switch off records the
+    /// agent here so the roster-driven default (`applyDefaultBilling`) never
+    /// re-enables it. Mirrors `SubagentConfiguration.removedWorkspaceAgents`.
+    nonisolated static let agentBillingOptOutDefaultsKey = "ai.osaurus.teams.agentBillingOptOut"
 
     private let client: OsaurusRouterAPIClient
     private let defaults: UserDefaults
@@ -147,8 +157,10 @@ final class WorkspacesService: ObservableObject {
 
     // MARK: - Root refresh
 
-    /// Workspaces the caller belongs to. Membership changes have no server push,
-    /// so this runs on tab open and (throttled) on app activation.
+    /// Workspaces the caller belongs to. Runs on tab open and after
+    /// mutations (create / join / leave / delete); the sync stream and the
+    /// roster store's activation refresh keep it current otherwise (see
+    /// `applyWorkspaceList`).
     func refreshWorkspaces() async {
         guard OsaurusRouter.isEnabled else { return }
         guard !isLoadingWorkspaces else { return }
@@ -159,18 +171,14 @@ final class WorkspacesService: ObservableObject {
         do {
             let fetched = try await client.listWorkspaces()
             guard generation == rootGeneration else { return }
-            workspaces = fetched
-            lastRootRefresh = Date()
-            // An authoritative workspace list is the reconciliation point for
-            // per-agent billing prefs: leaving, being removed, or the workspace
-            // being deleted must stop `workspace_context` injection.
-            reconcileBillingPreferences(validWorkspaceIds: Set(workspaces.map(\.id)))
+            installWorkspaceList(fetched)
             // Membership changed (create / join / leave / removed): the chat
             // sidebar's per-workspace sections follow the same list.
             let known = Set(WorkspaceRosterStore.shared.rosters.map(\.id))
             if known != Set(workspaces.map(\.id)) {
                 Task { await WorkspaceRosterStore.shared.refresh(reason: .manual) }
             }
+            WorkspaceSyncService.shared.noteMembership(hasWorkspaces: !fetched.isEmpty)
         } catch {
             noteError(error)
             return
@@ -184,6 +192,7 @@ final class WorkspacesService: ObservableObject {
             })
         {
             endConfirmation()
+            FeatureTelemetry.workspaceCreated(via: "checkout")
             await WorkspaceAuditLog.shared.recordOwnerAction(
                 .workspaceCreated, workspaceId: created.id, details: ["name": name, "via": "checkout"]
             )
@@ -191,15 +200,37 @@ final class WorkspacesService: ObservableObject {
         }
     }
 
+    /// An authoritative workspace list fetched by another surface (the chat
+    /// roster store's probe, fallback, or activation refresh). Installs it
+    /// exactly as `refreshWorkspaces` would, without a second
+    /// `GET /workspaces` for the same trigger.
+    func applyWorkspaceList(_ fetched: [OsaurusRouterWorkspaceSummary]) {
+        guard OsaurusRouter.isEnabled else { return }
+        installWorkspaceList(fetched)
+    }
+
+    private func installWorkspaceList(_ fetched: [OsaurusRouterWorkspaceSummary]) {
+        rootGeneration = UUID()
+        if workspaces != fetched { workspaces = fetched }
+        hasLoadedWorkspaces = true
+        lastRootRefresh = Date()
+        // An authoritative workspace list is the reconciliation point for
+        // per-agent billing prefs: leaving, being removed, or the workspace
+        // being deleted must stop `workspace_context` injection.
+        reconcileBillingPreferences(validWorkspaceIds: Set(workspaces.map(\.id)))
+    }
+
     /// Account-level billing summary (owner subscription + trial state) and
     /// the public plan/prices. Quiet on failure: the list is the primary
     /// surface, and a router without these routes must not raise a banner.
+    /// Prices are public catalog data that change by deploy, not by user
+    /// action: fetched once per session.
     func refreshBilling() async {
         guard OsaurusRouter.isEnabled else { return }
         if let summary = try? await client.workspaceBilling() {
             billing = summary
         }
-        if let fetched = try? await client.workspacePrices() {
+        if prices == nil, let fetched = try? await client.workspacePrices() {
             prices = fetched
         }
     }
@@ -275,6 +306,7 @@ final class WorkspacesService: ObservableObject {
             switch result {
             case .ready(let detail):
                 outcome = .ready(detail)
+                FeatureTelemetry.workspaceCreated(via: "direct")
                 await WorkspaceAuditLog.shared.recordOwnerAction(
                     .workspaceCreated, workspaceId: detail.id, details: ["name": trimmedName]
                 )
@@ -351,6 +383,7 @@ final class WorkspacesService: ObservableObject {
             let detail = try await self.client.workspaceActivate(code: trimmedCode, name: trimmedName)
             created = detail
             self.pendingActivation = nil
+            FeatureTelemetry.workspaceCreated(via: "activation_code")
             await WorkspaceAuditLog.shared.recordOwnerAction(
                 .workspaceCreated, workspaceId: detail.id,
                 details: ["name": trimmedName, "via": "activation_code"]
@@ -381,6 +414,7 @@ final class WorkspacesService: ObservableObject {
             let detail = try await self.client.workspaceJoin(code: trimmed)
             joined = detail
             self.pendingJoin = nil
+            FeatureTelemetry.workspaceJoined()
             await WorkspaceAuditLog.shared.recordOwnerAction(
                 .joinRedeemed, workspaceId: detail.id,
                 details: ["role": detail.role]
@@ -430,6 +464,7 @@ final class WorkspacesService: ObservableObject {
             // letting teammates ride out the rest of their attestations.
             await WorkspaceAgentAccessHost.shared.invalidateKeys(workspaceId: id)
             await self.refreshWorkspaces()
+            Task { await WorkflowShareService.shared.unshareAll(fromWorkspace: id) }
         }
     }
 
@@ -447,7 +482,7 @@ final class WorkspacesService: ObservableObject {
     /// Land on one workspace's detail in Settings ▸ Workspaces from anywhere
     /// in the app: selects it (so the list pane drills in as soon as its
     /// summary is known), remembers the requested tab, and brings the
-    /// management window forward. The one path every "Open workspace"
+    /// Settings forward. The one path every "Open workspace"
     /// affordance uses, so they all end on the same screen. `shareAgentId`
     /// additionally opens the Share agent sheet with that agent selected.
     func openInSettings(
@@ -458,6 +493,17 @@ final class WorkspacesService: ObservableObject {
         deepLinkTab = tab
         Task { await selectWorkspace(id: workspaceId) }
         AppDelegate.shared?.showManagementWindow(initialTab: .workspaces)
+    }
+
+    /// A settings search result for a page inside a workspace: opens the
+    /// workspace already selected (or the only/first one) on that page.
+    /// Without any workspace the Workspaces list stays as is.
+    func openFromSearch(tab: WorkspaceDetailView.Tab) {
+        guard let target = selectedWorkspaceId ?? workspaces.first?.id else { return }
+        deepLinkTab = tab
+        if selectedWorkspaceId != target {
+            Task { await selectWorkspace(id: target) }
+        }
     }
 
     func selectWorkspace(id: String) async {
@@ -877,6 +923,13 @@ final class WorkspacesService: ObservableObject {
                 await self.refreshSelectedWorkspace()
             }
             await self.refreshWorkspaces()
+            // The registry doesn't know who's in a workspace: take what the
+            // departing member shared there out of its Workflows catalog.
+            if isSelfLeave {
+                Task { await WorkflowShareService.shared.unshareAll(fromWorkspace: workspaceId) }
+            } else if let wallet = removed?.walletAddress {
+                Task { await WorkflowShareService.shared.unshareAuthor(wallet, fromWorkspace: workspaceId) }
+            }
         }
     }
 
@@ -890,7 +943,8 @@ final class WorkspacesService: ObservableObject {
         agentAddress: String,
         agentKeyPath: AgentKeyPath,
         displayName: String,
-        description: String?
+        description: String?,
+        billWorkspaceCredits: Bool? = nil
     ) async -> Bool {
         let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 120 else {
@@ -911,10 +965,30 @@ final class WorkspacesService: ObservableObject {
                 proof: proof
             )
             _ = try await self.client.shareWorkspaceAgent(id: workspaceId, body: body)
+            FeatureTelemetry.workspaceAgentShared()
             await WorkspaceAuditLog.shared.recordOwnerAction(
                 .agentShared, workspaceId: workspaceId,
                 agentAddress: agentAddress, agentName: name
             )
+            // Pool billing is the default for an agent you share: bind it now
+            // so the very first chat after sharing draws from the pool, not
+            // the roster poll a while later. No-op when the agent already
+            // bills a workspace or was explicitly opted out.
+            if let local = AgentManager.shared.agent(byAddress: agentAddress) {
+                switch billWorkspaceCredits {
+                case .some(let bill):
+                    Self.applyShareBillingChoice(
+                        agentId: local.id, agentAddress: agentAddress,
+                        workspaceId: workspaceId, bill: bill, defaults: self.defaults
+                    )
+                    self.objectWillChange.send()
+                case .none:
+                    self.applyDefaultBilling(
+                        localAgents: [(id: local.id, address: agentAddress)],
+                        rosters: [(workspaceId: workspaceId, addresses: Set([agentAddress.lowercased()]))]
+                    )
+                }
+            }
             let generation = self.selectionGeneration
             if let fetched = try? await self.client.workspaceAgents(id: workspaceId),
                 self.selectedWorkspaceId == workspaceId, generation == self.selectionGeneration
@@ -942,8 +1016,10 @@ final class WorkspacesService: ObservableObject {
                 $0.agentAddress.lowercased() == agentAddress.lowercased()
             }
             // Unsharing invalidates any workspace-billing preference for it (no-op
-            // for other members' agents, which have no local record).
-            self.setBillingWorkspace(agentAddress: agentAddress, workspaceId: nil)
+            // for other members' agents, which have no local record). This is
+            // not an opt-out: re-sharing the agent later defaults back to pool
+            // billing.
+            self.clearBillingPreference(agentAddress: agentAddress)
             // Revocation contract: immediately kill workspace-minted keys for this
             // agent so a redeemed teammate session ends with the share.
             await WorkspaceAgentAccessHost.shared.invalidateKeys(
@@ -1137,8 +1213,176 @@ final class WorkspacesService: ObservableObject {
         defaults.set(map, forKey: agentBillingDefaultsKey)
     }
 
+    // MARK: Opt-out (toggle OFF) tombstones
+
+    /// Agent ids whose owner turned pool billing off. Nonisolated read —
+    /// UserDefaults is thread-safe.
+    nonisolated static func billingOptOutAgentIds(defaults: UserDefaults = .standard) -> Set<String> {
+        Set(defaults.stringArray(forKey: agentBillingOptOutDefaultsKey) ?? [])
+    }
+
+    nonisolated static func isBillingOptedOut(agentId: UUID, defaults: UserDefaults = .standard) -> Bool {
+        billingOptOutAgentIds(defaults: defaults).contains(agentId.uuidString)
+    }
+
+    nonisolated static func setBillingOptOut(
+        agentId: UUID, optedOut: Bool, defaults: UserDefaults = .standard
+    ) {
+        var ids = billingOptOutAgentIds(defaults: defaults)
+        if optedOut {
+            guard ids.insert(agentId.uuidString).inserted else { return }
+        } else {
+            guard ids.remove(agentId.uuidString) != nil else { return }
+        }
+        if ids.isEmpty {
+            defaults.removeObject(forKey: agentBillingOptOutDefaultsKey)
+        } else {
+            defaults.set(ids.sorted(), forKey: agentBillingOptOutDefaultsKey)
+        }
+    }
+
+    // MARK: Default-on pool billing
+
+    /// Pool billing is the default for an agent you share. For every agent
+    /// hosted here (`localAgents`) that appears on one of the given rosters,
+    /// has no billing entry yet, and was not explicitly opted out, bind it to
+    /// the FIRST roster (in the given order) that lists it. Agents that
+    /// already bill a workspace keep their binding — turning the switch on
+    /// in another workspace is how the user moves it. Opt-out ids whose agent
+    /// no longer exists locally are pruned. Returns the agent ids that were
+    /// newly bound, so callers can publish only when something changed.
+    ///
+    /// Pure over `defaults` (no `AgentManager` / roster-store access) so the
+    /// rule is unit-testable; production feeds it from
+    /// `WorkspaceRosterStore.installDefaultPoolBilling()` on every verified
+    /// roster and from `shareAgent` right after a share lands.
+    @discardableResult
+    nonisolated static func applyDefaultBilling(
+        localAgents: [(id: UUID, address: String)],
+        rosters: [(workspaceId: String, addresses: Set<String>)],
+        defaults: UserDefaults = .standard
+    ) -> Set<UUID> {
+        var bound = Set<UUID>()
+        let existing =
+            (defaults.dictionary(forKey: agentBillingDefaultsKey)
+                as? [String: [String: String]]) ?? [:]
+        let optedOut = billingOptOutAgentIds(defaults: defaults)
+
+        for agent in localAgents {
+            let lowered = agent.address.lowercased()
+            guard !lowered.isEmpty else { continue }
+            let key = agent.id.uuidString
+            if optedOut.contains(key) { continue }
+            if let entry = existing[key], let current = billingEntryWorkspaceId(entry), !current.isEmpty {
+                continue
+            }
+            guard
+                let roster = rosters.first(where: { roster in
+                    !roster.workspaceId.isEmpty && roster.addresses.contains(lowered)
+                })
+            else { continue }
+            setBillingWorkspace(
+                agentId: agent.id, agentAddress: lowered, workspaceId: roster.workspaceId, defaults: defaults
+            )
+            bound.insert(agent.id)
+        }
+
+        // Tombstones for agents that no longer exist here are dead weight.
+        if !optedOut.isEmpty {
+            let live = Set(localAgents.map { $0.id.uuidString })
+            let kept = optedOut.filter(live.contains)
+            if kept.count != optedOut.count {
+                if kept.isEmpty {
+                    defaults.removeObject(forKey: agentBillingOptOutDefaultsKey)
+                } else {
+                    defaults.set(kept.sorted(), forKey: agentBillingOptOutDefaultsKey)
+                }
+            }
+        }
+        return bound
+    }
+
+    /// Instance wrapper for the roster hook / share path: applies the default
+    /// against this service's defaults and publishes when a binding was added.
+    @discardableResult
+    func applyDefaultBilling(
+        localAgents: [(id: UUID, address: String)],
+        rosters: [(workspaceId: String, addresses: Set<String>)]
+    ) -> Set<UUID> {
+        let bound = Self.applyDefaultBilling(localAgents: localAgents, rosters: rosters, defaults: defaults)
+        if !bound.isEmpty { objectWillChange.send() }
+        return bound
+    }
+
+    /// The user's explicit switch: ON binds the agent to `workspaceId` and
+    /// clears any opt-out; OFF (`nil`) drops the entry and records the
+    /// opt-out so `applyDefaultBilling` leaves the agent alone.
+    nonisolated static func recordBillingToggle(
+        agentId: UUID,
+        agentAddress: String,
+        workspaceId: String?,
+        defaults: UserDefaults = .standard
+    ) {
+        setBillingWorkspace(
+            agentId: agentId, agentAddress: agentAddress, workspaceId: workspaceId, defaults: defaults
+        )
+        setBillingOptOut(agentId: agentId, optedOut: workspaceId == nil, defaults: defaults)
+    }
+
+    /// What the share sheet's "Bill Workspace Credits" switch starts at: on
+    /// unless the agent already bills another workspace or its owner opted
+    /// out, which is exactly when `applyDefaultBilling` would bind it.
+    nonisolated static func shareBillingDefault(
+        agentId: UUID,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        if billingOptOutAgentIds(defaults: defaults).contains(agentId.uuidString) { return false }
+        let map = (defaults.dictionary(forKey: agentBillingDefaultsKey) as? [String: [String: String]]) ?? [:]
+        if let entry = map[agentId.uuidString], let current = billingEntryWorkspaceId(entry), !current.isEmpty {
+            return false
+        }
+        return true
+    }
+
+    /// Applies the share sheet's billing choice. On binds the agent to the
+    /// workspace it was shared into. Off records an opt-out only when the
+    /// agent bills nothing yet, so an existing binding to another workspace
+    /// is left alone.
+    nonisolated static func applyShareBillingChoice(
+        agentId: UUID,
+        agentAddress: String,
+        workspaceId: String,
+        bill: Bool,
+        defaults: UserDefaults = .standard
+    ) {
+        if bill {
+            recordBillingToggle(
+                agentId: agentId, agentAddress: agentAddress, workspaceId: workspaceId, defaults: defaults
+            )
+            return
+        }
+        let map = (defaults.dictionary(forKey: agentBillingDefaultsKey) as? [String: [String: String]]) ?? [:]
+        let currentlyBills = map[agentId.uuidString].flatMap(billingEntryWorkspaceId).map { !$0.isEmpty } ?? false
+        if !currentlyBills {
+            setBillingOptOut(agentId: agentId, optedOut: true, defaults: defaults)
+        }
+    }
+
+    /// Drops an agent's billing entry WITHOUT recording an opt-out (unshare,
+    /// agent deletion). Re-sharing later defaults back to pool billing.
+    func clearBillingPreference(agentAddress: String) {
+        guard let agent = AgentManager.shared.agent(byAddress: agentAddress) else { return }
+        let hadEntry = billingWorkspaceId(forAgentAddress: agentAddress) != nil
+        Self.setBillingWorkspace(
+            agentId: agent.id, agentAddress: agentAddress, workspaceId: nil, defaults: defaults
+        )
+        if hadEntry { objectWillChange.send() }
+    }
+
     /// UI toggle entry point: resolves the local agent by address (only the
     /// user's own agents show the toggle, so a local match always exists).
+    /// OFF (`workspaceId == nil`) records an opt-out so the roster-driven
+    /// default never turns it back on; ON clears that opt-out.
     func setBillingWorkspace(agentAddress: String, workspaceId: String?) {
         guard
             let agent = AgentManager.shared.agents.first(where: {
@@ -1146,7 +1390,7 @@ final class WorkspacesService: ObservableObject {
             })
         else { return }
         let previous = billingWorkspaceId(forAgentAddress: agentAddress)
-        Self.setBillingWorkspace(
+        Self.recordBillingToggle(
             agentId: agent.id, agentAddress: agentAddress, workspaceId: workspaceId, defaults: defaults
         )
         objectWillChange.send()
@@ -1426,16 +1670,10 @@ final class WorkspacesService: ObservableObject {
             }
         }
 
-        // Membership has no server push (removals, role changes, deleted
-        // workspaces): refresh the list on activation so billing prefs reconcile
-        // promptly, throttled so rapid app switching doesn't hammer the router.
-        let stale =
-            lastRootRefresh.map {
-                Date().timeIntervalSince($0) >= Self.activationRefreshInterval
-            } ?? true
-        if stale {
-            await refreshWorkspaces()
-        }
+        // Membership changes reach this surface through the sync stream
+        // (`applySyncSnapshot`) and, when the stream is not verified, through
+        // the roster store's throttled activation refresh (`applyWorkspaceList`).
+        // No list fetch of our own here: that doubled every activation.
     }
 
     /// One poll for a pending Stripe round-trip. Returns true when the

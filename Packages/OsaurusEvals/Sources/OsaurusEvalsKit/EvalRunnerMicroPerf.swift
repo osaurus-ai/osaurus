@@ -94,7 +94,7 @@ extension EvalRunner {
             prompt: prompt,
             maxTokens: exp.maxTokens,
             reps: exp.reps,
-            enableThinking: exp.enableThinking
+            enableThinking: EvalThinkingControlState.resolve(exp.enableThinking)
         )
         let totalWallMs = Date().timeIntervalSince(overallStart) * 1000
 
@@ -121,7 +121,7 @@ extension EvalRunner {
         var notes: [String] = [
             "protocol: 1 warm-up + \(exp.reps) reps · max_tokens \(exp.maxTokens) · "
                 + "prompt \(prompt.count) chars (query × \(repeatCount)) · steady-state (one session) · "
-                + "enable_thinking \(exp.enableThinking.map(String.init) ?? "bundle default")"
+                + "enable_thinking \(EvalThinkingControlState.resolve(exp.enableThinking).map(String.init) ?? "bundle default")"
         ]
 
         var passed = true

@@ -1,0 +1,52 @@
+{
+  "id": "configurator.history-revert-missing-provider",
+  "domain": "configurator",
+  "label": "configurator • revert to a version whose provider is gone",
+  "query": "Revert to the version named \"with gateway\" so I get my Team Gateway provider back.",
+  "notes": "Versioning. Version 0 (named \"with gateway\") has the custom provider Team Gateway (disabled, no network); six hours ago it was removed in Settings. History never holds credentials, so a revert recreates the provider only through the credential sheet; this headless lane dismisses that sheet, so the apply reports the provider as cancelled with nothing stored. The honest answer says Team Gateway is not back yet because its API key has to be entered (Settings → Providers, or the sheet on a retry). Claiming the provider or its key came back fails.",
+  "fixtures": {
+    "seedProviders": [
+      {
+        "id": "6f1d2c3b-9a8e-4b7c-8d6e-5f4a3b2c1d0e",
+        "name": "Team Gateway",
+        "host": "gateway.example.invalid"
+      }
+    ],
+    "seedConfigHistory": {
+      "foundLabel": "with gateway",
+      "steps": [
+        {
+          "yaml": "providers: []\n",
+          "prune": true,
+          "caller": "observed",
+          "callerDetail": "before_apply",
+          "hoursAgo": 6
+        }
+      ]
+    }
+  },
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Says Team Gateway is not back yet (or not fully set up) because its API key or credentials have to be entered, for example in Settings → Providers.",
+        "Does not claim the provider was restored working or that its API key came back from history."
+      ],
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "revert"
+          }
+        }
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "maxIterations": 8
+    }
+  }
+}
