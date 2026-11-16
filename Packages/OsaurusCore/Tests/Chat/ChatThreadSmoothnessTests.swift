@@ -627,6 +627,40 @@ struct ChatThreadSmoothnessTests {
         #expect(abs(first - settled) <= 1, "appeared at \(first)pt, settled at \(settled)pt")
     }
 
+    // MARK: - Tiling
+
+    /// AppKit calls `tile()` again from inside a running pass (the
+    /// `contentInsets` setter, the table's frame change after
+    /// `sizeLastColumnToFit()`). Nested passes stacked up into multi-second
+    /// main-thread hangs (APPLE-MACOS-122), so a nested call must be
+    /// deferred and replayed once, never run inside the outer pass.
+    @Test func aTileRequestedDuringTilingIsDeferredAndReplayedOnce() {
+        let t = Thread(width: 900, height: 400)
+        defer { t.window.close() }
+        let scrollView = t.scrollView
+        var policyCalls = 0
+        var depth = 0
+        var maxDepth = 0
+        scrollView.columnWidthPolicy = { [weak scrollView] fitted in
+            policyCalls += 1
+            depth += 1
+            maxDepth = max(maxDepth, depth)
+            defer { depth -= 1 }
+            // Simulate AppKit re-entering tile() mid-pass; the cap keeps an
+            // unguarded implementation from recursing forever.
+            if policyCalls < 10 { scrollView?.tile() }
+            return max(0, fitted - 40)
+        }
+        policyCalls = 0
+        maxDepth = 0
+        scrollView.tile()
+        #expect(maxDepth == 1, "tile() ran nested \(maxDepth) deep")
+        #expect(policyCalls == 2, "expected one pass plus one replay, got \(policyCalls)")
+        // The column stays centered: equal side insets.
+        #expect(abs(scrollView.contentInsets.left - scrollView.contentInsets.right) <= 0.5)
+        scrollView.columnWidthPolicy = nil
+    }
+
     private static func firstSubview<V: NSView>(of type: V.Type, in view: NSView) -> V? {
         for sub in view.subviews {
             if let match = sub as? V { return match }
