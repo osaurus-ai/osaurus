@@ -312828,6 +312828,9 @@
         }
       }
     },
+    "Shell and Python steps of this workflow run in the Sandbox, not on your Mac. Set up the Sandbox once and every run reuses it." : {
+
+    },
     "Shell steps of this workflow run in its own sandbox environment, not on your Mac. The packages below are installed there once and reused by every run." : {
 
     },
