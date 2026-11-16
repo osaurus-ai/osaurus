@@ -1432,7 +1432,13 @@ public final class BackgroundTaskManager: ObservableObject {
     /// double-stream into the same `ChatSession`.
     func lookupReattachableSession(for request: DispatchRequest) -> (data: ChatSessionData, live: ChatSession?)? {
         if let id = request.continueSessionId {
-            return lookupContinuedSession(id, agentId: request.agentId, workspace: request.workspaceTarget)
+            return lookupContinuedSession(
+                id,
+                agentId: request.agentId,
+                workspace: request.workspaceTarget,
+                bringsHostText: request.taskIntent == .hostContinuation
+                    && !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
         }
         guard request.reattachSession,
             let key = request.externalSessionKey,
@@ -1505,11 +1511,14 @@ public final class BackgroundTaskManager: ObservableObject {
     }
 
     /// The stored session `id`, when it belongs to `agentId` and nothing else
-    /// is running it.
+    /// is running it. Its latest turn must be the one to answer, unless the
+    /// run brings its own: host text (a helper's report) sent as
+    /// `.hostContinuation`, which becomes that turn.
     private func lookupContinuedSession(
         _ id: UUID,
         agentId: UUID?,
-        workspace: WorkspaceAgentRef? = nil
+        workspace: WorkspaceAgentRef? = nil,
+        bringsHostText: Bool = false
     ) -> (data: ChatSessionData, live: ChatSession?)? {
         let db = ConversationStores.current
         do { try db.open() } catch {
@@ -1519,7 +1528,7 @@ public final class BackgroundTaskManager: ObservableObject {
         guard backgroundTasks[id]?.status.isActive != true,
             let data = db.loadSession(id: id),
             Self.continues(data, agentId: agentId, workspace: workspace),
-            data.turns.last?.role == .user
+            bringsHostText || data.turns.last?.role == .user
         else { return nil }
         let live = ChatWindowManager.shared.session(forSessionId: id)
             ?? LiveChatSessionRegistry.shared.liveSession(for: id)

@@ -48,15 +48,20 @@ enum SubagentReportBack {
     /// Deliver the digest to the launching session once it is idle —
     /// not streaming and not paused on a clarify prompt (sending during a
     /// clarify would wrongly answer it). The weak box is re-read on every
-    /// tick so this loop never extends the session's lifetime; if the chat
-    /// is gone, the report is dropped and the Activity row
-    /// remains the durable record of the digest.
+    /// tick so this loop never extends the session's lifetime. If the chat
+    /// was released meanwhile (a phone or automation run ends its session
+    /// soon after the reply), the report goes to `HostContinuationInbox`,
+    /// which continues the saved chat with it, when the launching chat's
+    /// ids are known. Without them (no stored chat behind the session) it
+    /// is dropped, and the Activity row remains the durable record.
     static func deliver(
         title: String,
         success: Bool,
         summary: String,
         completedEnvelope: String? = nil,
-        to box: WeakChatSessionBox?
+        to box: WeakChatSessionBox?,
+        sessionId: UUID? = nil,
+        agentId: UUID? = nil
     ) async {
         let report = message(
             title: title,
@@ -65,7 +70,12 @@ enum SubagentReportBack {
             completedEnvelope: completedEnvelope
         )
         while !Task.isCancelled {
-            guard let session = box?.session else { return }
+            guard let session = box?.session else {
+                if box != nil, let sessionId {
+                    HostContinuationInbox.shared.add(text: report, sessionId: sessionId, agentId: agentId)
+                }
+                return
+            }
             if !session.isStreaming, session.awaitingClarify == nil {
                 // A background worker's `share_artifact` deposits typed
                 // artifacts keyed by this session; no spawn tool return will

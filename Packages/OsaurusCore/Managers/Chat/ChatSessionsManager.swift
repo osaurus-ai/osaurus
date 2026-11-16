@@ -86,6 +86,7 @@ final class ChatSessionsManager: ObservableObject {
             SyncWalletLink.start()
             SyncAgentDirectory.shared.start()
             SyncHostRunner.shared.start()
+            HostContinuationInbox.shared.start()
             SyncAttentionFeed.shared.start()
             SyncManageFeed.shared.start()
             SyncManageDetail.shared.start()
