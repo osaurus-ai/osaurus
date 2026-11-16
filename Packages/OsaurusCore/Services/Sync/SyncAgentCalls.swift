@@ -111,6 +111,27 @@ final class SyncAgentCalls {
     /// True when a call would ring at least one device.
     var canRing: Bool { !targets.isEmpty }
 
+    /// The agent call tools' names, in the schema only while `ringAvailable`.
+    nonisolated static let toolNames: Set<String> = [CallUserTool.toolName, ArrangeCallbackTool.toolName]
+
+    private nonisolated static let available = OSAllocatedUnfairLock(initialState: false)
+
+    /// `canRing` as of the last registrations read, for the prompt composer off the main actor.
+    nonisolated static var ringAvailable: Bool { available.withLock { $0 } }
+
+    /// The registrations were read again (`SyncWorkflowPush.refresh`).
+    func registrationsChanged() {
+        let now = canRing
+        let changed = Self.available.withLock { old in
+            defer { old = now }
+            return old != now
+        }
+        if changed {
+            Self.trace(now ? "a device rings for agent calls" : "no device rings for agent calls")
+            NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+        }
+    }
+
     nonisolated static func callTargets(
         _ targets: [SyncWorkflowPush.Target],
         dropped: Set<String>,

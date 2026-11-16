@@ -122,6 +122,7 @@ final class SyncWorkflowPush {
             }.value
             guard !Task.isCancelled else { return }
             self.targets = targets
+            SyncAgentCalls.shared.registrationsChanged()
             let devices = targets.map(\.device).sorted()
             SyncWorkflowActivities.shared.refresh(registrations: targets)
             if devices != registeredDevices {

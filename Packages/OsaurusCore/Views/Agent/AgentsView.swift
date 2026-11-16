@@ -1429,6 +1429,9 @@ struct AgentDetailView: View {
     @State private var workingFolderReadOnly: Bool = false
     @State private var showResponseMetrics: Bool = false
     @State private var speakEnabled: Bool = false
+    /// "Call You": the agent may ring the user's iPhone on its own (`AgentCallPolicy`, kept
+    /// outside the agent's settings).
+    @State private var callYouEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
     /// Native `web_search` gate — default ON (free providers need no setup).
     @State private var webSearchEnabled: Bool = true
@@ -3662,6 +3665,22 @@ struct AgentDetailView: View {
     /// snaps back, and the view scrolls to and pulses the Tools master
     /// card instead. Turning OFF still lands, so a paused ability can be
     /// unconfigured without re-enabling Tools first.
+    /// "Call You" is kept by `AgentCallPolicy`, not the agent's settings, so it saves there.
+    private var callYouBinding: Binding<Bool> {
+        Binding(
+            get: { callYouEnabled },
+            set: { newValue in
+                if newValue, !toolsEnabled {
+                    callYouEnabled = false
+                    flashToolsToggle()
+                    return
+                }
+                callYouEnabled = newValue
+                AgentCallPolicy.shared.setAllowed(newValue, agentId: agent.id)
+            }
+        )
+    }
+
     private func toolBackedSaveBinding(_ source: Binding<Bool>) -> Binding<Bool> {
         Binding(
             get: { source.wrappedValue },
@@ -3758,6 +3777,15 @@ struct AgentDetailView: View {
                         "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section.",
                     icon: "speaker.wave.2",
                     isOn: toolBackedSaveBinding($speakEnabled),
+                    pausedNote: toolsPausedNote,
+                    onPausedNoteTap: flashToolsToggle
+                )
+                SettingsAbilityRow(
+                    title: "Call You",
+                    description:
+                        "Let the agent ring your iPhone on its own when something can't wait. A call you ask for in a chat doesn't need this: you approve that one when you ask.",
+                    icon: "phone",
+                    isOn: callYouBinding,
                     pausedNote: toolsPausedNote,
                     onPausedNoteTap: flashToolsToggle
                 )
@@ -6638,6 +6666,7 @@ struct AgentDetailView: View {
         workingFolderReadOnly = agent.settings.workingFolderReadOnly
         showResponseMetrics = agent.settings.showResponseMetrics
         speakEnabled = agent.settings.speakEnabled
+        callYouEnabled = AgentCallPolicy.shared.isAllowed(agent.id)
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         webSearchEnabled = agent.settings.webSearchEnabled
         followUpEnabled = agent.settings.followUp.enabled
