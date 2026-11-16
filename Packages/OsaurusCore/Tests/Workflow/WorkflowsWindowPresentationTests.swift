@@ -144,10 +144,7 @@ struct WorkflowsWindowPresentationTests {
     func chatChanges_doNotReachTheWorkflowsWindow_butItsRouteDoes() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
-            defer {
-                window.cleanup()
-                UserDefaults.standard.removeObject(forKey: ChatWindowState.workflowsTabDefaultsKey)
-            }
+            defer { window.cleanup() }
             let route = WorkflowsRouteObserver(window)
             var changes = 0
             let watching = route.objectWillChange.sink { changes += 1 }
@@ -157,8 +154,8 @@ struct WorkflowsWindowPresentationTests {
             window.showSidebar.toggle()
             #expect(changes == 0)
 
-            window.workflowsTab = window.workflowsTab == .drafts ? .all : .drafts
-            window.workflowsTab = window.workflowsTab
+            window.workflowsSidebarScrollTarget = WorkflowsSidebarSection.drafts
+            window.workflowsSidebarScrollTarget = WorkflowsSidebarSection.drafts
             #expect(changes == 1)
             window.pushWorkflowsPage(.workflow(UUID()))
             #expect(changes == 2)
@@ -173,22 +170,71 @@ struct WorkflowsWindowPresentationTests {
     }
 
     @Test
-    func home_opensOnTheTabLastUsed_whileItHasAnything_elseAll() {
-        typealias State = ChatWindowState
-        #expect(State.workflowsTab(chosen: nil, hasInstalled: true, hasDrafts: true, hasPublished: true) == .all)
-        #expect(State.workflowsTab(chosen: .drafts, hasInstalled: true, hasDrafts: true, hasPublished: false) == .drafts)
-        #expect(State.workflowsTab(chosen: .drafts, hasInstalled: true, hasDrafts: false, hasPublished: false) == .all)
-        #expect(State.workflowsTab(chosen: .published, hasInstalled: true, hasDrafts: false, hasPublished: true) == .published)
-        #expect(State.workflowsTab(chosen: .published, hasInstalled: true, hasDrafts: true, hasPublished: false) == .all)
-        #expect(State.workflowsTab(chosen: .all, hasInstalled: true, hasDrafts: true, hasPublished: true) == .all)
+    func oldTabLinks_landOnHome_orScrollTheSidebarToDrafts() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            window.pushWorkflowsPage(.workflow(UUID()))
+            for tab in [ChatWindowState.WorkflowsTab.all, .published] {
+                window.showWorkflowsHome(tab: tab)
+                #expect(window.workflowsPath.isEmpty, "\(tab) is the home now")
+                #expect(window.mainSurface == .workflows)
+            }
+            window.showWorkflowsHome(tab: .drafts)
+            #expect(window.workflowsPath.isEmpty)
+            #expect(window.workflowsSidebarScrollTarget == WorkflowsSidebarSection.drafts)
+            window.workflowsSidebarScrollTarget = nil
+            window.showWorkflowsHome(tab: .workspaces)
+            #expect(window.workflowsPath.isEmpty, "with no workspace, Workspaces lands on the home")
+        }
     }
 
     @Test
-    func home_withDraftsButNothingInstalled_opensOnDrafts() {
+    func theSidebarMarksThePageOnTop_aRunAsItsWorkflow() {
         typealias State = ChatWindowState
-        #expect(State.workflowsTab(chosen: nil, hasInstalled: false, hasDrafts: true, hasPublished: false) == .drafts)
-        #expect(State.workflowsTab(chosen: .all, hasInstalled: false, hasDrafts: true, hasPublished: false) == .drafts)
-        #expect(State.workflowsTab(chosen: .published, hasInstalled: false, hasDrafts: true, hasPublished: false) == .drafts)
+        let id = UUID()
+        #expect(State.workflowsSidebarSelection([]) == .home)
+        #expect(State.workflowsSidebarSelection([.workflow(id)]) == .workflow(id))
+        #expect(
+            State.workflowsSidebarSelection([.workflow(id), .run(workflowID: id, runID: nil, agentId: UUID())])
+                == .workflow(id))
+        #expect(State.workflowsSidebarSelection([.workspace("w")]) == .workspace("w"))
+        #expect(State.workflowsSidebarSelection([.create]) == .create)
+    }
+
+    @Test
+    func pickingFromTheSidebar_replacesThePages_andClosesTheDrawer() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            let first = UUID()
+            let second = UUID()
+            window.pushWorkflowsPage(.workflow(first))
+            window.showWorkflowRun(workflowID: first, runID: nil)
+            window.updateShellBreakpoint(.compact)
+            window.toggleSidebar()
+            #expect(window.isWorkflowsDrawerPresented)
+            #expect(!window.isCompactSidebarPresented, "Workflows' drawer is its own")
+
+            window.selectWorkflowsPage(.workflow(second))
+            #expect(window.workflowsPath == [.workflow(second)])
+            #expect(!window.isWorkflowsDrawerPresented)
+            window.selectWorkflowsPage(nil)
+            #expect(window.workflowsPath.isEmpty)
+
+            window.toggleSidebar()
+            #expect(window.dismissShellOverlay(), "Esc closes the drawer")
+            #expect(!window.isWorkflowsDrawerPresented)
+            window.toggleSidebar()
+            window.updateShellBreakpoint(.regular)
+            #expect(!window.isWorkflowsDrawerPresented, "widening closes the drawer")
+
+            #expect(window.showWorkflowsSidebar)
+            window.toggleSidebar()
+            #expect(!window.showWorkflowsSidebar)
+            #expect(window.showSidebar, "the chat sidebar's choice stays put")
+            #expect(!window.isWorkflowsSidebarVisible)
+        }
     }
 
     @Test
@@ -201,21 +247,24 @@ struct WorkflowsWindowPresentationTests {
             defer {
                 window.cleanup()
                 installed.resetForTesting()
-                UserDefaults.standard.removeObject(forKey: ChatWindowState.workflowsTabDefaultsKey)
             }
             window.showWorkflowsHome(tab: .published)
             window.pushWorkflowsPage(.workflow(UUID()))
 
+            let page = try #require(window.workflowsPath.last)
             window.showNewWorkflow()
-            #expect(window.workflowsPath == [.create])
-            #expect(window.workflowsTab == .published)
+            #expect(window.workflowsPath == [page, .create], "over the page on screen, so Back returns there")
             #expect(window.consumeNewWorkflowComposerFocus())
             #expect(!window.consumeNewWorkflowComposerFocus())
 
             window.showNewWorkflow()
-            #expect(window.workflowsPath == [.create])
+            #expect(window.workflowsPath == [page, .create])
             window.popWorkflowsPage()
-            #expect(window.workflowsPath.isEmpty)
+            #expect(window.workflowsPath == [page])
+
+            window.selectWorkflowsPage(nil)
+            window.showNewWorkflow()
+            #expect(window.workflowsPath == [.create], "from Home, Back returns Home")
         }
     }
 
@@ -223,10 +272,7 @@ struct WorkflowsWindowPresentationTests {
     func goBack_stepsOutOneLevelAtATime_andStopsAtTheTop() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
-            defer {
-                window.cleanup()
-                UserDefaults.standard.removeObject(forKey: ChatWindowState.workflowsTabDefaultsKey)
-            }
+            defer { window.cleanup() }
             #expect(!window.goBack())
 
             window.showMainSurfaceFromRail(.workflows)
@@ -260,6 +306,7 @@ struct WorkflowsWindowPresentationTests {
             #expect(WorkflowsView.backTitle(to: .workflow(workflow.id)) == "Client Intake")
             #expect(WorkflowsView.backTitle(to: .workflow(UUID())) == "Workflow")
             #expect(WorkflowsView.backTitle(to: .run(workflowID: workflow.id, runID: nil, agentId: Agent.defaultId)) == "Run")
+            #expect(WorkflowsView.backTitle(to: .workspace("not-joined")) == "Workspace")
         }
     }
 

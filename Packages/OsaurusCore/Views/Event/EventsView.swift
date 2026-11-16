@@ -116,6 +116,10 @@ struct EventsView: View {
             consumePageRequest()
             consumePendingEditRequest()
             consumePendingDetailRequest()
+            consumePendingNewRequest()
+        }
+        .onChange(of: managementState.pendingNewAutomation) { _, _ in
+            consumePendingNewRequest()
         }
         .onChange(of: managementState.automationsSubTabRequest) { _, _ in
             consumePageRequest()
@@ -328,6 +332,13 @@ struct EventsView: View {
         managementState.pendingEventEditId = nil
     }
 
+    private func consumePendingNewRequest() {
+        guard managementState.pendingNewAutomation else { return }
+        managementState.pendingNewAutomation = false
+        page = .automations
+        editor = EventEditorRequest()
+    }
+
     private func consumePendingDetailRequest() {
         guard let pending = managementState.pendingEventDetailId else { return }
         if manager.event(for: pending) != nil {
@@ -422,6 +433,8 @@ struct EventEditorRequest: Identifiable {
     /// Pre-selected source for a new event (Agents → Add Event).
     var template: EventSourceTemplate?
     var initialAgentId: UUID?
+    /// A new automation that runs this workflow (a workflow's page in Workflows).
+    var initialWorkflowId: UUID?
     /// The connection a channel template starts on (the sheet it came from).
     var initialConnectionId: String?
 }

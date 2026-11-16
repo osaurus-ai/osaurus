@@ -225,6 +225,47 @@ struct ChatShellLayoutTests {
         #expect(wide.sidebarStepsAside == false)
         #expect(wide.contentWidth == CGFloat(1500 - 44 - 260 - 384))
     }
+
+    private func workflows(_ width: CGFloat, shows: Bool = true, drawer: Bool = false) -> ChatShellLayout {
+        .workflows(windowWidth: width, showsSidebar: shows, isDrawerPresented: drawer, preferredSidebarWidth: 260)
+    }
+
+    @Test("Workflows: compact keeps the sidebar in a drawer, closed until opened")
+    func workflowsCompactDrawer() {
+        for width: CGFloat in [560, 640, 760] {
+            let closed = workflows(width)
+            #expect(closed.breakpoint == .compact)
+            #expect(closed.sidebarMode == .hidden, "the docked choice never opens the drawer")
+            #expect(closed.contentWidth == width - Self.rail)
+
+            let open = workflows(width, drawer: true)
+            #expect(open.sidebarMode == .overlay)
+            #expect(open.sidebarWidth <= width - Self.rail - ChatShellLayout.overlayEdgeClearance)
+            #expect(open.contentWidth == width - Self.rail, "the drawer floats over the content")
+            #expect(open.contextMode == .hidden)
+        }
+    }
+
+    @Test("Workflows: regular and wide dock the sidebar beside the content, never a context panel")
+    func workflowsDocked() {
+        for width: CGFloat in [1024, 1199 + Self.rail, 1600, 2400] {
+            let shown = workflows(width, drawer: true)
+            #expect(shown.breakpoint != .compact)
+            #expect(shown.sidebarMode == .docked)
+            #expect(shown.sidebarWidth == 260)
+            #expect(shown.contextMode == .hidden && shown.contextWidth == 0)
+            #expect(shown.contentWidth == width - Self.rail - 260)
+            #expect(shown.contentWidth >= ChatShellLayout.minimumContentWidth)
+
+            let hidden = workflows(width, shows: false, drawer: true)
+            #expect(hidden.sidebarMode == .hidden, "the drawer flag means nothing outside compact")
+            #expect(hidden.contentWidth == width - Self.rail)
+        }
+        let narrowRegular = ChatShellLayout.workflows(
+            windowWidth: 760 + Self.rail, showsSidebar: true, isDrawerPresented: false, preferredSidebarWidth: 460)
+        #expect(narrowRegular.sidebarMode == .docked)
+        #expect(narrowRegular.contentWidth >= ChatShellLayout.minimumContentWidth, "a wide sidebar gives way first")
+    }
 }
 
 struct CompactRelativeAgeTests {

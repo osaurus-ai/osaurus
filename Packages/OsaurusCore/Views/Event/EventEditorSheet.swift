@@ -707,6 +707,11 @@ struct EventEditorSheet: View {
         hasLoaded = true
         if let initialAgentId = request.initialAgentId { target = .local(initialAgentId) }
         if let preset = request.template { choose(preset) }
+        if let workflow = request.initialWorkflowId.flatMap(workflowStore.workflow(id:)) {
+            actionKind = .workflow
+            workflowId = workflow.id
+            if name.isEmpty { name = AutomationDefaults.name(workflowName: workflow.name, kind: template?.sourceKind ?? .webhook) }
+        }
         if let initialConnectionId = request.initialConnectionId, !initialConnectionId.isEmpty {
             sources.channel.connectionId = initialConnectionId
         }

@@ -97,6 +97,24 @@ struct WorkflowsWindowRenderTests {
         return seen.count
     }
 
+    private static func installed(_ id: UUID) -> InstalledWorkflow? { InstalledWorkflowStore.shared.workflow(id: id) }
+
+    /// Workflows with its sidebar laid out for the window's width, as
+    /// `ChatView` does.
+    private struct WorkflowsWithSidebar: View {
+        let window: ChatWindowState
+
+        var body: some View {
+            GeometryReader { proxy in
+                let layout = ChatShellLayout.workflows(
+                    windowWidth: proxy.size.width, showsSidebar: true, isDrawerPresented: false,
+                    preferredSidebarWidth: 260, railWidth: 0)
+                WorkflowsView(
+                    windowState: window, sidebar: WorkflowsSidebarColumn(mode: layout.sidebarMode, width: layout.sidebarWidth))
+            }
+        }
+    }
+
     /// The window's (empty) title bar over the page.
     private struct WindowFrame<Content: View>: View {
         @Environment(\.theme) private var theme
@@ -255,7 +273,6 @@ struct WorkflowsWindowRenderTests {
         ThemeManager.shared.setDesignInspectionScale(1)
         ThemeManager.shared.setAppearanceMode(
             ServerConfigurationStore.load()?.appearanceMode ?? .system, persist: false)
-        UserDefaults.standard.removeObject(forKey: ChatWindowState.workflowsTabDefaultsKey)
     }
 
     // MARK: - Renders
@@ -276,59 +293,56 @@ struct WorkflowsWindowRenderTests {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { Self.tearDown(nil); window.cleanup() }
             try await renderEverywhere("01-first-run") {
-                WindowFrame(windowState: window, content: WorkflowsView(windowState: window))
+                WindowFrame(windowState: window, content: WorkflowsWithSidebar(window: window))
             }
         }
     }
 
-    @Test func workflowsTabsAndNewWorkflow_withLiveWaitingAutomatedAndFailedRuns() async throws {
+    @Test func workflowsHomeSidebarAndNewWorkflow_withLiveWaitingAutomatedAndFailedRuns() async throws {
         try await ChatHistoryTestStorage.run {
             InstalledWorkflowStore.shared.reload()
             let seeded = try Self.seed()
             defer { Self.tearDown(seeded) }
             let window = seeded.window
 
-            window.showWorkflowsHome(tab: .all)
-            try await renderEverywhere("02-workflows-all", height: 1100) {
-                WindowFrame(
-                    windowState: window,
-                    content: WorkflowsView(windowState: window, expandedWorkflows: [seeded.inbox.id, seeded.longName.id]))
+            window.showWorkflowsHome()
+            try await renderEverywhere("02-workflows-home", height: 1100) {
+                WindowFrame(windowState: window, content: WorkflowsWithSidebar(window: window))
             }
 
-            for tab in [ChatWindowState.WorkflowsTab.drafts, .published] {
-                window.showWorkflowsHome(tab: tab)
-                try await renderEverywhere("03-workflows-\(tab.rawValue)") {
-                    WindowFrame(windowState: window, content: WorkflowsView(windowState: window))
-                }
+            try Self.installed(seeded.inbox.id).map { try InstalledWorkflowStore.shared.setPinned(true, id: $0.id) }
+            window.showWorkflowsHome(tab: .drafts)
+            try await renderEverywhere("03-workflows-sidebar-pinned-and-drafts") {
+                WindowFrame(windowState: window, content: WorkflowsWithSidebar(window: window))
             }
 
             window.showNewWorkflow()
             #expect(window.workflowsPath == [.create])
             try await renderEverywhere("03-new-workflow") {
-                WindowFrame(windowState: window, content: WorkflowsView(windowState: window))
+                WindowFrame(windowState: window, content: WorkflowsWithSidebar(window: window))
             }
 
             window.showWorkflowsHome(tab: .all)
             window.pushWorkflowsPage(.workflow(seeded.inbox.id))
             try await renderEverywhere("04-workflow-page") {
-                WindowFrame(windowState: window, content: WorkflowsView(windowState: window))
+                WindowFrame(windowState: window, content: WorkflowsWithSidebar(window: window))
             }
 
             window.showWorkflowRun(workflowID: seeded.inbox.id, runID: seeded.runningRun.id, agentId: Agent.defaultId)
             try await renderEverywhere("05-run-page-running") {
-                WindowFrame(windowState: window, content: WorkflowsView(windowState: window))
+                WindowFrame(windowState: window, content: WorkflowsWithSidebar(window: window))
             }
 
             window.showWorkflowsHome()
             window.showWorkflowRun(workflowID: seeded.longName.id, runID: seeded.failedRun.id, agentId: Agent.defaultId)
             try await renderEverywhere("06-run-page-failed-long-name") {
-                WindowFrame(windowState: window, content: WorkflowsView(windowState: window))
+                WindowFrame(windowState: window, content: WorkflowsWithSidebar(window: window))
             }
 
             window.showWorkflowsHome()
             window.showWorkflowRun(workflowID: seeded.inbox.id, runID: nil, agentId: Agent.defaultId)
             try await renderEverywhere("07-run-page-new") {
-                WindowFrame(windowState: window, content: WorkflowsView(windowState: window))
+                WindowFrame(windowState: window, content: WorkflowsWithSidebar(window: window))
             }
         }
     }
@@ -347,7 +361,7 @@ struct WorkflowsWindowRenderTests {
             defer { window.cleanup() }
             window.showWorkflowsHome(tab: .all)
             try await renderEverywhere("08-fifty-workflows") {
-                WindowFrame(windowState: window, content: WorkflowsView(windowState: window))
+                WindowFrame(windowState: window, content: WorkflowsWithSidebar(window: window))
             }
         }
     }

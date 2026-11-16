@@ -220,7 +220,9 @@ than edits across the pipeline.
 
 `EventSourceRegistry.descriptor(for:)` (also `EventSourceKind.descriptor`)
 is the one lookup for everything static about a kind: display name, icon,
-picker subtitle and whether it is offered in Add Automation, payload root,
+picker subtitle and whether it is offered in Add Automation, the
+`friendlyTitle` / `friendlyExample` the Workflows screens show
+(`AutomationCatalog`), payload root,
 `SessionSource` and `RequestSource`, default delivery and fresh-session
 policy, `dedupeMode` (`none` / `window` / `durable`), `emitMode`
 (`perItem` / `perBatch`), the connection types it uses, the History chip, the
@@ -568,6 +570,47 @@ raw ids `events`, `schedules`, `watchers` resolve to it).
 - Settings search rows: `automations.*` in `SettingsSearchIndex`
   (`automations.history` lands on the History tab via
   `ManagementStateManager.automationsSubTabRequest`).
+- `ManagementStateManager.pendingNewAutomation` opens Add Automation from
+  outside Settings; `EventEditorRequest.initialWorkflowId` opens the editor
+  on **Run Workflow** with that workflow picked.
+
+### In Workflows (`Views/Workflow/Library/`)
+
+A workflow's page edits the automations that run it without opening
+Settings. They are ordinary `OsaurusEvent`s from
+`EventManager.events(forWorkflowID:)`; nothing is stored apart from them.
+
+- `WorkflowAutomationsSection` ("When should this run?") draws each one
+  from `AutomationSentence.parts`: a schedule's day word
+  (`AutomationSentence.DayChoice`) and time change it through
+  `AutomationSentence.frequency`; a folder word reopens the folder picker
+  (path and security-scoped bookmark); a feed's site takes a new address.
+  Anything else (and `.custom` schedules) is one sentence with **Change…**,
+  which opens `EventEditorSheet`. Switch is `setEnabled`, **Remove** is
+  `delete` after a confirm.
+- New ones come from `AutomationDefaults`: the kind's
+  `EventDeliveryPolicy.defaults`, no filter, the editor's input prefill
+  minus its `{{text}}` catch-all (a required input only the catch-all would
+  fill is left empty), created with `telemetryOrigin: "user"`. An
+  automation whose required inputs are unfilled is saved off and shows
+  `WorkflowInputBindingEditor`; filling the last one turns it on.
+  `AutomationPresets` holds the one-click schedules and the name/summary
+  rules that pick a suggested one; `AutomationCatalog` lists the kinds the
+  Workflows screens offer (named-service webhooks as one entry; event
+  streams and generic webhooks stay in Settings).
+- The sidebar's bolt opens `WorkflowAutomatePopover`: the workflow's
+  automations with switches, then `AutomationPresets`. A preset that needs
+  nothing more is created at once with an Undo toast
+  (`WorkflowAutomationUndo`, which deletes the event); anything else hands
+  the workflow's page a `WorkflowAutomationIntent` (highlight, add a feed,
+  or open the editor) through `ChatWindowState.showWorkflowAutomation`.
+- Home reads `WorkflowsOverviewModel` through `WorkflowsHomeModel`: the
+  count line uses the sidebar's `WorkflowsSidebarModel.status`, **Running
+  on their own** lists every workflow-action event whose workflow is
+  installed (with `WorkflowAutomationState` and a 7-bar
+  `WorkflowHealth` strip from its fires), the agent/prompt count excludes
+  channel messages, and each **Ways to automate** card counts the distinct
+  workflows with an enabled event of that catalog entry.
 
 ## Tests
 

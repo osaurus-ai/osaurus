@@ -277,11 +277,16 @@ struct WorkflowTabTests {
             window.openWorkflowTab(workflowID: workflowID)
             #expect(window.tabs.count == tabs, "a workflow never opens a tab")
             #expect(window.mainSurface == .workflows && window.showsWorkflowLibrary)
-            #expect(window.workflowsPath == [.run(workflowID: workflowID, runID: nil, agentId: Agent.defaultId)])
+            #expect(
+                window.workflowsPath == [
+                    .workflow(workflowID), .run(workflowID: workflowID, runID: nil, agentId: Agent.defaultId),
+                ])
 
             window.openWorkflowTab(workflowID: workflowID, runID: runID)
             #expect(
-                window.workflowsPath == [.run(workflowID: workflowID, runID: runID, agentId: Agent.defaultId)],
+                window.workflowsPath == [
+                    .workflow(workflowID), .run(workflowID: workflowID, runID: runID, agentId: Agent.defaultId),
+                ],
                 "a run of the workflow on screen replaces it rather than stacking")
 
             let record = window.tabLayoutSnapshot()
@@ -313,8 +318,8 @@ struct WorkflowTabTests {
             let other = UUID()
             window.openWorkflowTab(workflowID: other)
             #expect(
-                window.workflowsPath == [.run(workflowID: other, runID: nil, agentId: Agent.defaultId)],
-                "from a chat, a run opens on its own with the window's home behind it")
+                window.workflowsPath == [.workflow(other), .run(workflowID: other, runID: nil, agentId: Agent.defaultId)],
+                "from a chat, a run opens on top of its workflow's page")
             window.showWorkflowsHome()
             #expect(window.workflowsPath.isEmpty)
         }

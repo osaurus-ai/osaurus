@@ -87,6 +87,18 @@ struct WorkflowRunViewRenderTests {
         }
     }
 
+    /// A long value lays out only its start, so opening its step stays quick.
+    @Test func jsonText_laysOutOnlyTheStartOfALongValue() {
+        let short = "{\n  \"a\": 1\n}"
+        #expect(WorkflowJSONText.start(of: short) == (short[...], false))
+        let manyLines = (1...1_000).map { "line \($0)" }.joined(separator: "\n")
+        let byLines = WorkflowJSONText.start(of: manyLines, lines: 400, characters: 1_000_000)
+        #expect(byLines.isCut && byLines.text.split(separator: "\n").count == 400)
+        let oneLine = String(repeating: "x", count: 50_000)
+        let byCharacters = WorkflowJSONText.start(of: oneLine, lines: 400, characters: 24_000)
+        #expect(byCharacters.isCut && byCharacters.text.count == 24_000)
+    }
+
     /// Six steps like the character-card starter: four done, the image step
     /// done after two failed attempts and opened, the last one working.
     static func characterCardRun() throws -> (WorkflowRun, WorkflowDefinition) {

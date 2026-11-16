@@ -899,6 +899,8 @@ public actor WorkflowRunner {
                         values[key] = value
                         knownSecrets[key] = value
                     }
+                } catch let connection as WorkflowConnectionResolver.Failure {
+                    throw connection
                 } catch {
                     throw WorkflowNodeError.unsupported(error.localizedDescription)
                 }

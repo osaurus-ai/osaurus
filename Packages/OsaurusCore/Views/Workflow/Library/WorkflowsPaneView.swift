@@ -215,7 +215,7 @@ struct WorkflowsPaneView: View {
                                     Button {
                                         ArchitectLauncher.edit(workflow, in: windowState)
                                     } label: {
-                                        Text("Edit with the Architect", bundle: .module)
+                                        Text("Edit…", bundle: .module)
                                     }
                                     Button {
                                         AppDelegate.shared?.showManagementWindow(initialTab: .workflows)

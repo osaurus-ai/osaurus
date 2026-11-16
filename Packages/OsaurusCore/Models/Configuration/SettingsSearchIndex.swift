@@ -2835,7 +2835,7 @@ public enum SettingsSearchIndex {
                 "open in workflows",
             ],
             subTab: "workflows",
-            disambiguation: "Workflows and agent templates members shared with this workspace (Share → Who can see it → Workspace). Any member, viewers included, can Install a copy that runs on their own Mac with their own keys; Update appears when a newer version is shared. The author, and the workspace's owners and admins, can remove a listing; installed copies keep working. A suspended workspace can't install. Open in Workflows shows the same list in the Workflows window's Workspaces tab. To let teammates run your workflow on your Mac instead, use Teammates can run this on the workflow and turn it on for the shared agent."
+            disambiguation: "Workflows and agent templates members shared with this workspace (Share → Who can see it → Workspace). Any member, viewers included, can Install a copy that runs on their own Mac with their own keys; Update appears when a newer version is shared. The author, and the workspace's owners and admins, can remove a listing; installed copies keep working. A suspended workspace can't install. Open in Workflows shows the same list on that workspace's page in Workflows. To let teammates run your workflow on your Mac instead, use Teammates can run this on the workflow and turn it on for the shared agent."
         ),
         .init(
             id: "workspaces.audit",
@@ -4547,37 +4547,87 @@ public enum SettingsSearchIndex {
             tab: .workflows,
             title: "Workflows",
             keywords: [
-                "workflow", "installed workflows", "pipeline", "dag", "run workflow", "workflow tab",
-                "run history", "workflow runs", "past runs", "see all runs", "run with different input",
+                "workflow", "installed workflows", "pipeline", "dag", "run workflow", "workflows home",
+                "run history", "workflow runs", "past runs", "workflows sidebar",
                 "manage workflows", "make workflows", "publish workflows", "studio", "library", "workflow library",
                 "my workflows",
             ],
             subTab: "workflows",
-            disambiguation: "Main window ▸ Workflows: one page with Import and New Workflow (⌘N) in its header, Running now while anything runs, then the workflows in tabs: All, Drafts while any are unfinished, and Published once anything is. It opens on the tab last used. Run starts a workflow at once when it needs nothing, else asks for its input; a row opens to show its last runs, and See all runs opens the workflow's page. With no workflows and no drafts the page is New Workflow alone."
+            disambiguation: "Main window ▸ Workflows: a sidebar (search, Home, Activity, Pinned, All Workflows with + for New Workflow, Drafts, Workspaces, then Osaurus Store at the foot) beside the page picked there. Home has New Workflow (⌘N) and a ⋯ menu (Import a Workflow File…, Connections, All Automations, Browse the Store) in its header, with one line saying what is running and what runs on its own; then Running Now, Needs Attention, Pinned and Your Automations, each only when it has something, Ways to Automate until you have an automation, and your author page at the foot. Picking a workflow opens its page; a row's Run starts it at once when it needs nothing, else asks for its input. The toolbar's sidebar button (⌘B) hides or shows the sidebar. With no workflows and no drafts the page is New Workflow alone, without a sidebar."
         ),
         .init(
             id: "workflows.runningNow",
             tab: .workflows,
             section: "Workflows",
-            title: "Running now",
+            title: "Running Now",
             keywords: [
-                "live runs", "running workflows", "what is running", "automation runs", "waiting on you", "respond",
-                "stop a run", "workflow progress", "triggered by automation",
+                "live runs", "running workflows", "what is running", "automation runs", "waiting on you", "answer",
+                "respond", "stop a run", "workflow progress", "triggered by automation",
             ],
             subTab: "workflows",
-            disambiguation: "At the top of Workflows, above the tabs, while any workflow is running: each run with its step progress, who started it (you, an agent, or an automation, with a bolt), Stop, and Respond when it waits on a form. Shown only while something runs."
+            disambiguation: "On Workflows Home, under the title, while any workflow is running: each run with the step it is on (Step 4 of 6) and how long it has been going, Stop, and Answer when it waits on you. A run that just ended stays a few seconds, then leaves. The same live state shows in the sidebar row (a spinner and Running · Step 4 of 6) and at the top of the workflow's page."
+        ),
+        .init(
+            id: "workflows.activity",
+            tab: .workflows,
+            section: "Sidebar",
+            title: "Activity",
+            keywords: [
+                "everything your workflows did", "workflow history", "run history", "all runs", "failed runs", "what happened",
+                "needs attention", "ran on their own", "run by me", "run again", "ask osaurus to fix it", "technical details",
+                "one workflow", "more filters", "issues",
+            ],
+            subTab: "workflows.activity",
+            disambiguation: "Main window ▸ Workflows ▸ Activity in the sidebar (also osaurus://workflows/activity): every run of your workflows, newest first, by day, with All and Needs attention up front, and Ran on their own, Run by me and One Workflow in the filter menu beside them. Click a run to open it. A failure the workflow hasn't finished a run since opens with What happened, its steps, the fix when there is one, Run Again (from the failed step), Ask Osaurus to Fix It, and Technical details (the run page). The sidebar row shows how many workflows have an issue. Settings → Automations → History still lists every automation run."
+        ),
+        .init(
+            id: "workflows.needsAttention",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Needs Attention",
+            keywords: [
+                "could not run", "workflow failed", "broken workflow", "see what happened", "show all in activity",
+                "sign in again", "choose folder", "choose a model", "open system settings",
+            ],
+            subTab: "workflows",
+            disambiguation: "On Workflows Home while a workflow's automation failed or can't start it: one card per workflow (at most three, then See all opens Activity on Needs attention) saying what happened, with the fix when there is one and See what happened. It clears once the workflow finishes a run."
+        ),
+        .init(
+            id: "workflows.runningOnTheirOwn",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Your Automations",
+            keywords: [
+                "automations", "running on their own", "what runs on its own", "automated workflows", "scheduled workflows",
+                "stop an automation", "pause automation", "how it last went", "all activity",
+            ],
+            subTab: "workflows",
+            disambiguation: "On Workflows Home once you have an automation: every automation that starts a workflow, as a sentence (Mail Triage runs every weekday at 8:00 AM), how it last went, and a switch to turn it on or off. Click a row to open the workflow's page with that automation highlighted; See all opens Activity on what ran on its own. Automations that run an agent instead are in Settings → Automations (All Automations in Home's ⋯ menu)."
+        ),
+        .init(
+            id: "workflows.waysToAutomate",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Ways to Automate",
+            keywords: [
+                "pick a moment", "automate a workflow", "at a set time", "when a file shows up", "when an app has news",
+                "when a site posts something new", "when something goes wrong", "when osaurus opens", "see all ways to automate",
+            ],
+            subTab: "workflows",
+            disambiguation: "On Workflows Home until you have your first automation: up to four cards, each a moment a workflow can start on its own. Pick a card, then a workflow; the automation is made and its page opens with it highlighted. Afterward every way is under When It Runs on a workflow's page and behind the bolt beside it in the sidebar."
         ),
         .init(
             id: "workflows.all",
             tab: .workflows,
-            section: "Workflows",
-            title: "All",
+            section: "Sidebar",
+            title: "All Workflows",
             keywords: [
-                "all workflows", "ready to run", "installed workflows", "update workflow", "needs setup", "set up",
-                "nothing to run yet",
+                "every workflow", "ready to run", "installed workflows", "needs setup", "set up", "run by hand",
+                "needs attention", "runs on its own", "run now", "automate", "workflow list", "collapse", "fold", "hide workflows",
+                "show workflows", "sort", "sort by", "order", "reorder", "drag", "my order", "last run", "date added",
             ],
-            subTab: "workflows.all",
-            disambiguation: "The Workflows page's first tab: every installed workflow with an Update to vN chip when one is available, a Live badge once published, when it last ran, and Run (Set Up while it needs setup), plus its … menu (Publish…, Save as File…, Version History, and the rest)."
+            subTab: "workflows",
+            disambiguation: "The Workflows sidebar's list of every workflow not pinned, in the order Sort By picks (the arrows beside All Workflows on hover: Name, Last Run, Date Added or My Order; drag a row to a new place and it switches to My Order); click All Workflows to fold or unfold it (Pinned, Drafts and Workspaces fold the same way, and a search opens them all), and its + is New Workflow, with teammates' workflows (their owner's Mac on the second line). Each row: a dot that is filled when an automation runs it, marked when its last automated run failed, hollow when you run it by hand, and a setup mark while it needs setup; the few words that say how it runs (Run by hand, Weekdays at 8:00 AM, Needs attention), or a spinner and Step 4 of 6 while it runs; Automate (bolt) and Run (play, Set Up first when needed) appear on hover. Click the row for its page; right-click for Pin, Automate, Share, Run, Rename, Publish, Save as File, Uninstall and the rest."
         ),
         .init(
             id: "workflows.new",
@@ -4590,42 +4640,63 @@ public enum SettingsSearchIndex {
                 "create your first workflow", "ready to add",
             ],
             subTab: "new",
-            disambiguation: "The New Workflow page, opened from New Workflow in the Workflows header or ⌘N, with ‹ Workflows in the title bar to go back: the Architect's composer (sending starts a new draft with your words as its first message), then Or add a ready-made workflow, the templates not set up yet, each opening a preview with Add, and Import a workflow. With no workflows and no drafts it is the whole Workflows page, titled Create your first workflow."
+            disambiguation: "The New Workflow page, opened from New Workflow in the Workflows header, the + beside All Workflows in the sidebar, or ⌘N: the Architect's composer (sending starts a new draft with your words as its first message), then Or add a ready-made workflow, the templates not set up yet, each opening a preview with Add, and Import a workflow. With no workflows and no drafts it is the whole Workflows page, titled Create your first workflow."
         ),
         .init(
             id: "workflows.drafts",
             tab: .workflows,
-            section: "Workflows",
+            section: "Sidebar",
             title: "Drafts",
             keywords: [
                 "unfinished workflow", "continue editing", "continue where you left off", "delete draft", "draft workflows",
                 "resume draft",
             ],
             subTab: "workflows.drafts",
-            disambiguation: "The Workflows page's Drafts tab, shown while any draft is unfinished: each with where it stands (Design → Test → Save → Publish), when it was last edited, Continue, and Delete Draft… in its … menu."
-        ),
-        .init(
-            id: "workflows.published",
-            tab: .workflows,
-            section: "Workflows",
-            title: "Published",
-            keywords: [
-                "published workflows", "my published workflows", "published filter", "manage published", "live workflows",
-            ],
-            subTab: "workflows.published",
-            disambiguation: "The Workflows page's Published tab, shown once this Mac has published a workflow: the same rows as All, narrowed to what you've published, each with its Live badge (click it to manage the listing)."
+            disambiguation: "A section of the Workflows sidebar, shown while any draft is unfinished, newest first. Click a draft to continue it in the Architect; right-click for Continue Editing and Delete Draft…."
         ),
         .init(
             id: "workflows.workspaces",
             tab: .workflows,
-            section: "Workflows",
+            section: "Sidebar",
             title: "Workspaces",
             keywords: [
                 "workspace workflows", "team workflows", "shared with my workspace", "install from workspace",
                 "teammate workflows", "shared in workspace", "nothing shared yet", "workspace settings",
             ],
             subTab: "workflows.workspaces",
-            disambiguation: "The Workflows page's Workspaces tab, shown while you belong to a workspace: one section per workspace with what members shared there (Install a copy, then Update, Set Up or Open) and what teammates' agents run on their own Macs (Runs on X's Mac). Installed copies show Shared in <workspace> under All. The same list is in Settings → Workspaces → (workspace) → Workflows, which has Open in Workflows."
+            disambiguation: "A section of the Workflows sidebar, shown while you belong to a workspace: one row per workspace. Its page lists what members shared there (Install a copy, then Update, Set Up or Open) and what teammates' agents run on their own Macs (Runs on X's Mac), with Workspace settings and Refresh. The same list is in Settings → Workspaces → (workspace) → Workflows, which has Open in Workflows."
+        ),
+        .init(
+            id: "workflows.search",
+            tab: .workflows,
+            section: "Sidebar",
+            title: "Search workflows",
+            keywords: [
+                "filter workflows", "find a workflow", "tag filter", "workflow search", "search by tag",
+            ],
+            subTab: "workflows",
+            disambiguation: "The field at the top of the Workflows sidebar: narrows Pinned, All Workflows, Drafts and Workspaces by name, and workflows by their tags too. The Workflows lens in a chat's inspector has its own search field."
+        ),
+        .init(
+            id: "workflows.pin",
+            tab: .workflows,
+            section: "Sidebar",
+            title: "Pinned",
+            keywords: ["pin", "unpin", "pin workflow", "favorite workflows", "keep at the top", "one click to run", "pinned tiles"],
+            subTab: "workflows",
+            disambiguation: "Right-click a workflow in the Workflows sidebar and choose Pin, or choose Pin in the ⋯ menu at the top of its page: it moves to Pinned at the top, oldest pin first, with a filled Run button, and shows as a tile with Run on Workflows Home. Unpin moves it back to All Workflows. Pins stay on this Mac, survive relaunch and updates, and are never exported or shared. A teammate's workflow can be pinned too."
+        ),
+        .init(
+            id: "workflows.store",
+            tab: .workflows,
+            section: "Sidebar",
+            title: "Osaurus Store",
+            keywords: [
+                "workflows made by others", "browse workflows", "browse the store", "workflow store", "store.osaurus.ai",
+                "find workflows", "community workflows",
+            ],
+            subTab: "workflows",
+            disambiguation: "At the foot of the Workflows sidebar (and Browse the Store in Home's ⋯ menu): opens store.osaurus.ai in your browser. Add on a listing there comes back to Osaurus and opens setup, which shows what the workflow does and what it can use before anything is installed."
         ),
         .init(
             id: "workflows.addHosted",
@@ -4637,13 +4708,13 @@ public enum SettingsSearchIndex {
                 "on teammates' macs", "remove from my workflows",
             ],
             subTab: "workflows.workspaces",
-            disambiguation: "On a workflow a teammate's shared agent runs for the workspace: adds it without installing a copy. It then lists under All → On teammates' Macs and in each agent's Abilities → Workflows; every run goes to its owner's Mac, which asks them first and uses their keys and folders. Remove from My Workflows is in its menu. Install instead keeps a copy that runs here."
+            disambiguation: "On a workflow a teammate's shared agent runs for the workspace: adds it without installing a copy. It then lists under All Workflows in the Workflows sidebar (its owner's Mac on the second line) and in each agent's Abilities → Workflows; every run goes to its owner's Mac, which asks them first and uses their keys and folders. Remove from My Workflows is in its menu. Install instead keeps a copy that runs here."
         ),
         .init(
             id: "workflows.importExport",
             tab: .workflows,
             section: "Workflows",
-            title: "Import",
+            title: "Import a Workflow File…",
             keywords: [
                 "import template", "export template", "export workflow", "save as file", "workflow file",
                 "osaurustemplate", "workflow templates", "version history", "restore version",
@@ -4652,7 +4723,7 @@ public enum SettingsSearchIndex {
                 "import a workflow",
             ],
             subTab: "workflows",
-            disambiguation: "Import is in the Workflows header (and Import a workflow on the New Workflow page); a workflow file dropped anywhere on Workflows imports too. Saving a workflow as a file is Save as File… in a workflow's … menu, or Share… ▸ Save as a file on its page. Agent templates live in Agents ▸ Templates. Template files also open from Finder. osaurus://templates-import links are accepted only from the store registry (store.osaurus.ai Install button)."
+            disambiguation: "Import a Workflow File… is in the ⋯ menu beside New Workflow on Workflows Home (and Import a workflow on the New Workflow page); a workflow file dropped anywhere on Workflows imports too. Saving a workflow as a file is Save as File… in a workflow's … menu, or Share… ▸ Save as a file in that menu. Agent templates live in Agents ▸ Templates. Template files also open from Finder. osaurus://templates-import links are accepted only from the store registry (store.osaurus.ai Install button)."
         ),
         .init(
             id: "workflows.architect",
@@ -4669,10 +4740,10 @@ public enum SettingsSearchIndex {
             id: "workflows.automations",
             tab: .workflows,
             section: "Workflows",
-            title: "Automations",
-            keywords: ["run workflow on schedule", "workflow trigger", "schedule workflow", "workflow webhook", "run it automatically"],
+            title: "All Automations",
+            keywords: ["run workflow on schedule", "workflow trigger", "schedule workflow", "workflow webhook"],
             subTab: "workflows",
-            disambiguation: "A link under the Workflows title (and Run it automatically under an open workflow row) to Automations, where a workflow is started by a schedule, folder, webhook or channel message. Runs automations start show up live in Workflows ▸ Running now."
+            disambiguation: "All Automations, in the ⋯ menu beside New Workflow on Workflows Home, opens Settings → Automations, where a workflow is started by a schedule, folder, webhook or channel message. Runs automations start show up live in Workflows ▸ Running Now."
         ),
         .init(
             id: "workflows.connections",
@@ -4686,7 +4757,7 @@ public enum SettingsSearchIndex {
                 "manage all sign-ins in vault", "needs setup",
             ],
             subTab: "workflows",
-            disambiguation: "Connections is a link under the Workflows title that opens the Connections sheet in the Workflows window. It lists each sign-in workflows use with its status, its service and the workflows that use it, with Sign In Again (or Replace Value for a pasted key) right there, and a Needs Setup list of workflows still missing a sign-in, each with Set Up. Manage All Sign-Ins in Vault opens General ▸ Vault ▸ Accounts to rename or remove a session, make it the default, or pick the session an agent uses. A workflow's setup offers the existing sessions for its secrets, can sign in as a new named session, and can keep a pasted value as one. Plain workflow secrets are saved in General ▸ Vault ▸ Your Keys."
+            disambiguation: "Connections, in the ⋯ menu beside New Workflow on Workflows Home, opens the Connections sheet in the Workflows window. It lists each sign-in workflows use with its status, its service and the workflows that use it, with Sign In Again (or Replace Value for a pasted key) right there, and a Needs Setup list of workflows still missing a sign-in, each with Set Up. Manage All Sign-Ins in Vault opens General ▸ Vault ▸ Accounts to rename or remove a session, make it the default, or pick the session an agent uses. A workflow's setup offers the existing sessions for its secrets, can sign in as a new named session, and can keep a pasted value as one. Plain workflow secrets are saved in General ▸ Vault ▸ Your Keys."
         ),
         .init(
             id: "workflows.setup.agents",
@@ -4721,7 +4792,7 @@ public enum SettingsSearchIndex {
                 "step risk", "step cost", "badges", "reaches", "sends to cloud", "your mac", "sandbox",
                 "where it runs", "runs commands",
             ],
-            disambiguation: "Badges under each step in a workflow's details (Osaurus does) and in the Architect's Draft steps: where it runs (Your Mac when it reads or saves files outside the run's workspace or acts on the Mac; Sandbox · Runs commands for shell steps), the hosts it reaches, secrets it reads, files it writes, browser use, whether its model runs here or in the cloud, and the time and tokens past runs took. Not a setting; they are computed from the steps and run history."
+            disambiguation: "Badges under each step in the Architect's Draft steps and in View flow: where it runs (Your Mac when it reads or saves files outside the run's workspace or acts on the Mac; Sandbox · Runs commands for shell steps), the hosts it reaches, secrets it reads, files it writes, browser use, whether its model runs here or in the cloud, and the time and tokens past runs took. Not a setting; they are computed from the steps and run history."
         ),
         .init(
             id: "workflows.yourFiles",
@@ -4733,7 +4804,7 @@ public enum SettingsSearchIndex {
                 "replaces files", "folder access", "your mac", "sandbox", "access summary", "least access",
                 "write scope", "read only folder",
             ],
-            disambiguation: "A section in the Architect's Design tab: what the draft reads, writes, deletes, and replaces on your Mac, read from its steps, and whether it works in the sandbox. Runs enforce it: file steps save only where it says, read-only folders stay read-only, and replacing an existing file asks first. The same rows show under What It Does in a saved workflow's details, in the import review, and as one line in the save card, starter previews, and the publish review. Not a setting. Folders always allowed for a saved workflow are in Workflow Details under Before It Runs."
+            disambiguation: "A section in the Architect's Design tab: what the draft reads, writes, deletes, and replaces on your Mac, read from its steps, and whether it works in the sandbox. Runs enforce it: file steps save only where it says, read-only folders stay read-only, and replacing an existing file asks first. The same rows show in the import review, and as one line under What It Does on a saved workflow's page, in the save card, starter previews, and the publish review. Not a setting. Folders always allowed for a saved workflow are on its page under More Options → Before It Runs."
         ),
         .init(
             id: "workflows.draftChanges",
@@ -4761,9 +4832,9 @@ public enum SettingsSearchIndex {
             id: "workflows.runFix",
             tab: .workflows,
             section: "Runs",
-            title: "Fix with the Architect",
+            title: "Ask Osaurus to Fix It",
             keywords: [
-                "fix failed run", "repair workflow", "workflow failed", "step failed", "fix workflow", "architect fix",
+                "fix with the architect", "fix failed run", "repair workflow", "workflow failed", "step failed", "fix workflow", "architect fix",
                 "retry from failed step", "failed step", "why did it fail", "error hint",
             ],
             disambiguation: "On a failed run (its run page, the Architect's Test tab, and the Runs list's … menu): opens an Architect chat that reads the run's error, failed step, logs, and where the fix belongs (the step, setup, an app setting, a retry, or you), fixes it, re-tests from the failed step, and proposes the next version. The line under the error says what to change. Retry from Failed Step re-runs from that step without changing anything. Saving stays your click."
@@ -4774,9 +4845,21 @@ public enum SettingsSearchIndex {
             title: "Share",
             keywords: [
                 "share workflow", "share online", "export", "export workflow", "save as a file", "save as file",
-                "share sheet", "share button", "two ways to share", "share a workflow",
+                "share sheet", "share button", "two ways to share", "share a workflow", "share the recipe",
+                "never your data",
             ],
-            disambiguation: "Share… is in a workflow's page footer; each row on the Workflows page carries Publish… (or Manage Published… once live) and Save as File… in its … menu. Share offers two ways: Save as a file (.osaurustemplate) or Publish to store.osaurus.ai. Once published, the row's Live badge shows who can see it and installs, and opens the published dashboard. Theme sharing lives in Themes."
+            disambiguation: "Share… is in the ⋯ menu at the top of a workflow's page (Manage Published… once live) and in its right-click menu in the Workflows sidebar (with Save as File… and Publish…, or Manage Published… once live). Share offers two ways: Save as a file (.osaurustemplate) or Publish to store.osaurus.ai; the sheet says You share the recipe, never your data. Once published, the row's Live badge shows who can see it and installs, and opens the published dashboard. Theme sharing lives in Themes."
+        ),
+        .init(
+            id: "workflows.shareSummary",
+            tab: .workflows,
+            section: "Share",
+            title: "What gets shared",
+            keywords: [
+                "what stays on your mac", "what gets shared", "what is shared", "privacy when sharing",
+                "results and run history", "accounts and sign-ins", "what it needs access to", "steps it follows",
+            ],
+            disambiguation: "In Share, both Save as a file and Publish to store.osaurus.ai show What gets shared (the steps it follows and what it needs access to) beside What stays on your Mac (your accounts and sign-ins, and your results and run history unless you add Example Runs). Folder paths under your home folder are kept as ~/… in the recipe, so files and folders are not listed as staying behind."
         ),
         .init(
             id: "workflows.publish",
@@ -4866,7 +4949,7 @@ public enum SettingsSearchIndex {
                 "stats", "statistics", "install count", "installs", "how many installed", "published dashboard",
                 "manage published", "versions published", "live since", "last updated", "published workflow",
             ],
-            disambiguation: "The published dashboard opens from a workflow row's Live badge, Manage Published… in its … menu, or Manage Published… on the workflow's page. It shows installs, versions, live since and updated, with the registry's versions and your local version side by side."
+            disambiguation: "The published dashboard opens from a workflow row's Live badge, Manage Published… in its … menu, or Manage Published… in the ⋯ menu on the workflow's page. It shows installs, versions, live since and updated, with the registry's versions and your local version side by side."
         ),
         .init(
             id: "workflows.takeDown",
@@ -4897,10 +4980,10 @@ public enum SettingsSearchIndex {
             title: "Your author page",
             keywords: [
                 "published by you", "my published workflows", "author page", "my page on the registry",
-                "published filter", "published tab", "n published", "total installs",
+                "n published", "total installs", "published", "published workflows", "live workflows", "published mark",
             ],
             subTab: "workflows",
-            disambiguation: "A quiet line under the Workflows title once something is published: how many are published, total installs, and a link to your page on store.osaurus.ai. The Published tab narrows the list to them."
+            disambiguation: "A quiet line at the foot of Workflows Home once something is published: how many are published, total installs, and a link to your page on store.osaurus.ai. Published workflows have no list of their own: each shows a globe beside its name in the sidebar and a Live badge on its page (click it to manage the listing)."
         ),
         .init(
             id: "workflows.shareAfterSave",
@@ -4919,10 +5002,10 @@ public enum SettingsSearchIndex {
             section: "Workflow Details",
             title: "Osaurus can run this for you",
             keywords: [
-                "visible to the orchestrator", "run_workflow", "orchestrator workflows", "hide workflow",
+                "visible to the orchestrator", "run_workflow", "orchestrator workflows", "who can start it", "more options", "hide workflow",
                 "let osaurus run",
             ],
-            disambiguation: "Per workflow. Which agents get a workflow as a tool is set on each agent. For a workflow added from a workspace that runs on a teammate's Mac, it's in that row's menu under All → On teammates' Macs."
+            disambiguation: "Per workflow, on its page under More Options (closed until you open it; a search result opens it): when you ask in chat, Osaurus may start it. Which agents get a workflow as a tool is set on each agent. For a workflow added from a workspace that runs on a teammate's Mac, it's in that row's right-click menu in the Workflows sidebar."
         ),
         .init(
             id: "workflows.teammatesCanRun",
@@ -4933,7 +5016,7 @@ public enum SettingsSearchIndex {
                 "share workflow with workspace", "teammate workflow", "workspace workflow", "guest workflow",
                 "shared agent workflow", "let teammates run", "remote workflow run",
             ],
-            disambiguation: "Per workflow, off by default. Lets people chatting with one of your shared agents start this workflow through that agent's workflow tool; it runs on this Mac with your keys, connections and folders. Each call needs your approval, so the agent also needs Require Approval for Teammate Tool Calls (Workspaces → workspace → Shared Agents). To give teammates their own copy instead, use Share → Workspace."
+            disambiguation: "Per workflow, off by default, under More Options → Who Can Start It on its page. Lets people chatting with one of your shared agents start this workflow through that agent's workflow tool; it runs on this Mac with your keys, connections and folders. Each call needs your approval, so the agent also needs Require Approval for Teammate Tool Calls (Workspaces → workspace → Shared Agents). To give teammates their own copy instead, use Share → Workspace."
         ),
         .init(
             id: "workflows.selfHeal",
@@ -4944,14 +5027,15 @@ public enum SettingsSearchIndex {
                 "self heal", "self-heal", "auto fix", "auto-repair", "repeated failures", "architect fixes",
                 "fix with the architect", "failing workflow", "keeps failing",
             ],
-            disambiguation: "Per workflow, off by default. After the same step fails three runs in a row, the Architect drafts a fix in a background chat and a notification offers it; nothing is saved without your review. Fix with the Architect in a run's menu does the same for one run, right away."
+            disambiguation: "Per workflow, off by default, under More Options → Who Can Start It on its page. After the same step fails three runs in a row, Osaurus drafts a fix in a background chat and a notification offers it; nothing is saved without your review. Ask Osaurus to Fix It on a failed run does the same for one run, right away."
         ),
         .init(
             id: "workflows.savedAnswers",
             tab: .workflows,
             section: "Workflow Details",
             title: "Saved Answers",
-            keywords: ["remembered answers", "clear answers", "workflow form answers"]
+            keywords: ["remembered answers", "clear answers", "workflow form answers"],
+            disambiguation: "Per workflow, under More Options on its page, shown when the workflow remembers form answers: each remembered answer with Edit or Set and Clear, and Clear All. Kept on this Mac and never exported."
         ),
         .init(
             id: "workflows.tags",
@@ -4962,7 +5046,7 @@ public enum SettingsSearchIndex {
                 "tag a workflow", "label", "labels", "folders", "organize workflows", "group workflows", "categories",
                 "add tags", "edit tags",
             ],
-            disambiguation: "Per workflow, on its page: comma-separated labels (\"finance, weekly\") kept on this Mac and never exported. The library's filter bar searches them and offers one chip per tag."
+            disambiguation: "Per workflow, under More Options on its page (Add Tags, then Save): comma-separated labels (\"finance, weekly\") kept on this Mac and never exported. Search workflows in the Workflows sidebar finds a workflow by its tags."
         ),
         .init(
             id: "workflows.rename",
@@ -4973,29 +5057,42 @@ public enum SettingsSearchIndex {
                 "rename workflow", "workflow name", "change name", "tool name", "workflow_", "name differs",
                 "old name", "keep name", "use new name",
             ],
-            disambiguation: "Per installed workflow: in its page's footer and its … menu. The name is what Settings shows and what agents and the Orchestrator call (workflow_<name>), separate from the template. Saving a renamed draft in the Architect renames it too; an update never does on its own, so a version with another name shows a notice offering Use or Keep. Old names keep working for steps that call it. Renaming a workflow template that is not installed is the template card's Rename…."
+            disambiguation: "Per installed workflow: in the … menu at the top of its page and on its sidebar row. The name is what Settings shows and what agents call (workflow_<name>; More Options shows it as Technical name), separate from the template. Saving a renamed draft in the Architect renames it too; an update never does on its own, so a version with another name shows a notice offering Use or Keep. Old names keep working for steps that call it. Renaming a workflow template that is not installed is the template card's Rename…."
         ),
         .init(
             id: "workflows.edit",
             tab: .workflows,
             section: "Workflow Details",
-            title: "Edit",
+            title: "Edit…",
             keywords: [
                 "edit workflow", "change workflow", "modify workflow", "edit with the architect", "change steps",
                 "edit steps",
             ],
-            disambiguation: "Per installed workflow: Edit in its page's footer, beside Run, and Edit with the Architect near the top of its … menu. Both open the workflow as a draft in the Architect; nothing changes until you save it there. Building a new workflow is New Workflow instead."
+            disambiguation: "Per installed workflow: Edit… near the top of the ⋯ menu at the top of its page and on its sidebar row. It opens the workflow as a draft in the Architect; nothing changes until you save it there. Building a new workflow is New Workflow instead."
         ),
         .init(
-            id: "workflows.tagFilter",
+            id: "workflows.automate.schedule",
             tab: .workflows,
-            section: "Workflows",
-            title: "Search by name or tag…",
+            section: "Workflow Details",
+            title: "When It Runs",
             keywords: [
-                "filter workflows", "find a workflow", "search workflows", "tag filter", "tag chips", "workflow search",
+                "when should this run", "want this to run on its own", "run on its own", "run automatically", "automate workflow", "schedule workflow", "every weekday",
+                "every morning", "run at a time", "when a file shows up", "watch a folder", "when osaurus opens",
+                "when a site posts", "feed", "also run it", "more ways", "add another way", "stop an automation", "remove automation",
+                "what should it use each time", "workflow inputs for automation",
             ],
-            subTab: "workflows",
-            disambiguation: "On the Workflows page's All and Published tabs: the search field sits in the tab row and one chip per tag in use sits above the list. The search field appears when any workflow is tagged or more than eight are installed. The Workflows lens in a chat's inspector has its own search field."
+            disambiguation: "Per installed workflow, on its page: each automation that starts it, as a sentence with its switch (Remove appears on hover). Click the day or time of a schedule, the folder, or the site to change it in place; Custom… and Change… open the full editor from Settings → Automations. Add Another Way under them adds another. An automation whose workflow needs an input with no default stays off and shows What should it use each time? until it is filled. The bolt beside a workflow in the sidebar opens the same choices in a small panel (Run <name>…): a suggestion is made in one click with Undo, and See all ways to automate opens the workflow's page. Every automation also lists in Settings → Automations."
+        ),
+        .init(
+            id: "workflows.recentRuns",
+            tab: .workflows,
+            section: "Workflow Details",
+            title: "Recent Runs",
+            keywords: [
+                "workflow runs", "run history", "last runs", "did it work", "health", "failed runs", "see all runs",
+                "open a run", "try it now", "running now",
+            ],
+            disambiguation: "Per installed workflow, on its page (beside the rest when the window is wide): one sentence about how the last runs went (Running now. while one is going), runs going now with their step, then the last five, each opening its run page. See all opens Activity for this workflow; with no runs yet, Try it now runs it."
         ),
         .init(
             id: "workflows.storedData",
@@ -5003,10 +5100,21 @@ public enum SettingsSearchIndex {
             section: "Workflow Details",
             title: "Stored Data",
             keywords: [
-                "workflow state", "state step", "variables", "data table", "tables", "counter", "dedupe",
+                "workflow state", "state step", "variables", "data table", "tables", "counter", "remembers between runs",
                 "already handled", "seen items", "cache", "clear stored data", "persistent state", "kv",
             ],
-            disambiguation: "Per workflow: the tables its state steps keep between runs (key, value, when it changed), with Clear per table or for all. Appears when the workflow has a state step or has stored something. Not the same as Saved Answers (remembered form answers) or agent memory."
+            disambiguation: "Per workflow, under More Options on its page: the tables its state steps keep between runs (key, value, when it changed), with Clear per table or for all. Appears when the workflow has a state step or has stored something. Not the same as Saved Answers (remembered form answers) or agent memory."
+        ),
+        .init(
+            id: "workflows.moreOptions",
+            tab: .workflows,
+            section: "Workflow Details",
+            title: "More Options",
+            keywords: [
+                "before it runs", "who can start it", "technical name", "tool name", "workflow settings",
+                "what it needs", "models and keys", "folders always allowed", "agents that can use it",
+            ],
+            disambiguation: "At the foot of a workflow's page, closed until you open it: Before It Runs (whether this Mac has what it needs, with Set Up… or Change…, and the models, keys, folders and tools it uses), Who Can Start It, Saved Answers and Stored Data when the workflow has them, Tags, and its Technical name (what agents call). A settings search for any of these opens it."
         ),
         .init(
             id: "sandbox.overview",

@@ -49,6 +49,11 @@ protocol EventSourceDescriptor: Sendable {
     var icon: String { get }
     /// One line under the title in "Add Automation".
     var subtitle: String { get }
+    /// The kind in the Workflows screens' words ("At a set time"), where
+    /// Settings says `displayName`.
+    var friendlyTitle: String { get }
+    /// One example line under `friendlyTitle`.
+    var friendlyExample: String { get }
     /// Top-level payload key this kind fills (`schedule`, `webhook`, …).
     var payloadRoot: String { get }
     /// Runtime session source of the agent runs it starts — what tool and
@@ -91,6 +96,8 @@ protocol EventSourceDescriptor: Sendable {
 }
 
 extension EventSourceDescriptor {
+    var friendlyTitle: String { displayName }
+    var friendlyExample: String { subtitle }
     var emitMode: EventEmitMode { .perItem }
     var connectionTypes: [SourceConnectionType] { [] }
     var isOfferedInPicker: Bool { true }
@@ -147,6 +154,8 @@ struct ScheduleSourceDescriptor: EventSourceDescriptor {
     var displayName: String { L("Schedule") }
     var icon: String { "calendar.badge.clock" }
     var subtitle: String { L("At set times or intervals") }
+    var friendlyTitle: String { L("At a set time") }
+    var friendlyExample: String { L("Every morning, every Friday, every hour.") }
     var listTitle: String { L("Schedules") }
     var listSubtitle: String { L("Run at set times or intervals.") }
     var payloadRoot: String { "schedule" }
@@ -173,6 +182,8 @@ struct FolderSourceDescriptor: EventSourceDescriptor {
     var displayName: String { L("Folder") }
     var icon: String { "folder.badge.gearshape" }
     var subtitle: String { L("When files in a folder change") }
+    var friendlyTitle: String { L("When a file shows up") }
+    var friendlyExample: String { L("Watch a folder like Downloads or Desktop.") }
     var listTitle: String { L("Folder watchers") }
     var listSubtitle: String { L("Run when files in a folder change.") }
     var payloadRoot: String { "folder" }
@@ -208,6 +219,11 @@ struct WebhookSourceDescriptor: EventSourceDescriptor {
     var displayName: String { L("Webhook") }
     var icon: String { "link" }
     var subtitle: String { L("When a URL is called (local or relay)") }
+    /// The card for the named services; a generic webhook is under Advanced.
+    var friendlyTitle: String { L("When an app has news") }
+    var friendlyExample: String {
+        ListFormatter.localizedString(byJoining: WebhookProvider.services.compactMap(AutomationSentence.providerName))
+    }
     var listTitle: String { L("Webhooks") }
     var listSubtitle: String { L("Run when another app calls a URL.") }
     var payloadRoot: String { "webhook" }
@@ -256,6 +272,8 @@ struct RSSSourceDescriptor: EventSourceDescriptor {
     var displayName: String { L("RSS Feed") }
     var icon: String { "dot.radiowaves.up.forward" }
     var subtitle: String { L("When a feed publishes a new item") }
+    var friendlyTitle: String { L("When a site posts something new") }
+    var friendlyExample: String { L("Follow a blog, a podcast, or a news feed.") }
     var listTitle: String { L("Feeds") }
     var listSubtitle: String { L("Run when an RSS, Atom or JSON feed has a new item.") }
     var payloadRoot: String { "feed" }
@@ -349,6 +367,8 @@ struct RunFailedSourceDescriptor: EventSourceDescriptor {
     var displayName: String { L("Run Failed") }
     var icon: String { "exclamationmark.triangle" }
     var subtitle: String { L("When a workflow or automation run fails") }
+    var friendlyTitle: String { L("When something goes wrong") }
+    var friendlyExample: String { L("Run a follow-up when another workflow fails.") }
     var listTitle: String { L("Failure handlers") }
     var listSubtitle: String { L("Run when a workflow or automation run fails.") }
     var payloadRoot: String { "failure" }
@@ -387,6 +407,8 @@ struct AppEventsSourceDescriptor: EventSourceDescriptor {
     var displayName: String { L("App Event") }
     var icon: String { "power" }
     var subtitle: String { L("When Osaurus starts, or this automation is turned on or changed") }
+    var friendlyTitle: String { L("When Osaurus opens") }
+    var friendlyExample: String { L("Start the day with something ready for you.") }
     var listTitle: String { L("App events") }
     var listSubtitle: String { L("Run when Osaurus starts, or the automation is turned on or changed.") }
     var payloadRoot: String { "app" }

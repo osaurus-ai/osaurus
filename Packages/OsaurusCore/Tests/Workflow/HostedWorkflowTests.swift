@@ -175,16 +175,27 @@ struct WorkspaceWorkflowProvenanceTests {
         #expect(Destination(url: URL(string: "osaurus://workflows/workspaces/ws-1")!) == .workspace("ws-1"))
         #expect(Destination(url: URL(string: "osaurus://workflows")!) == .home(nil))
         #expect(Destination(url: URL(string: "osaurus://templates-import?url=x")!) == nil)
+        let id = UUID()
+        #expect(Destination(url: URL(string: "osaurus://workflows/workflow/\(id.uuidString)")!) == .workflow(id))
+        #expect(Destination(subTab: "workflows.workflow.\(id.uuidString)") == .workflow(id))
+        #expect(Destination(subTab: "workflows.workflow.not-an-id") == nil)
+        for tab in ChatWindowState.WorkflowsTab.allCases {
+            #expect(Destination(url: URL(string: "osaurus://workflows/\(tab.rawValue)")!) == .home(tab), "old links keep resolving")
+        }
     }
 
     @Test
-    func theWorkspacesTabShowsOnlyWhileThisMacIsInAWorkspace() {
-        let chosen = ChatWindowState.workflowsTab(
-            chosen: .workspaces, hasInstalled: true, hasDrafts: false, hasPublished: false, hasWorkspaces: true)
-        #expect(chosen == .workspaces)
-        let gone = ChatWindowState.workflowsTab(
-            chosen: .workspaces, hasInstalled: true, hasDrafts: false, hasPublished: false, hasWorkspaces: false)
-        #expect(gone == .all)
+    func aWorkspaceLink_opensThatWorkspacesPage() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            window.showWorkflows(.workspace("ws-1"))
+            #expect(window.workflowsPath == [.workspace("ws-1")])
+            #expect(window.workflowsSidebarSelection == .workspace("ws-1"))
+            let id = UUID()
+            window.showWorkflows(.workflow(id))
+            #expect(window.workflowsPath == [.workflow(id)])
+        }
     }
 }
 

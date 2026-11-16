@@ -17,14 +17,19 @@ The window has one job per column, left to right, plus one floating card:
 | Column | Holds | Scope |
 | --- | --- | --- |
 | Navigation rail | Destinations: Chat, Workflows; Usage and Settings at the bottom | The app |
-| Sidebar | What you can open: the Orchestrator, Pinned chats, Agents, each agent's chats, agents on other Macs, workspace agents, agents shared with you | The Chat destination |
-| Content | The conversation: title strip, thread, notices, composer | The chat on screen |
+| Sidebar | Chat: the Orchestrator, Pinned chats, Agents, each agent's chats, agents on other Macs, workspace agents, agents shared with you. Workflows: search, Home, Pinned, All workflows, Drafts, Workspaces, New workflow, Osaurus Store | The destination on screen |
+| Content | Chat: the conversation (title strip, thread, notices, composer). Workflows: the page picked in its sidebar | The chat or page on screen |
 | Context panel (floating card) | File Changes for the chat on screen, only once it has some | The chat on screen |
 
 Rules that follow from this:
 
-- A destination owns the whole content area. The sidebar and context panel
-  belong to Chat; Workflows hides both.
+- A destination owns the sidebar column and the content area. Chat's
+  sidebar lists chats; Workflows has its own sidebar
+  (`WorkflowsSidebar`) in the same column, at the same width and with the
+  same breakpoints (`ChatShellLayout.workflows`): docked in regular and
+  wide windows, a drawer in compact ones, hidden by the toolbar's sidebar
+  button or ⌘B, and absent on Workflows' first run. The context panel
+  belongs to Chat; Workflows has none.
 - The sidebar navigates. Opening a chat, starting one, or switching agents
   from it is navigation, so in a compact window the drawer closes on those
   picks (folding an agent or Show more keeps it open).
@@ -237,8 +242,8 @@ The design-library integration status (token coverage, placeholder values
 awaiting design review, inspector layout coverage and open Workflows
 screens) lives in [design-library-integration.md](design-library-integration.md).
 
-- Workflows destination polish beyond the split: library, run tabs, and the
-  workflow guide topics that still describe the old inspector lenses.
+- Workflows destination polish beyond the sidebar and Home: run tabs, and
+  the workflow guide topics that still describe the old inspector lenses.
 - Project pages are not reachable from the shell since the handoff removed
   their mount; they need an IA decision before they return.
 - Settings and the management window are not yet on this column model.
