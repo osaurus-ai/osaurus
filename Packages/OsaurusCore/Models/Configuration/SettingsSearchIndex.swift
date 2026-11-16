@@ -4598,7 +4598,7 @@ public enum SettingsSearchIndex {
             section: "Workflows",
             title: "Running on their own",
             keywords: [
-                "automations", "what runs on its own", "automated workflows", "scheduled workflows", "turn off automation",
+                "automations", "what runs on its own", "automated workflows", "scheduled workflows", "stop an automation",
                 "pause automation", "how the last runs went", "all activity", "other automations", "run agents",
             ],
             subTab: "workflows",
