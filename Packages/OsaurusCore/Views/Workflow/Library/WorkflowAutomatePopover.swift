@@ -26,6 +26,9 @@ struct WorkflowAutomatePopover: View {
 
     private var manager: EventManager { .shared }
 
+    /// Dark themes paint `border.subtle` the same as `surface.overlay`.
+    private var rule: Color { theme.isDark ? theme.border.default : theme.border.subtle }
+
     var body: some View {
         let automations = manager.events(forWorkflowID: workflow.id).sorted { $0.createdAt < $1.createdAt }
         VStack(alignment: .leading, spacing: theme.space.s12) {
@@ -42,7 +45,7 @@ struct WorkflowAutomatePopover: View {
                 VStack(alignment: .leading, spacing: theme.space.s2) {
                     ForEach(automations) { event in existingRow(event) }
                 }
-                ThemeHairlineDivider()
+                ThemeHairlineDivider(color: rule)
                 Text(verbatim: L("Add another"))
                     .font(SettingsFont.compactLabel)
                     .foregroundStyle(theme.text.secondary)
@@ -52,7 +55,8 @@ struct WorkflowAutomatePopover: View {
                     row(icon: icon(preset.kind), title: preset.title, isSuggested: preset.isSuggested) { choose(preset.kind) }
                 }
             }
-            ThemeHairlineDivider()
+            .padding(.horizontal, -WorkflowAutomateRowLabel.inset(theme))
+            ThemeHairlineDivider(color: rule)
             VStack(alignment: .leading, spacing: theme.space.s2) {
                 row(icon: "folder.badge.gearshape", title: L("When a file shows up in a folder…")) { pickFolder(startingAt: nil) }
                 row(icon: "dot.radiowaves.up.forward", title: L("When a site posts something new…")) { onOpenPage(.addFeed) }
@@ -67,12 +71,13 @@ struct WorkflowAutomatePopover: View {
                 .buttonStyle(.plain)
                 .menuIndicator(.hidden)
             }
-            ThemeHairlineDivider()
+            .padding(.horizontal, -WorkflowAutomateRowLabel.inset(theme))
+            ThemeHairlineDivider(color: rule)
             WorkflowTextLink(title: L("See all ways to automate"), action: onSeeAllWays)
+                .padding(.leading, -theme.assignedMetric(SettingsButtonSize.extraSmall.assignment("paddingX"), fallback: theme.space.s6))
         }
         .padding(theme.space.s16)
         .frame(width: Self.width, alignment: .leading)
-        .settingsChrome(.overlay)
         .accessibilityElement(children: .contain)
     }
 
@@ -160,6 +165,10 @@ private struct WorkflowAutomateRowLabel: View {
     let isSuggested: Bool
     @State private var isHovered = false
 
+    /// How far the icon sits inside the hover fill; the list is pulled out
+    /// by as much so icons line up with the card's title.
+    static func inset(_ theme: any ThemeProtocol) -> CGFloat { theme.space.s8 }
+
     var body: some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
@@ -174,7 +183,7 @@ private struct WorkflowAutomateRowLabel: View {
             Spacer(minLength: theme.space.s8)
             if isSuggested { StatusChip(L("Suggested"), tone: .accent) }
         }
-        .padding(.horizontal, theme.space.s8)
+        .padding(.horizontal, Self.inset(theme))
         .padding(.vertical, theme.space.s6)
         .settingsChrome(isHovered ? .hover : nil)
         .contentShape(Rectangle())

@@ -2629,7 +2629,8 @@ private struct SharedAgentStatusDot: View {
                 Circle().fill(theme.status.info.foreground)
             case .notConnected(let reason, _):
                 if reason == nil {
-                    Circle().strokeBorder(theme.border.default, lineWidth: theme.stroke.default)
+                    // The sidebar's family scope sets `stroke.default` to zero.
+                    Circle().strokeBorder(theme.border.default, lineWidth: theme.unscopedTheme.stroke.default)
                 } else {
                     Circle().fill(theme.status.warning.foreground)
                 }
