@@ -3,12 +3,26 @@
 //  osaurus
 //
 //  What the Workflows sidebar lists, from plain values so it is testable:
-//  Pinned, All workflows (installed and teammates' hosted links), Drafts
+//  Pinned, All Workflows (installed and teammates' hosted links), Drafts
 //  and Workspaces, each workflow with its status and the few words that
 //  say how it runs. The view draws it; `WorkflowsOverviewModel` feeds it.
 //
 
 import Foundation
+
+/// How All Workflows is ordered. Pinned keeps the order things were pinned.
+enum WorkflowsSidebarSort: String, CaseIterable, Sendable {
+    case name, lastRun, dateAdded, manual
+
+    var title: String {
+        switch self {
+        case .name: return L("Name")
+        case .lastRun: return L("Last Run")
+        case .dateAdded: return L("Date Added")
+        case .manual: return L("My Order")
+        }
+    }
+}
 
 struct WorkflowsSidebarModel: Equatable {
     /// How a workflow runs, worst first.
@@ -93,6 +107,9 @@ struct WorkflowsSidebarModel: Equatable {
         drafts: [WorkflowDraft] = [],
         workspaces: [WorkspaceRow] = [],
         query: String = "",
+        sort: WorkflowsSidebarSort = .name,
+        lastRunAt: [UUID: Date] = [:],
+        manualOrder: [String] = [],
         style: AutomationSentence.Style = .current
     ) -> WorkflowsSidebarModel {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
@@ -107,23 +124,64 @@ struct WorkflowsSidebarModel: Equatable {
         var model = WorkflowsSidebarModel()
         var pinned: [(row: Row, at: Date?)] = []
         var unpinned: [Row] = []
+        var added: [String: Date] = [:]
         for workflow in workflows where matches(workflow.searchText) {
-            if workflow.isPinned { pinned.append((row(workflow), workflow.pinnedAt)) } else { unpinned.append(row(workflow)) }
+            let row = row(workflow)
+            added[row.sortKey] = workflow.createdAt
+            if workflow.isPinned { pinned.append((row, workflow.pinnedAt)) } else { unpinned.append(row) }
         }
         for link in hostedLinks where matches(link.name) {
             let row = Row(
                 kind: .hosted(link.id), name: link.name, subtitle: link.hostLabel, status: .manual,
                 isPinned: link.isPinned, isPublished: false)
+            added[row.sortKey] = link.addedAt
             if link.isPinned { pinned.append((row, link.pinnedAt)) } else { unpinned.append(row) }
         }
         model.pinned = pinned.sorted { pinOrder($0.at, $0.row, $1.at, $1.row) }.map(\.row)
-        model.all = unpinned.sorted(by: nameOrder)
+        model.all = order(unpinned, by: sort, added: added, lastRunAt: lastRunAt, manualOrder: manualOrder)
         model.drafts = drafts.sorted { $0.updatedAt > $1.updatedAt }.compactMap { draft in
             let name = draft.name.isEmpty ? L("Untitled Workflow") : draft.name
             return matches(name) ? DraftRow(id: draft.id, name: name) : nil
         }
         model.workspaces = workspaces.filter { matches($0.name) }
         return model
+    }
+
+    /// Newest first for the date orders, with what never ran (or has no
+    /// date) after, by name. My Order follows `manualOrder`; anything not
+    /// in it yet goes last, by name.
+    static func order(
+        _ rows: [Row], by sort: WorkflowsSidebarSort, added: [String: Date] = [:], lastRunAt: [UUID: Date] = [:],
+        manualOrder: [String] = []
+    ) -> [Row] {
+        func newestFirst(_ date: @escaping (Row) -> Date?) -> (Row, Row) -> Bool {
+            { lhs, rhs in
+                switch (date(lhs), date(rhs)) {
+                case let (l?, r?) where l != r: return l > r
+                case (_?, nil): return true
+                case (nil, _?): return false
+                default: return nameOrder(lhs, rhs)
+                }
+            }
+        }
+        switch sort {
+        case .name:
+            return rows.sorted(by: nameOrder)
+        case .lastRun:
+            return rows.sorted(by: newestFirst { $0.workflowID.flatMap { lastRunAt[$0] } })
+        case .dateAdded:
+            return rows.sorted(by: newestFirst { added[$0.sortKey] })
+        case .manual:
+            let position = Dictionary(manualOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+            return rows.sorted { lhs, rhs in
+                switch (position[lhs.sortKey], position[rhs.sortKey]) {
+                case let (l?, r?): return l < r
+                case (_?, nil): return true
+                case (nil, _?): return false
+                default: return nameOrder(lhs, rhs)
+                }
+            }
+        }
     }
 
     /// By name; the same name keeps a stable order.

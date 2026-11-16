@@ -1953,8 +1953,8 @@ enum NavigatorRowMetrics {
 
 /// A collapsible group's header ("Pinned", "Agents"): the whole row is the
 /// toggle, with optional actions on the trailing end that keep their own
-/// clicks.
-private struct NavigatorGroupHeader<Trailing: View>: View {
+/// clicks. The Workflows sidebar's sections use it too.
+struct NavigatorGroupHeader<Trailing: View>: View {
     let title: String
     let isCollapsed: Bool
     var isToggleEnabled: Bool = true

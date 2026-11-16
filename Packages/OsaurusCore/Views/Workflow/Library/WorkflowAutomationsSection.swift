@@ -36,10 +36,12 @@ struct WorkflowAutomationsSection: View {
     @Environment(\.theme) private var theme
 
     let workflow: InstalledWorkflow
+    /// The page's own answer, so the header and each automation agree.
+    let needsSetup: Bool
     /// What the page was opened to do; taken on appear.
     var takeIntent: () -> WorkflowAutomationIntent? = { nil }
 
-    /// An automation just added: its card opens with the words to change it.
+    /// An automation just added or asked for, marked for a moment.
     @State private var highlighted: UUID?
     @State private var editorRequest: EventEditorRequest?
     @State private var removing: OsaurusEvent?
@@ -62,7 +64,7 @@ struct WorkflowAutomationsSection: View {
                         if index > 0 { ThemeHairlineDivider(color: theme.border.subtle) }
                         WorkflowAutomationCard(
                             event: event, workflow: workflow,
-                            isHighlighted: highlighted == event.id, needsSetup: workflow.needsSetup,
+                            isHighlighted: highlighted == event.id, needsSetup: needsSetup,
                             onChange: { editorRequest = EventEditorRequest(existing: $0) },
                             onRemove: { removing = $0 })
                     }
@@ -123,26 +125,31 @@ struct WorkflowAutomationsSection: View {
                 if let suggested = AutomationPresets.presets(name: workflow.name, summary: workflow.summary)
                     .first(where: \.isSuggested)
                 {
-                    choice(icon: "sparkles", title: suggested.title, detail: L("Suggested")) { apply(suggested.kind) }
+                    choice(icon: "sparkles", title: suggested.title, detail: L("Suggested for this workflow")) {
+                        apply(suggested.kind)
+                    }
                 }
-                choice(icon: "calendar.badge.clock", title: L("At a time I choose"), detail: L("Every day, every weekday, every Monday…")) {
+                choice(icon: "calendar.badge.clock", title: L("At a time I choose"), detail: L("Pick the days and the time")) {
                     add(AutomationDefaults.schedule)
                 }
                 Menu {
                     happeningsMenu
                 } label: {
-                    choiceLabel(icon: "bolt", title: L("When something happens"), detail: L("A file shows up, a site posts, an app has news…"))
+                    choiceLabel(icon: "bolt", title: L("When something happens"), detail: L("A new file, a new post, and more"))
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
                 .menuIndicator(.hidden)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func choice(icon: String, title: String, detail: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { choiceLabel(icon: icon, title: title, detail: detail) }
             .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func choiceLabel(icon: String, title: String, detail: String) -> some View {
@@ -155,13 +162,15 @@ struct WorkflowAutomationsSection: View {
                 .font(SettingsFont.rowTitle)
                 .foregroundStyle(theme.text.primary)
                 .multilineTextAlignment(.leading)
+                .lineLimit(2)
             Text(verbatim: detail)
                 .font(SettingsFont.footnote)
                 .foregroundStyle(theme.text.secondary)
                 .multilineTextAlignment(.leading)
+                .lineLimit(2)
         }
         .padding(theme.space.s12)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .settingsChrome(.card)
         .contentShape(Rectangle())
         .pointingHandCursor()
@@ -170,32 +179,15 @@ struct WorkflowAutomationsSection: View {
     // MARK: Also run it
 
     private func alsoRunIt(_ automations: [OsaurusEvent]) -> some View {
-        let hasAppLaunch = automations.contains { $0.sourceKind == .app }
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: theme.space.s6) { alsoRunItContent(hasAppLaunch: hasAppLaunch) }
-            VStack(alignment: .leading, spacing: theme.space.s6) { alsoRunItContent(hasAppLaunch: hasAppLaunch) }
-        }
-    }
-
-    @ViewBuilder
-    private func alsoRunItContent(hasAppLaunch: Bool) -> some View {
-        Text(verbatim: L("Also run it"))
-            .font(SettingsFont.rowDescription)
-            .foregroundStyle(theme.text.secondary)
-        WorkflowDashedChip(title: L("at another time")) { add(AutomationDefaults.schedule) }
-        if !hasAppLaunch {
-            WorkflowDashedChip(title: L("when Osaurus opens")) { add(AutomationDefaults.appLaunch) }
-        }
-        WorkflowDashedChip(title: L("when a file shows up")) { addFolder() }
-        Menu {
+        SettingsMenuButton(.tertiary, "Add Another Way", icon: "plus", size: .small) {
+            Button {
+                add(AutomationDefaults.schedule)
+            } label: {
+                Label(L("At another time"), systemImage: "calendar.badge.clock")
+            }
+            Divider()
             happeningsMenu
-        } label: {
-            WorkflowDashedChipLabel(title: L("more ways"), icon: "ellipsis")
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
     }
 
     /// Every way the catalog offers but a schedule.
@@ -224,7 +216,7 @@ struct WorkflowAutomationsSection: View {
 
     private func apply(_ intent: WorkflowAutomationIntent?) {
         switch intent {
-        case .highlight(let id)?: withAnimation(theme.motion.standard) { highlighted = id }
+        case .highlight(let id)?: highlight(id)
         case .addFeed?: addingFeed = true
         case .openEditor(let template)?: openEditor(template)
         case nil: break
@@ -261,7 +253,17 @@ struct WorkflowAutomationsSection: View {
     private func add(_ source: EventSource) {
         let event = AutomationDefaults.event(for: workflow, source: source)
         let created = manager.create(event, telemetryOrigin: "user")
-        withAnimation(theme.motion.standard) { highlighted = created.id }
+        highlight(created.id)
+    }
+
+    /// Marks the automation just added or opened, then lets it settle.
+    private func highlight(_ id: UUID) {
+        withAnimation(theme.motion.standard) { highlighted = id }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard highlighted == id else { return }
+            withAnimation(theme.motion.standard) { highlighted = nil }
+        }
     }
 
     private func openEditor(_ template: EventSourceTemplate) {
@@ -271,7 +273,7 @@ struct WorkflowAutomationsSection: View {
     private func save(_ event: OsaurusEvent, isNew: Bool) {
         if isNew {
             let created = manager.create(event, telemetryOrigin: "user")
-            highlighted = created.id
+            highlight(created.id)
             if created.sourceKind == .webhook { WorkflowAutomationLinks.openInSettings(created.id) }
         } else {
             manager.update(event)
@@ -307,20 +309,23 @@ struct WorkflowAutomationCard: View {
         let missing = missingInputs
         VStack(alignment: .leading, spacing: theme.space.s10) {
             HStack(alignment: .center, spacing: theme.space.s10) {
-                Image(systemName: EventSourceTemplate.icon(for: event))
-                    .glyphSize(.footnote, weight: .semibold)
-                    .foregroundStyle(event.isEnabled ? theme.text.secondary : theme.text.tertiary)
-                    .frame(width: theme.space.s16)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: theme.space.s4) {
-                    sentence
-                        .help(L("Click a word to change it."))
+                VStack(alignment: .leading, spacing: theme.space.s6) {
+                    HStack(spacing: theme.space.s10) {
+                        Image(systemName: EventSourceTemplate.icon(for: event))
+                            .glyphSize(.body, weight: .medium)
+                            .foregroundStyle(event.isEnabled ? theme.text.secondary : theme.text.tertiary)
+                            .frame(width: theme.space.s20)
+                            .accessibilityHidden(true)
+                        sentence
+                            .help(L("Click a word to change it."))
+                    }
                     let state = WorkflowAutomationState.line(
                         event, needsSetup: needsSetup, inputsMissing: !missing.isEmpty,
                         hasTargetProblem: EventInspection.targetProblem(event) != nil)
                     Text(verbatim: state.text)
                         .font(SettingsFont.footnote)
                         .foregroundStyle(state.tone.map(theme.statusInk) ?? theme.text.secondary)
+                        .padding(.leading, theme.space.s20 + theme.space.s10)
                 }
                 Spacer(minLength: theme.space.s8)
                 SettingsIconButton("trash", help: L("Remove"), size: .small, isDestructive: true) { onRemove(event) }
@@ -377,7 +382,7 @@ struct WorkflowAutomationCard: View {
                     sentenceText(AutomationSentence.sentence(event))
                     SettingsButton(.tertiary, "Change…", size: .small) { onChange(event) }
                 } else {
-                    SettingsMenuButton(.secondary, AutomationSentence.dayLabel(parts.day), size: .small, verbatim: true) {
+                    SettingsMenuButton(.secondary, AutomationSentence.dayLabel(parts.day), size: .standard, verbatim: true) {
                         ForEach(AutomationSentence.dayMenu(), id: \.self) { choice in
                             Button(AutomationSentence.dayLabel(choice)) { setDay(choice, parts: parts) }
                         }

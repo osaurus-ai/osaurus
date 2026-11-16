@@ -89,23 +89,18 @@ struct WorkflowDetailPage<Actions: View>: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: theme.space.s32) {
-                            VStack(alignment: .leading, spacing: theme.space.s12) {
-                                header(workflow, needsSetup: needsSetup)
-                                WorkflowDetailStatusLine(
-                                    workflow: workflow, needsSetup: needsSetup, lastRun: model.recordedRuns.first)
-                                    .padding(.leading, theme.space.s40 + theme.space.s12)
-                            }
+                            header(workflow, needsSetup: needsSetup)
                             nameNotice(workflow)
                             HStack(alignment: .top, spacing: theme.space.s32) {
                                 VStack(alignment: .leading, spacing: theme.space.s32) {
-                                    if !isWide { recentRuns(workflow) }
-                                    WorkflowAutomationsSection(workflow: workflow, takeIntent: takeIntent)
+                                    if !isWide { recentRuns(workflow, needsSetup: needsSetup) }
+                                    WorkflowAutomationsSection(workflow: workflow, needsSetup: needsSetup, takeIntent: takeIntent)
                                     whatItDoes(workflow)
                                     moreOptions(workflow)
                                 }
                                 .frame(maxWidth: WorkflowLibraryLayout.columnWidth, alignment: .leading)
                                 if isWide {
-                                    recentRuns(workflow)
+                                    recentRuns(workflow, needsSetup: needsSetup)
                                         .frame(width: Self.runsColumnWidth)
                                 }
                             }
@@ -152,11 +147,7 @@ struct WorkflowDetailPage<Actions: View>: View {
     /// Name, one-line summary, and the one thing to do: Run now, or Set Up…
     /// while something blocks the run. Everything else is in ⋯.
     private func header(_ workflow: InstalledWorkflow, needsSetup: Bool) -> some View {
-        SettingsDetailHeader(
-            icon: "flowchart",
-            title: workflow.name,
-            subtitle: workflow.summary
-        ) {
+        WorkflowPageHeader(title: workflow.name, subtitle: workflow.summary) {
             if let published = registryRecords.record(for: workflow.templateID) {
                 publishedChip(published, workflow: workflow)
             }
@@ -174,6 +165,8 @@ struct WorkflowDetailPage<Actions: View>: View {
                     .settingsLandingAnchor("workflows.edit")
             }
             .settingsLandingAnchor("workflows.rename")
+        } status: {
+            WorkflowDetailStatusLine(workflow: workflow, needsSetup: needsSetup, lastRun: model.recordedRuns.first)
         }
     }
 
@@ -237,9 +230,10 @@ struct WorkflowDetailPage<Actions: View>: View {
 
     // MARK: - Recent Runs
 
-    private func recentRuns(_ workflow: InstalledWorkflow) -> some View {
+    private func recentRuns(_ workflow: InstalledWorkflow, needsSetup: Bool) -> some View {
         WorkflowRecentRuns(
-            workflow: workflow, recorded: model.recordedRuns, onRun: { onRun(workflow) }, onOpenRun: onOpenRun,
+            workflow: workflow, recorded: model.recordedRuns, needsSetup: needsSetup, onRun: { onRun(workflow) },
+            onOpenRun: onOpenRun,
             onSeeAll: { onSeeAllRuns(workflow) })
     }
 
@@ -262,30 +256,22 @@ struct WorkflowDetailPage<Actions: View>: View {
         ) {
             if !steps.isEmpty { WorkflowFlowViewerButton(source: .workflow(workflow.id)) }
         } content: {
-            if !inputs.isEmpty {
-                fact(L("You give it: \(WorkflowSummary.list(inputs))."))
-            }
             if steps.isEmpty {
-                fact(L("No steps yet. Edit it to add some."))
-            } else {
-                WorkflowStepList(steps: steps)
+                Text("No steps yet. Edit it to add some.", bundle: .module)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundStyle(theme.text.secondary)
             }
-            VStack(alignment: .leading, spacing: theme.space.s4) {
-                if !outputs.isEmpty {
-                    fact(L("You get: \(WorkflowSummary.list(outputs))."))
-                }
-                if touchesFiles { fact(access.architectSentence) }
-                if !hosts.isEmpty { fact(L("It connects to \(WorkflowSummary.list(hosts)).")) }
-                if let locality = model.locality { fact(locality.text + ".") }
+            let facts = [
+                inputs.isEmpty ? nil : WorkflowStepList.Fact(icon: "arrow.right.circle", text: L("You give it: \(WorkflowSummary.list(inputs)).")),
+                outputs.isEmpty ? nil : WorkflowStepList.Fact(icon: "arrow.down.circle", text: L("You get: \(WorkflowSummary.list(outputs)).")),
+                touchesFiles ? WorkflowStepList.Fact(icon: "folder", text: access.architectSentence) : nil,
+                hosts.isEmpty ? nil : WorkflowStepList.Fact(icon: "network", text: L("It connects to \(WorkflowSummary.list(hosts)).")),
+                model.locality.map { WorkflowStepList.Fact(icon: $0.icon, text: $0.text + ".") },
+            ].compactMap { $0 }
+            if !steps.isEmpty || !facts.isEmpty {
+                WorkflowStepList(steps: steps, facts: facts)
             }
         }
-    }
-
-    private func fact(_ text: String) -> some View {
-        Text(verbatim: text)
-            .font(SettingsFont.rowDescription)
-            .foregroundStyle(theme.text.secondary)
-            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - More Options
@@ -681,6 +667,7 @@ private struct WorkflowRecentRuns: View {
     let workflow: InstalledWorkflow
     /// Settled, newest first.
     let recorded: [WorkflowRun]
+    let needsSetup: Bool
     let onRun: () -> Void
     let onOpenRun: (UUID) -> Void
     let onSeeAll: () -> Void
@@ -713,12 +700,7 @@ private struct WorkflowRecentRuns: View {
             }
         } content: {
             if items.isEmpty {
-                VStack(alignment: .leading, spacing: theme.space.s10) {
-                    Text("No runs yet.", bundle: .module)
-                        .font(SettingsFont.rowDescription)
-                        .foregroundStyle(theme.text.secondary)
-                    SettingsButton(.secondary, "Try It Now", icon: "play", size: .small, action: onRun)
-                }
+                empty
             } else {
                 if let headline = WorkflowHealth.headline(bars, running: going.count) {
                     Text(verbatim: headline)
@@ -747,6 +729,34 @@ private struct WorkflowRecentRuns: View {
             }
         }
         .settingsLandingAnchor("workflows.recentRuns")
+    }
+
+    /// One quiet row in the runs' place. Until setup is done the header's
+    /// Set Up… is the only thing to do, so it offers no run.
+    private var empty: some View {
+        HStack(alignment: .center, spacing: theme.space.s12) {
+            Image(systemName: "clock")
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundStyle(theme.text.tertiary)
+                .frame(width: theme.space.s16, height: theme.space.s16)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                Text("No runs yet", bundle: .module)
+                    .textStyle(.body, weight: 500)
+                    .foregroundStyle(theme.text.primary)
+                Text(needsSetup ? "Finish setup, then try it." : "Try it once to see what you get.", bundle: .module)
+                    .font(SettingsFont.footnote)
+                    .foregroundStyle(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if !needsSetup {
+                SettingsButton(.secondary, "Try It Now", icon: "play.fill", size: .small, action: onRun)
+            }
+        }
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s12)
+        .settingsChrome(.card)
     }
 }
 

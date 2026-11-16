@@ -241,6 +241,40 @@ struct WorkflowsSidebarModelTests {
     }
 
     @Test
+    func sortOrders_newestFirst_neverAfter_myOrderThenTheRestByName() {
+        let a = Self.workflow("Alpha")
+        let b = Self.workflow("Bravo")
+        let c = Self.workflow("Charlie")
+        let rows = WorkflowsSidebarModel.make(workflows: [c, a, b], style: us).all
+        let key = Dictionary(uniqueKeysWithValues: rows.map { ($0.name, $0.sortKey) })
+        func names(_ sort: WorkflowsSidebarSort, added: [String: Date] = [:], lastRunAt: [UUID: Date] = [:], manual: [String] = [])
+            -> [String]
+        {
+            WorkflowsSidebarModel.order(rows, by: sort, added: added, lastRunAt: lastRunAt, manualOrder: manual).map(\.name)
+        }
+        #expect(names(.name) == ["Alpha", "Bravo", "Charlie"])
+        let lastRun = [b.id: Date(timeIntervalSince1970: 10), c.id: Date(timeIntervalSince1970: 20)]
+        #expect(names(.lastRun, lastRunAt: lastRun) == ["Charlie", "Bravo", "Alpha"], "never ran goes last")
+        let added = [key["Alpha"]!: Date(timeIntervalSince1970: 30), key["Charlie"]!: Date(timeIntervalSince1970: 5)]
+        #expect(names(.dateAdded, added: added) == ["Alpha", "Charlie", "Bravo"])
+        #expect(names(.manual, manual: [key["Charlie"]!, key["Alpha"]!]) == ["Charlie", "Alpha", "Bravo"], "new ones go last")
+        #expect(names(.manual) == ["Alpha", "Bravo", "Charlie"])
+    }
+
+    @Test
+    func cardGrid_leavesNoCardAlone() {
+        #expect(WorkflowCardGridColumns.count(4, fit: 3) == 2)
+        #expect(WorkflowCardGridColumns.count(6, fit: 3) == 3)
+        #expect(WorkflowCardGridColumns.count(3, fit: 3) == 3)
+        #expect(WorkflowCardGridColumns.count(3, fit: 2) == 1)
+        #expect(WorkflowCardGridColumns.count(2, fit: 3) == 2)
+        #expect(WorkflowCardGridColumns.count(5, fit: 3) == 3, "3 and 2, the 2 centered")
+        #expect(WorkflowCardGridColumns.count(7, fit: 2) == 2)
+        #expect(WorkflowCardGridColumns.count(4, fit: 1) == 1)
+        #expect(WorkflowCardGridColumns.count(0, fit: 3) == 1)
+    }
+
+    @Test
     func published_isMarked() {
         let a = Self.workflow("Shared")
         let model = WorkflowsSidebarModel.make(workflows: [a], publishedTemplateIDs: [a.templateID], style: us)

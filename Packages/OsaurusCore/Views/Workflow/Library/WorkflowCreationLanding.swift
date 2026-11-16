@@ -111,7 +111,7 @@ struct WorkflowCreationLanding<StarterCard: View>: View {
             Text("Or add a ready-made workflow", bundle: .module)
                 .textStyle(.caption)
                 .foregroundStyle(theme.text.tertiary)
-            WorkflowStarterGrid(items: starters, card: starterCard)
+            WorkflowCardGrid(items: starters, card: starterCard)
         }
     }
 }

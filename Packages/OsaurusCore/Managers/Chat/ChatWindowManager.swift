@@ -2000,7 +2000,8 @@ private struct WorkflowsTitleBarControls: View {
 /// editor to the page under it, or from a pushed page to the one before.
 /// While the page a link opened is on screen, back returns to the link.
 /// With the sidebar showing, a page picked there has nothing to go back
-/// to: the sidebar is the way home.
+/// to: the sidebar is the way home. New Workflow is never picked there,
+/// so it always has a way back.
 private struct WorkflowsTitleBarBackButton: View {
     @ObservedObject var windowState: ChatWindowState
     var sidebarShown = false
@@ -2013,8 +2014,9 @@ private struct WorkflowsTitleBarBackButton: View {
             SettingsBackButton(title: WorkflowsView.backTitle(to: path.last), verbatim: true) {
                 windowState.goBack()
             }
-        } else if path.count > (sidebarShown ? 1 : 0) {
-            SettingsBackButton(title: WorkflowsView.backTitle(to: path.dropLast().last), verbatim: true) {
+        } else if path.count > (sidebarShown && path.first != .create ? 1 : 0) {
+            let target = path.dropLast().last
+            SettingsBackButton(title: target == nil && sidebarShown ? L("Home") : WorkflowsView.backTitle(to: target), verbatim: true) {
                 withAnimation(windowState.theme.motion.quick) { _ = windowState.goBack() }
             }
         }

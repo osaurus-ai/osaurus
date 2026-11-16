@@ -114,16 +114,11 @@ struct WorkflowsHomeSections: View {
 
     private func pinned(_ tiles: [WorkflowsHomeModel.Tile]) -> some View {
         SettingsSection(title: "Pinned", layout: .plain) {
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 180), spacing: theme.space.s12, alignment: .top)],
-                alignment: .leading, spacing: theme.space.s12
-            ) {
-                ForEach(tiles) { tile in
-                    WorkflowsPinnedTile(
-                        tile: tile,
-                        onOpen: { windowState.selectWorkflowsPage(.workflow(tile.id)) },
-                        onRun: { if let workflow = installed.workflow(id: tile.id) { onRun(workflow) } })
-                }
+            WorkflowCardGrid(items: tiles) { tile in
+                WorkflowsPinnedTile(
+                    tile: tile,
+                    onOpen: { windowState.selectWorkflowsPage(.workflow(tile.id)) },
+                    onRun: { if let workflow = installed.workflow(id: tile.id) { onRun(workflow) } })
             }
         }
     }
@@ -151,20 +146,15 @@ struct WorkflowsHomeSections: View {
     /// each asking which workflow next.
     private func ways(_ ways: [WorkflowsHomeModel.Way]) -> some View {
         SettingsSection(title: "Ways to Automate", subtitle: "Pick a moment, then a workflow.", layout: .plain) {
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 160), spacing: theme.space.s12, alignment: .top)],
-                alignment: .leading, spacing: theme.space.s12
-            ) {
-                ForEach(ways) { way in
-                    Menu {
-                        workflowPicker(for: way.item.entry)
-                    } label: {
-                        WorkflowsWayCard(way: way)
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-                    .menuIndicator(.hidden)
+            WorkflowCardGrid(items: ways) { way in
+                Menu {
+                    workflowPicker(for: way.item.entry)
+                } label: {
+                    WorkflowsWayCard(way: way)
                 }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
             }
         }
         .id(WorkflowsHomeSection.ways)
@@ -291,7 +281,7 @@ private struct WorkflowsPinnedTile: View {
             }
         }
         .padding(theme.space.s12)
-        .frame(maxWidth: .infinity, minHeight: theme.space.s64 + theme.space.s32, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: theme.space.s64 + theme.space.s32, maxHeight: .infinity, alignment: .topLeading)
         .settingsChrome(isHovered ? .cardHover : .card)
         .contentShape(Rectangle())
         .onTapGesture(perform: onOpen)
@@ -372,7 +362,7 @@ private struct WorkflowsWayCard: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(theme.space.s12)
-        .frame(maxWidth: .infinity, minHeight: theme.space.s64 + theme.space.s32, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: theme.space.s64 + theme.space.s32, maxHeight: .infinity, alignment: .topLeading)
         .settingsChrome(isHovered ? .cardHover : .card)
         .contentShape(Rectangle())
         .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }

@@ -7,7 +7,7 @@
 //  or Open) and the ones teammates' agents run on their own Macs (Add to
 //  My Workflows, then Run). Everything comes from
 //  `WorkspaceWorkflowCatalog`, which Settings → workspace → Workflows
-//  shares. Hosted workflows you added also list under All workflows.
+//  shares. Hosted workflows you added also list under All Workflows.
 //
 
 import SwiftUI

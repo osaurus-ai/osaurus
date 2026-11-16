@@ -444,47 +444,104 @@ private struct WorkflowPageTabButton: View {
     }
 }
 
-// MARK: - Starter grid
+// MARK: - Page header
 
-/// Ready-made workflows as cards, as many to a row as fit (at most three);
-/// a short last row stretches to the full width instead of leaving a hole.
-struct WorkflowStarterGrid<Item: Identifiable, Card: View>: View {
+/// A workflow's page and its runs' pages: the name as large as Home's
+/// title with the page's actions beside it, one line about it, any chips,
+/// then how it stands now. Everything shares the sections' left edge.
+struct WorkflowPageHeader<Chips: View, Actions: View, Status: View>: View {
+    @Environment(\.theme) private var theme
+    /// Verbatim.
+    let title: String
+    var subtitle: String?
+    @ViewBuilder var chips: () -> Chips
+    @ViewBuilder var actions: () -> Actions
+    @ViewBuilder var status: () -> Status
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(alignment: .center, spacing: theme.space.s12) {
+                Text(verbatim: title)
+                    .textStyle(.title)
+                    .foregroundStyle(theme.text.primary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                    .layoutPriority(1)
+                Spacer(minLength: theme.space.s12)
+                HStack(spacing: theme.space.s8) { actions() }
+                    .fixedSize()
+            }
+            if let subtitle, !subtitle.isEmpty {
+                Text(verbatim: subtitle)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundStyle(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if Chips.self != EmptyView.self {
+                HStack(spacing: theme.space.s6) { chips() }
+                    .padding(.top, theme.space.s2)
+            }
+            status()
+                .padding(.top, theme.space.s6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Card grid
+
+enum WorkflowCardGridColumns {
+    static func count(_ count: Int, fit: Int) -> Int {
+        let fit = max(1, fit)
+        guard count > fit else { return max(1, count) }
+        guard fit > 1 else { return 1 }
+        if let even = (2...fit).reversed().first(where: { count % $0 == 0 }) { return even }
+        if count <= 3 { return 1 }
+        return (2...fit).reversed().max { count % $0 < count % $1 } ?? fit
+    }
+}
+
+/// Cards in even rows: as many columns as fit, then the count that leaves
+/// no short last row (4 cards make 2 by 2, 6 make 3 by 2, 3 that don't
+/// fit in one row stack). When a short row can't be avoided, its cards
+/// keep the column width, centered.
+struct WorkflowCardGrid<Item: Identifiable, Card: View>: View {
     @Environment(\.theme) private var theme
     let items: [Item]
+    /// Nil: wide enough for a card's name on one line at the current text size.
+    var minimumCardWidth: CGFloat? = nil
+    var maximumColumns = 3
     @ViewBuilder var card: (Item) -> Card
 
     @State private var width: CGFloat = 0
 
-    /// Wide enough for a starter's name on one line at the current text size.
-    private var minimumCardWidth: CGFloat { theme.pointSize(.body) * 12 }
-
-    private var columns: Int {
-        guard width > 0 else { return 3 }
-        let fit = Int((width + theme.space.s12) / (minimumCardWidth + theme.space.s12))
-        return min(3, max(1, fit))
+    private var fit: Int {
+        guard width > 0 else { return maximumColumns }
+        let minimum = minimumCardWidth ?? theme.pointSize(.body) * 12
+        return min(maximumColumns, max(1, Int((width + theme.space.s12) / (minimum + theme.space.s12))))
     }
 
     var body: some View {
-        let perRow = columns
+        let perRow = WorkflowCardGridColumns.count(items.count, fit: fit)
         let rows = stride(from: 0, to: items.count, by: perRow).map { Array(items[$0..<min($0 + perRow, items.count)]) }
-        VStack(alignment: .leading, spacing: theme.space.s12) {
+        let cardWidth = max(0, (width - theme.space.s12 * CGFloat(perRow - 1)) / CGFloat(perRow))
+        VStack(alignment: .center, spacing: theme.space.s12) {
             ForEach(rows.indices, id: \.self) { index in
+                let row = rows[index]
                 HStack(alignment: .top, spacing: theme.space.s12) {
-                    ForEach(rows[index]) { item in
-                        card(item).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    }
-                    // A short last row keeps the column width instead of
-                    // stretching its cards across the empty columns.
-                    if rows.count > 1 {
-                        ForEach(0..<(perRow - rows[index].count), id: \.self) { _ in
-                            Color.clear.frame(height: 0).frame(maxWidth: .infinity).accessibilityHidden(true)
+                    ForEach(row) { item in
+                        if row.count < perRow, width > 0 {
+                            card(item).frame(width: cardWidth, alignment: .topLeading).frame(maxHeight: .infinity, alignment: .top)
+                        } else {
+                            card(item).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         }
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 }
@@ -505,71 +562,6 @@ struct WorkflowTextLink: View {
 // MARK: - Progress
 
 /// How far a run has got: a thin bar in the run's status color.
-/// A dashed outline: something you could add, not something there yet.
-struct WorkflowDashedOutline: ViewModifier {
-    @Environment(\.theme) private var theme
-    var radius: CGFloat?
-
-    func body(content: Content) -> some View {
-        content.overlay {
-            Group {
-                if let radius {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(theme.border.strong, style: StrokeStyle(lineWidth: theme.stroke.default, dash: [4, 3]))
-                } else {
-                    Capsule()
-                        .strokeBorder(theme.border.strong, style: StrokeStyle(lineWidth: theme.stroke.default, dash: [4, 3]))
-                }
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
-    }
-}
-
-extension View {
-    /// A capsule when `radius` is nil.
-    func workflowDashedOutline(radius: CGFloat? = nil) -> some View { modifier(WorkflowDashedOutline(radius: radius)) }
-}
-
-/// "+ at another time": a dashed chip that adds something.
-struct WorkflowDashedChip: View {
-    @Environment(\.theme) private var theme
-    /// Already localized.
-    let title: String
-    var icon: String = "plus"
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) { WorkflowDashedChipLabel(title: title, icon: icon) }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-    }
-}
-
-struct WorkflowDashedChipLabel: View {
-    @Environment(\.theme) private var theme
-    let title: String
-    var icon: String = "plus"
-    @State private var isHovered = false
-
-    var body: some View {
-        HStack(spacing: theme.space.s4) {
-            Image(systemName: icon)
-                .glyphSize(.micro, weight: .semibold)
-                .accessibilityHidden(true)
-            Text(verbatim: title)
-                .font(SettingsFont.compactLabel)
-        }
-        .foregroundStyle(isHovered ? theme.text.primary : theme.text.secondary)
-        .padding(.horizontal, theme.space.s10)
-        .padding(.vertical, theme.space.s4)
-        .workflowDashedOutline()
-        .contentShape(Capsule())
-        .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
-    }
-}
-
 struct WorkflowRunProgressBar: View {
     @Environment(\.theme) private var theme
     let run: WorkflowRun

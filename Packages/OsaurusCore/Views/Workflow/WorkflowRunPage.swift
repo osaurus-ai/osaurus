@@ -364,8 +364,6 @@ struct WorkflowRunPage: View {
 
     @State private var form: WorkflowRunForm?
     @State private var formWorkflowID: UUID?
-    /// nil: open while the run is going or did not work, closed once it worked.
-    @State private var showsSteps: Bool?
 
     private var workflow: InstalledWorkflow? { workflows.workflow(id: workflowID) }
     private var run: WorkflowRun? { runID.flatMap { runs.run(id: $0) } }
@@ -402,10 +400,7 @@ struct WorkflowRunPage: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.surface.canvas)
         .onAppear(perform: prepareForm)
-        .onChange(of: runID) { _, _ in
-            showsSteps = nil
-            prepareForm()
-        }
+        .onChange(of: runID) { _, _ in prepareForm() }
     }
 
     // MARK: Hero
@@ -414,15 +409,12 @@ struct WorkflowRunPage: View {
     private func hero(_ workflow: InstalledWorkflow) -> some View {
         if let run {
             let line = WorkflowRunWords.status(run, definition: definition(run, workflow))
-            VStack(alignment: .leading, spacing: theme.space.s12) {
-                SettingsDetailHeader(
-                    icon: "flowchart", title: workflow.name, subtitle: subtitle(run)
-                ) {
-                    EmptyView()
-                } actions: {
-                    action(run, workflow: workflow)
-                    menu(run)
-                }
+            WorkflowPageHeader(title: workflow.name, subtitle: subtitle(run)) {
+                EmptyView()
+            } actions: {
+                action(run, workflow: workflow)
+                menu(run)
+            } status: {
                 VStack(alignment: .leading, spacing: theme.space.s8) {
                     HStack(spacing: theme.space.s6) {
                         Group {
@@ -451,14 +443,15 @@ struct WorkflowRunPage: View {
                             .transition(.opacity)
                     }
                 }
-                .padding(.leading, theme.space.s40 + theme.space.s12)
             }
             .animation(theme.motion.quick, value: run.status)
         } else {
-            SettingsDetailHeader(icon: "flowchart", title: workflow.name, subtitle: workflow.summary) {
+            WorkflowPageHeader(title: workflow.name, subtitle: workflow.summary) {
                 EmptyView()
             } actions: {
                 newRunMenu
+            } status: {
+                EmptyView()
             }
         }
     }
@@ -612,33 +605,29 @@ struct WorkflowRunPage: View {
         }
     }
 
-    /// What each step did. Closed once the run worked; open while it runs
-    /// or when something went wrong.
+    /// What each step did, each opening to its details. Once a long run
+    /// worked, only its first steps until asked for the rest.
     private func steps(_ run: WorkflowRun, workflow: InstalledWorkflow, definition: WorkflowDefinition?) -> some View {
         let ownRun = run.workflowID == workflow.id
-        let isOpen = showsSteps ?? (run.status != .completed)
         return SettingsSection(title: "Steps", caption: definition.map(WorkflowCardFacts.steps), layout: .plain) {
             HStack(spacing: theme.space.s8) {
                 WorkflowInsightsLink(runID: run.id, refresh: run.finishedAt)
-                if definition != nil, isOpen {
+                if definition != nil {
                     WorkflowFlowViewerButton(source: .run(runID: run.id, workflowID: workflow.id))
-                }
-                WorkflowTextLink(title: isOpen ? L("Hide") : L("Show")) {
-                    withAnimation(theme.motion.quick) { showsSteps = !isOpen }
                 }
             }
         } content: {
-            if isOpen {
-                WorkflowRunView(
-                    run: run, definition: definition, showsOutput: false, header: .none,
-                    onFix: ownRun ? { ArchitectLauncher.repair(run, of: workflow, in: windowState) } : nil,
-                    onRetry: ownRun && WorkflowRunService.reasonNotToRetry(run) == nil
-                        ? { tryAgain(run, workflow: workflow) } : nil
-                )
-                .transition(.opacity)
-            }
+            WorkflowRunView(
+                run: run, definition: definition, showsOutput: false, header: .none,
+                onFix: ownRun ? { ArchitectLauncher.repair(run, of: workflow, in: windowState) } : nil,
+                onRetry: ownRun && WorkflowRunService.reasonNotToRetry(run) == nil
+                    ? { tryAgain(run, workflow: workflow) } : nil,
+                shownSteps: run.status == .completed ? Self.shownStepsOnceItWorked : nil
+            )
         }
     }
+
+    private static var shownStepsOnceItWorked: Int { 8 }
 
     // MARK: Form
 

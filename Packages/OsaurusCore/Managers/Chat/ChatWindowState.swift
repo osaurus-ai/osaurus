@@ -641,14 +641,14 @@ final class ChatWindowState: ObservableObject {
         shellBreakpoint == .compact ? isWorkflowsDrawerPresented : showWorkflowsSidebar
     }
 
-    /// New Workflow (⌘N): its page over the home, its composer focused.
-    /// With no workflows and no drafts the home already is that page, so
-    /// nothing is pushed.
+    /// New Workflow (⌘N): its page over the one on screen, so Back returns
+    /// there, its composer focused. With no workflows and no drafts the
+    /// home already is that page, so nothing is pushed.
     func showNewWorkflow() {
         if WorkflowsView.isFirstRun(installed: .shared, drafts: .shared) {
             workflowsPath = []
-        } else if workflowsPath != [.create] {
-            workflowsPath = [.create]
+        } else if workflowsPath.last != .create {
+            workflowsPath.append(.create)
         }
         newWorkflowComposerWantsFocus = true
         showMainSurface(.workflows)

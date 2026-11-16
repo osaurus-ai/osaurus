@@ -3,8 +3,9 @@
 //  osaurus
 //
 //  The Workflows destination's sidebar, in the column the chat sidebar
-//  uses: search, Home, then Pinned, All workflows, Drafts and Workspaces,
-//  with New workflow and the Osaurus Store at the foot. Each workflow row
+//  uses: search, Home, then Pinned, All Workflows (with New Workflow's +),
+//  Drafts and Workspaces, each folding like the chat sidebar's groups,
+//  with the Osaurus Store at the foot. Each workflow row
 //  says how it runs in a few words and has Automate and Run beside it.
 //  What it lists comes from `WorkflowsSidebarModel`.
 //
@@ -38,6 +39,24 @@ struct WorkflowsSidebar: View {
 
     @State private var searchText = ""
     @State private var query = ""
+    @AppStorage("workflowsSidebar.pinnedCollapsed") private var pinnedCollapsed = false
+    @AppStorage("workflowsSidebar.allCollapsed") private var allCollapsed = false
+    @AppStorage("workflowsSidebar.draftsCollapsed") private var draftsCollapsed = false
+    @AppStorage("workflowsSidebar.workspacesCollapsed") private var workspacesCollapsed = false
+    @AppStorage("workflowsSidebar.sort") private var sortStorage = WorkflowsSidebarSort.name.rawValue
+    /// My Order, as row sort keys joined by commas.
+    @AppStorage("workflowsSidebar.manualOrder") private var manualOrderStorage = ""
+
+    /// All Workflows while a row is dragged; nil otherwise.
+    @State private var dragOrder: [WorkflowsSidebarModel.Row]?
+    @State private var draggingKey: String?
+    @State private var dragOffset: CGFloat = 0
+    /// How far live swaps have already moved the dragged row this drag.
+    @State private var dragSwapped: CGFloat = 0
+    @State private var rowHeights: [String: CGFloat] = [:]
+
+    private var sort: WorkflowsSidebarSort { WorkflowsSidebarSort(rawValue: sortStorage) ?? .name }
+    private var manualOrder: [String] { manualOrderStorage.split(separator: ",").map(String.init) }
 
     private var model: WorkflowsSidebarModel {
         WorkflowsSidebarModel.make(
@@ -47,7 +66,10 @@ struct WorkflowsSidebar: View {
             publishedTemplateIDs: Set(installed.workflows.map(\.templateID).filter { registryRecords.record(for: $0) != nil }),
             drafts: drafts.libraryDrafts,
             workspaces: workspaces.workspaces.map { .init(id: $0.id, name: $0.name) },
-            query: query)
+            query: query,
+            sort: sort,
+            lastRunAt: overview.lastRunAt,
+            manualOrder: manualOrder)
     }
 
     var body: some View {
@@ -119,28 +141,55 @@ struct WorkflowsSidebar: View {
 
     @ViewBuilder
     private func list(_ model: WorkflowsSidebarModel) -> some View {
+        let searching = !query.isEmpty
         if !model.pinned.isEmpty {
-            SidebarSectionHeader(title: L("Pinned"))
+            WorkflowsSidebarGroupHeader(
+                title: L("Pinned"), isCollapsed: $pinnedCollapsed, isSearching: searching,
+                help: (show: L("Show pinned workflows"), hide: L("Hide pinned workflows")),
+                workflowIDs: model.pinned.compactMap(\.workflowID))
                 .settingsLandingAnchor("workflows.pin")
-            ForEach(model.pinned) { workflowRow($0) }
+            if !pinnedCollapsed || searching { ForEach(model.pinned) { workflowRow($0) } }
         }
-        if !model.all.isEmpty {
-            SidebarSectionHeader(title: L("All workflows"))
-                .settingsLandingAnchor("workflows.all")
-            ForEach(model.all) { workflowRow($0) }
+        if !model.all.isEmpty || !searching {
+            WorkflowsSidebarGroupHeader(
+                title: L("All Workflows"), isCollapsed: $allCollapsed, isSearching: searching,
+                help: (show: L("Show workflows"), hide: L("Hide workflows")),
+                workflowIDs: model.all.compactMap(\.workflowID)
+            ) { isHovered in
+                sortMenu
+                    .opacity(isHovered ? 1 : 0)
+                    .allowsHitTesting(isHovered)
+                SettingsIconButton("plus", help: "New Workflow (⌘N)", size: .extraSmall, role: .tertiary) {
+                    windowState.isWorkflowsDrawerPresented = false
+                    windowState.showNewWorkflow()
+                }
+                .accessibilityLabel(Text("New Workflow", bundle: .module))
+            }
+            .settingsLandingAnchor("workflows.all")
+            if !allCollapsed || searching {
+                ForEach(dragOrder ?? model.all) { row in
+                    reorderable(row, in: model.all, enabled: !searching)
+                }
+            }
         }
         if !model.drafts.isEmpty {
-            SidebarSectionHeader(title: L("Drafts"))
+            WorkflowsSidebarGroupHeader(
+                title: L("Drafts"), isCollapsed: $draftsCollapsed, isSearching: searching,
+                help: (show: L("Show drafts"), hide: L("Hide drafts")))
                 .id(WorkflowsSidebarSection.drafts)
                 .settingsLandingAnchor("workflows.drafts")
-            ForEach(model.drafts) { draftRow($0) }
+            if !draftsCollapsed || searching { ForEach(model.drafts) { draftRow($0) } }
         }
         if !model.workspaces.isEmpty {
-            SidebarSectionHeader(title: L("Workspaces"))
+            WorkflowsSidebarGroupHeader(
+                title: L("Workspaces"), isCollapsed: $workspacesCollapsed, isSearching: searching,
+                help: (show: L("Show workspaces"), hide: L("Hide workspaces")))
                 .settingsLandingAnchor("workflows.workspaces")
-            ForEach(model.workspaces) { workspace in
-                destinationRow(workspace.name, icon: "person.3", isSelected: selection == .workspace(workspace.id)) {
-                    windowState.selectWorkflowsPage(.workspace(workspace.id))
+            if !workspacesCollapsed || searching {
+                ForEach(model.workspaces) { workspace in
+                    destinationRow(workspace.name, icon: "person.3", isSelected: selection == .workspace(workspace.id)) {
+                        windowState.selectWorkflowsPage(.workspace(workspace.id))
+                    }
                 }
             }
         }
@@ -229,6 +278,87 @@ struct WorkflowsSidebar: View {
             }
     }
 
+    // MARK: Sort and reorder
+
+    private var sortMenu: some View {
+        let size = theme.assignedMetric(SettingsButtonSize.extraSmall.assignment("height"), fallback: theme.space.s24)
+        return AssignedActionMenu(accessibilityLabel: L("Sort By")) {
+            ForEach(WorkflowsSidebarSort.allCases, id: \.self) { option in
+                Button {
+                    withAnimation(theme.motion.quick) { sortStorage = option.rawValue }
+                } label: {
+                    if option == sort {
+                        Label(option.title, systemImage: "checkmark")
+                    } else {
+                        Text(verbatim: option.title)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+        }
+        .buttonStyle(SettingsIconButtonStyle(size: .extraSmall, role: .tertiary))
+        .frame(width: size, height: size)
+        .help(L("Sort By: \(sort.title)"))
+    }
+
+    /// A row of All Workflows that can be dragged into a new place, which
+    /// switches the list to My Order. A search's results don't move.
+    private func reorderable(
+        _ row: WorkflowsSidebarModel.Row, in rows: [WorkflowsSidebarModel.Row], enabled: Bool
+    ) -> some View {
+        let isDragging = draggingKey == row.sortKey
+        return workflowRow(row)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowHeights[row.sortKey] = $0 }
+            .offset(y: isDragging ? dragOffset : 0)
+            .zIndex(isDragging ? 1 : 0)
+            .gesture(
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                    .onChanged { drag(row.sortKey, in: rows, translation: $0.translation.height) }
+                    .onEnded { _ in endDrag() },
+                including: enabled ? .all : .subviews)
+    }
+
+    private func drag(_ key: String, in rows: [WorkflowsSidebarModel.Row], translation: CGFloat) {
+        if draggingKey != key {
+            draggingKey = key
+            dragOrder = rows
+            dragOffset = 0
+            dragSwapped = 0
+        }
+        guard var order = dragOrder, var index = order.firstIndex(where: { $0.sortKey == key }) else { return }
+        func pitch(_ row: WorkflowsSidebarModel.Row) -> CGFloat { (rowHeights[row.sortKey] ?? theme.space.s40) + theme.space.s2 }
+        var offset = translation - dragSwapped
+        while index < order.count - 1, offset > pitch(order[index + 1]) / 2 {
+            let step = pitch(order[index + 1])
+            order.swapAt(index, index + 1)
+            index += 1
+            dragSwapped += step
+            offset -= step
+        }
+        while index > 0, offset < -pitch(order[index - 1]) / 2 {
+            let step = pitch(order[index - 1])
+            order.swapAt(index, index - 1)
+            index -= 1
+            dragSwapped -= step
+            offset += step
+        }
+        if index == 0 { offset = max(offset, 0) }
+        if index == order.count - 1 { offset = min(offset, 0) }
+        dragOrder = order
+        dragOffset = offset
+    }
+
+    private func endDrag() {
+        if let order = dragOrder {
+            manualOrderStorage = order.map(\.sortKey).joined(separator: ",")
+            sortStorage = WorkflowsSidebarSort.manual.rawValue
+        }
+        withAnimation(theme.motion.springAnimation(responseMultiplier: 0.8)) { dragOffset = 0 }
+        draggingKey = nil
+        dragOrder = nil
+    }
+
     private func destinationRow(
         _ title: String, icon: String, isSelected: Bool, action: @escaping () -> Void
     ) -> some View {
@@ -238,28 +368,69 @@ struct WorkflowsSidebar: View {
     private func scrollToTarget(_ proxy: ScrollViewProxy) {
         guard let target = windowState.workflowsSidebarScrollTarget else { return }
         windowState.workflowsSidebarScrollTarget = nil
+        if target == WorkflowsSidebarSection.drafts { draftsCollapsed = false }
         withAnimation(theme.motion.quick) { proxy.scrollTo(target, anchor: .top) }
     }
 
     // MARK: Footer
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: theme.space.s8) {
-            SettingsButton(.secondary, "New Workflow", icon: "plus", size: .small, help: "Describe a task and Osaurus builds it (⌘N)") {
-                windowState.isWorkflowsDrawerPresented = false
-                windowState.showNewWorkflow()
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            WorkflowsSidebarStoreRow { NSWorkspace.shared.open(Self.storeURL) }
-                .settingsLandingAnchor("workflows.store")
-        }
-        .padding(.horizontal, theme.space.s16)
-        .padding(.top, theme.space.s8)
-        .padding(.bottom, theme.space.s16)
+        WorkflowsSidebarStoreRow { NSWorkspace.shared.open(Self.storeURL) }
+            .settingsLandingAnchor("workflows.store")
+            .padding(.horizontal, theme.space.s16)
+            .padding(.top, theme.space.s8)
+            .padding(.bottom, theme.space.s16)
     }
 }
 
 // MARK: - Rows
+
+/// A section header in the chat sidebar's anatomy: the title folds the
+/// section, and a folded section still shows when one of its workflows is
+/// running or waiting on you. A search keeps every section open.
+private struct WorkflowsSidebarGroupHeader<Trailing: View>: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var live = WorkflowLiveRuns.shared
+    let title: String
+    @Binding var isCollapsed: Bool
+    let isSearching: Bool
+    let help: (show: String, hide: String)
+    let workflowIDs: [UUID]
+    let trailing: (Bool) -> Trailing
+
+    init(
+        title: String, isCollapsed: Binding<Bool>, isSearching: Bool, help: (show: String, hide: String),
+        workflowIDs: [UUID] = [], @ViewBuilder trailing: @escaping (Bool) -> Trailing = { _ in EmptyView() }
+    ) {
+        self.title = title
+        _isCollapsed = isCollapsed
+        self.isSearching = isSearching
+        self.help = help
+        self.workflowIDs = workflowIDs
+        self.trailing = trailing
+    }
+
+    var body: some View {
+        let collapsed = isCollapsed && !isSearching
+        NavigatorGroupHeader(
+            title: title,
+            isCollapsed: collapsed,
+            isToggleEnabled: !isSearching,
+            help: collapsed ? help.show : help.hide,
+            activityStatus: collapsed ? activity : nil,
+            onToggle: { withAnimation(theme.motion.quick) { isCollapsed.toggle() } },
+            trailing: trailing
+        )
+        .padding(.top, theme.space.s14)
+    }
+
+    private var activity: SessionActivityMonitor.Status? {
+        guard !workflowIDs.isEmpty else { return nil }
+        let ids = Set(workflowIDs)
+        return SessionActivityMonitor.rollUp(
+            live.going.filter { ids.contains($0.workflowID) }.map { $0.isWaitingOnYou ? .waitingForInput : .working })
+    }
+}
 
 /// Home, a workspace or a draft: an icon and one line.
 private struct WorkflowsSidebarDestinationRow: View {
@@ -313,10 +484,12 @@ struct WorkflowsSidebarWorkflowRow: View {
     let automatePopover: (_ close: @escaping () -> Void) -> AnyView?
     @State private var isHovered = false
     @State private var showsAutomate = false
+    /// The presenter keeps a card hidden until it has a height.
+    @State private var automateHeight: CGFloat = 0
 
     /// Run and Automate only where the pointer is, so the list reads as
-    /// names and states.
-    private var showsActions: Bool { isHovered || isSelected || showsAutomate }
+    /// names and states, and a selected row keeps its whole subtitle.
+    private var showsActions: Bool { isHovered || showsAutomate }
 
     var body: some View {
         WorkflowLiveRunReader(workflowID: row.workflowID) { going in
@@ -389,10 +562,19 @@ struct WorkflowsSidebarWorkflowRow: View {
                     .accessibilityLabel(Text("Automate \(row.name)", bundle: .module))
                     .anchoredCard(
                         isPresented: $showsAutomate,
-                        size: CGSize(width: WorkflowAutomatePopover.width, height: 0),
+                        size: CGSize(width: WorkflowAutomatePopover.width, height: automateHeight),
                         besideAnchor: true, accessibilityLabel: L("Automate \(row.name)")
                     ) {
-                        if showsAutomate { automatePopover { showsAutomate = false } }
+                        ScrollView(.vertical) {
+                            if showsAutomate, let card = automatePopover({ showsAutomate = false }) {
+                                card
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                                        if abs(automateHeight - height) > 0.5 { automateHeight = max(1, height) }
+                                    }
+                            }
+                        }
+                        .scrollIndicators(.hidden)
                     }
             }
             SettingsIconButton("play", help: "Run now", size: .extraExtraSmall, role: .secondary, action: onRun)
@@ -457,15 +639,11 @@ private struct WorkflowsSidebarStoreRow: View {
                 .foregroundStyle(theme.text.secondary)
                 .frame(width: theme.space.s16)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: theme.space.s2) {
-                Text("Osaurus Store", bundle: .module)
-                    .textStyle(.body, weight: 500)
-                    .foregroundStyle(theme.text.primary)
-                Text("Workflows made by others", bundle: .module)
-                    .textStyle(.caption)
-                    .foregroundStyle(theme.text.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Text("Osaurus Store", bundle: .module)
+                .textStyle(.body, weight: 500)
+                .foregroundStyle(theme.text.primary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: "arrow.up.right")
                 .glyphSize(.micro, weight: .semibold)
                 .foregroundStyle(theme.text.tertiary)
@@ -477,7 +655,7 @@ private struct WorkflowsSidebarStoreRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
-        .help(L("Opens store.osaurus.ai in your browser"))
+        .help(L("Workflows made by others, on store.osaurus.ai"))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isLink)
         .accessibilityAction { action() }

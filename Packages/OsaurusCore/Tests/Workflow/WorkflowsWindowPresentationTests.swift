@@ -251,15 +251,20 @@ struct WorkflowsWindowPresentationTests {
             window.showWorkflowsHome(tab: .published)
             window.pushWorkflowsPage(.workflow(UUID()))
 
+            let page = try #require(window.workflowsPath.last)
             window.showNewWorkflow()
-            #expect(window.workflowsPath == [.create])
+            #expect(window.workflowsPath == [page, .create], "over the page on screen, so Back returns there")
             #expect(window.consumeNewWorkflowComposerFocus())
             #expect(!window.consumeNewWorkflowComposerFocus())
 
             window.showNewWorkflow()
-            #expect(window.workflowsPath == [.create])
+            #expect(window.workflowsPath == [page, .create])
             window.popWorkflowsPage()
-            #expect(window.workflowsPath.isEmpty)
+            #expect(window.workflowsPath == [page])
+
+            window.selectWorkflowsPage(nil)
+            window.showNewWorkflow()
+            #expect(window.workflowsPath == [.create], "from Home, Back returns Home")
         }
     }
 

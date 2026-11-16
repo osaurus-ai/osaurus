@@ -32,6 +32,10 @@ final class WorkflowsOverviewModel: ObservableObject {
     /// When each workflow last started a run that finished, from the recent
     /// runs. A failure before it is resolved.
     @Published private(set) var lastFinishedRun: [UUID: Date] = [:]
+    /// When each workflow last started a run of any outcome, for the
+    /// sidebar's Last Run order. Test runs and steps of another workflow
+    /// don't count.
+    @Published private(set) var lastRunAt: [UUID: Date] = [:]
 
     private let events: EventManager
     private var cancellables: Set<AnyCancellable> = []
@@ -130,10 +134,16 @@ final class WorkflowsOverviewModel: ObservableObject {
 
     private func refreshFinishedRuns() {
         var latest: [UUID: Date] = [:]
-        for run in WorkflowRunStore.shared.recentRuns() where run.status == .completed && run.caller.kind != .workflow {
+        var anyLatest: [UUID: Date] = [:]
+        for run in WorkflowRunStore.shared.recentRuns() where run.caller.kind != .workflow {
+            if !run.isTest, run.startedAt > anyLatest[run.workflowID] ?? .distantPast {
+                anyLatest[run.workflowID] = run.startedAt
+            }
+            guard run.status == .completed else { continue }
             if run.startedAt > latest[run.workflowID] ?? .distantPast { latest[run.workflowID] = run.startedAt }
         }
         if latest != lastFinishedRun { lastFinishedRun = latest }
+        if anyLatest != lastRunAt { lastRunAt = anyLatest }
     }
 
     private func refreshTargets() {

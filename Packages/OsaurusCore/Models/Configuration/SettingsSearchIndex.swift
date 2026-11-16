@@ -4553,7 +4553,7 @@ public enum SettingsSearchIndex {
                 "my workflows",
             ],
             subTab: "workflows",
-            disambiguation: "Main window ▸ Workflows: a sidebar (search, Home, Activity, Pinned, All workflows, Drafts, Workspaces, then New workflow and Osaurus Store) beside the page picked there. Home has New Workflow (⌘N) and a ⋯ menu (Import a Workflow File…, Connections, All Automations, Browse the Store) in its header, with one line saying what is running and what runs on its own; then Running Now, Needs Attention, Pinned and Your Automations, each only when it has something, Ways to Automate until you have an automation, and your author page at the foot. Picking a workflow opens its page; a row's Run starts it at once when it needs nothing, else asks for its input. The toolbar's sidebar button (⌘B) hides or shows the sidebar. With no workflows and no drafts the page is New Workflow alone, without a sidebar."
+            disambiguation: "Main window ▸ Workflows: a sidebar (search, Home, Activity, Pinned, All Workflows with + for New Workflow, Drafts, Workspaces, then Osaurus Store at the foot) beside the page picked there. Home has New Workflow (⌘N) and a ⋯ menu (Import a Workflow File…, Connections, All Automations, Browse the Store) in its header, with one line saying what is running and what runs on its own; then Running Now, Needs Attention, Pinned and Your Automations, each only when it has something, Ways to Automate until you have an automation, and your author page at the foot. Picking a workflow opens its page; a row's Run starts it at once when it needs nothing, else asks for its input. The toolbar's sidebar button (⌘B) hides or shows the sidebar. With no workflows and no drafts the page is New Workflow alone, without a sidebar."
         ),
         .init(
             id: "workflows.runningNow",
@@ -4620,13 +4620,14 @@ public enum SettingsSearchIndex {
             id: "workflows.all",
             tab: .workflows,
             section: "Sidebar",
-            title: "All workflows",
+            title: "All Workflows",
             keywords: [
                 "every workflow", "ready to run", "installed workflows", "needs setup", "set up", "run by hand",
-                "needs attention", "runs on its own", "run now", "automate", "workflow list",
+                "needs attention", "runs on its own", "run now", "automate", "workflow list", "collapse", "fold", "hide workflows",
+                "show workflows", "sort", "sort by", "order", "reorder", "drag", "my order", "last run", "date added",
             ],
             subTab: "workflows",
-            disambiguation: "The Workflows sidebar's list of every workflow not pinned, by name, with teammates' workflows (their owner's Mac on the second line). Each row: a dot that is filled when an automation runs it, marked when its last automated run failed, hollow when you run it by hand, and a setup mark while it needs setup; the few words that say how it runs (Run by hand, Weekdays at 8:00 AM, Needs attention), or a spinner and Running · Step 4 of 6 while it runs; Automate (bolt) and Run (play, Set Up first when needed) appear on hover. Click the row for its page; right-click for Pin, Automate, Share, Run, Rename, Publish, Save as File, Uninstall and the rest."
+            disambiguation: "The Workflows sidebar's list of every workflow not pinned, in the order Sort By picks (the arrows beside All Workflows on hover: Name, Last Run, Date Added or My Order; drag a row to a new place and it switches to My Order); click All Workflows to fold or unfold it (Pinned, Drafts and Workspaces fold the same way, and a search opens them all), and its + is New Workflow, with teammates' workflows (their owner's Mac on the second line). Each row: a dot that is filled when an automation runs it, marked when its last automated run failed, hollow when you run it by hand, and a setup mark while it needs setup; the few words that say how it runs (Run by hand, Weekdays at 8:00 AM, Needs attention), or a spinner and Step 4 of 6 while it runs; Automate (bolt) and Run (play, Set Up first when needed) appear on hover. Click the row for its page; right-click for Pin, Automate, Share, Run, Rename, Publish, Save as File, Uninstall and the rest."
         ),
         .init(
             id: "workflows.new",
@@ -4639,7 +4640,7 @@ public enum SettingsSearchIndex {
                 "create your first workflow", "ready to add",
             ],
             subTab: "new",
-            disambiguation: "The New Workflow page, opened from New Workflow in the Workflows header, New workflow at the foot of the sidebar, or ⌘N: the Architect's composer (sending starts a new draft with your words as its first message), then Or add a ready-made workflow, the templates not set up yet, each opening a preview with Add, and Import a workflow. With no workflows and no drafts it is the whole Workflows page, titled Create your first workflow."
+            disambiguation: "The New Workflow page, opened from New Workflow in the Workflows header, the + beside All Workflows in the sidebar, or ⌘N: the Architect's composer (sending starts a new draft with your words as its first message), then Or add a ready-made workflow, the templates not set up yet, each opening a preview with Add, and Import a workflow. With no workflows and no drafts it is the whole Workflows page, titled Create your first workflow."
         ),
         .init(
             id: "workflows.drafts",
@@ -4674,7 +4675,7 @@ public enum SettingsSearchIndex {
                 "filter workflows", "find a workflow", "tag filter", "workflow search", "search by tag",
             ],
             subTab: "workflows",
-            disambiguation: "The field at the top of the Workflows sidebar: narrows Pinned, All workflows, Drafts and Workspaces by name, and workflows by their tags too. The Workflows lens in a chat's inspector has its own search field."
+            disambiguation: "The field at the top of the Workflows sidebar: narrows Pinned, All Workflows, Drafts and Workspaces by name, and workflows by their tags too. The Workflows lens in a chat's inspector has its own search field."
         ),
         .init(
             id: "workflows.pin",
@@ -4683,7 +4684,7 @@ public enum SettingsSearchIndex {
             title: "Pinned",
             keywords: ["pin", "unpin", "pin workflow", "favorite workflows", "keep at the top", "one click to run", "pinned tiles"],
             subTab: "workflows",
-            disambiguation: "Right-click a workflow in the Workflows sidebar and choose Pin, or choose Pin in the ⋯ menu at the top of its page: it moves to Pinned at the top, oldest pin first, with a filled Run button, and shows as a tile with Run on Workflows Home. Unpin moves it back to All workflows. Pins stay on this Mac, survive relaunch and updates, and are never exported or shared. A teammate's workflow can be pinned too."
+            disambiguation: "Right-click a workflow in the Workflows sidebar and choose Pin, or choose Pin in the ⋯ menu at the top of its page: it moves to Pinned at the top, oldest pin first, with a filled Run button, and shows as a tile with Run on Workflows Home. Unpin moves it back to All Workflows. Pins stay on this Mac, survive relaunch and updates, and are never exported or shared. A teammate's workflow can be pinned too."
         ),
         .init(
             id: "workflows.store",
@@ -4707,7 +4708,7 @@ public enum SettingsSearchIndex {
                 "on teammates' macs", "remove from my workflows",
             ],
             subTab: "workflows.workspaces",
-            disambiguation: "On a workflow a teammate's shared agent runs for the workspace: adds it without installing a copy. It then lists under All workflows in the Workflows sidebar (its owner's Mac on the second line) and in each agent's Abilities → Workflows; every run goes to its owner's Mac, which asks them first and uses their keys and folders. Remove from My Workflows is in its menu. Install instead keeps a copy that runs here."
+            disambiguation: "On a workflow a teammate's shared agent runs for the workspace: adds it without installing a copy. It then lists under All Workflows in the Workflows sidebar (its owner's Mac on the second line) and in each agent's Abilities → Workflows; every run goes to its owner's Mac, which asks them first and uses their keys and folders. Remove from My Workflows is in its menu. Install instead keeps a copy that runs here."
         ),
         .init(
             id: "workflows.importExport",
@@ -5077,10 +5078,10 @@ public enum SettingsSearchIndex {
             keywords: [
                 "when should this run", "want this to run on its own", "run on its own", "run automatically", "automate workflow", "schedule workflow", "every weekday",
                 "every morning", "run at a time", "when a file shows up", "watch a folder", "when osaurus opens",
-                "when a site posts", "feed", "also run it", "more ways", "turn off automation", "remove automation",
+                "when a site posts", "feed", "also run it", "more ways", "add another way", "turn off automation", "remove automation",
                 "what should it use each time", "workflow inputs for automation",
             ],
-            disambiguation: "Per installed workflow, on its page: each automation that starts it, as a sentence with its switch (Remove appears on hover). Click the day or time of a schedule, the folder, or the site to change it in place; Custom… and Change… open the full editor from Settings → Automations. Also run it adds another way. An automation whose workflow needs an input with no default stays off and shows What should it use each time? until it is filled. The bolt beside a workflow in the sidebar opens the same choices in a small panel (Run <name>…): a suggestion is made in one click with Undo, and See all ways to automate opens the workflow's page. Every automation also lists in Settings → Automations."
+            disambiguation: "Per installed workflow, on its page: each automation that starts it, as a sentence with its switch (Remove appears on hover). Click the day or time of a schedule, the folder, or the site to change it in place; Custom… and Change… open the full editor from Settings → Automations. Add Another Way under them adds another. An automation whose workflow needs an input with no default stays off and shows What should it use each time? until it is filled. The bolt beside a workflow in the sidebar opens the same choices in a small panel (Run <name>…): a suggestion is made in one click with Undo, and See all ways to automate opens the workflow's page. Every automation also lists in Settings → Automations."
         ),
         .init(
             id: "workflows.recentRuns",

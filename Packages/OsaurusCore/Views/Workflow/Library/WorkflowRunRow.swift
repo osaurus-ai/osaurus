@@ -134,17 +134,27 @@ struct WorkflowRowList<Item: Identifiable, Row: View>: View {
     }
 }
 
-/// What a workflow does: each step's number and name, in run order.
+/// What a workflow does: each step's number and name, in run order, then
+/// any facts about the whole of it (what it gives back, where it runs) on
+/// the same card.
 struct WorkflowStepList: View {
+    struct Fact: Identifiable, Equatable {
+        let icon: String
+        /// Already localized.
+        let text: String
+        var id: String { text }
+    }
+
     @Environment(\.theme) private var theme
     let steps: [WorkflowSummary.Step]
+    var facts: [Fact] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: theme.space.s0) {
             ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                 if index > 0 {
                     ThemeHairlineDivider(color: theme.border.subtle)
-                        .padding(.leading, theme.space.s12 + theme.space.s20 + theme.space.s12)
+                        .padding(.leading, theme.space.s16 + theme.space.s20 + theme.space.s12)
                 }
                 HStack(alignment: .center, spacing: theme.space.s12) {
                     Text(verbatim: "\(index + 1)")
@@ -152,9 +162,10 @@ struct WorkflowStepList: View {
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.5)
-                        .foregroundStyle(theme.text.inverse)
+                        .foregroundStyle(theme.text.secondary)
                         .frame(width: theme.space.s20, height: theme.space.s20)
-                        .background(Circle().fill(theme.surface.inverse ?? theme.text.primary))
+                        .background(Circle().fill(theme.surface.subtle))
+                        .overlay(Circle().strokeBorder(theme.border.subtle))
                         .accessibilityHidden(true)
                     Text(verbatim: step.name)
                         .textStyle(.body)
@@ -162,12 +173,35 @@ struct WorkflowStepList: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, theme.space.s12)
+                .padding(.horizontal, theme.space.s16)
                 .padding(.vertical, theme.space.s10)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(Text(verbatim: L("Step \(index + 1): \(step.name)")))
             }
+            if !facts.isEmpty {
+                if !steps.isEmpty { ThemeHairlineDivider(color: theme.border.subtle) }
+                VStack(alignment: .leading, spacing: theme.space.s6) {
+                    ForEach(facts) { fact in
+                        HStack(alignment: .firstTextBaseline, spacing: theme.space.s12) {
+                            Image(systemName: fact.icon)
+                                .glyphSize(.footnote, weight: .medium)
+                                .foregroundStyle(theme.text.tertiary)
+                                .frame(width: theme.space.s20)
+                                .accessibilityHidden(true)
+                            Text(verbatim: fact.text)
+                                .font(SettingsFont.footnote)
+                                .foregroundStyle(theme.text.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .padding(.horizontal, theme.space.s16)
+                .padding(.vertical, theme.space.s12)
+                .background(theme.surface.subtle)
+            }
         }
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
         .settingsChrome(.card)
     }
 }
