@@ -11,25 +11,25 @@
 import Foundation
 import SwiftUI
 
-/// Which slice of a kind's catalog the table shows.
+/// Which slice of a kind's catalog the table shows. Case order is chip order.
 enum LocalModelCatalogScope: String, CaseIterable, Hashable, Sendable {
-    case all
     case onThisMac
     case available
+    case all
 
     var title: String {
         switch self {
-        case .all: L("All")
         case .onThisMac: L("On This Mac")
         case .available: L("Available")
+        case .all: L("All")
         }
     }
 
     func includes(_ status: LocalModelCatalogItem.Status) -> Bool {
         switch self {
-        case .all: true
         case .onThisMac: status.isOnThisMac
         case .available: !status.isOnThisMac
+        case .all: true
         }
     }
 }
