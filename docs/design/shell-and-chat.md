@@ -244,7 +244,6 @@ screens) lives in [design-library-integration.md](design-library-integration.md)
 
 - Workflows destination polish beyond the sidebar and Home: run tabs, and
   the workflow guide topics that still describe the old inspector lenses.
-  The Workflows layout is in [workflows-redesign.md](workflows-redesign.md).
 - Project pages are not reachable from the shell since the handoff removed
   their mount; they need an IA decision before they return.
 - Settings and the management window are not yet on this column model.
