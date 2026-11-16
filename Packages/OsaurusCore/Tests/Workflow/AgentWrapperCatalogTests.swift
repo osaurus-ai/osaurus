@@ -289,6 +289,23 @@ struct AgentWrapperCatalogTests {
 @MainActor
 struct AgentWrapperVisibilityTests {
 
+    /// Open Run on a hand-off goes to the agent's chat, and has nowhere to
+    /// go when it failed before the agent started.
+    @Test func handoffRunOpensTheAgentsChat_orNothing() {
+        let wrapperID = AgentWrapperCatalog.id(forAgent: BuiltInWorker.browser.agentId)
+        #expect(AgentWrapperCatalog.isWrapperID(wrapperID))
+        var run = WorkflowRun(
+            workflowID: wrapperID, workflowName: "Browser", templateID: wrapperID, templateVersion: 1,
+            caller: WorkflowCaller(kind: .orchestrator), input: .object([:]), nodeIDs: [AgentWrapperCatalog.nodeID])
+        #expect(WorkflowRunLauncher.handoffSessionID(run) == nil)
+        let session = UUID()
+        run.update(AgentWrapperCatalog.nodeID) {
+            $0.output = .object(["text": .string("Done."), "session_id": .string(session.uuidString)])
+        }
+        #expect(WorkflowRunLauncher.handoffSessionID(run) == session)
+        #expect(WorkflowRunLauncher.canOpen(runID: UUID()), "a run not loaded yet keeps its link")
+    }
+
     @Test func wrappersAreRunnableButListedNowhereElse() async throws {
         let wrappers = AgentWrapperCatalog.live()
         #expect(wrappers.contains { $0.worker == .browser })

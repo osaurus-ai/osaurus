@@ -503,8 +503,8 @@ struct CreditsView: View {
     private var mergedTimeline: [CreditsTimelineEntry] {
         let usageItems = accountService.usage
         let requestRows = CreditsActivityProjector(
-            hasInsightsLogForRequestId: { insightsService.hasLog(requestId: $0) },
-            hasInsightsLogForTurnId: { insightsService.hasLog(turnId: $0) }
+            hasInsightsLogForRequestId: { insightsService.knownHasLog(requestId: $0) },
+            hasInsightsLogForTurnId: { insightsService.knownHasLog(turnId: $0) }
         )
         .rows(usageItems: usageItems, ledgerEntries: ledgerEntries)
         let requests = zip(requestRows, usageItems).map { row, item in

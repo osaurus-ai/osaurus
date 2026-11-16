@@ -2,12 +2,12 @@
 //  WorkflowsWorkspacesTab.swift
 //  osaurus
 //
-//  The Workflows window's Workspaces tab: one section per workspace this
-//  Mac belongs to, with the workflows members shared there (Install, then
-//  Update, Set Up or Open) and the ones teammates' agents run on their own
-//  Macs (Add to My Workflows, then Run). Everything comes from
+//  A workspace's page in the Workflows window, opened from its sidebar
+//  row: the workflows members shared there (Install, then Update, Set Up
+//  or Open) and the ones teammates' agents run on their own Macs (Add to
+//  My Workflows, then Run). Everything comes from
 //  `WorkspaceWorkflowCatalog`, which Settings → workspace → Workflows
-//  shares. Hosted workflows you added also list under All.
+//  shares. Hosted workflows you added also list under All Workflows.
 //
 
 import SwiftUI
@@ -19,45 +19,43 @@ struct WorkflowsWorkspacesTab: View {
     @ObservedObject private var installed = InstalledWorkflowStore.shared
     @ObservedObject private var links = HostedWorkflowLinkStore.shared
     let windowState: ChatWindowState
+    /// Only this workspace; nil lists every one.
+    var workspaceID: String? = nil
     let onSetUp: (InstalledWorkflow) -> Void
 
     @State private var runningLink: HostedWorkflowLink?
 
+    private var shown: [OsaurusRouterWorkspaceSummary] {
+        guard let workspaceID else { return workspaces.workspaces }
+        return workspaces.workspaces.filter { $0.id == workspaceID }
+    }
+
     var body: some View {
-        ScrollViewReader { proxy in
-            VStack(alignment: .leading, spacing: theme.space.s24) {
-                if workspaces.workspaces.isEmpty {
-                    SettingsEmptyState(
-                        inline: "person.3", title: "You're not in a workspace yet.",
-                        hint: "Workflows your workspaces share show up here.")
-                } else {
-                    Text(
-                        "Install keeps a copy that runs here. Add to My Workflows runs it on its owner's Mac, after they approve.",
-                        bundle: .module
-                    )
-                    .textStyle(.caption)
-                    .foregroundStyle(theme.text.tertiary)
-                    .settingsLandingAnchor("workflows.addHosted")
-                }
-                ForEach(workspaces.workspaces) { workspace in
-                    section(workspace).id(workspace.id)
-                }
+        VStack(alignment: .leading, spacing: theme.space.s24) {
+            if shown.isEmpty {
+                SettingsEmptyState(
+                    inline: "person.3", title: "You're not in a workspace yet.",
+                    hint: "Workflows your workspaces share show up here.")
+            } else {
+                Text(
+                    "Install keeps a copy that runs here. Add to My Workflows runs it on its owner's Mac, after they approve.",
+                    bundle: .module
+                )
+                .textStyle(.caption)
+                .foregroundStyle(theme.text.tertiary)
+                .settingsLandingAnchor("workflows.addHosted")
             }
-            .settingsLandingAnchor("workflows.workspaces")
-            .task { await catalog.refreshAll() }
-            .onAppear { scroll(proxy) }
-            .onChange(of: windowState.workflowsWorkspaceFocus) { _, _ in scroll(proxy) }
+            ForEach(shown) { workspace in
+                section(workspace)
+            }
+        }
+        .task(id: workspaceID) {
+            if let workspaceID { await catalog.refresh(workspaceID) } else { await catalog.refreshAll() }
         }
         .sheet(item: $runningLink) { link in
             HostedWorkflowRunSheet(link: link) { runningLink = nil }
                 .environment(\.theme, theme)
         }
-    }
-
-    private func scroll(_ proxy: ScrollViewProxy) {
-        guard let id = windowState.workflowsWorkspaceFocus else { return }
-        windowState.workflowsWorkspaceFocus = nil
-        withAnimation(theme.motion.quick) { proxy.scrollTo(id, anchor: .top) }
     }
 
     // MARK: Section

@@ -437,7 +437,7 @@ struct WorkflowRunHistoryList: View {
             Button {
                 ArchitectLauncher.repair(run, of: workflow, in: windowState)
             } label: {
-                Text("Fix with the Architect", bundle: .module)
+                Text("Ask Osaurus to Fix It", bundle: .module)
             }
         }
     }

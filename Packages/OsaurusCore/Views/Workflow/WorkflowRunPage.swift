@@ -340,9 +340,10 @@ struct WorkflowRunInputSheet: View {
 // MARK: - Run page
 
 /// One run in the Workflows window, or the form for a new one when
-/// `runID` is nil.
+/// `runID` is nil. Its workflow's page is always under it (Back reads the
+/// workflow's name), so the header repeats the workflow and says, in one
+/// sentence, where this run stands, with the one thing to do about it.
 struct WorkflowRunPage: View {
-    @Environment(\.workflowSharedGrid) private var sharedGrid
     @Environment(\.theme) private var theme
     let windowState: ChatWindowState
     let workflowID: UUID
@@ -354,13 +355,12 @@ struct WorkflowRunPage: View {
     var onBack: (() -> Void)? = nil
     /// Shows another run of this workflow here, or the form for nil.
     let onShowRun: (UUID?) -> Void
-    /// Opens the workflow's own page; nil leaves the link out.
-    var onShowWorkflow: ((UUID) -> Void)? = nil
     var onSetUp: (InstalledWorkflow) -> Void = { WorkflowRunLauncher.openSetup($0) }
 
     @ObservedObject private var workflows = InstalledWorkflowStore.shared
     @ObservedObject private var runs = WorkflowRunStore.shared
     @ObservedObject private var dialogs = DialogCoordinator.shared
+    @ObservedObject private var agents = AgentManager.shared
 
     @State private var form: WorkflowRunForm?
     @State private var formWorkflowID: UUID?
@@ -373,7 +373,7 @@ struct WorkflowRunPage: View {
         VStack(spacing: theme.space.s0) {
             if let workflow {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: theme.space.s24) {
+                    VStack(alignment: .leading, spacing: theme.space.s32) {
                         hero(workflow)
                         if let run {
                             runContent(run, workflow: workflow)
@@ -384,10 +384,10 @@ struct WorkflowRunPage: View {
                     .frame(maxWidth: WorkflowLibraryLayout.columnWidth, alignment: .leading)
                     .padding(.horizontal, theme.space.s24)
                     .padding(.top, WorkflowLibraryLayout.pageTopInset(theme))
-                    .padding(.bottom, theme.space.s32)
+                    .padding(.bottom, theme.space.s48)
                     .frame(maxWidth: .infinity)
                 }
-                footer(workflow)
+                if run == nil { footer(workflow) }
             } else {
                 Spacer()
                 SettingsEmptyState(
@@ -398,7 +398,7 @@ struct WorkflowRunPage: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background { if !sharedGrid { theme.surface.canvas } }
+        .background(theme.surface.canvas)
         .onAppear(perform: prepareForm)
         .onChange(of: runID) { _, _ in prepareForm() }
     }
@@ -408,69 +408,136 @@ struct WorkflowRunPage: View {
     @ViewBuilder
     private func hero(_ workflow: InstalledWorkflow) -> some View {
         if let run {
-            VStack(alignment: .leading, spacing: theme.space.s16) {
-                SettingsDetailHeader(
-                    title: workflow.name,
-                    subtitle: nil,
-                    leading: {
-                        SettingsIconTile(
-                            icon: run.status == .running ? "play.fill" : WorkflowRunStyle.icon(run.status), size: 40,
-                            tint: WorkflowRunStyle.color(run.status, theme: theme))
-                    },
-                    chips: {
-                        StatusChip(
-                            WorkflowRunPresentation.shortStatus(run.status),
-                            tone: WorkflowRunPresentation.tone(run.status), showsDot: !run.status.isTerminal)
-                        WorkflowStartedByLabel(caller: run.caller)
-                        Text(verbatim: run.startedAt.formatted(date: .abbreviated, time: .shortened))
-                            .textStyle(.caption)
-                            .foregroundStyle(theme.text.tertiary)
-                            .lineLimit(1)
-                    },
-                    actions: {
-                        workflowLink(workflow)
-                        WorkflowInsightsLink(runID: run.id, refresh: run.finishedAt)
-                        pastRunsMenu
-                    })
-                if !run.status.isTerminal {
-                    VStack(alignment: .leading, spacing: theme.space.s8) {
-                        HStack(spacing: theme.space.s8) {
-                            Text(verbatim: WorkflowRunPresentation.progressLine(run, definition: definition(run, workflow)))
-                                .textStyle(.body)
-                                .foregroundStyle(theme.text.secondary)
-                                .lineLimit(1)
-                            Spacer(minLength: theme.space.s8)
-                            WorkflowRunElapsed(run: run)
+            let line = WorkflowRunWords.status(run, definition: definition(run, workflow))
+            WorkflowPageHeader(title: workflow.name, subtitle: subtitle(run)) {
+                EmptyView()
+            } actions: {
+                action(run, workflow: workflow)
+                menu(run)
+            } status: {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
+                    HStack(spacing: theme.space.s6) {
+                        Group {
+                            if run.status == .running {
+                                SettingsSpinner(size: .mini)
+                            } else {
+                                Circle()
+                                    .fill(line.tone.map(theme.statusInk) ?? theme.text.tertiary)
+                                    .frame(width: theme.space.s6, height: theme.space.s6)
+                            }
                         }
-                        WorkflowRunProgressBar(run: run)
+                        .frame(width: theme.space.s12, height: theme.space.s12)
+                        .accessibilityHidden(true)
+                        Text(verbatim: line.text)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundStyle(
+                                line.tone == .error || line.tone == .warning
+                                    ? line.tone.map(theme.statusInk) ?? theme.text.secondary : theme.text.secondary
+                            )
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: theme.space.s8)
+                        if !run.status.isTerminal { WorkflowRunElapsed(run: run) }
                     }
-                    .transition(.opacity)
+                    if !run.status.isTerminal {
+                        WorkflowRunProgressBar(run: run)
+                            .transition(.opacity)
+                    }
                 }
             }
             .animation(theme.motion.quick, value: run.status)
         } else {
-            SettingsDetailHeader(
-                icon: "flowchart", title: workflow.name, subtitle: workflow.summary,
-                chips: {
-                    let sentence = WorkflowSummary.sentence(workflow.definition)
-                    if !sentence.isEmpty {
-                        Text(verbatim: sentence)
-                            .textStyle(.caption)
-                            .foregroundStyle(theme.text.tertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                },
-                actions: {
-                    workflowLink(workflow)
-                    pastRunsMenu
-                })
+            WorkflowPageHeader(title: workflow.name, subtitle: workflow.summary) {
+                EmptyView()
+            } actions: {
+                newRunMenu
+            } status: {
+                EmptyView()
+            }
         }
     }
 
+    /// "Today, 8:00 AM · On schedule, took 42 sec".
+    private func subtitle(_ run: WorkflowRun) -> String {
+        let event = run.caller.eventID.flatMap { EventManager.shared.event(for: $0) }
+        let how = WorkflowRunWords.detail(run, event: event) { agents.agent(for: $0)?.displayName }
+        return "\(WorkflowRunWords.when(run.startedAt)) · \(how)"
+    }
+
+    /// The one thing to do now: Stop while it runs, Try Again when it
+    /// did not work, Run Again once it did. Waiting on you, the question
+    /// itself is the action.
     @ViewBuilder
-    private func workflowLink(_ workflow: InstalledWorkflow) -> some View {
-        if let onShowWorkflow {
-            WorkflowTextLink(title: L("About this workflow"), icon: "info.circle") { onShowWorkflow(workflow.id) }
+    private func action(_ run: WorkflowRun, workflow: InstalledWorkflow) -> some View {
+        switch run.status {
+        case .running:
+            SettingsButton(.secondary, "Stop", icon: "stop.fill", help: "Stop this run") {
+                WorkflowRunService.shared.cancel(run.id)
+            }
+        case .awaitingUser:
+            EmptyView()
+        case .failed, .needsSetup:
+            SettingsButton(.primary, "Try Again", icon: "arrow.clockwise", help: "Try again (⌘Return)") {
+                tryAgain(run, workflow: workflow)
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+        case .completed, .cancelled:
+            SettingsButton(.primary, "Run Again", icon: "arrow.clockwise", help: "Run again (⌘Return)") {
+                runAgain(run, workflow: workflow)
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+        }
+    }
+
+    /// ⋯: a new run, Stop while it waits on you, and this workflow's
+    /// earlier runs.
+    private func menu(_ run: WorkflowRun) -> some View {
+        let past = runs.recentRuns().filter { $0.workflowID == workflowID && $0.id != run.id }.prefix(20)
+        return SettingsActionMenu(accessibilityLabel: L("Run actions")) {
+            Button { onShowRun(nil) } label: { Label(L("New Run…"), systemImage: "plus") }
+            if run.status == .awaitingUser {
+                Button { WorkflowRunService.shared.cancel(run.id) } label: { Label(L("Stop"), systemImage: "stop") }
+            }
+            if !past.isEmpty {
+                Divider()
+                Menu(L("Earlier Runs")) {
+                    ForEach(Array(past)) { item in
+                        Button { onShowRun(item.id) } label: {
+                            Text(
+                                verbatim:
+                                    "\(WorkflowRunWords.when(item.startedAt)) · \(WorkflowRunPresentation.shortStatus(item.status))"
+                            )
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+        }
+        .buttonStyle(SettingsIconButtonStyle(size: .standard, role: .tertiary))
+        .fixedSize()
+        .help(L("Run actions"))
+    }
+
+    /// The form's ⋯: this workflow's earlier runs.
+    @ViewBuilder
+    private var newRunMenu: some View {
+        let past = runs.recentRuns().filter { $0.workflowID == workflowID }.prefix(20)
+        if !past.isEmpty {
+            SettingsActionMenu(accessibilityLabel: L("Earlier Runs")) {
+                ForEach(Array(past)) { item in
+                    Button { onShowRun(item.id) } label: {
+                        Text(
+                            verbatim:
+                                "\(WorkflowRunWords.when(item.startedAt)) · \(WorkflowRunPresentation.shortStatus(item.status))"
+                        )
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+            }
+            .buttonStyle(SettingsIconButtonStyle(size: .standard, role: .tertiary))
+            .fixedSize()
+            .help(L("Earlier Runs"))
         }
     }
 
@@ -484,42 +551,67 @@ struct WorkflowRunPage: View {
     private func runContent(_ run: WorkflowRun, workflow: InstalledWorkflow) -> some View {
         let definition = definition(run, workflow)
         if let dialog = dialogs.presentable.first(where: { $0.runID == run.id }) {
-            WorkflowPageCard(title: dialog.title, icon: "text.badge.checkmark") {
+            SettingsSection(title: dialog.title, layout: .plain, verbatimTitle: true) {
                 VStack(alignment: .leading, spacing: theme.space.s12) {
                     if !dialog.message.isEmpty {
                         Text(verbatim: dialog.message)
-                            .textStyle(.body)
+                            .font(SettingsFont.rowDescription)
                             .foregroundStyle(theme.text.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     WorkflowDialogForm(dialog: dialog).id(dialog.id)
                 }
+                .padding(theme.space.s16)
+                .settingsChrome(.card)
             }
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
-        if !run.hostWrites.isEmpty {
-            WorkflowPageCard(title: L("On your Mac"), icon: WorkflowAccessScope.Place.mac.systemImage) {
-                WorkflowHostWritesSummary(run: run, definition: definition, boundFolders: workflow.bindings.folders)
-            }
-            .transition(.opacity)
-        }
-        if let output = run.output {
+        if let output = run.output, Self.hasResult(output) || !run.artifacts.isEmpty {
             let schema = definition?.outputSchema ?? .object([:])
-            WorkflowPageCard(title: L("Result"), icon: "tray.and.arrow.down") {
+            SettingsSection(title: "Result", layout: .plain) {
                 WorkflowResultCopyAllButton(output: output, schema: schema)
             } content: {
                 WorkflowResultCard(output: output, schema: schema, showsTitle: false, files: run.artifacts)
+                    .padding(theme.space.s16)
+                    .settingsChrome(.card)
             }
             .transition(.opacity)
         } else if !run.artifacts.isEmpty {
-            WorkflowPageCard(title: L("Files"), icon: "doc.on.doc") {
+            SettingsSection(title: "Files", layout: .plain) {
                 WorkflowRunFiles(files: run.artifacts)
+                    .padding(theme.space.s16)
+                    .settingsChrome(.card)
             }
         }
+        if !run.hostWrites.isEmpty {
+            SettingsSection(title: "Changes on Your Mac", layout: .plain) {
+                WorkflowHostWritesSummary(run: run, definition: definition, boundFolders: workflow.bindings.folders)
+                    .padding(theme.space.s16)
+                    .settingsChrome(.card)
+            }
+            .transition(.opacity)
+        }
+        steps(run, workflow: workflow, definition: definition)
+    }
+
+    /// An output with nothing in it (`{}`, `[]`, `""`, null) shows no Result.
+    static func hasResult(_ output: JSONValue) -> Bool {
+        switch output {
+        case .null: return false
+        case .string(let text): return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .object(let fields): return fields.values.contains(where: hasResult)
+        case .array(let items): return items.contains(where: hasResult)
+        case .number, .bool: return true
+        }
+    }
+
+    /// What each step did, each opening to its details. Once a long run
+    /// worked, only its first steps until asked for the rest.
+    private func steps(_ run: WorkflowRun, workflow: InstalledWorkflow, definition: WorkflowDefinition?) -> some View {
         let ownRun = run.workflowID == workflow.id
-        WorkflowPageCard(title: L("Steps"), icon: "list.number") {
+        return SettingsSection(title: "Steps", caption: definition.map(WorkflowCardFacts.steps), layout: .plain) {
             HStack(spacing: theme.space.s8) {
-                if run.status.isTerminal { WorkflowRunTiming(run: run) }
+                WorkflowInsightsLink(runID: run.id, refresh: run.finishedAt)
                 if definition != nil {
                     WorkflowFlowViewerButton(source: .run(runID: run.id, workflowID: workflow.id))
                 }
@@ -529,20 +621,24 @@ struct WorkflowRunPage: View {
                 run: run, definition: definition, showsOutput: false, header: .none,
                 onFix: ownRun ? { ArchitectLauncher.repair(run, of: workflow, in: windowState) } : nil,
                 onRetry: ownRun && WorkflowRunService.reasonNotToRetry(run) == nil
-                    ? {
-                        guard let newID = WorkflowRunService.shared.retry(runID: run.id) else { return }
-                        onShowRun(newID)
-                    } : nil)
+                    ? { tryAgain(run, workflow: workflow) } : nil,
+                shownSteps: run.status == .completed ? Self.shownStepsOnceItWorked : nil
+            )
         }
     }
+
+    private static var shownStepsOnceItWorked: Int { 8 }
 
     // MARK: Form
 
     private func formContent(_ workflow: InstalledWorkflow, form: WorkflowRunForm) -> some View {
-        WorkflowPageCard(title: L("What it needs"), icon: "square.and.pencil") {
+        SettingsSection(title: "What It Needs", layout: .plain) {
             WorkflowRunInputBody(
                 workflow: workflow, windowAgent: windowAgent, form: form, onSubmit: { start(workflow) },
-                onSetUp: onSetUp)
+                onSetUp: onSetUp
+            )
+            .padding(theme.space.s16)
+            .settingsChrome(.card)
         }
     }
 
@@ -564,45 +660,41 @@ struct WorkflowRunPage: View {
 
     // MARK: Footer
 
+    /// The form's Run, which never scrolls away.
     @ViewBuilder
     private func footer(_ workflow: InstalledWorkflow) -> some View {
-        let content = footerContent(workflow)
-        VStack(spacing: theme.space.s0) {
-            ThemeHairlineDivider(color: theme.border.subtle)
-            content
+        if !WorkflowRunStarter.setupReport(workflow, windowAgent: windowAgent).hasBlockers {
+            VStack(spacing: theme.space.s0) {
+                ThemeHairlineDivider(color: theme.border.subtle)
+                HStack(spacing: theme.space.s8) {
+                    WorkflowRunExampleButton(examples: workflow.definition.examples) {
+                        form?.fill($0.input.objectValue ?? [:])
+                    }
+                    Spacer()
+                    WorkflowRunKeysCaption(workflow: workflow, windowAgent: windowAgent)
+                    SettingsButton(.primary, "Run", icon: "play.fill") { start(workflow) }
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .help(L("Run (⌘Return)"))
+                }
                 .frame(maxWidth: WorkflowLibraryLayout.columnWidth)
                 .padding(.horizontal, theme.space.s24)
                 .padding(.vertical, theme.space.s12)
                 .frame(maxWidth: .infinity)
+            }
+            .background(theme.surface.canvas)
         }
-        .background(theme.surface.canvas)
     }
 
-    @ViewBuilder
-    private func footerContent(_ workflow: InstalledWorkflow) -> some View {
-        if let run {
-            HStack(spacing: theme.space.s8) {
-                if !run.status.isTerminal {
-                    SettingsButton(.secondary, "Stop", icon: "stop.fill") { WorkflowRunService.shared.cancel(run.id) }
-                }
-                Spacer()
-                if run.status.isTerminal {
-                    SettingsButton(.primary, "Run Again", icon: "arrow.clockwise") { runAgain(run, workflow: workflow) }
-                        .keyboardShortcut(.return, modifiers: .command)
-                }
-            }
-        } else if !WorkflowRunStarter.setupReport(workflow, windowAgent: windowAgent).hasBlockers {
-            HStack(spacing: theme.space.s8) {
-                WorkflowRunExampleButton(examples: workflow.definition.examples) {
-                    form?.fill($0.input.objectValue ?? [:])
-                }
-                Spacer()
-                WorkflowRunKeysCaption(workflow: workflow, windowAgent: windowAgent)
-                SettingsButton(.primary, "Run", icon: "play.fill") { start(workflow) }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .help(L("Run (⌘Return)"))
-            }
+    /// The same run again: retried from where it stopped when it can be,
+    /// else started over with the same input.
+    private func tryAgain(_ run: WorkflowRun, workflow: InstalledWorkflow) {
+        if run.workflowID == workflow.id, WorkflowRunService.reasonNotToRetry(run) == nil,
+            let newID = WorkflowRunService.shared.retry(runID: run.id)
+        {
+            onShowRun(newID)
+            return
         }
+        runAgain(run, workflow: workflow)
     }
 
     /// Same input again: at once when the workflow takes none, else the
@@ -619,23 +711,5 @@ struct WorkflowRunPage: View {
         form = WorkflowRunForm(workflow: workflow, prefill: input)
         formWorkflowID = workflowID
         onShowRun(nil)
-    }
-
-    // MARK: Past runs
-
-    private var pastRunsMenu: some View {
-        let past = runs.recentRuns().filter { $0.workflowID == workflowID }.prefix(20)
-        return SettingsMenuButton(.secondary, "Runs", icon: "clock.arrow.circlepath", size: .extraSmall) {
-            Button { onShowRun(nil) } label: { Label(L("New Run"), systemImage: "plus") }
-            if !past.isEmpty { Divider() }
-            ForEach(Array(past)) { item in
-                Button { onShowRun(item.id) } label: {
-                    Text(
-                        verbatim:
-                            "\(item.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(WorkflowRunPresentation.shortStatus(item.status))"
-                    )
-                }
-            }
-        }
     }
 }

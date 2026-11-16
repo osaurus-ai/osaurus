@@ -373,6 +373,14 @@ public final class InstalledWorkflowStore: ObservableObject {
         try save(w)
     }
 
+    /// Pins or unpins; a new pin goes after the ones already there.
+    public func setPinned(_ pinned: Bool, id: UUID) throws {
+        guard var w = workflow(id: id), w.isPinned != pinned else { return }
+        w.isPinned = pinned
+        w.pinnedAt = pinned ? Date() : nil
+        try save(w)
+    }
+
     /// Every tag in use, with how many workflows carry it, by name.
     public var allTags: [(tag: String, count: Int)] {
         var counts: [String: Int] = [:]

@@ -373,7 +373,7 @@ lower activation. No setting names or values are ever attached.
 | `workflow_run_started` | `caller`: who started it — `agent` (an agent's workflow tool), `orchestrator` (`run_workflow`), `user` (a workflow tab or the Workflows screen), `test` (an Architect test run), `workflow` (a step of another workflow), or `event` (an automation); `resumed`: bool, a run continuing after a pause |
 | `workflow_run_finished` | `caller`, as above; `status`: `completed`, `failed`, `cancelled`, `needs_setup`, or `awaiting_user` (paused for a person); `duration_bucket`: `lt_10s`, `10_60s`, `1_5m`, `5_30m`, `gte_30m`, or `none` |
 | `workflow_draft_started` | `origin`: `blank` (new in the Architect), `edit` (a saved workflow opened in the Architect), or `inline` (a chat handed a task to the Architect) |
-| `workflows_opened` | `page`: the page it opened on — `home`, `workflow`, `run`, or `new`. Fires when the surface comes on screen, not on navigation inside it |
+| `workflows_opened` | `page`: the page it opened on — `home`, `workflow`, `run`, `new`, `workspace`, or `activity`. Fires when the surface comes on screen, not on navigation inside it |
 
 Each step of a run also sends `message_sent` with `source=workflow`.
 
@@ -381,7 +381,7 @@ Each step of a run also sends `message_sent` with `source=workflow`.
 
 | Event | Properties |
 |-------|------------|
-| `automation_created` | `trigger`: `schedule`, `folder`, `webhook`, `rss`, `sse`, `run_failed`, `app`, `email`, or `channel_message`; `origin`: `user` (Settings or the editor) or `config` (`osaurus_config`, including onboarding's Turn On). Automations an agent schedules for itself and those a plugin installs are not counted |
+| `automation_created` | `trigger`: `schedule`, `folder`, `webhook`, `rss`, `sse`, `run_failed`, `app`, `email`, or `channel_message`; `origin`: `user` (Settings, the editor, or a workflow's page in Workflows) or `config` (`osaurus_config`, including onboarding's Turn On). Automations an agent schedules for itself and those a plugin installs are not counted |
 | `automation_run_finished` | `trigger`, as above; `status`: `succeeded`, `failed`, `cancelled`, or `awaiting_user`. Deliveries dropped as filtered or duplicate never reach this |
 
 ### Computer Use

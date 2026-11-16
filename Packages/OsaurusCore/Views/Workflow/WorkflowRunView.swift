@@ -30,13 +30,17 @@ struct WorkflowRunView: View {
     var header: Header = .full
     /// Steps open when the view appears, such as the one a run failed at.
     var initiallyOpen: Set<String> = []
-    /// Shown on a failed run as "Fix with the Architect". Nil where the
+    /// Shown on a failed run as "Ask Osaurus to Fix It". Nil where the
     /// surrounding card already offers it.
     var onFix: (() -> Void)?
     /// Shown on a failed run as "Retry from Failed Step", where it can be.
     var onRetry: (() -> Void)?
 
+    /// The steps listed before Show All; nil lists every one.
+    var shownSteps: Int? = nil
+
     @State private var expanded: Set<String> = []
+    @State private var showsAllSteps = false
     @State private var rawShown: Set<String> = []
     @Environment(\.theme) private var theme
 
@@ -122,7 +126,7 @@ struct WorkflowRunView: View {
 
     /// Why the run stopped, under the name of the step it stopped at, with
     /// the failure's hint and, where offered, Retry from Failed Step and
-    /// Fix with the Architect.
+    /// Ask Osaurus to Fix It.
     @ViewBuilder
     private func errorCallout(_ error: WorkflowRunError) -> some View {
         let step = error.nodeID.flatMap { id in definition?.node(id)?.name }
@@ -205,11 +209,30 @@ struct WorkflowRunView: View {
 
     /// The steps as one list, divided rather than boxed one by one.
     private var stepList: some View {
-        let rows = Self.rows(run, definition: definition)
+        let all = Self.rows(run, definition: definition)
+        let limit = showsAllSteps ? nil : shownSteps.flatMap { all.count > $0 + 1 ? $0 : nil }
+        let rows = limit.map { Array(all.prefix($0)) } ?? all
         return VStack(alignment: .leading, spacing: theme.space.s0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, node in
                 if index > 0 { Divider() }
                 nodeRow(node)
+            }
+            if limit != nil {
+                Divider()
+                Button {
+                    withAnimation(theme.motion.quick) { showsAllSteps = true }
+                } label: {
+                    Text(verbatim: L("Show all \(all.count) steps"))
+                        .textStyle(.bodySmall)
+                        .foregroundColor(theme.text.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, theme.space.s24)
+                        .padding(.horizontal, theme.space.s8)
+                        .padding(.vertical, theme.space.s6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
             }
         }
         .settingsChrome(.inset)
@@ -291,7 +314,9 @@ struct WorkflowRunView: View {
             .accessibilityHint(expandable ? Text(isOpen ? "Hides the step's details" : "Shows the step's details", bundle: .module) : Text(verbatim: ""))
 
             Group {
-                if !isOpen, node.status == .failed, let error = node.error, !error.isEmpty {
+                if !isOpen, node.status == .failed, let error = node.error, !error.isEmpty,
+                    run.error?.nodeID != node.nodeID
+                {
                     Text(verbatim: error)
                         .font(SettingsFont.footnote)
                         .foregroundColor(theme.statusInk(.error))
@@ -447,25 +472,7 @@ struct WorkflowRunView: View {
     }
 
     private func jsonBlock(title: LocalizedStringKey, value: JSONValue) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.s4) {
-            HStack {
-                Text(title, bundle: .module)
-                    .textStyle(.footnote, weight: 600)
-                    .foregroundColor(theme.text.tertiary)
-                Spacer()
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(value.prettyJSONString, forType: .string)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .glyphSize(.micro)
-                        .foregroundColor(theme.text.tertiary)
-                }
-                .buttonStyle(.plain)
-                .localizedHelp("Copy")
-            }
-            WorkflowJSONText(text: value.prettyJSONString, maxHeight: 220)
-        }
+        WorkflowJSONBlock(title: title, value: value).equatable()
     }
 
     private func listBlock(title: LocalizedStringKey, items: [String]) -> some View {
@@ -474,7 +481,7 @@ struct WorkflowRunView: View {
                 .textStyle(.footnote, weight: 600)
                 .foregroundColor(theme.text.tertiary)
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                Text(item)
+                Text(verbatim: String(item.prefix(Self.shortTextLimit)))
                     .font(SettingsFont.monoSmall)
                     .foregroundColor(theme.text.secondary)
                     .textSelection(.enabled)
@@ -519,8 +526,11 @@ struct WorkflowRunView: View {
         }
     }
 
+    /// Six lines of a log entry or tool call never need more than this.
+    private static var shortTextLimit: Int { 1_200 }
+
     private func toolText(_ text: String, color: Color) -> some View {
-        Text(text)
+        Text(verbatim: String(text.prefix(Self.shortTextLimit)))
             .font(SettingsFont.monoSmall)
             .foregroundColor(color)
             .textSelection(.enabled)
@@ -642,10 +652,43 @@ enum WorkflowOutputLayout {
     }
 }
 
+/// A step's input or output with its Copy button. Formatted once per
+/// value: the run page redraws on every run update.
+private struct WorkflowJSONBlock: View, Equatable {
+    let title: LocalizedStringKey
+    let value: JSONValue
+    @Environment(\.theme) private var theme
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.value == rhs.value }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
+            HStack {
+                Text(title, bundle: .module)
+                    .textStyle(.footnote, weight: 600)
+                    .foregroundColor(theme.text.tertiary)
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(value.prettyJSONString, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .glyphSize(.micro)
+                        .foregroundColor(theme.text.tertiary)
+                }
+                .buttonStyle(.plain)
+                .localizedHelp("Copy")
+            }
+            WorkflowJSONText(text: value.prettyJSONString, maxHeight: 220)
+        }
+    }
+}
+
 /// Pretty-printed JSON wrapped to the width it has, at its natural height
 /// up to `maxHeight` and scrolling down past that. The height is measured,
 /// with the line count as the first guess: a bare `ScrollView` with only a
-/// height cap let long values draw over the rows below.
+/// height cap let long values draw over the rows below. Only the start of a
+/// long value is laid out; laying out all of it stalls opening the step.
 struct WorkflowJSONText: View {
     let text: String
     var maxHeight: CGFloat
@@ -653,33 +696,64 @@ struct WorkflowJSONText: View {
     @State private var measured: CGFloat = 0
     @Environment(\.theme) private var theme
 
-    private var height: CGFloat {
-        guard measured == 0 else { return min(maxHeight, measured) }
-        let lines = text.reduce(into: 1) { count, character in
-            if character.isNewline { count += 1 }
+    static let shownLineLimit = 400
+    static let shownCharacterLimit = 24_000
+
+    /// The first `lines` lines or `characters` characters, whichever ends first.
+    static func start(of text: String, lines: Int = shownLineLimit, characters: Int = shownCharacterLimit)
+        -> (text: Substring, isCut: Bool)
+    {
+        var index = text.startIndex
+        var count = 0
+        var newlines = 0
+        while index < text.endIndex {
+            if count == characters { return (text[..<index], true) }
+            if text[index].isNewline {
+                newlines += 1
+                if newlines == lines { return (text[..<index], true) }
+            }
+            index = text.index(after: index)
+            count += 1
         }
+        return (text[...], false)
+    }
+
+    private func height(lines: Int) -> CGFloat {
+        guard measured == 0 else { return min(maxHeight, measured) }
         let lineHeight = NSLayoutManager().defaultLineHeight(for: theme.nsFont(.footnote, family: .code))
         return min(maxHeight, ceil(CGFloat(lines) * lineHeight))
     }
 
     var body: some View {
+        let shown = Self.start(of: text, lines: Self.shownLineLimit, characters: Self.shownCharacterLimit)
         let overflows = measured > maxHeight
-        ScrollView(.vertical, showsIndicators: overflows) {
-            Text(verbatim: text)
-                .font(SettingsFont.monoSmall)
-                .foregroundColor(theme.text.secondary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(key: WorkflowJSONHeightKey.self, value: geo.size.height)
-                    })
+        VStack(alignment: .leading, spacing: theme.space.s4) {
+            ScrollView(.vertical, showsIndicators: overflows) {
+                lines(shown.text)
+            }
+            .scrollDisabled(!overflows)
+            .frame(height: height(lines: shown.text.reduce(into: 1) { if $1.isNewline { $0 += 1 } }))
+            .clipped()
+            .onPreferenceChange(WorkflowJSONHeightKey.self) { measured = $0 }
+            if shown.isCut {
+                Text("Showing the start. It's too long to show in full.", bundle: .module)
+                    .textStyle(.caption)
+                    .foregroundColor(theme.text.tertiary)
+            }
         }
-        .scrollDisabled(!overflows)
-        .frame(height: height)
-        .clipped()
-        .onPreferenceChange(WorkflowJSONHeightKey.self) { measured = $0 }
+    }
+
+    private func lines(_ text: Substring) -> some View {
+        Text(verbatim: String(text))
+            .font(SettingsFont.monoSmall)
+            .foregroundColor(theme.text.secondary)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: WorkflowJSONHeightKey.self, value: geo.size.height)
+                })
     }
 }
 
@@ -719,14 +793,14 @@ struct WorkflowInsightsLink: View {
     }
 }
 
-/// "Fix with the Architect" on a failed run.
+/// "Ask Osaurus to Fix It" on a failed run.
 struct WorkflowFixButton: View {
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Label {
-                Text("Fix with the Architect", bundle: .module)
+                Text("Ask Osaurus to Fix It", bundle: .module)
             } icon: {
                 Image(systemName: "wrench.and.screwdriver")
             }

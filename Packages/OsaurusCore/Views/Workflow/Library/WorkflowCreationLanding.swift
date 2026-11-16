@@ -13,11 +13,42 @@ extension EnvironmentValues {
     }
 }
 
-/// The Paper empty state lives in the existing main Workflows destination.
-/// Installed workflows and unfinished drafts share the Paper homepage.
-struct WorkflowMainDestination: View {
+/// Workflows as a destination of the chat window: its sidebar takes the
+/// column the chat sidebar uses (same width and resize handle), docked or
+/// as a compact window's drawer, per `ChatShellLayout.workflows`.
+struct WorkflowMainDestination: View, Equatable {
     let windowState: ChatWindowState
-    var body: some View { WorkflowsView(windowState: windowState) }
+    let sidebarMode: ChatShellLayout.PaneMode
+    let sidebarWidth: CGFloat
+    let sidebarWidthRange: ClosedRange<Double>
+    @Binding var storedSidebarWidth: Double
+    @Binding var liveSidebarWidth: Double?
+
+    /// The chat view re-renders on every streamed token; Workflows only
+    /// needs to when its column changes. It observes its own route.
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.windowState === rhs.windowState && lhs.sidebarMode == rhs.sidebarMode
+            && lhs.sidebarWidth == rhs.sidebarWidth
+    }
+
+    var body: some View {
+        WorkflowsView(
+            windowState: windowState,
+            sidebar: WorkflowsSidebarColumn(
+                mode: sidebarMode, width: sidebarWidth,
+                resizeHandle: AnyView(
+                    ColumnResizeHandle(
+                        edge: .trailing, range: sidebarWidthRange, storedWidth: $storedSidebarWidth,
+                        liveWidth: $liveSidebarWidth))))
+    }
+}
+
+/// Where the Workflows sidebar sits in the window.
+struct WorkflowsSidebarColumn {
+    var mode: ChatShellLayout.PaneMode
+    var width: CGFloat
+    /// Drawn on the docked sidebar's trailing edge.
+    var resizeHandle: AnyView? = nil
 }
 
 /// New Workflow: describe a task to the Architect, or add a ready-made
@@ -54,7 +85,7 @@ struct WorkflowCreationLanding<StarterCard: View>: View {
                                 // The existing composer owns 12pt outer side insets.
                                 .frame(maxWidth: 504)
                                 .padding(.bottom, -theme.space.s12)
-                            Text("The Architect drafts the steps, tests them with you, and saves the workflow to your library.", bundle: .module)
+                            Text("Osaurus drafts the steps, tests them with you, and saves the workflow to your library.", bundle: .module)
                                 .textStyle(.caption)
                                 .foregroundStyle(theme.text.tertiary)
                                 .multilineTextAlignment(.center)
@@ -82,7 +113,7 @@ struct WorkflowCreationLanding<StarterCard: View>: View {
             Text("Or add a ready-made workflow", bundle: .module)
                 .textStyle(.caption)
                 .foregroundStyle(theme.text.tertiary)
-            WorkflowStarterGrid(items: starters, card: starterCard)
+            WorkflowCardGrid(items: starters, card: starterCard)
         }
     }
 }

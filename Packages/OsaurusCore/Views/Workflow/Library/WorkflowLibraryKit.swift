@@ -215,48 +215,9 @@ enum WorkflowLibraryLayout {
     static func pageTopInset(_ theme: any ThemeProtocol) -> CGFloat { theme.space.s48 }
 }
 
-/// A titled card on a Workflows page: the run's steps, its result, what a
-/// workflow does.
-struct WorkflowPageCard<Trailing: View, Content: View>: View {
-    @Environment(\.theme) private var theme
-    /// Already localized.
-    let title: String
-    let icon: String
-    @ViewBuilder var trailing: () -> Trailing
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.s16) {
-            HStack(spacing: theme.space.s8) {
-                Image(systemName: icon)
-                    .glyphSize(.caption, weight: .semibold)
-                    .foregroundStyle(theme.text.secondary)
-                    .frame(width: theme.space.s16)
-                    .accessibilityHidden(true)
-                Text(verbatim: title)
-                    .font(SettingsFont.sectionTitle)
-                    .foregroundStyle(theme.text.primary)
-                    .accessibilityAddTraits(.isHeader)
-                Spacer(minLength: theme.space.s8)
-                trailing()
-            }
-            content()
-        }
-        .padding(theme.space.s16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .workflowCanvasCard()
-    }
-}
-
 extension View {
-    /// The card surface on the Workflows canvas and in the Architect's draft.
+    /// The card surface in the Architect's draft.
     func workflowCanvasCard() -> some View { settingsChrome(.canvas) }
-}
-
-extension WorkflowPageCard where Trailing == EmptyView {
-    init(title: String, icon: String, @ViewBuilder content: @escaping () -> Content) {
-        self.init(title: title, icon: icon, trailing: { EmptyView() }, content: content)
-    }
 }
 
 // MARK: - Making a workflow
@@ -483,47 +444,104 @@ private struct WorkflowPageTabButton: View {
     }
 }
 
-// MARK: - Starter grid
+// MARK: - Page header
 
-/// Ready-made workflows as cards, as many to a row as fit (at most three);
-/// a short last row stretches to the full width instead of leaving a hole.
-struct WorkflowStarterGrid<Item: Identifiable, Card: View>: View {
+/// A workflow's page and its runs' pages: the name as large as Home's
+/// title with the page's actions beside it, one line about it, any chips,
+/// then how it stands now. Everything shares the sections' left edge.
+struct WorkflowPageHeader<Chips: View, Actions: View, Status: View>: View {
+    @Environment(\.theme) private var theme
+    /// Verbatim.
+    let title: String
+    var subtitle: String?
+    @ViewBuilder var chips: () -> Chips
+    @ViewBuilder var actions: () -> Actions
+    @ViewBuilder var status: () -> Status
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(alignment: .center, spacing: theme.space.s12) {
+                Text(verbatim: title)
+                    .textStyle(.title)
+                    .foregroundStyle(theme.text.primary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                    .layoutPriority(1)
+                Spacer(minLength: theme.space.s12)
+                HStack(spacing: theme.space.s8) { actions() }
+                    .fixedSize()
+            }
+            if let subtitle, !subtitle.isEmpty {
+                Text(verbatim: subtitle)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundStyle(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if Chips.self != EmptyView.self {
+                HStack(spacing: theme.space.s6) { chips() }
+                    .padding(.top, theme.space.s2)
+            }
+            status()
+                .padding(.top, theme.space.s6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Card grid
+
+enum WorkflowCardGridColumns {
+    static func count(_ count: Int, fit: Int) -> Int {
+        let fit = max(1, fit)
+        guard count > fit else { return max(1, count) }
+        guard fit > 1 else { return 1 }
+        if let even = (2...fit).reversed().first(where: { count % $0 == 0 }) { return even }
+        if count <= 3 { return 1 }
+        return (2...fit).reversed().max { count % $0 < count % $1 } ?? fit
+    }
+}
+
+/// Cards in even rows: as many columns as fit, then the count that leaves
+/// no short last row (4 cards make 2 by 2, 6 make 3 by 2, 3 that don't
+/// fit in one row stack). When a short row can't be avoided, its cards
+/// keep the column width, centered.
+struct WorkflowCardGrid<Item: Identifiable, Card: View>: View {
     @Environment(\.theme) private var theme
     let items: [Item]
+    /// Nil: wide enough for a card's name on one line at the current text size.
+    var minimumCardWidth: CGFloat? = nil
+    var maximumColumns = 3
     @ViewBuilder var card: (Item) -> Card
 
     @State private var width: CGFloat = 0
 
-    /// Wide enough for a starter's name on one line at the current text size.
-    private var minimumCardWidth: CGFloat { theme.pointSize(.body) * 12 }
-
-    private var columns: Int {
-        guard width > 0 else { return 3 }
-        let fit = Int((width + theme.space.s12) / (minimumCardWidth + theme.space.s12))
-        return min(3, max(1, fit))
+    private var fit: Int {
+        guard width > 0 else { return maximumColumns }
+        let minimum = minimumCardWidth ?? theme.pointSize(.body) * 12
+        return min(maximumColumns, max(1, Int((width + theme.space.s12) / (minimum + theme.space.s12))))
     }
 
     var body: some View {
-        let perRow = columns
+        let perRow = WorkflowCardGridColumns.count(items.count, fit: fit)
         let rows = stride(from: 0, to: items.count, by: perRow).map { Array(items[$0..<min($0 + perRow, items.count)]) }
-        VStack(alignment: .leading, spacing: theme.space.s12) {
+        let cardWidth = max(0, (width - theme.space.s12 * CGFloat(perRow - 1)) / CGFloat(perRow))
+        VStack(alignment: .center, spacing: theme.space.s12) {
             ForEach(rows.indices, id: \.self) { index in
+                let row = rows[index]
                 HStack(alignment: .top, spacing: theme.space.s12) {
-                    ForEach(rows[index]) { item in
-                        card(item).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    }
-                    // A short last row keeps the column width instead of
-                    // stretching its cards across the empty columns.
-                    if rows.count > 1 {
-                        ForEach(0..<(perRow - rows[index].count), id: \.self) { _ in
-                            Color.clear.frame(height: 0).frame(maxWidth: .infinity).accessibilityHidden(true)
+                    ForEach(row) { item in
+                        if row.count < perRow, width > 0 {
+                            card(item).frame(width: cardWidth, alignment: .topLeading).frame(maxHeight: .infinity, alignment: .top)
+                        } else {
+                            card(item).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         }
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 }
@@ -556,59 +574,6 @@ struct WorkflowRunProgressBar: View {
     }
 }
 
-/// One segment per step, in run order: done, working, waiting, failed, or
-/// still to come. The working step breathes.
-struct WorkflowStepStrip: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let run: WorkflowRun
-    @State private var pulse = false
-
-    var body: some View {
-        HStack(spacing: theme.space.s2) {
-            ForEach(run.nodes) { node in
-                let tint = color(node.status)
-                RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
-                    .fill(tint)
-                    .opacity(node.status == .running && pulse ? 0.45 : 1)
-                    .frame(height: theme.space.s4)
-                    .help(Text(verbatim: stepHelp(node)))
-            }
-        }
-        .animation(theme.motion.quick, value: run.nodes.map(\.status))
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(theme.motion.slow.repeatForever(autoreverses: true)) { pulse = true }
-        }
-        .accessibilityElement()
-        .accessibilityLabel(Text("Steps", bundle: .module))
-        .accessibilityValue(
-            Text(verbatim: L("\(WorkflowRunPresentation.finishedSteps(run)) of \(run.nodes.count) done")))
-    }
-
-    private func color(_ status: NodeRunStatus) -> Color {
-        switch status {
-        case .done, .pinned: return theme.statusInk(.success)
-        case .running: return theme.statusInk(.info)
-        case .awaitingUser: return theme.statusInk(.warning)
-        case .failed: return theme.statusInk(.error)
-        case .skipped: return theme.border.default
-        case .pending: return theme.border.subtle
-        }
-    }
-
-    private func stepHelp(_ node: NodeRun) -> String {
-        switch node.status {
-        case .done, .pinned: return L("Done")
-        case .running: return L("Working")
-        case .awaitingUser: return L("Waiting on you")
-        case .failed: return L("Failed")
-        case .skipped: return L("Skipped")
-        case .pending: return L("Up next")
-        }
-    }
-}
-
 /// Seconds since a run started, ticking while it goes.
 struct WorkflowRunElapsed: View {
     @Environment(\.theme) private var theme
@@ -617,7 +582,7 @@ struct WorkflowRunElapsed: View {
     var body: some View {
         TimelineView(.periodic(from: run.startedAt, by: 1)) { context in
             let end = run.finishedAt ?? context.date
-            Text(verbatim: WorkflowRunView.duration(max(0, end.timeIntervalSince(run.startedAt))))
+            Text(verbatim: WorkflowRunWords.stopwatch(end.timeIntervalSince(run.startedAt)))
                 .textStyle(.caption)
                 .monospacedDigit()
                 .foregroundStyle(theme.text.tertiary)
@@ -897,73 +862,6 @@ struct WorkflowRowParts {
     var accessory = AnyView(EmptyView())
     var expanded = AnyView(EmptyView())
     var keyboard = WorkflowRowKeyboard()
-}
-
-/// One past or live run inside a list: status glyph, how it went, who
-/// started it, and when. A live run shows its steps filling in.
-struct WorkflowRunCompactRow: View {
-    @Environment(\.theme) private var theme
-    let run: WorkflowRun
-    let definition: WorkflowDefinition?
-    /// Shows the workflow's name first, for lists that mix workflows.
-    var showsWorkflowName = false
-    let onOpen: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: theme.space.s6) {
-                HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
-                    WorkflowRunStatusIcon(status: run.status, size: 11)
-                        .frame(width: theme.space.s16)
-                    if showsWorkflowName {
-                        Text(verbatim: run.workflowName)
-                            .textStyle(.body)
-                            .foregroundStyle(theme.text.primary)
-                            .lineLimit(1)
-                    }
-                    Text(verbatim: WorkflowRunPresentation.progressLine(run, definition: definition))
-                        .textStyle(.caption)
-                        .foregroundStyle(run.status == .failed ? theme.statusInk(.error) : theme.text.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .help(run.error?.reason ?? "")
-                    Spacer(minLength: theme.space.s8)
-                    WorkflowStartedByLabel(caller: run.caller)
-                    if run.status.isTerminal {
-                        Text(verbatim: WorkflowRunPresentation.relativeTime(run.finishedAt ?? run.startedAt))
-                            .textStyle(.caption)
-                            .foregroundStyle(theme.text.tertiary)
-                            .lineLimit(1)
-                            .fixedSize()
-                    } else {
-                        WorkflowRunElapsed(run: run).fixedSize()
-                    }
-                    Image(systemName: "chevron.right")
-                        .glyphSize(.tiny, weight: .semibold)
-                        .foregroundStyle(theme.text.tertiary)
-                        .opacity(isHovered ? 1 : 0)
-                        .accessibilityHidden(true)
-                }
-                if !run.status.isTerminal, !run.nodes.isEmpty {
-                    WorkflowStepStrip(run: run)
-                        .padding(.leading, theme.space.s16 + theme.space.s8)
-                        .transition(.opacity)
-                }
-            }
-            .padding(.horizontal, theme.space.s8)
-            .padding(.vertical, theme.space.s6)
-            .settingsChrome(isHovered ? .hover : nil)
-            .contentShape(Rectangle())
-        }
-        .assignedBasePlainButtonStyle()
-        .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
-        .pointingHandCursor()
-        .anchorPreference(key: WorkflowRowActionBounds.self, value: .bounds) { [$0] }
-        .accessibilityElement(children: .combine)
-        .accessibilityHint(Text("Opens the run", bundle: .module))
-    }
 }
 
 /// One cursor owner for the row, avoiding nested push/pop hover callbacks and

@@ -2,12 +2,11 @@
 //  WorkflowsView.swift
 //  osaurus
 //
-//  Main window → Workflows. One home: what is running now, then the
-//  workflows in tabs (All, Drafts to continue, and what this Mac has
-//  published), each row opening to its recent runs. New Workflow, a
-//  workflow's page, and a run's page push over it; the title bar's back
-//  button pops them. With no workflows and no drafts, the New Workflow
-//  page is the whole screen.
+//  Main window → Workflows. The sidebar lists every workflow, draft and
+//  workspace; picking one replaces the page beside it. Home says what is
+//  running now. A run's page pushes over a workflow's page; the title
+//  bar's back button pops it. With no workflows and no drafts, the New
+//  Workflow page is the whole screen and there is no sidebar.
 //
 //  Workflow files arrive through Import, a drop anywhere on the screen, or
 //  a store.osaurus.ai install link, and leave through Share (as a file, or
@@ -42,8 +41,9 @@ struct WorkflowsView: View {
     @ObservedObject var runGlances = WorkflowRunGlances.shared
     @ObservedObject var workspaces = WorkspacesService.shared
     @ObservedObject var hostedLinks = HostedWorkflowLinkStore.shared
-    @ObservedObject var workspaceCatalog = WorkspaceWorkflowCatalog.shared
     @State var runningLink: HostedWorkflowLink?
+    /// Where the sidebar sits; nil draws none.
+    let sidebar: WorkflowsSidebarColumn?
     /// Read, not observed: it publishes on every step of every run. What
     /// the home shows of runs comes through `runGlances` and views that
     /// observe the store themselves.
@@ -66,22 +66,12 @@ struct WorkflowsView: View {
     @State var sharing: ShareRequest?
     @State var runSheet: RunSheetRequest?
     @State var showingConnections = false
-    @State var query = ""
-    @State var selectedTag: String?
     @State var deletingDraft: WorkflowDraft?
-    /// Workflow rows open to show their recent runs.
-    @State var expandedWorkflows: Set<UUID> = []
-    /// The row ↑/↓ asked to focus next.
-    @State var rowFocus: WorkflowRowFocusRequest?
 
-    /// Past this many installed workflows the list offers a search field
-    /// even when none is tagged.
-    static let searchThreshold = 8
-
-    init(windowState: ChatWindowState, expandedWorkflows: Set<UUID> = []) {
+    init(windowState: ChatWindowState, sidebar: WorkflowsSidebarColumn? = nil) {
         self.windowState = windowState
+        self.sidebar = sidebar
         _route = StateObject(wrappedValue: WorkflowsRouteObserver(windowState))
-        _expandedWorkflows = State(initialValue: expandedWorkflows)
     }
 
     struct ShareRequest: Identifiable {
@@ -114,14 +104,32 @@ struct WorkflowsView: View {
         templates.allTemplates(kind: .workflow).filter { installed.workflow(templateID: $0.id) == nil }
     }
 
+    /// The sidebar on screen: none on the first-run page.
+    private var shownSidebar: WorkflowsSidebarColumn? {
+        guard let sidebar, sidebar.mode != .hidden,
+            !Self.isFirstRun(installed: installed, drafts: drafts, hostedLinks: hostedLinks, workspaces: workspaces)
+        else { return nil }
+        return sidebar
+    }
+
     var body: some View {
-        ZStack {
-            page
+        let shown = shownSidebar
+        HStack(spacing: theme.space.s0) {
+            if let shown, shown.mode == .docked {
+                sidebarView(width: shown.width)
+                    .overlay(alignment: .trailing) { shown.resizeHandle }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .zIndex(1)
+            }
+            ZStack {
+                page
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipped()
+        .overlay { compactDrawer(shown) }
+        .animation(theme.motion.quick, value: shown?.mode)
         .animation(reduceMotion ? theme.motion.quick : theme.motion.standard, value: windowState.workflowsPath)
-        .animation(theme.motion.quick, value: windowState.workflowsTab)
         .background { if !sharedGrid { theme.surface.canvas } }
         .environment(\.theme, theme)
         .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
@@ -271,10 +279,10 @@ struct WorkflowsView: View {
                     windowState.showWorkflowRun(workflowID: id, runID: runID, agentId: windowState.agentId)
                 },
                 onShare: { share($0.template, entry: shareEntry(for: $0.templateID)) },
-                onRename: { renamingInstalled = $0 },
-                onEdit: { ArchitectLauncher.edit($0, in: windowState) },
                 onDone: { windowState.popWorkflowsPage() },
-                actionMenu: { workflow in installedCard(workflow, detailActionMenu: true) }
+                onSeeAllRuns: { windowState.showWorkflowsActivity(.init(workflowID: $0.id)) },
+                takeIntent: { windowState.takeWorkflowsAutomationIntent() },
+                actionMenu: { detailMenu($0) }
             )
             .id("workflow-\(id)")
             .transition(pushTransition)
@@ -283,8 +291,6 @@ struct WorkflowsView: View {
                 windowState: windowState, workflowID: workflowID, runID: runID, agentId: agentId,
                 onBack: { windowState.popWorkflowsPage() },
                 onShowRun: { windowState.showWorkflowRun(workflowID: workflowID, runID: $0, agentId: agentId) },
-                onShowWorkflow: previousPage == .workflow(workflowID)
-                    ? nil : { windowState.pushWorkflowsPage(.workflow($0)) },
                 onSetUp: { setupSubject = .setup($0) })
             .id("run-\(workflowID)")
             .transition(pushTransition)
@@ -292,15 +298,23 @@ struct WorkflowsView: View {
             newWorkflowPage(onBack: { windowState.popWorkflowsPage() })
                 .id("create")
                 .transition(pushTransition)
+        case .workspace(let id)?:
+            workspacePage(id)
+                .id("workspace-\(id)")
+                .transition(.opacity)
+        case .activity?:
+            WorkflowsActivityPage(
+                windowState: windowState, overview: windowState.workflowsOverview,
+                onRun: { workflow in
+                    if workflow.needsSetup { setupSubject = .setup(workflow) } else { play(workflow) }
+                },
+                onSetUp: { setupSubject = .setup($0) })
+            .id("activity")
+            .transition(.opacity)
         case nil:
             home
                 .transition(.opacity)
         }
-    }
-
-    private var previousPage: ChatWindowState.WorkflowsPage? {
-        let path = windowState.workflowsPath
-        return path.count >= 2 ? path[path.count - 2] : nil
     }
 
     /// The title-bar back button's label for returning to `page`; nil is
@@ -311,7 +325,106 @@ struct WorkflowsView: View {
         case .workflow(let id)?: return installed.workflow(id: id)?.name ?? L("Workflow")
         case .run?: return L("Run")
         case .create?: return L("New Workflow")
+        case .workspace(let id)?: return WorkspacesService.shared.workspaces.first { $0.id == id }?.name ?? L("Workspace")
+        case .activity?: return L("Activity")
         case nil: return L("Workflows")
+        }
+    }
+
+    // MARK: - Sidebar
+
+    private func sidebarView(width: CGFloat) -> some View {
+        WorkflowsSidebar(
+            windowState: windowState,
+            overview: windowState.workflowsOverview,
+            width: width,
+            selection: windowState.workflowsSidebarSelection,
+            workflowMenu: { workflow, label in AnyView(sidebarMenu(workflow, label: label)) },
+            onRun: runFromSidebar,
+            onDeleteDraft: { deletingDraft = $0 })
+    }
+
+    /// A compact window's sidebar: a drawer over the page above a scrim
+    /// that closes it. Esc closes it too.
+    @ViewBuilder
+    private func compactDrawer(_ shown: WorkflowsSidebarColumn?) -> some View {
+        ZStack(alignment: .leading) {
+            if let shown, shown.mode == .overlay {
+                theme.scrimSubtle
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(theme.motion.quick) { windowState.isWorkflowsDrawerPresented = false }
+                    }
+                    .transition(.opacity)
+                sidebarView(width: shown.width)
+                    .themeElevation(theme.elevation.overlay)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    /// The workflow page's ⋯: the card's menu with Pin and Share first.
+    private func detailMenu(_ workflow: InstalledWorkflow) -> InstalledWorkflowCard {
+        var card = installedCard(workflow, detailActionMenu: true)
+        let published = registryRecords.record(for: workflow.templateID)
+        card.leadingMenuItems = AnyView(
+            Group {
+                pinButton(workflow)
+                Button { share(workflow.template, entry: shareEntry(for: workflow.templateID)) } label: {
+                    Label(published == nil ? L("Share…") : L("Manage Published…"), systemImage: "square.and.arrow.up")
+                }
+            })
+        return card
+    }
+
+    private func pinButton(_ workflow: InstalledWorkflow) -> some View {
+        Button {
+            try? installed.setPinned(!workflow.isPinned, id: workflow.id)
+        } label: {
+            Label(
+                workflow.isPinned ? L("Unpin") : L("Pin"),
+                systemImage: workflow.isPinned ? "pin.slash" : "pin")
+        }
+    }
+
+    /// The card's menu on a sidebar row, with Pin, Automate and Share first.
+    private func sidebarMenu(_ workflow: InstalledWorkflow, label: AnyView) -> InstalledWorkflowCard {
+        var card = installedCard(workflow)
+        card.contextMenuLabel = label
+        card.leadingMenuItems = AnyView(
+            Group {
+                pinButton(workflow)
+                Button { windowState.selectWorkflowsPage(.workflow(workflow.id)) } label: {
+                    Label(L("Automate…"), systemImage: "bolt")
+                }
+                Button { share(workflow.template, entry: shareEntry(for: workflow.templateID)) } label: {
+                    Label(L("Share…"), systemImage: "square.and.arrow.up")
+                }
+            })
+        return card
+    }
+
+    /// Run from a sidebar row: Set Up first when the workflow can't run
+    /// yet; a teammate's workflow asks its owner.
+    private func runFromSidebar(_ row: WorkflowsSidebarModel.Row) {
+        switch row.kind {
+        case .installed(let id):
+            guard let workflow = installed.workflow(id: id) else { return }
+            if workflow.needsSetup { setupSubject = .setup(workflow) } else { play(workflow) }
+        case .hosted(let id):
+            runningLink = hostedLinks.link(id: id)
+        }
+    }
+
+    private func workspacePage(_ id: String) -> some View {
+        ScrollView {
+            WorkflowsWorkspacesTab(windowState: windowState, workspaceID: id, onSetUp: { setupSubject = .setup($0) })
+                .frame(maxWidth: WorkflowLibraryLayout.columnWidth, alignment: .leading)
+                .padding(.horizontal, theme.space.s24)
+                .padding(.top, WorkflowLibraryLayout.pageTopInset(theme))
+                .padding(.bottom, theme.space.s64)
+                .frame(maxWidth: .infinity, alignment: .top)
         }
     }
 
@@ -321,16 +434,29 @@ struct WorkflowsView: View {
             newWorkflowPage(onBack: nil)
                 .transition(.opacity)
         } else {
-            ScrollView {
-                workflowsHome
-                    .frame(maxWidth: WorkflowLibraryLayout.columnWidth, alignment: .leading)
-                    .padding(.horizontal, theme.space.s24)
-                    .padding(.top, WorkflowLibraryLayout.pageTopInset(theme))
-                    .padding(.bottom, theme.space.s64)
-                    .frame(maxWidth: .infinity, alignment: .top)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    workflowsHome
+                        .frame(maxWidth: WorkflowLibraryLayout.columnWidth, alignment: .leading)
+                        .padding(.horizontal, theme.space.s24)
+                        .padding(.top, WorkflowLibraryLayout.pageTopInset(theme))
+                        .padding(.bottom, theme.space.s64)
+                        .frame(maxWidth: .infinity, alignment: .top)
+                }
+                .onAppear { scrollHome(proxy, to: windowState.takeWorkflowsHomeScrollTarget()) }
+                .onReceive(NotificationCenter.default.publisher(for: .workflowsHomeScroll)) { _ in
+                    scrollHome(proxy, to: windowState.takeWorkflowsHomeScrollTarget())
+                }
             }
             .transition(.opacity)
             .settingsLandingAnchor("workflows.overview")
+        }
+    }
+
+    private func scrollHome(_ proxy: ScrollViewProxy, to section: String?) {
+        guard let section else { return }
+        DispatchQueue.main.async {
+            withAnimation(theme.motion.standard) { proxy.scrollTo(section, anchor: .top) }
         }
     }
 
@@ -368,21 +494,13 @@ struct WorkflowsView: View {
         }
     }
 
-    /// A run just started from here: on the home its row opens to show it;
-    /// on a workflow's page the page shows it at the top of its runs.
+    /// A run just started from here: Home lists it under Running now; a
+    /// workflow's page shows it at the top of its runs.
     func reveal(_ runID: UUID, of workflowID: UUID) {
         windowState.workflowsSpotlightRunID = runID
-        if windowState.workflowsPath.isEmpty {
-            if workflowsTab == .drafts { windowState.workflowsTab = .all }
-            withAnimation(expandAnimation) { _ = expandedWorkflows.insert(workflowID) }
-        }
     }
 
-    var expandAnimation: Animation {
-        reduceMotion ? theme.motion.quick : theme.motion.springAnimation(responseMultiplier: 1)
-    }
-
-    func openRun(_ run: WorkflowRun) {
+    func openRun(_ run: WorkflowLiveRuns.Summary) {
         windowState.showWorkflowRun(
             workflowID: run.workflowID, runID: run.id, agentId: run.caller.agentID ?? windowState.agentId)
     }
@@ -429,36 +547,6 @@ struct WorkflowsView: View {
         )
     }
 
-    /// What an installed workflow's row shows: the `WorkflowRowSnapshot`
-    /// key for `installedCard` rows.
-    struct InstalledRowKey: Equatable, Sendable {
-        let workflow: InstalledWorkflow
-        let updateVersion: Int?
-        let published: WorkflowRegistryRecord?
-        let agentCount: Int
-        let hasHistory: Bool
-        /// The row's pending keyboard focus request, and its list's order.
-        let focus: Int
-        let ids: [UUID]
-        let theme: Int
-        var isExpanded = false
-        var spotlight: UUID?
-        var automations = 0
-        var runs = WorkflowRunGlances.Glance()
-    }
-
-    func installedRowKey(_ workflow: InstalledWorkflow, ids: [UUID]) -> InstalledRowKey {
-        InstalledRowKey(
-            workflow: workflow,
-            updateVersion: installed.availableUpdate(for: workflow)?.version,
-            published: registryRecords.record(for: workflow.templateID),
-            agentCount: agentCount(workflow.id),
-            hasHistory: templates.latest(id: workflow.templateID) != nil,
-            focus: rowFocus?.id == workflow.id ? rowFocus?.serial ?? 0 : 0,
-            ids: ids,
-            theme: theme.renderFingerprint)
-    }
-
     func templateCard(_ template: Template) -> WorkflowTemplateCard {
         WorkflowTemplateCard(
             template: template,
@@ -490,73 +578,6 @@ struct WorkflowsView: View {
         case "0f5c1a4e-6b7d-4c1a-9a01-000000000101": return "at"
         default: return "flowchart"
         }
-    }
-
-    // MARK: - Filtering
-
-    /// What this Mac has published.
-    var publishedWorkflows: [InstalledWorkflow] {
-        installed.workflows.filter { registryRecords.record(for: $0.templateID) != nil }
-    }
-
-    /// The workflows a tab lists before search and tag narrow it.
-    func tabWorkflows(_ tab: ChatWindowState.WorkflowsTab) -> [InstalledWorkflow] {
-        tab == .published ? publishedWorkflows : installed.workflows
-    }
-
-    func shownInstalled(_ tab: ChatWindowState.WorkflowsTab) -> [InstalledWorkflow] {
-        InstalledWorkflow.filter(tabWorkflows(tab), query: query, tag: selectedTag)
-    }
-
-    var showsSearch: Bool {
-        !installed.allTags.isEmpty || installed.workflows.count > Self.searchThreshold || !query.isEmpty
-    }
-
-    /// Search by name or tag; it sits in the tab row.
-    var searchField: some View {
-        SearchField(text: $query, placeholder: "Search by name or tag…", width: 240)
-            .settingsLandingAnchor("workflows.tagFilter")
-    }
-
-    /// All and one chip per tag in use within `tab`; a chip narrows the
-    /// list to workflows carrying that tag.
-    @ViewBuilder
-    func filterChips(_ tab: ChatWindowState.WorkflowsTab) -> some View {
-        let base = tabWorkflows(tab)
-        let tags = Self.tagCounts(base)
-        if !tags.isEmpty {
-            FilterChipScroller {
-                tagChip(nil, label: L("All"), count: base.count)
-                ForEach(tags, id: \.tag) { entry in
-                    tagChip(entry.tag, label: entry.tag, count: entry.count)
-                }
-            }
-        }
-    }
-
-    static func tagCounts(_ workflows: [InstalledWorkflow]) -> [(tag: String, count: Int)] {
-        var counts: [String: Int] = [:]
-        for w in workflows { for t in w.tags { counts[t, default: 0] += 1 } }
-        return counts.keys.sorted().map { ($0, counts[$0] ?? 0) }
-    }
-
-    private func tagChip(_ tag: String?, label: String, count: Int) -> some View {
-        FilterChip(
-            label, icon: nil, count: count, isSelected: selectedTag == tag,
-            help: tag == nil ? L("Every workflow in this tab") : L("Only workflows tagged “\(label)”")
-        ) {
-            selectedTag = tag
-        }
-    }
-
-    var noMatches: some View {
-        SettingsEmptyState(
-            inline: "line.3.horizontal.decrease.circle", title: "No workflow matches.",
-            hint: "Try another name or tag.",
-            action: .init(title: L("Clear Filters"), icon: "xmark.circle") {
-                query = ""
-                selectedTag = nil
-            })
     }
 
     // MARK: - Actions
@@ -610,7 +631,7 @@ struct WorkflowsView: View {
         guard let id = managementState.pendingWorkflowDetailId else { return }
         managementState.pendingWorkflowDetailId = nil
         guard installed.workflow(id: id) != nil else { return }
-        windowState.workflowsPath = [.workflow(id)]
+        windowState.selectWorkflowsPage(.workflow(id))
     }
 
     private var isSheetOpen: Bool {

@@ -96,6 +96,13 @@ enum WorkflowFailure {
                         : L("Add \(key) in Settings → Vault as a value shared by all agents; runs without an agent use only those."),
                     type: type)
             }
+        case let connection as WorkflowConnectionResolver.Failure:
+            switch connection {
+            case .signInNeeded, .refreshFailed:
+                return make("sign_in_needed", .setup, L("Open Set Up and sign in to the connection again."))
+            case .missing, .noValue:
+                return make("connection_missing", .setup, L("Open Set Up and choose or enter the connection again."))
+            }
         case let block as WorkflowSettingBlock:
             return make(block.kind, .settings, L("Change \(block.setting), or change the step so it stays within it."))
         case let subagent as SubagentError:

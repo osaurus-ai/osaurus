@@ -288,11 +288,20 @@ public enum SetupChecker {
     public static func check(
         _ workflow: InstalledWorkflow, secrets: SecretAudience = .caller(nil), attended: Bool = false
     ) -> SetupReport {
+        check(workflow, secrets: secrets, environment: .live(secrets: secrets, attended: attended))
+    }
+
+    /// The same check against an environment the caller already built, so
+    /// a page that also needs the model catalog builds it once.
+    @MainActor
+    static func check(
+        _ workflow: InstalledWorkflow, secrets: SecretAudience = .caller(nil), environment env: Environment
+    ) -> SetupReport {
         checkingChain.append(workflow.id)
         defer { checkingChain.removeLast() }
         let report = check(
             workflow.template, bindings: workflow.bindings, subjectId: workflow.id, secrets: secrets,
-            environment: .live(secrets: secrets, attended: attended))
+            environment: env)
         guard InstalledWorkflowStore.shared.modifiedOutsideApp.contains(workflow.id) else { return report }
         return SetupReport(subjectId: report.subjectId, items: [integrityItem] + report.items)
     }

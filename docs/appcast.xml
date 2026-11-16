@@ -3,34 +3,27 @@
   <channel>
     <title>Osaurus</title>
         <item>
-            <title>1.0.5</title>
-            <pubDate>Sun, 15 Nov 2026 10:48:51 +0000</pubDate>
-            <sparkle:version>1.0.5</sparkle:version>
-            <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
+            <title>1.0.6</title>
+            <pubDate>Mon, 16 Nov 2026 13:39:12 +0000</pubDate>
+            <sparkle:version>1.0.6</sparkle:version>
+            <sparkle:shortVersionString>1.0.6</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.5/Osaurus-1.0.5.dmg" length="121848194" type="application/octet-stream" sparkle:edSignature="TpotPq6D8q/OTkT8dNG/vf/F2+Ny0dYwm/MCDLbwhX9FQoAz121R9v7FTygdmbAD09SsxD0+MCts2IyCTDB6AQ=="/>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.6/Osaurus-1.0.6.dmg" length="122404355" type="application/octet-stream" sparkle:edSignature="eCbrtjRMokSIdq2R4YHUHqNXLi4rsYHPH4LIu64ydcWJrUSXMLD2NyKPu/EYG7TkPbHnfOhfHFz3+zjLHaP+AA=="/>
             <description sparkle:format="markdown"><![CDATA[
 ## What's Changed
-* Memoize tool canonical hash payloads to avoid preview recomputation app hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3322
-* add /api/tags to /api/show end-to-end test for external models by @htjworld in https://github.com/osaurus-ai/osaurus/pull/3071
-* Stop the System Prompt editor jittering with legacy scroll bars by @tpae in https://github.com/osaurus-ai/osaurus/pull/3427
-* fix(chat): parse `$…$` spans according to pandoc's tex_math_dollars rules by @tomnnnn in https://github.com/osaurus-ai/osaurus/pull/3300
-* docs: fix dead Apple Containerization documentation links in README and SANDBOX by @sxh313 in https://github.com/osaurus-ai/osaurus/pull/2834
-* docs: fix six relative links that resolve to files that do not exist by @tonydzi in https://github.com/osaurus-ai/osaurus/pull/2669
-* Cut main-thread and per-call overhead in chat, sync, file history, tool preflight and workflows by @tpae in https://github.com/osaurus-ai/osaurus/pull/3431
-* Wire the usage popover to real credits and ping on wallet changes by @tpae in https://github.com/osaurus-ai/osaurus/pull/3432
-* Avoid main-thread hangs by size-capping and lazily indexing known files for edit path inference by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3430
-* Raptor 0.7 tool reliability: prompt/tool fixes, harness-owned session state, evals (PARTIAL) by @tpae in https://github.com/osaurus-ai/osaurus/pull/3433
-* Per-agent tool approvals: Never Ask, per-tool policies, and an audit marker by @tpae in https://github.com/osaurus-ai/osaurus/pull/3434
-* Cap file-read text before newline split and memoize known file contents by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3429
+* Skip the Cloud media catalog fetch while the Osaurus Router is off by @tpae in https://github.com/osaurus-ai/osaurus/pull/3437
+* Turn Ollama thinking off with reasoning_effort and log the real finish reason by @tpae in https://github.com/osaurus-ai/osaurus/pull/3438
+* Make Open in New Window move the chat instead of refocusing it by @tpae in https://github.com/osaurus-ai/osaurus/pull/3440
+* Bump Codex client_version so ChatGPT sign-in lists GPT-6.1 models by @tpae in https://github.com/osaurus-ai/osaurus/pull/3439
+* Refresh the translation call for help with live coverage and partial-batch tooling by @tpae in https://github.com/osaurus-ai/osaurus/pull/3443
+* Fix the Apple-app refusal, ask permissions lazily, add Architect model guidance and FirstRun evals by @tpae in https://github.com/osaurus-ai/osaurus/pull/3445
+* Keep CreditsAttentionTracker upstream transforms nonisolated so identity setup does not crash off the main thread by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3442
+* Read Credits timeline Insights presence off the main thread by @tpae in https://github.com/osaurus-ai/osaurus/pull/3446
+* Workflows redesign: sidebar, workflow pages, automations, Activity, and sharing by @tpae in https://github.com/osaurus-ai/osaurus/pull/3444
 
-## New Contributors
-* @tomnnnn made their first contribution in https://github.com/osaurus-ai/osaurus/pull/3300
-* @sxh313 made their first contribution in https://github.com/osaurus-ai/osaurus/pull/2834
-* @tonydzi made their first contribution in https://github.com/osaurus-ai/osaurus/pull/2669
 
-**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.4...1.0.5
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.5...1.0.6
 ]]></description>
             <sparkle:channel>beta</sparkle:channel>
             <sparkle:minimumAutoupdateVersion>1.0.0</sparkle:minimumAutoupdateVersion>

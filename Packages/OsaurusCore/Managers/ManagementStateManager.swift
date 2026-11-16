@@ -240,6 +240,10 @@ public final class ManagementStateManager: ObservableObject {
     /// task's Open Automation). `EventsView` resets it after presenting.
     @Published public var pendingEventDetailId: UUID?
 
+    /// One-shot request to open "Add Automation" (Workflows → Home's
+    /// "more ways" link). `EventsView` resets it after presenting.
+    @Published public var pendingNewAutomation = false
+
     /// One-shot request to open a task's detail sheet on the Tasks tab
     /// (Insights → a task row's Open Task). `TasksView` resets it.
     @Published public var pendingTaskDetailId: UUID?

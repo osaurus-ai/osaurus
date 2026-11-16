@@ -168,6 +168,25 @@ struct ChatShellLayout: Equatable, Sendable {
         }
     }
 
+    /// The Workflows destination: its own sidebar in the chat sidebar's
+    /// column, and no context panel. `showsSidebar` is the docked choice;
+    /// a compact window shows the sidebar only while its drawer is open.
+    static func workflows(
+        windowWidth: CGFloat,
+        showsSidebar: Bool,
+        isDrawerPresented: Bool,
+        preferredSidebarWidth: CGFloat,
+        railWidth: CGFloat = ChatShellLayout.railWidth
+    ) -> ChatShellLayout {
+        let compact = breakpoint(forAvailableWidth: max(0, windowWidth - railWidth)) == .compact
+        return ChatShellLayout(
+            windowWidth: windowWidth,
+            sidebarRequested: compact ? isDrawerPresented : showsSidebar,
+            preferredSidebarWidth: preferredSidebarWidth,
+            contextRequested: false,
+            railWidth: railWidth)
+    }
+
     static func breakpoint(forAvailableWidth available: CGFloat) -> ChatShellBreakpoint {
         if available < compactUpperBound { return .compact }
         if available < wideLowerBound { return .regular }

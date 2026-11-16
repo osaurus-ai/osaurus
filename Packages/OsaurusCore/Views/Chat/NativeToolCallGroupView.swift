@@ -2700,9 +2700,9 @@ final class NativeToolCallRowView: NSView {
             openRunID = nil
             return
         }
-        openRunID =
-            item.result.flatMap(WorkflowToolCall.runID(inResult:))
-            ?? WorkflowRunService.shared.liveRunID(forToolCall: item.call.id)
+        openRunID = (item.result.flatMap(WorkflowToolCall.runID(inResult:))
+            ?? WorkflowRunService.shared.liveRunID(forToolCall: item.call.id))
+            .flatMap { WorkflowRunLauncher.canOpen(runID: $0) ? $0 : nil }
         guard openRunID != nil else {
             setHeaderLink(openRunButton, visible: false)
             // The run starts just after the row appears; look again shortly.

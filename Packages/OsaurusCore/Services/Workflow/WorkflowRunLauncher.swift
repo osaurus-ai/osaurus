@@ -37,14 +37,40 @@ enum WorkflowRunLauncher {
     }
 
     /// A recorded run. Test runs belong to an Architect draft, which has
-    /// no run page of its own; they open the Architect's chat.
+    /// no run page of its own; they open the Architect's chat. A hand-off
+    /// to an agent opens the chat that agent worked in.
     static func open(runID: UUID) {
         guard let run = WorkflowRunStore.shared.run(id: runID) else { return }
+        if AgentWrapperCatalog.isWrapperID(run.workflowID) {
+            if let sessionID = handoffSessionID(run) { openChat(sessionID: sessionID) }
+            return
+        }
         guard !run.isTest, InstalledWorkflowStore.shared.workflow(id: run.workflowID) != nil else {
             ChatWindowManager.shared.openChat(withAgentId: run.caller.agentID ?? Agent.architectId)
             return
         }
         openTab(workflowID: run.workflowID, runID: runID, agentId: run.caller.agentID ?? Agent.defaultId)
+    }
+
+    /// False when `open(runID:)` has nowhere to go: a hand-off has no run
+    /// page, only the agent's chat, which a hand-off that failed before the
+    /// agent started never had.
+    static func canOpen(runID: UUID) -> Bool {
+        guard let run = WorkflowRunStore.shared.run(id: runID) else { return true }
+        return !AgentWrapperCatalog.isWrapperID(run.workflowID) || handoffSessionID(run) != nil
+    }
+
+    /// The chat a hand-off's one agent step ran in, from what it returned.
+    static func handoffSessionID(_ run: WorkflowRun) -> UUID? {
+        run.node(AgentWrapperCatalog.nodeID)?.output?.objectValue?["session_id"]?.stringValue
+            .flatMap(UUID.init(uuidString:))
+    }
+
+    private static func openChat(sessionID: UUID) {
+        let windows = ChatWindowManager.shared
+        if windows.revealOpenSession(sessionID) != nil { return }
+        guard let data = ChatSessionStore.load(id: sessionID) else { return }
+        windows.createWindow(agentId: data.agentId, sessionData: data)
     }
 
     /// Runs one of the template's examples in a new workflow tab, only on

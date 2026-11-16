@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Repair as a flow. `WorkflowRepairBrief` is what the Architect is told
-//  about a failed run, whether the person clicked "Fix with the Architect"
+//  about a failed run, whether the person clicked "Ask Osaurus to Fix It"
 //  or self-heal fired. `WorkflowSelfHealMonitor` watches finished runs of
 //  installed workflows that opted in: when the same step fails the same
 //  way `threshold` runs in a row, it dispatches the Architect in a

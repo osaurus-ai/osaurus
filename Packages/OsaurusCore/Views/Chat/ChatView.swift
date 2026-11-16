@@ -11504,8 +11504,9 @@ struct ChatView: View {
     // MARK: - Shell layout
 
     /// The column model for a window `windowWidth` wide. The sidebar and
-    /// context panel belong to the Chat destination; Workflows owns the
-    /// whole content area. In a compact window the sidebar is a drawer
+    /// context panel belong to the Chat destination; Workflows draws its
+    /// own sidebar in the same column (`ChatShellLayout.workflows`), inside
+    /// its content area. In a compact window the sidebar is a drawer
     /// with its own open state, so narrowing the window never rewrites
     /// the user's docked choice.
     private func shellLayout(windowWidth: CGFloat) -> ChatShellLayout {
@@ -11770,7 +11771,7 @@ struct ChatView: View {
                 ZStack {
                     // Keep the titlebar over the window material, outside the chat canvas.
                     Group {
-                        if windowState.mainSurface == .workflows { WorkflowCanvasGrid() }
+                        if windowState.workflowsShowsGrid { WorkflowCanvasGrid() }
                         else { theme.surface.canvas }
                     }
                         .padding(.top, topInset)
@@ -12129,7 +12130,21 @@ struct ChatView: View {
 
                     ZStack {
                         if windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary {
-                            WorkflowMainDestination(windowState: windowState)
+                            let workflowsLayout = ChatShellLayout.workflows(
+                                windowWidth: proxy.size.width,
+                                showsSidebar: windowState.showWorkflowsSidebar,
+                                isDrawerPresented: windowState.isWorkflowsDrawerPresented,
+                                preferredSidebarWidth: clampedSidebarWidth,
+                                railWidth: isEmbedded ? 0 : ChatShellLayout.railWidth)
+                            WorkflowMainDestination(
+                                windowState: windowState,
+                                sidebarMode: workflowsLayout.sidebarMode,
+                                sidebarWidth: workflowsLayout.sidebarWidth,
+                                sidebarWidthRange: Self.sidebarWidthRange,
+                                storedSidebarWidth: $storedSidebarWidth,
+                                liveSidebarWidth: $liveSidebarWidth
+                            )
+                            .equatable()
                                 .padding(.top, Self.headerHeight(theme))
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .transition(pageTransition)
@@ -12164,7 +12179,7 @@ struct ChatView: View {
                     }
                     .zIndex(2)
                 }
-                .environment(\.workflowSharedGrid, windowState.mainSurface == .workflows)
+                .environment(\.workflowSharedGrid, windowState.workflowsShowsGrid)
                 // Computer Use gated-action confirmations. Process-wide queue so
                 // the in-tool loop (which has no ChatSession handle) can park a
                 // request the user resolves; rendered above the input bar like the

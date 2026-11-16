@@ -192,7 +192,6 @@ enum SettingsKitLintBaseline {
             "Views/Workflow/Architect/WorkflowRequirementsPanel.swift": 1,
             "Views/Workflow/Library/WorkflowBundleSetupView.swift": 1,
             "Views/Workflow/Library/WorkflowCards.swift": 1,
-            "Views/Workflow/Library/WorkflowDetailPage.swift": 1,
             "Views/Workflow/Library/WorkflowSetupWizardView.swift": 1,
             "Views/Workflow/Library/WorkflowsPaneView.swift": 1,
             "Views/Workflow/WorkflowMediaGallery.swift": 1,

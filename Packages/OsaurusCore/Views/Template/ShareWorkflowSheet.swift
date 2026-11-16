@@ -235,7 +235,7 @@ struct ShareWorkflowSheet: View {
 
     var body: some View {
         VStack(spacing: theme.space.s0) {
-            SettingsSheetHeader(icon: headerIcon, title: headerTitle, subtitleText: template.name, onClose: onDone)
+            SettingsSheetHeader(icon: headerIcon, title: headerTitle, subtitleText: headerSubtitle, onClose: onDone)
             Group {
                 if case .manage = phase {
                     PublishedWorkflowDashboard(
@@ -329,6 +329,15 @@ struct ShareWorkflowSheet: View {
                 workspaceIDs = Set(record.workspaceIDs)
             }
             resetListingFields()
+        }
+    }
+
+    /// The workflow's name; while choosing how to share it, what sharing means.
+    private var headerSubtitle: String {
+        guard !isAgent else { return template.name }
+        switch phase {
+        case .choose, .file, .publish: return L("\(template.name) · You share the recipe, never your data.")
+        default: return template.name
         }
     }
 
@@ -439,6 +448,7 @@ struct ShareWorkflowSheet: View {
                 .font(SettingsFont.rowDescription)
                 .foregroundColor(theme.text.tertiary)
             if !models.isEmpty || !hints.isEmpty { suggestions }
+            if !isAgent { WorkflowSharePanels(summary: WorkflowShareSummary.make(outgoing, includesExampleRuns: false)) }
             if canSign { signing }
             review(L("What they'll review"))
             failureLine
@@ -452,6 +462,11 @@ struct ShareWorkflowSheet: View {
             if !canSign { needsIdentity }
             listingSection
             if !models.isEmpty || !hints.isEmpty { suggestions }
+            if !isAgent {
+                WorkflowSharePanels(
+                    summary: WorkflowShareSummary.make(
+                        outgoing, includesExampleRuns: (editsExamplesHere && !examples.isEmpty) || (record?.exampleCount ?? 0) > 0))
+            }
             whoCanSeeIt
             if isAgent { alsoPublishes }
             if canSign || record != nil { publishAuthor }

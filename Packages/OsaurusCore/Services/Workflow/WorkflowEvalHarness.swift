@@ -137,7 +137,7 @@ public enum WorkflowEvalHarness {
             public var name: String
             public var definition: JSONValue
             /// Run once before the chat; the failed run becomes the chat's
-            /// repair run, as with Fix with the Architect.
+            /// repair run, as with Ask Osaurus to Fix It.
             public var failingInput: JSONValue?
 
             public init(name: String, definition: JSONValue, failingInput: JSONValue? = nil) {
