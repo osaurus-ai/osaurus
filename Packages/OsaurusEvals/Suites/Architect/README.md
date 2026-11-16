@@ -61,6 +61,7 @@ steps run on the eval model.
 | `architect.support-triage` | Decide node with conditional branches. |
 | `architect.order-total-code` | Code node for deterministic arithmetic. |
 | `architect.save-notes-tool` | Tool node (`file_write`) found through `workflow_draft` `tools`, arguments bound to the input. |
+| `architect.mail-tool-step` | Mail reads as `tool` nodes, not direct calls; a save proposal follows even if one was called directly. |
 | `architect.paged-issue-digest` | Cursor paging behind bearer auth, a decision per issue, memory of handled issues, a Markdown file output. |
 | `architect.flaky-api-fallback` | Retry on a flaky API; a down API handled without failing the run. |
 | `architect.csv-reconcile-approval` | A CSV input, a lookup per row, approval of mismatches, a report in a declared folder. |

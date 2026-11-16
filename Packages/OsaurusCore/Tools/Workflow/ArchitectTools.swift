@@ -130,6 +130,12 @@ final class WorkflowDraftTool: OsaurusTool, PermissionedTool, @unchecked Sendabl
     /// Matches `tools` returns with their full schemas.
     static let toolMatchLimit = 8
 
+    /// The listed names are not in the Architect's own schema; calling one
+    /// directly is refused.
+    static let stepToolsNote =
+        "These are step tools: put one in a `tool` node (or an agentic node's tools) with `patch`, then run the "
+        + "draft with \(WorkflowTestTool.toolName). Do not call them yourself."
+
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -322,6 +328,7 @@ final class WorkflowDraftTool: OsaurusTool, PermissionedTool, @unchecked Sendabl
                     result: [
                         "count": entries.count,
                         "tools": ArchitectToolGate.foundation(JSONValue.array(listed)),
+                        "note": Self.stepToolsNote,
                     ])
             }
             guard let draft = ArchitectToolGate.currentDraft() else {

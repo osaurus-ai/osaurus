@@ -348,6 +348,18 @@ struct TeamSeedingTests {
         }
     }
 
+    /// A seed that made nobody leaves the install unseeded, so the Create
+    /// Your Team card can still offer the team; an empty roster by choice,
+    /// or any teammate it asked for, counts.
+    @Test
+    func aSeedThatMadeNobody_doesNotCountAsSeeded() {
+        let roster: [Teammate] = [.planner, .courier, .keeper, .scout]
+        #expect(!TeamSeeder.seedCounts(wanted: roster, present: []))
+        #expect(TeamSeeder.seedCounts(wanted: roster, present: [.scout]))
+        #expect(TeamSeeder.seedCounts(wanted: [], present: []))
+        #expect(!TeamSeeder.seedCounts(wanted: [.planner], present: [.builder]))
+    }
+
     @Test
     func seedFreshInstall_withABundleExclusion_leavesThoseTeammatesAndTheirWorkflowsOut() async throws {
         try await withIsolatedTeam { folder in

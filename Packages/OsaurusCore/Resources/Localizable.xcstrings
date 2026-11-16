@@ -344,6 +344,12 @@
         }
       }
     },
+    "%@ are on your team. Ask me about your day, your mail, or your files." : {
+
+    },
+    "%@ is on your team. Ask me about your day, your mail, or your files." : {
+
+    },
     "%@ is set to Never Ask, so tool calls run without an approval card." : {
       "localizations" : {
         "de" : {
@@ -377,6 +383,9 @@
           }
         }
       }
+    },
+    "%@ needs %@ access" : {
+
     },
     "%@ will run tools without showing an approval card, in chats and in its scheduled and watcher runs. Tools can run code and modify files, so use this only for an agent whose tools you trust." : {
       "localizations" : {
@@ -1058,6 +1067,12 @@
         }
       }
     },
+    "Create Team" : {
+
+    },
+    "Create Your Team" : {
+
+    },
     "Delegating to other agents, image and video costs, AppleScript confirmation, and Computer or Browser Use." : {
       "localizations" : {
         "de" : {
@@ -1126,6 +1141,12 @@
         }
       }
     },
+    "For %@" : {
+
+    },
+    "I could not add the team. You can try again in Settings → Agents → Delegation → Create starter agents." : {
+
+    },
     "In Use" : {
       "localizations" : {
         "de" : {
@@ -1159,6 +1180,12 @@
           }
         }
       }
+    },
+    "It is still off. Turn on Osaurus in System Settings, then try again." : {
+
+    },
+    "It is turned off for Osaurus in System Settings → Privacy & Security → %@." : {
+
     },
     "Lock Model" : {
       "localizations" : {
@@ -1567,6 +1594,9 @@
           }
         }
       }
+    },
+    "Osaurus Cloud didn't connect. Pick another model for the Architect in Settings." : {
+
     },
     "Osaurus is still using %@. Restart to switch to %@." : {
       "localizations" : {
@@ -2043,6 +2073,9 @@
           }
         }
       }
+    },
+    "Then come back here. The request goes ahead once access is on." : {
+
     },
     "This Agent" : {
       "localizations" : {
@@ -2554,6 +2587,9 @@
         }
       }
     },
+    "Use %@" : {
+
+    },
     "Use Global Setting" : {
       "localizations" : {
         "de" : {
@@ -2655,6 +2691,12 @@
           }
         }
       }
+    },
+    "macOS asks before a teammate first opens one of your apps." : {
+
+    },
+    "macOS does not ask for this one. Turn on Osaurus in System Settings → Privacy & Security → %@." : {
+
     },
     "—" : {
       "comment" : "A placeholder text to indicate missing data.",

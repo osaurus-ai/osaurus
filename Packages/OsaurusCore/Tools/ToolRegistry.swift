@@ -766,24 +766,55 @@ public final class ToolRegistry: ObservableObject {
         return AgentManager.shared.effectiveCapabilities(for: agentId).enabledAppleApps.contains(app)
     }
 
-    /// Envelope for an Apple tool whose app is off for the calling agent
-    /// (or that was called without an agent). Names the one real switch.
-    nonisolated static func appleAppOffEnvelope(tool: String, app: AppleApp, agentId: UUID?) -> String {
-        let message: String
-        if agentId == nil {
-            message =
+    /// Why an Apple tool cannot run for the calling agent, and whether the
+    /// model can recover on its own. Built-in agents have no Apple Apps
+    /// switch, so their refusal is a correctable steer (`tool_not_found`)
+    /// toward the path they do have. A custom agent's switch is real and
+    /// only the person can flip it, so that refusal stays terminal.
+    nonisolated static func appleAppOffRefusal(
+        tool: String, app: AppleApp, agentId: UUID?
+    ) -> (kind: ToolEnvelope.Kind, message: String) {
+        guard let agentId else {
+            return (
+                .rejected,
                 "'\(tool)' belongs to the built-in \(app.displayName) app and only runs inside an Osaurus agent that has \(app.displayName) enabled."
-        } else if agentId == Agent.defaultId {
-            message =
-                "'\(tool)' belongs to the built-in \(app.displayName) app, which the Orchestrator never uses itself. "
-                + "Call \(RunWorkflowTool.toolName) with a teammate that has \(app.displayName) on (`status` lists "
-                + "them). If none does, call \(ConfiguratorHandoffTool.toolName) to turn \(app.displayName) on for one."
-        } else {
-            message =
-                "'\(tool)' belongs to the built-in \(app.displayName) app, which is off for this agent. It cannot be loaded with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps (or have the Orchestrator set capabilities.apple_apps), then retry."
+            )
         }
+        if agentId == Agent.defaultId {
+            return (
+                .toolNotFound,
+                "'\(tool)' belongs to the built-in \(app.displayName) app, which the Orchestrator never uses itself. "
+                    + "Call \(RunWorkflowTool.toolName) with a teammate that has \(app.displayName) on (`status` lists "
+                    + "them). If none does, call \(ConfiguratorHandoffTool.toolName) to turn \(app.displayName) on for one."
+            )
+        }
+        if agentId == Agent.architectId {
+            return (
+                .toolNotFound,
+                "'\(tool)' is a workflow step tool, not one you call yourself. Add it to the draft as a `tool` step "
+                    + "with \(WorkflowDraftTool.toolName), then run the draft with \(WorkflowTestTool.toolName). "
+                    + "The step authorizes it; no agent setting is involved, so do not ask the user to change one."
+            )
+        }
+        if Agent.isHiddenBuiltIn(agentId) {
+            return (
+                .toolNotFound,
+                "'\(tool)' belongs to the built-in \(app.displayName) app, which this built-in agent cannot use. "
+                    + "Do the task without it, or say which step needs \(app.displayName)."
+            )
+        }
+        return (
+            .rejected,
+            "'\(tool)' belongs to the built-in \(app.displayName) app, which is off for this agent. It cannot be loaded with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps (or have the Orchestrator set capabilities.apple_apps), then retry."
+        )
+    }
+
+    /// Envelope for an Apple tool whose app is off for the calling agent
+    /// (or that was called without an agent).
+    nonisolated static func appleAppOffEnvelope(tool: String, app: AppleApp, agentId: UUID?) -> String {
+        let refusal = appleAppOffRefusal(tool: tool, app: app, agentId: agentId)
         return ToolEnvelope.failure(
-            kind: .rejected, message: message, tool: tool, retryable: false,
+            kind: refusal.kind, message: refusal.message, tool: tool, retryable: false,
             metadata: ["apple_app": app.rawValue]
         )
     }
@@ -1006,30 +1037,42 @@ public final class ToolRegistry: ObservableObject {
             let isComputerUse = name == ComputerUseTool.toolName
             if isComputerUse { FeatureTelemetry.computerUseAttempt() }
 
-            // Check system permissions and prompt the user for any that are missing
+            // Ask for each missing system permission: macOS's own dialog
+            // when it can still show one, otherwise the Osaurus panel.
             let missingSystemPermissions = await SystemPermissionService.shared.missingPermissions(
                 from: requirements
             )
+            var stillMissing: [SystemPermission] = []
+            var unanswered = false
             for permission in missingSystemPermissions {
-                _ = await SystemPermissionService.shared.requestPermissionAndWait(permission)
+                let outcome = await SystemPermissionGate.ensure(permission, toolName: name)
+                guard !outcome.allowsCall else { continue }
+                stillMissing.append(permission)
+                if outcome == .notAnswered { unanswered = true }
             }
-            let stillMissing = await SystemPermissionService.shared.missingPermissions(
-                from: requirements
-            )
             if !stillMissing.isEmpty {
                 if isComputerUse {
                     FeatureTelemetry.computerUseRefused(stage: .permissionAccessibility)
                 }
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
+                let addOnly = stillMissing.contains(.calendar) ? await SystemPermissionGate.calendarIsAddOnly() : false
+                let message: String
+                if addOnly {
+                    message =
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Calendar is set to Add Only for Osaurus, so it can add events but not read them. Ask the user to choose Full Access for Osaurus in System Settings → Privacy & Security → Calendars, then try again."
+                } else if unanswered {
+                    message =
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Osaurus asked the user to turn it on and they did not answer. Tell them what needs it and where: System Settings → Privacy & Security → \(stillMissing[0].systemSettingsPath); then they can ask again."
+                } else {
+                    message =
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or Osaurus Settings → Privacy & Security → Permissions), then try again."
+                }
                 // Typed like `AppleToolError.permissionDenied`: the first
                 // missing permission's stable name and its System Settings
                 // pane ride along so the envelope tells the model exactly
                 // which grant is missing and where it lives (the Apple app
                 // tools hit this gate before their body runs).
-                var userInfo: [String: Any] = [
-                    NSLocalizedDescriptionKey:
-                        "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or Osaurus Settings → Privacy & Security → Permissions), then try again."
-                ]
+                var userInfo: [String: Any] = [NSLocalizedDescriptionKey: message]
                 if let first = stillMissing.first {
                     userInfo[Self.missingPermissionUserInfoKey] = first.rawValue
                     if let url = first.systemSettingsURL?.absoluteString {

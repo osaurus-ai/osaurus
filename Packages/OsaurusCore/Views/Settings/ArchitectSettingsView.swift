@@ -266,6 +266,7 @@ struct ArchitectSettingsView: View {
         tempDisplayName = ""
         tempSystemPrompt = ""
         agentManager.setBuiltInMascot(Agent.architectStockAvatar, for: Agent.architectId)
+        ArchitectConfigurationStore.update { $0.localModelAcknowledged = false }
         withAnimation(theme.motion.springAnimation) {
             successMessage = L("Architect settings restored to defaults")
         }

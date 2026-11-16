@@ -211,6 +211,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// Whether any installed workflow is visible to the Orchestrator. The
     /// Orchestrator's `run_workflow` is in its schema only when this is true.
     public let hasOrchestratorWorkflows: Bool
+    /// What `run_workflow` can run, captured with `hasOrchestratorWorkflows`
+    /// for the Orchestrator's Team section. Empty for every other agent.
+    public let orchestratorTeam: OrchestratorTeam
     /// Per-agent opt-ins for the specialist built-ins (`calculate`, and the
     /// host-folder redaction pair `detect_pii` / `redact_file`).
     public let calculatorEnabled: Bool
@@ -258,6 +261,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         enabledAppleApps: Set<AppleApp> = [],
         workflowToolNames: [String] = [],
         hasOrchestratorWorkflows: Bool = false,
+        orchestratorTeam: OrchestratorTeam = OrchestratorTeam(),
         calculatorEnabled: Bool = false,
         redactionToolsEnabled: Bool = false,
         taskChecklistEnabled: Bool = true,
@@ -299,6 +303,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.enabledAppleApps = enabledAppleApps
         self.workflowToolNames = workflowToolNames
         self.hasOrchestratorWorkflows = hasOrchestratorWorkflows
+        self.orchestratorTeam = orchestratorTeam
         self.calculatorEnabled = calculatorEnabled
         self.redactionToolsEnabled = redactionToolsEnabled
         self.taskChecklistEnabled = taskChecklistEnabled
@@ -341,6 +346,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         let subagentConfig = SubagentConfigurationStore.snapshot()
         let isDefault = agentId == Agent.defaultId
         let settings = mgr.agent(for: agentId)?.settings
+        let orchestratorTeam = isDefault ? RoutableWorkflowCatalog.team() : OrchestratorTeam()
         let sharedParallelLimit =
             SpawnBatchConcurrencyContract.configuredLimit(
                 for: ServerRuntimeSettingsStore.snapshot()
@@ -431,7 +437,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             enabledAppleApps: caps.enabledAppleApps,
             workflowToolNames: isDefault || agentId == Agent.architectId
                 ? [] : WorkflowTool.toolNames(enabled: settings?.enabledWorkflowIDs ?? []),
-            hasOrchestratorWorkflows: isDefault && !RoutableWorkflowCatalog.docs().isEmpty,
+            hasOrchestratorWorkflows: !orchestratorTeam.isEmpty,
+            orchestratorTeam: orchestratorTeam,
             calculatorEnabled: caps.calculatorEnabled,
             redactionToolsEnabled: caps.redactionToolsEnabled,
             taskChecklistEnabled: caps.taskChecklistEnabled,
