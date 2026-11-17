@@ -209,8 +209,8 @@ struct ConfigurationReadScopeTests {
         "search", "workspaces", "shared_agents",
     ]
 
-    /// Scopes whose feature was removed: still offered so a guess gets the
-    /// replacement instead of a generic rejection.
+    /// Scopes the tools don't own: still offered so a guess gets the
+    /// Settings path instead of a generic rejection.
     private static let retiredScopes: Set<String> = ["themes"]
 
     /// Read scopes still answered but no longer offered in the schema enum:
@@ -340,10 +340,11 @@ struct ConfigurationReadScopeTests {
     }
 
     @Test
-    func unknownScope_retiredThemes_pointsAtAppearance() {
+    func unknownScope_themes_pointsAtThemePage() {
         let envelope = OsaurusInspectTool.unknownScopeFailure(scope: "themes", tool: "osaurus_inspect")
-        #expect(envelope.contains("Custom themes were removed"))
-        #expect(envelope.contains("General → Appearance"))
+        #expect(envelope.contains("General → Appearance → Theme"))
+        #expect(envelope.contains("View → Theme"))
+        #expect(!envelope.contains("removed"))
         #expect(!envelope.contains("DOCUMENT SECTION"))
     }
 

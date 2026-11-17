@@ -10,8 +10,11 @@ The library is shipped. `LibraryResources/design-library.json` holds the
 handoff's tokens and every assignment that paints, the shared styling is
 unconditional (the former `OSAURUS_DESIGN_SYSTEM` flag is gone), and System,
 Light and Dark all resolve through `DesignThemeOverlay`.
-Custom themes, the chat tour, Pairing and the Project inspector were removed
-on purpose (`162919fb0`, `16ed0f119`); none of that is a regression.
+The chat tour, Pairing and the Project inspector were removed on purpose
+(`162919fb0`, `16ed0f119`); none of that is a regression. Custom themes came
+back as generated themes: `ThemeCompiler` layers a theme's tone, accent,
+readability and token overrides onto this library and installs the result
+through the same overlay (see [THEMES.md](../THEMES.md)).
 
 What is not finished: a few library values are placeholders that need
 design sign-off before any component uses them, inspector layout coverage

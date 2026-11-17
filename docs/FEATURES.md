@@ -53,7 +53,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Apple Foundation Models          | macOS 26+ | Guide: guide-local-models.md  | Services/Inference/FoundationModelService.swift                                                 |
 | Chat window & menu bar panel     | Stable    | Guide: guide-chat.md          | Views/Chat/ChatView.swift, Managers/Chat/ChatWindowManager.swift, Views/Settings/StatusPanelView.swift |
 | Chat Session Management          | Stable    | Guide: guide-chat.md          | Managers/Chat/ChatSessionsManager.swift, Models/Chat/ChatSessionData.swift                      |
-| Appearance (System/Light/Dark)   | Stable    | Guide: guide-settings.md      | Views/Settings/ConfigurationView.swift, Models/Theme/Theme.swift                               |
+| Appearance and themes            | Stable    | Guide: guide-settings.md, docs/THEMES.md | Views/Settings/ConfigurationView.swift, Views/Settings/ThemesView.swift, Models/Theme/Theme.swift |
 | Model Manager                    | Stable    | Guide: guide-local-models.md  | Views/Model/LocalModelsView.swift, Services/ModelDownloadService.swift, Services/HuggingFaceService.swift |
 | Chat model picker                | Beta      | Guide: guide-chat.md          | Views/Model/ChatModelPickerCard.swift, Views/Model/CloudModelBrowserDialog.swift |
 | Image & video generation         | Stable    | Guide: guide-images.md        | Views/ImageGeneration/ImageGenerationView.swift, Services/MediaGeneration/, Tools/NativeImageTools.swift |
@@ -496,19 +496,27 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 
 ### Appearance
 
-**Purpose:** Light or dark Osaurus, matching macOS by default.
+**Purpose:** Light or dark Osaurus, matching macOS by default, painted by a theme: the built-in Osaurus brand palette or one the user picks or makes.
 
 **Components:**
 
-- `Models/Theme/Theme.swift` — `ThemeManager`: resolves System / Light / Dark to the built-in seed and applies the global text size
+- `Models/Theme/Theme.swift` — `ThemeManager`: resolves System / Light / Dark, compiles and installs the active theme (or an editor draft), follows macOS Increase Contrast, and applies the global text size
 - `Models/Theme/CustomTheme.swift` — The light and dark seed carriers the design library resolves
-- `Views/Settings/ConfigurationView.swift` — General → Appearance (**Appearance**, **Text Size**)
+- `Models/Theme/ThemeDocument.swift`, `ThemePresets.swift`, `ThemeLibraryStore.swift` — The theme file format, the five bundled themes, and the library in `~/.osaurus/themes/library`
+- `Models/Theme/Generator/` — `ThemeGenerator` (accent solver, tone, readability), `ThemeTokenPolicy` (JSON validation and safe ranges), `ThemeCompiler` (document → snapshot plus contrast report)
+- `Models/Theme/ClassicThemeMigrator.swift` — One-time conversion of Classic custom themes
+- `Views/Settings/ConfigurationView.swift` — General → Appearance (**Theme**, **Appearance**, **Text Size**)
+- `Views/Settings/ThemesView.swift`, `ThemeEditorSheet.swift` — The Themes page, editor and JSON editor
+- `Views/DesignSystem/SettingsThemeKit.swift` — Swatch picker, font picker, theme preview, card hero and JSON editor kit pieces
 
 **Features:**
 
-- System, Light and Dark, also under View → Appearance
+- System, Light and Dark, also under View → Appearance (locked while a light-only or dark-only theme is active)
 - Text Size from 70% to 160%, shared with View → Zoom In / Zoom Out
-- Custom themes were removed; an active custom theme migrates once to Light or Dark to match it
+- Themes: Osaurus (default), Graphite, Nord, Paper and Terminal built in; new, duplicate, import, export, delete; also under View → Theme
+- Editor: accent swatches or any custom color (solved for contrast), tone, contrast, corners, and readability (reading size, line spacing, interface and code fonts, stronger outlines, larger controls) with a live preview
+- JSON editing for per-token overrides, validated against safe ranges with line-numbered findings
+- Classic custom themes convert once on upgrade and the active one stays active
 
 ---
 

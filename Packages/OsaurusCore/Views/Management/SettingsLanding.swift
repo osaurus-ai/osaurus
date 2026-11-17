@@ -17,6 +17,7 @@ enum SettingsLanding {
     static func prepare(_ entry: SettingsSearchEntry, stateManager: ManagementStateManager = .shared) -> Bool {
         if let subTab = entry.subTab {
             switch entry.tab {
+            case .settings: stateManager.generalSubPageRequest = subTab
             case .voice: stateManager.voiceSubTabRequest = subTab
             case .server: stateManager.serverSectionRequest = subTab
             case .imageGeneration: stateManager.imageGenerationSubTabRequest = subTab

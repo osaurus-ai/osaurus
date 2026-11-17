@@ -345,16 +345,144 @@ public enum SettingsSearchIndex {
     static let catalog: [SettingsSearchEntry] = [
         // MARK: Settings (General)
         .init(
+            id: "settings.general.theme",
+            tab: .settings,
+            section: "Appearance",
+            title: "Theme",
+            keywords: [
+                "themes", "custom theme", "color theme", "colour theme", "accent color", "palette", "skin",
+                "graphite", "nord", "paper", "terminal",
+            ],
+            disambiguation:
+                "Which theme paints every window: colors, fonts and readability. Light or dark is Appearance; "
+                + "text zoom is Text Size. Also in View → Theme."
+        ),
+        .init(
             id: "settings.general.appearance",
             tab: .settings,
             section: "Appearance",
             title: "Appearance",
             keywords: [
-                "theme", "themes", "dark mode", "light mode", "night mode", "system appearance", "color scheme",
-                "match macos", "auto dark", "custom theme",
+                "dark mode", "light mode", "night mode", "system appearance", "color scheme",
+                "match macos", "auto dark",
             ],
             disambiguation:
-                "System, Light or Dark for every Osaurus window. Custom themes were removed; also in View → Appearance."
+                "System, Light or Dark for every Osaurus window; also in View → Appearance. "
+                + "Locked while a light-only or dark-only theme is active. Colors and fonts are Theme."
+        ),
+        .init(
+            id: "settings.general.themes",
+            tab: .settings,
+            section: "Themes",
+            title: "Themes",
+            keywords: [
+                "new theme", "import theme", "export theme", "export active theme", "duplicate theme",
+                "delete theme", "theme file", "show themes folder", "classic themes",
+            ],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "The theme library: built-in themes and your own. Pick, create, import or export."
+        ),
+        .init(
+            id: "settings.general.themes.accent",
+            tab: .settings,
+            section: "Themes",
+            title: "Accent",
+            keywords: ["accent color", "brand color", "button color", "link color", "highlight color", "tint"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor. Any color is adjusted to stay readable."
+        ),
+        .init(
+            id: "settings.general.themes.tone",
+            tab: .settings,
+            section: "Themes",
+            title: "Tone",
+            keywords: ["warm", "cool", "neutral", "background tint", "cream"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor: the tint of backgrounds and borders."
+        ),
+        .init(
+            id: "settings.general.themes.appearance",
+            tab: .settings,
+            section: "Themes",
+            title: "Appearance",
+            keywords: ["light only", "dark only", "light-only theme", "dark-only theme"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor: locks one theme to light or dark. The app-wide switch is General → Appearance."
+        ),
+        .init(
+            id: "settings.general.themes.contrast",
+            tab: .settings,
+            section: "Themes",
+            title: "Contrast",
+            keywords: ["high contrast", "increase contrast", "low vision", "accessibility", "readability"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor. macOS Increase Contrast turns this on for every theme."
+        ),
+        .init(
+            id: "settings.general.themes.corners",
+            tab: .settings,
+            section: "Themes",
+            title: "Corners",
+            keywords: ["corner radius", "rounded corners", "square corners", "roundness"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.readingSize",
+            tab: .settings,
+            section: "Readability",
+            title: "Reading Size",
+            keywords: ["bigger text", "larger text", "large font", "chat text size", "accessibility"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor: larger chat and body text. Stacks with General → Text Size."
+        ),
+        .init(
+            id: "settings.general.themes.lineSpacing",
+            tab: .settings,
+            section: "Readability",
+            title: "Line Spacing",
+            keywords: ["line height", "leading", "relaxed", "dyslexia"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.uiFont",
+            tab: .settings,
+            section: "Readability",
+            title: "Interface Font",
+            keywords: ["font", "typeface", "atkinson hyperlegible", "lexend", "opendyslexic", "dyslexia font"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.codeFont",
+            tab: .settings,
+            section: "Readability",
+            title: "Code Font",
+            keywords: ["monospace font", "monospaced", "jetbrains mono", "fira code", "menlo"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.strongerOutlines",
+            tab: .settings,
+            section: "Readability",
+            title: "Stronger Outlines",
+            keywords: ["thicker borders", "focus ring", "border width", "outline"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.largerControls",
+            tab: .settings,
+            section: "Readability",
+            title: "Larger Controls",
+            keywords: ["bigger buttons", "taller rows", "touch target", "control size"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.json",
+            tab: .settings,
+            section: "Themes",
+            title: "Edit JSON",
+            keywords: ["theme json", "design tokens", "advanced theme", "token override"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor: per-token colors, sizes and fonts, kept within safe ranges."
         ),
         .init(
             id: "settings.general.textSize",

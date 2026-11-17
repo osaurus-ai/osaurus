@@ -193,47 +193,47 @@ extension ThemeColorRoles where Value == String {
     public static var lightDefaults: ThemeSemanticColors {
         ThemeSemanticColors(
             surface: ThemeSurfaceRoles(
-                canvas: "#FBFAF9FF", subtle: "#ECEBE8FF", raised: "#F0EFEDFF", overlay: "#FBFAF9FF",
-                sidebar: "#ECEBE8FF", code: "#F0EFEDFF", hover: "#453d3614", pressed: "#453d3626",
-                selected: "#E5E5E1FF", disabled: "#E5E5E1FF"
+                canvas: "#FBFAF7FF", subtle: "#ECECE3FF", raised: "#F0EFE8FF", overlay: "#FBFAF7FF",
+                sidebar: "#ECECE3FF", code: "#F0EFE8FF", hover: "#423E3A14", pressed: "#423E3A26",
+                selected: "#E6E6DBFF", disabled: "#E6E6DBFF"
             ),
             text: ThemeTextRoles(
-                primary: "#2D2D2AFF", secondary: "#474543FF", tertiary: "#5A5852FF", placeholder: "#5A5852FF",
-                disabled: "#888680FF", inverse: "#F0EFEDFF", onDanger: "#FBFAF9FF", link: "#181816FF",
-                linkHover: "#2D2D2AFF"
+                primary: "#2F2C29FF", secondary: "#494540FF", tertiary: "#5B5753FF", placeholder: "#5B5753FF",
+                disabled: "#898681FF", inverse: "#F0EFE8FF", onDanger: "#FBFAF7FF", link: "#076869FF",
+                linkHover: "#065456FF"
             ),
-            chat: ThemeChatRoles(userBackground: "#E5E5E1FF", assistantBackground: "#F0EFEDFF"),
+            chat: ThemeChatRoles(userBackground: "#E6E6DBFF", assistantBackground: "#F0EFE8FF"),
             action: ThemeActionRoles(
                 primary: ThemeActionVariant(
-                    default: ThemeActionState(background: "#2D2D2AFF", foreground: "#FBFAF9FF"),
-                    hover: ThemeActionState(background: "#181816FF", foreground: "#FBFAF9FF"),
-                    pressed: ThemeActionState(background: "#474543FF", foreground: "#FBFAF9FF"),
-                    disabled: ThemeActionState(background: "#ECEBE8FF", foreground: "#888680FF")
+                    default: ThemeActionState(background: "#065456FF", foreground: "#FDFCFAFF"),
+                    hover: ThemeActionState(background: "#013334FF", foreground: "#FDFCFAFF"),
+                    pressed: ThemeActionState(background: "#076869FF", foreground: "#FDFCFAFF"),
+                    disabled: ThemeActionState(background: "#ECECE3FF", foreground: "#898681FF")
                 ),
                 secondary: ThemeActionVariant(
-                    default: ThemeActionState(background: "#E5E5E1FF", foreground: "#2D2D2AFF"),
-                    hover: ThemeActionState(background: "#D8D8D4FF", foreground: "#2D2D2AFF"),
-                    pressed: ThemeActionState(background: "#E5E5E1FF", foreground: "#2D2D2AFF"),
-                    disabled: ThemeActionState(background: "#ECEBE8FF", foreground: "#888680FF")
+                    default: ThemeActionState(background: "#E6E6DBFF", foreground: "#2F2C29FF"),
+                    hover: ThemeActionState(background: "#D9D9CDFF", foreground: "#2F2C29FF"),
+                    pressed: ThemeActionState(background: "#E6E6DBFF", foreground: "#2F2C29FF"),
+                    disabled: ThemeActionState(background: "#ECECE3FF", foreground: "#898681FF")
                 ),
                 tertiary: ThemeActionVariant(
-                    default: ThemeActionState(background: "#00000000", foreground: "#2D2D2AFF"),
-                    hover: ThemeActionState(background: "#E5E5E1FF", foreground: "#2D2D2AFF"),
-                    pressed: ThemeActionState(background: "#D8D8D4FF", foreground: "#2D2D2AFF"),
-                    disabled: ThemeActionState(background: "#00000000", foreground: "#888680FF")
+                    default: ThemeActionState(background: "#00000000", foreground: "#2F2C29FF"),
+                    hover: ThemeActionState(background: "#E6E6DBFF", foreground: "#2F2C29FF"),
+                    pressed: ThemeActionState(background: "#D9D9CDFF", foreground: "#2F2C29FF"),
+                    disabled: ThemeActionState(background: "#00000000", foreground: "#898681FF")
                 ),
                 destructive: ThemeActionVariant(
-                    default: ThemeActionState(background: "#D31B00FF", foreground: "#FBFAF9FF"),
-                    hover: ThemeActionState(background: "#9B2208FF", foreground: "#FBFAF9FF"),
-                    pressed: ThemeActionState(background: "#531609FF", foreground: "#FBFAF9FF"),
-                    disabled: ThemeActionState(background: "#ECEBE8FF", foreground: "#888680FF")
+                    default: ThemeActionState(background: "#D31B00FF", foreground: "#FBFAF7FF"),
+                    hover: ThemeActionState(background: "#9B2208FF", foreground: "#FBFAF7FF"),
+                    pressed: ThemeActionState(background: "#531609FF", foreground: "#FBFAF7FF"),
+                    disabled: ThemeActionState(background: "#ECECE3FF", foreground: "#898681FF")
                 ),
                 border: "#00000000"
             ),
             border: ThemeBorderRoles(
-                subtle: "#D8D8D4FF", default: "#BAB9B5FF", strong: "#888680FF", focus: "#181816FF", error: "#D31B00FF"),
-            selection: ThemeSelectionRoles(background: "#E5E5E1FF", foreground: "#2D2D2AFF"),
-            cursor: "#181816FF",
+                subtle: "#D9D9CDFF", default: "#BAB9B1FF", strong: "#898681FF", focus: "#076869FF", error: "#D31B00FF"),
+            selection: ThemeSelectionRoles(background: "#E6E6DBFF", foreground: "#2F2C29FF"),
+            cursor: "#076869FF",
             status: ThemeStatusRoles(
                 success: ThemeStatusSet(foreground: "#227758FF", background: "#E3FCF4FF", border: "#40BF90FF", ink: "#227758FF"),
                 warning: ThemeStatusSet(foreground: "#976000FF", background: "#FFEDD6FF", border: "#FFBA6BFF", ink: "#976000FF"),
@@ -260,47 +260,47 @@ extension ThemeColorRoles where Value == String {
     public static var darkDefaults: ThemeSemanticColors {
         ThemeSemanticColors(
             surface: ThemeSurfaceRoles(
-                canvas: "#181816FF", subtle: "#201F1DFF", raised: "#2A2928FF", overlay: "#353331FF",
-                sidebar: "#201F1DFF", code: "#201F1DFF", hover: "#A1A09B1A", pressed: "#A1A09B26",
-                selected: "#A1A09B40", disabled: "#2A2928FF"
+                canvas: "#121211FF", subtle: "#1A1919FF", raised: "#272321FF", overlay: "#312E2BFF",
+                sidebar: "#1A1919FF", code: "#1A1919FF", hover: "#A2A09A1A", pressed: "#A2A09A26",
+                selected: "#A2A09A40", disabled: "#272321FF"
             ),
             text: ThemeTextRoles(
-                primary: "#FBFAF9FF", secondary: "#D8D8D4FF", tertiary: "#A1A09BFF", placeholder: "#A1A09BFF",
-                disabled: "#54524FFF", inverse: "#201F1DFF", onDanger: "#201F1DFF", link: "#FBFAF9FF",
-                linkHover: "#EEEEECFF"
+                primary: "#FBFAF7FF", secondary: "#D9D9CDFF", tertiary: "#A2A09AFF", placeholder: "#A2A09AFF",
+                disabled: "#56524DFF", inverse: "#1A1919FF", onDanger: "#1A1919FF", link: "#0DB1B5FF",
+                linkHover: "#5ED3D5FF"
             ),
-            chat: ThemeChatRoles(userBackground: "#3F3D3BFF", assistantBackground: "#201F1DFF"),
+            chat: ThemeChatRoles(userBackground: "#3E3B37FF", assistantBackground: "#1A1919FF"),
             action: ThemeActionRoles(
                 primary: ThemeActionVariant(
-                    default: ThemeActionState(background: "#EEEEECFF", foreground: "#181816FF"),
-                    hover: ThemeActionState(background: "#A1A09BFF", foreground: "#181816FF"),
-                    pressed: ThemeActionState(background: "#EEEEECFF", foreground: "#181816FF"),
-                    disabled: ThemeActionState(background: "#54524FFF", foreground: "#A1A09BFF")
+                    default: ThemeActionState(background: "#C0EC51FF", foreground: "#121211FF"),
+                    hover: ThemeActionState(background: "#CFF07AFF", foreground: "#121211FF"),
+                    pressed: ThemeActionState(background: "#A7DA2FFF", foreground: "#121211FF"),
+                    disabled: ThemeActionState(background: "#56524DFF", foreground: "#A2A09AFF")
                 ),
                 secondary: ThemeActionVariant(
-                    default: ThemeActionState(background: "#353331FF", foreground: "#D8D8D4FF"),
-                    hover: ThemeActionState(background: "#3F3D3BFF", foreground: "#D8D8D4FF"),
-                    pressed: ThemeActionState(background: "#353331FF", foreground: "#FBFAF9FF"),
-                    disabled: ThemeActionState(background: "#2A2928FF", foreground: "#54524FFF")
+                    default: ThemeActionState(background: "#312E2BFF", foreground: "#D9D9CDFF"),
+                    hover: ThemeActionState(background: "#3E3B37FF", foreground: "#D9D9CDFF"),
+                    pressed: ThemeActionState(background: "#312E2BFF", foreground: "#FBFAF7FF"),
+                    disabled: ThemeActionState(background: "#272321FF", foreground: "#56524DFF")
                 ),
                 tertiary: ThemeActionVariant(
-                    default: ThemeActionState(background: "#00000000", foreground: "#D8D8D4FF"),
-                    hover: ThemeActionState(background: "#A1A09B1A", foreground: "#D8D8D4FF"),
-                    pressed: ThemeActionState(background: "#A1A09B40", foreground: "#D8D8D4FF"),
-                    disabled: ThemeActionState(background: "#00000000", foreground: "#73726EFF")
+                    default: ThemeActionState(background: "#00000000", foreground: "#D9D9CDFF"),
+                    hover: ThemeActionState(background: "#A2A09A1A", foreground: "#D9D9CDFF"),
+                    pressed: ThemeActionState(background: "#A2A09A40", foreground: "#D9D9CDFF"),
+                    disabled: ThemeActionState(background: "#00000000", foreground: "#75716DFF")
                 ),
                 destructive: ThemeActionVariant(
-                    default: ThemeActionState(background: "#AF290EFF", foreground: "#FBFAF9FF"),
+                    default: ThemeActionState(background: "#AF290EFF", foreground: "#FBFAF7FF"),
                     hover: ThemeActionState(background: "#F2340DFF", foreground: "#000000FF"),
-                    pressed: ThemeActionState(background: "#85230FFF", foreground: "#FBFAF9FF"),
-                    disabled: ThemeActionState(background: "#353331FF", foreground: "#73726EFF")
+                    pressed: ThemeActionState(background: "#85230FFF", foreground: "#FBFAF7FF"),
+                    disabled: ThemeActionState(background: "#312E2BFF", foreground: "#75716DFF")
                 ),
                 border: "#00000000"
             ),
             border: ThemeBorderRoles(
-                subtle: "#353331FF", default: "#3F3D3BFF", strong: "#73726EFF", focus: "#FBFAF9FF", error: "#F2340DFF"),
-            selection: ThemeSelectionRoles(background: "#3F3D3BFF", foreground: "#EEEEECFF"),
-            cursor: "#FBFAF9FF",
+                subtle: "#312E2BFF", default: "#3E3B37FF", strong: "#75716DFF", focus: "#0DB1B5FF", error: "#F2340DFF"),
+            selection: ThemeSelectionRoles(background: "#3E3B37FF", foreground: "#EFEEE7FF"),
+            cursor: "#0DB1B5FF",
             status: ThemeStatusRoles(
                 success: ThemeStatusSet(foreground: "#4CE5ADFF", background: "#073120FF", border: "#106043FF", ink: "#4CE5ADFF"),
                 warning: ThemeStatusSet(foreground: "#FFB35CFF", background: "#57370FFF", border: "#8A530FFF", ink: "#FFB35CFF"),
