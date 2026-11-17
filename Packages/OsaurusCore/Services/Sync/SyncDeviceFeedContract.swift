@@ -395,14 +395,23 @@ enum SyncDeviceFeedContract {
     /// Synced only: signing out and keeping chats leaves this device's old
     /// feeds behind as device-local copies that nothing else reads.
     static func conversation(kind: String, device: String, core: SyncCore) throws -> Conversation? {
-        let filter = ConversationFilter(
-            tags: [
-                Tag(key: SyncConversationMapper.TagKey.kind, value: kind),
-                Tag(key: SyncConversationMapper.TagKey.device, value: device),
-            ],
-            replication: .synced,
-            limit: 8
-        )
+        let tags = [
+            Tag(key: SyncConversationMapper.TagKey.kind, value: kind),
+            Tag(key: SyncConversationMapper.TagKey.device, value: device),
+        ]
+        let user = try core.userKey()
+        let pinKey = "SyncSystemConversation.\(user).\(kind).\(device)"
+        // The one used before, looked up by its scope: among many tagged ones (another user's
+        // shared ones can carry the same tags) a list could leave it out, and the fallbacks below
+        // would then pick another. Still checked to be synced and tagged as asked.
+        if let pinned = UserDefaults.standard.string(forKey: pinKey),
+            let conversation = try? core.conversation(scope: pinned),
+            conversation.replication == .synced,
+            tags.allSatisfy({ tag in conversation.tags.contains(tag) })
+        {
+            return conversation
+        }
+        let filter = ConversationFilter(tags: tags, replication: .synced, limit: 50)
         // Tags are ordinary conversation data, so a conversation another user shared with this one
         // could carry the same two and be taken for this Mac's own, and the requests in it run as this
         // user. So: the one used before, once found; else one no other user is in (agents may be);
@@ -411,13 +420,6 @@ enum SyncDeviceFeedContract {
         // because no other was found mustn't keep its place once the real one is. Remembered per account,
         // so another account's, or the one before a change of phrase, is never taken for this one's.
         let found = try core.conversationsFiltered(filter: filter)
-        let user = try core.userKey()
-        let pinKey = "SyncSystemConversation.\(user).\(kind).\(device)"
-        if let pinned = UserDefaults.standard.string(forKey: pinKey),
-            let conversation = found.first(where: { $0.scope == pinned })
-        {
-            return conversation
-        }
         let me = "u:" + user
         if let own = found.first(where: { conversation in
             conversation.members.allSatisfy { !$0.principal.hasPrefix("u:") || $0.principal == me }

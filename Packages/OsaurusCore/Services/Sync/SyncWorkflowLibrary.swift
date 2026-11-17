@@ -468,7 +468,10 @@ final class SyncWorkflowRunsFeed {
         guard state.runs != written else { return }
         let (live, saved) = (store.live.count, store.recentPersisted?.count ?? 0)
         Self.trace("writing \(state.runs.count) runs (\(live) live, \(saved) saved)")
+        // Set now so the next change doesn't write the same runs while this write is queued; a
+        // write that fails undoes it and tries again (`writeFailed`).
         written = state.runs
+        let runs = state.runs
         // A run that ended changes its steps' time and token badges (`workflow_details`).
         SyncManageFeed.shared.schedulePublish()
         Task.detached(priority: .utility) {
@@ -490,10 +493,28 @@ final class SyncWorkflowRunsFeed {
                 }
             } catch SyncConversationStoreError.notOpen {
                 Self.trace("not written: the store isn't open")
+                Task { @MainActor in SyncWorkflowRunsFeed.shared.writeFailed(runs) }
             } catch {
                 Self.log.error("workflow runs write failed: \(error.syncLogDetail, privacy: .public)")
                 Self.trace("write failed: \(error.syncLogDetail)")
+                Task { @MainActor in SyncWorkflowRunsFeed.shared.writeFailed(runs) }
             }
+        }
+    }
+
+    /// How long after a failed write it's tried again, with nothing else changing.
+    nonisolated static let retryAfter: Duration = .seconds(15)
+    private var retryTask: Task<Void, Never>?
+
+    /// `runs` weren't written: forgotten as written, unless newer ones were since, and tried again.
+    private func writeFailed(_ runs: [SyncDeviceFeedContract.WorkflowRunEntry]) {
+        guard written == runs else { return }
+        written = nil
+        retryTask?.cancel()
+        retryTask = Task { @MainActor in
+            try? await Task.sleep(for: Self.retryAfter)
+            guard !Task.isCancelled else { return }
+            SyncWorkflowRunsFeed.shared.schedule()
         }
     }
 

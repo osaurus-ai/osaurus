@@ -93,8 +93,13 @@ final class SyncWorkflowPush {
     private let sinceMs = SyncHostedRunContract.nowMs()
     /// Runs an iPhone started (`runWorkflow`).
     private var startedFromPhone: Set<String> = []
-    /// No sends until then: the service asked to wait.
-    private var waitUntilMs: Int64 = 0
+    /// No sends to an iPhone until then: the service asked to wait (a 429), by device key. Per
+    /// device, so one iPhone's limit doesn't silence the others.
+    private var waitUntilMs: [String: Int64] = [:]
+    /// Notifications held while an iPhone waits, by device key, then run id: only the latest per
+    /// run, sent when the wait ends. A wait no longer loses a run's `awaiting_user`.
+    private var held: [String: [String: Event]] = [:]
+    private var flushTasks: [String: Task<Void, Never>] = [:]
     private var refreshTask: Task<Void, Never>?
 
     private init() {}
@@ -187,14 +192,55 @@ final class SyncWorkflowPush {
         let (events, next) = Self.events(previous: lastStatus, runs: runs, sinceMs: sinceMs)
         lastStatus = next
         guard !events.isEmpty, !targets.isEmpty else { return }
-        let nowMs = SyncHostedRunContract.nowMs()
-        guard nowMs >= waitUntilMs else {
-            Self.trace("\(events.count) events not sent: waiting for the service")
-            return
-        }
         for event in events {
             for target in targets where Self.wants(target.registration, event, fromPhone: startedFromPhone) {
-                send(event, to: target)
+                if waitMs(for: target.device) != nil {
+                    hold(event, for: target.device)
+                } else {
+                    send(event, to: target)
+                }
+            }
+        }
+    }
+
+    // MARK: Waiting
+
+    /// How long `device` must still wait before the next send; nil when it needn't.
+    func waitMs(for device: String) -> Int64? {
+        guard let until = waitUntilMs[device] else { return nil }
+        let left = until - SyncHostedRunContract.nowMs()
+        if left <= 0 { waitUntilMs[device] = nil }
+        return left > 0 ? left : nil
+    }
+
+    /// The service asked `device` to wait (also from Live Activity updates, which share its limits).
+    func noteWait(device: String, seconds: Int) {
+        let until = SyncHostedRunContract.nowMs() + Int64(seconds) * 1000
+        waitUntilMs[device] = max(waitUntilMs[device] ?? 0, until)
+        Self.trace("\(device.prefix(8)) waits \(seconds) s before sending again")
+        scheduleFlush(device)
+    }
+
+    private func hold(_ event: Event, for device: String) {
+        held[device, default: [:]][event.runId] = event
+        Self.trace("\(event.kind) for \(event.runId.prefix(8)) held: \(device.prefix(8)) is waiting")
+        scheduleFlush(device)
+    }
+
+    /// When the wait ends, sends what was held to the device's registration as it is then.
+    private func scheduleFlush(_ device: String) {
+        guard let left = waitMs(for: device) else { return }
+        flushTasks[device]?.cancel()
+        flushTasks[device] = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(left + 500))
+            guard !Task.isCancelled else { return }
+            let push = SyncWorkflowPush.shared
+            push.flushTasks[device] = nil
+            guard push.waitMs(for: device) == nil else { return push.scheduleFlush(device) }
+            let events = push.held.removeValue(forKey: device)?.values.sorted { $0.runId < $1.runId } ?? []
+            guard let target = push.targets.first(where: { $0.device == device }) else { return }
+            for event in events where Self.wants(target.registration, event, fromPhone: push.startedFromPhone) {
+                push.send(event, to: target)
             }
         }
     }
@@ -280,8 +326,8 @@ final class SyncWorkflowPush {
             DroppedGrants.add(target.registration.grantId, expiresMs: target.registration.expiresMs)
             refresh()
         case .wait(let seconds):
-            waitUntilMs = SyncHostedRunContract.nowMs() + Int64(seconds) * 1000
-            Self.trace("waiting \(seconds) s before sending again")
+            noteWait(device: target.device, seconds: seconds)
+            hold(event, for: target.device)
         case .retry:
             let text = Self.text(event, macName: SyncService.deviceName)
             Task.detached(priority: .utility) {

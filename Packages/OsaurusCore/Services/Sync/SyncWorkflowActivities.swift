@@ -156,6 +156,12 @@ final class SyncWorkflowActivities {
             guard let target = targets[runId], !ended.contains(runId) else { continue }
             let state = Self.state(run, macName: macName)
             guard sent[runId] != state.signature else { continue }
+            // The push service asked this iPhone to wait: sent when the wait ends (`resend`).
+            if let waitMs = SyncWorkflowPush.shared.waitMs(for: target.device) {
+                scheduleResend(runId, afterMs: waitMs)
+                continue
+            }
+            // Marked as sent now so a second runs list doesn't send it twice; a failure undoes it.
             sent[runId] = state.signature
             let isEnd = Self.endStatuses.contains(run.card.status)
             if isEnd { ended.insert(runId) }
@@ -163,8 +169,29 @@ final class SyncWorkflowActivities {
             Task.detached(priority: .userInitiated) {
                 guard let core = SyncService.shared.core else { return }
                 let outcome = await Self.deliver(state, event: isEnd ? .end : .update, to: target, core: core)
-                await MainActor.run { SyncWorkflowActivities.shared.handle(outcome, target: target) }
+                await MainActor.run {
+                    SyncWorkflowActivities.shared.handle(outcome, target: target, signature: state.signature)
+                }
             }
+        }
+    }
+
+    /// Runs whose activity update waits to be sent again, and when.
+    private var resends: [String: Task<Void, Never>] = [:]
+    /// Runs already sent again once for their current state: a second failure isn't retried, as
+    /// alerts aren't.
+    private var resent: [String: String] = [:]
+
+    /// Sends the run's current state again after `afterMs`: a failed update, the final one above
+    /// all, would otherwise leave the Lock Screen showing the run as still going.
+    private func scheduleResend(_ runId: String, afterMs: Int64) {
+        guard resends[runId] == nil else { return }
+        resends[runId] = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(max(afterMs, 0)))
+            let activities = SyncWorkflowActivities.shared
+            activities.resends[runId] = nil
+            guard !Task.isCancelled else { return }
+            activities.update(activities.latestRuns)
         }
     }
 
@@ -193,10 +220,10 @@ final class SyncWorkflowActivities {
         }
     }
 
-    private func handle(_ outcome: SyncWorkflowPush.Outcome, target: Target) {
+    private func handle(_ outcome: SyncWorkflowPush.Outcome, target: Target, signature: String? = nil) {
         switch outcome {
         case .sent:
-            break
+            if !target.runId.isEmpty { resent[target.runId] = nil }
         case .dropGrant(let why):
             Self.trace("activity grant dropped: \(why)")
             DroppedGrants.add(target.grantId, expiresMs: SyncHostedRunContract.nowMs() + 24 * 60 * 60 * 1000)
@@ -205,9 +232,31 @@ final class SyncWorkflowActivities {
             } else {
                 targets[target.runId] = nil
             }
-        default:
-            Self.trace("activity update not sent: \(outcome)")
+        case .wait(let seconds):
+            SyncWorkflowPush.shared.noteWait(device: target.device, seconds: seconds)
+            Self.trace("activity update not sent: waiting \(seconds) s")
+            retry(target, signature: signature, afterMs: Int64(seconds) * 1000)
+        case .retry:
+            Self.trace("activity update not sent: retrying")
+            retry(target, signature: signature, afterMs: 30_000)
+        case .failed(let why):
+            Self.log.error("activity update not sent: \(why, privacy: .public)")
+            Self.trace("activity update not sent: \(why)")
         }
+    }
+
+    /// One more try for an update the service couldn't take now; push-to-start isn't retried
+    /// (the run's notifications carry on without an activity).
+    private func retry(_ target: Target, signature: String?, afterMs: Int64) {
+        let runId = target.runId
+        guard !runId.isEmpty, let signature, resent[runId] != signature, sent[runId] == signature else {
+            if !target.runId.isEmpty { Self.log.error("activity update not sent after a retry") }
+            return
+        }
+        resent[runId] = signature
+        sent[runId] = nil
+        ended.remove(runId)
+        scheduleResend(runId, afterMs: afterMs)
     }
 
     // MARK: State
@@ -224,13 +273,39 @@ final class SyncWorkflowActivities {
         var signature: String
     }
 
+    /// The card's sizes, so the push stays under APNs' 4 KB with any run: names trimmed, and step
+    /// names only around the current step (the widget shows four). Every step's status is kept:
+    /// the widget counts them.
+    nonisolated static let nameLimit = 80
+    nonisolated static let macNameLimit = 40
+    nonisolated static let stepNameLimit = 40
+    nonisolated static let namedSteps = 6
+    /// The sealed card, before sealing and base64, at most; past it step names go, then the steps.
+    nonisolated static let cardLimit = 2400
+
     nonisolated static func state(_ run: SyncDeviceFeedContract.WorkflowRunEntry, macName: String) -> State {
         let shown = run.card.steps.filter { $0.status != "skipped" }
-        let steps = shown.map { ["name": $0.name, "status": stepStatus($0.status)] }
+        let statuses = shown.map { stepStatus($0.status) }
+        let current = statuses.firstIndex { $0 != "completed" } ?? max(statuses.count - 1, 0)
+        let first = max(0, min(current - 1, statuses.count - namedSteps))
+        let named = first ..< (first + namedSteps)
         let done = shown.filter { $0.status == "done" || $0.status == "pinned" }.count
         // `WorkflowRunAttributes.Card` on the iPhone.
-        let card: [String: Any] = ["name": run.card.name, "mac": macName, "steps": steps]
-        let plain = (try? JSONSerialization.data(withJSONObject: card, options: [.sortedKeys])) ?? Data()
+        func card(names: Bool, steps: Bool) -> Data {
+            let list: [[String: String]] = steps
+                ? shown.indices.map { index in
+                    let name = names && named.contains(index) ? String(shown[index].name.prefix(stepNameLimit)) : ""
+                    return ["name": name, "status": statuses[index]]
+                } : []
+            let card: [String: Any] = [
+                "name": String(run.card.name.prefix(nameLimit)), "mac": String(macName.prefix(macNameLimit)),
+                "steps": list,
+            ]
+            return (try? JSONSerialization.data(withJSONObject: card, options: [.sortedKeys])) ?? Data()
+        }
+        var plain = card(names: true, steps: true)
+        if plain.count > cardLimit { plain = card(names: false, steps: true) }
+        if plain.count > cardLimit { plain = card(names: false, steps: false) }
         let signature = ([run.card.status] + shown.map(\.status)).joined(separator: ",")
         return State(
             sealedCard: plain, status: run.card.status, done: done, total: shown.count,
