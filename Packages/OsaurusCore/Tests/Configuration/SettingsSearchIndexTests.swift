@@ -95,6 +95,11 @@ struct SettingsSearchIndexTests {
                     LocalModelKind(rawValue: subTab) != nil,
                     "\(entry.id): \(subTab) is not a LocalModelKind raw value"
                 )
+            case .settings:
+                #expect(
+                    GeneralSubPage(rawValue: subTab) != nil,
+                    "\(entry.id): \(subTab) is not a GeneralSubPage raw value"
+                )
             case .workflows:
                 #expect(
                     ChatWindowState.WorkflowsDestination(subTab: subTab) != nil,

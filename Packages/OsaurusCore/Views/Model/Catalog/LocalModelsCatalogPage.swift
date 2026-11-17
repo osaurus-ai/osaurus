@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Models → Local Models for one model kind: the shared header and kind
-//  tabs, All / On This Mac / Available chips, search, the model table and
+//  tabs, On This Mac / Available / All chips, search, the model table and
 //  the detail panel beside it. Every kind renders through this page; its
 //  `LocalModelCatalogSource` supplies the rows.
 //
@@ -20,7 +20,11 @@ struct LocalModelsCatalogPage: View {
     @ObservedObject private var managementState = ManagementStateManager.shared
     @Environment(\.theme) private var theme
 
-    @State private var scope: LocalModelCatalogScope = .all
+    /// The chip the user last picked; nil until they pick one.
+    @AppStorage("localModelsScope") private var savedScope: LocalModelCatalogScope?
+    /// Widens the scope for this visit only (deep links, revealing a row,
+    /// Browse Available) without replacing the saved chip.
+    @State private var scopeOverride: LocalModelCatalogScope?
     @State private var searchText = ""
     @State private var query = ""
     @State private var queryDebounce: Task<Void, Never>?
@@ -41,6 +45,16 @@ struct LocalModelsCatalogPage: View {
     private static let inspectorWidth: CGFloat = 420
     /// Narrower than this beside the panel, the panel covers the table.
     private static let minTableWidth: CGFloat = 480
+
+    /// Until a chip is picked, the page opens on what is installed, or on
+    /// Available when this kind has nothing on this Mac yet. Installed
+    /// models are discovered asynchronously, so this is evaluated live.
+    private var scope: LocalModelCatalogScope {
+        if let scopeOverride { return scopeOverride }
+        if let savedScope { return savedScope }
+        let hasModelsOnThisMac = source.isLoading || source.items.contains { $0.status.isOnThisMac }
+        return hasModelsOnThisMac ? .onThisMac : .available
+    }
 
     var body: some View {
         let searched = searchedItems
@@ -98,7 +112,7 @@ struct LocalModelsCatalogPage: View {
         }
         .onChange(of: searchText) { _, newValue in
             if source.kind == .language, ModelManager.parseHuggingFaceRepoId(from: newValue) != nil {
-                scope = .all
+                scopeOverride = .all
             }
             queryDebounce?.cancel()
             queryDebounce = Task { @MainActor in
@@ -222,7 +236,14 @@ struct LocalModelsCatalogPage: View {
         SettingsHeaderToolbar(searchText: $searchText, searchPlaceholder: "Search models") {
             FilterChipRow(
                 LocalModelCatalogScope.allCases,
-                selection: Binding(get: { scope }, set: { if let scope = $0 { self.scope = scope } }),
+                selection: Binding(
+                    get: { scope },
+                    set: {
+                        guard let picked = $0 else { return }
+                        savedScope = picked
+                        scopeOverride = nil
+                    }
+                ),
                 allTitle: nil,
                 allowsDeselect: false,
                 title: \.title,
@@ -295,7 +316,7 @@ struct LocalModelsCatalogPage: View {
         }
         guard query.isEmpty, scope == .onThisMac else { return nil }
         return .init(title: L("Browse Available"), icon: "square.grid.2x2") {
-            withAnimation(theme.motion.quick) { scope = .available }
+            withAnimation(theme.motion.quick) { scopeOverride = .available }
         }
     }
 
@@ -338,7 +359,7 @@ struct LocalModelsCatalogPage: View {
             return
         }
         pendingSelectionId = nil
-        if !scope.includes(item.status) { scope = .all }
+        if !scope.includes(item.status) { scopeOverride = .all }
         selection = item.id
         if item.id.lowercased() != lowered {
             inspectedModel = item.variants.first { $0.id.lowercased() == lowered }
@@ -351,7 +372,7 @@ struct LocalModelsCatalogPage: View {
         guard let language = source as? LanguageCatalogSource else { return }
         searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
         query = searchText
-        scope = .all
+        scopeOverride = .all
         language.reveal(repoId: modelId)
         select(modelId: modelId)
     }

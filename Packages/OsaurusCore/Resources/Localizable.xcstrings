@@ -344,6 +344,16 @@
         }
       }
     },
+    "%lld redacted in this conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld redacted in this conversation"
+          }
+        }
+      }
+    },
     "-1001234567890 — one per line" : {
       "localizations" : {
         "de" : {
@@ -408,6 +418,549 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "-1001234567890 或 @channelname — 每行一個"
+          }
+        }
+      }
+    },
+    "Always in this chat" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Always in this chat"
+          }
+        }
+      }
+    },
+    "Always redact %@ in this conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Always redact %@ in this conversation"
+          }
+        }
+      }
+    },
+    "Always sent as written, in every conversation. Add your own name, your company's domain, or public feeds here, or from a row's menu in the review sheet." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Always sent as written, in every conversation. Add your own name, your company's domain, or public feeds here, or from a row's menu in the review sheet."
+          }
+        }
+      }
+    },
+    "Ask about %@ again" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask about %@ again"
+          }
+        }
+      }
+    },
+    "Ask about new items" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask about new items"
+          }
+        }
+      }
+    },
+    "Ask me" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask me"
+          }
+        }
+      }
+    },
+    "Domain" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Domain"
+          }
+        }
+      }
+    },
+    "Domain, including subdomains" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Domain, including subdomains"
+          }
+        }
+      }
+    },
+    "Exact value" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exact value"
+          }
+        }
+      }
+    },
+    "Exact value, any capitalization" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exact value, any capitalization"
+          }
+        }
+      }
+    },
+    "Redact %@" : {
+
+    },
+    "example.com" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "example.com"
+          }
+        }
+      }
+    },
+    "For the rest of this conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "For the rest of this conversation"
+          }
+        }
+      }
+    },
+    "Forget Redactions in This Conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forget Redactions in This Conversation"
+          }
+        }
+      }
+    },
+    "From the %@ tool" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From the %@ tool"
+          }
+        }
+      }
+    },
+    "From the model's own text" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From the model's own text"
+          }
+        }
+      }
+    },
+    "From tool results" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From tool results"
+          }
+        }
+      }
+    },
+    "From your message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From your message"
+          }
+        }
+      }
+    },
+    "Hide full message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide full message"
+          }
+        }
+      }
+    },
+    "Jane Appleseed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jane Appleseed"
+          }
+        }
+      }
+    },
+    "Match" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Match"
+          }
+        }
+      }
+    },
+    "Model's Own Output" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model's Own Output"
+          }
+        }
+      }
+    },
+    "Never in this chat" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never in this chat"
+          }
+        }
+      }
+    },
+    "Never redact" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never redact"
+          }
+        }
+      }
+    },
+    "Never Redact" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never Redact"
+          }
+        }
+      }
+    },
+    "Never redact %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never redact %@"
+          }
+        }
+      }
+    },
+    "Never redact %@ in this conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never redact %@ in this conversation"
+          }
+        }
+      }
+    },
+    "Never redact this value" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never redact this value"
+          }
+        }
+      }
+    },
+    "Osaurus Cloud — the managed models behind Architect and other built-in agents." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus Cloud — the managed models behind Architect and other built-in agents."
+          }
+        }
+      }
+    },
+    "Personal data in your own messages. Ask me shows the review sheet once per new item; Redact automatically replaces it without asking. Each conversation can change this from the privacy menu in the composer." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personal data in your own messages. Ask me shows the review sheet once per new item; Redact automatically replaces it without asking. Each conversation can change this from the privacy menu in the composer."
+          }
+        }
+      }
+    },
+    "Privacy Filter Settings…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacy Filter Settings…"
+          }
+        }
+      }
+    },
+    "Privacy Filter: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacy Filter: %@"
+          }
+        }
+      }
+    },
+    "Redact" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redact"
+          }
+        }
+      }
+    },
+    "Redact all" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redact all"
+          }
+        }
+      }
+    },
+    "Redact automatically" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redact automatically"
+          }
+        }
+      }
+    },
+    "Redactions in This Conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redactions in This Conversation"
+          }
+        }
+      }
+    },
+    "Redactions in This Conversation (%lld)…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redactions in This Conversation (%lld)…"
+          }
+        }
+      }
+    },
+    "Replaces names, emails, links, and other personal data with placeholders before a request reaches a cloud provider. Local models (MLX, Foundation) and on-device tools bypass the filter." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Replaces names, emails, links, and other personal data with placeholders before a request reaches a cloud provider. Local models (MLX, Foundation) and on-device tools bypass the filter."
+          }
+        }
+      }
+    },
+    "Review Before Sending" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review Before Sending"
+          }
+        }
+      }
+    },
+    "Sent as written" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent as written"
+          }
+        }
+      }
+    },
+    "Sent as written in every conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent as written in every conversation."
+          }
+        }
+      }
+    },
+    "Show full message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show full message"
+          }
+        }
+      }
+    },
+    "Stop redacting" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop redacting"
+          }
+        }
+      }
+    },
+    "Stopped values are sent as written from your next message on." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stopped values are sent as written from your next message on."
+          }
+        }
+      }
+    },
+    "The model's earlier replies and tool arguments. They only repeat text the model already received, so they're redacted without asking by default." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model's earlier replies and tool arguments. They only repeat text the model already received, so they're redacted without asking by default."
+          }
+        }
+      }
+    },
+    "These items will be replaced with placeholders before your message goes to %@. Your choices apply to the rest of this conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "These items will be replaced with placeholders before your message goes to %@. Your choices apply to the rest of this conversation."
+          }
+        }
+      }
+    },
+    "These items will be replaced with placeholders before your message leaves your Mac. Your choices apply to the rest of this conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "These items will be replaced with placeholders before your message leaves your Mac. Your choices apply to the rest of this conversation."
+          }
+        }
+      }
+    },
+    "This Conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Conversation"
+          }
+        }
+      }
+    },
+    "Tool Results" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tool Results"
+          }
+        }
+      }
+    },
+    "Turn filter off" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn filter off"
+          }
+        }
+      }
+    },
+    "Undo never redact" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undo never redact"
+          }
+        }
+      }
+    },
+    "Use Default (%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use Default (%@)"
+          }
+        }
+      }
+    },
+    "Values and Domains" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Values and Domains"
+          }
+        }
+      }
+    },
+    "Web pages, files, and other tool output the agent sends back to the model during a turn." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Web pages, files, and other tool output the agent sends back to the model during a turn."
+          }
+        }
+      }
+    },
+    "When New Items Are Found" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When New Items Are Found"
           }
         }
       }
@@ -858,6 +1411,16 @@
         }
       }
     },
+    "\"%@.%@\" needs a number." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "\"%1$@.%2$@\" needs a number."
+          }
+        }
+      }
+    },
     "“%@”" : {
       "localizations" : {
         "de" : {
@@ -913,6 +1476,19 @@
           }
         }
       }
+    },
+    "\"%@\" can only change size, lineHeight and weight, not \"%@\"." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "\"%1$@\" can only change size, lineHeight and weight, not \"%2$@\"."
+          }
+        }
+      }
+    },
+    "\"%@\" can't be changed by a theme." : {
+
     },
     "“%@” could not be loaded for this agent." : {
       "localizations" : {
@@ -1002,6 +1578,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "“%@”未运行：%@"
+          }
+        }
+      }
+    },
+    "\"%@\" has an unknown field \"%@\"." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "\"%1$@\" has an unknown field \"%2$@\"."
           }
         }
       }
@@ -1288,7 +1874,35 @@
         }
       }
     },
+    "\"%@\" must be one of: %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "\"%1$@\" must be one of: %2$@."
+          }
+        }
+      }
+    },
+    "\"%@\" needs { \"light\": …, \"dark\": … }." : {
+
+    },
+    "\"%@\" needs { \"response\": …, \"dampingFraction\": … }." : {
+
+    },
+    "\"%@\" needs { \"size\": …, \"lineHeight\": …, \"weight\": … }." : {
+
+    },
+    "\"%@\" needs a color like \"#1A2B3C\"." : {
+
+    },
     "“%@” needs a folder to work in, and none is chosen." : {
+
+    },
+    "\"%@\" needs a font family name." : {
+
+    },
+    "\"%@\" needs a number." : {
 
     },
     "“%@” ran on %@, but slot “%@” requires %@." : {
@@ -1319,6 +1933,19 @@
 
     },
     "“%@” stopped because the request to allow it was declined." : {
+
+    },
+    "\"%@\" was %@; clamped to %@ (allowed %@–%@)." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "\"%1$@\" was %2$@; clamped to %3$@ (allowed %4$@–%5$@)."
+          }
+        }
+      }
+    },
+    "“%@” will be moved to the Trash." : {
 
     },
     "\"%@\" will be removed permanently. This can't be undone." : {
@@ -4932,6 +5559,9 @@
         }
       }
     },
+    "%@ Copy" : {
+
+    },
     "%@ could not be installed" : {
       "comment" : "A warning message that appears in the app's main view when a bundle import has failed.",
       "isCommentAutoGenerated" : true
@@ -6365,6 +6995,12 @@
         }
       }
     },
+    "%@ is a dark-only theme" : {
+
+    },
+    "%@ is a light-only theme" : {
+
+    },
     "%@ is a name the system sets, so agents' code never sees this value. Pick another name to use it there." : {
       "comment" : "Keys (credentials) UI.",
       "extractionState" : "manual",
@@ -7366,10 +8002,6 @@
           }
         }
       }
-    },
-    "%@ is saved" : {
-      "comment" : "A label for a saved draft. The argument is the name of the draft.",
-      "isCommentAutoGenerated" : true
     },
     "%@ is saved. Find it under Workflows beside any chat." : {
       "comment" : "A toast message that is shown when a workflow is saved. The argument is the name of the workflow.",
@@ -10835,6 +11467,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@：%@"
+          }
+        }
+      }
+    },
+    "%@: %@ on %@ is %@:1 (needs %@:1)." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: %2$@ on %3$@ is %4$@:1 (needs %5$@:1)."
           }
         }
       }
@@ -18547,9 +19189,6 @@
         }
       }
     },
-    "%lld tests" : {
-
-    },
     "%lld tests passed" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",
@@ -18561,10 +19200,6 @@
           }
         }
       }
-    },
-    "%lld things to set up" : {
-      "comment" : "Pluralization key for \"thing to set up\".",
-      "isCommentAutoGenerated" : true
     },
     "%lld to %lld characters." : {
       "localizations" : {
@@ -18622,6 +19257,9 @@
           }
         }
       }
+    },
+    "%lld tokens set in JSON take precedence over the choices above." : {
+
     },
     "%lld tool(s) discovered via %@." : {
       "extractionState" : "stale",
@@ -23904,10 +24542,6 @@
         }
       }
     },
-    "1 thing to set up" : {
-      "comment" : "Plural form of \"thing to set up\".",
-      "isCommentAutoGenerated" : true
-    },
     "1 token" : {
       "localizations" : {
         "de" : {
@@ -26238,6 +26872,9 @@
         }
       }
     },
+    "A link" : {
+
+    },
     "A local agent is bound, so n8n speaks Secure Channel and plaintext is never needed." : {
       "localizations" : {
         "de" : {
@@ -28491,6 +29128,12 @@
     "A test run" : {
 
     },
+    "A theme must be a JSON object." : {
+
+    },
+    "A theme with this name already exists." : {
+
+    },
     "A thoughtful partner for drafting, editing, and polishing prose." : {
       "localizations" : {
         "de" : {
@@ -29141,6 +29784,9 @@
           }
         }
       }
+    },
+    "Aa" : {
+
     },
     "Abilities" : {
       "comment" : "Label for the \"Abilities\" tab group in the agent detail view.",
@@ -35731,6 +36377,10 @@
         }
       }
     },
+    "Add to My Workflows?" : {
+      "comment" : "Title of a prompt card that asks the user to add a workflow to their list of saved ones.",
+      "isCommentAutoGenerated" : true
+    },
     "Add to one of them below. You can send a new report once one is closed." : {
       "localizations" : {
         "de" : {
@@ -36199,6 +36849,10 @@
       "comment" : "Label for a menu item that adds a new workflow.",
       "isCommentAutoGenerated" : true
     },
+    "Added" : {
+      "comment" : "Title of the prompt card when a workflow is added to the user's list of saved workflows.",
+      "isCommentAutoGenerated" : true
+    },
     "Added \"%@\"" : {
       "comment" : "A success message that appears when a workflow is added. The argument is the name of the workflow.",
       "isCommentAutoGenerated" : true
@@ -36407,6 +37061,14 @@
           }
         }
       }
+    },
+    "Adding it updates that workflow. Choose Save as New Workflow in the … menu to keep it as it is." : {
+      "comment" : "Tooltip for the text that appears in the footer of the Architect preview panel.",
+      "isCommentAutoGenerated" : true
+    },
+    "Adding keeps it on this Mac, set up the way you tried it." : {
+      "comment" : "Footnote for the Add to My Workflows? card.",
+      "isCommentAutoGenerated" : true
     },
     "Adding…" : {
       "localizations" : {
@@ -46173,6 +46835,9 @@
     "AM or PM" : {
 
     },
+    "Amber" : {
+
+    },
     "Ambient" : {
       "localizations" : {
         "de" : {
@@ -52971,6 +53636,10 @@
     },
     "Ask the Architect" : {
 
+    },
+    "Ask the Architect to fix what went wrong" : {
+      "comment" : "Button label for asking the Architect to fix a workflow.",
+      "isCommentAutoGenerated" : true
     },
     "Ask the dino for help" : {
       "localizations" : {
@@ -61372,8 +62041,8 @@
         }
       }
     },
-    "Before it can be tested" : {
-      "comment" : "Title of a section that lists issues or blockers that must be addressed before the draft can be tested.",
+    "Before it can run" : {
+      "comment" : "Section title for the \"Before it can run\" section in the Architect preview.",
       "isCommentAutoGenerated" : true
     },
     "Before it runs" : {
@@ -63042,6 +63711,9 @@
         }
       }
     },
+    "Blue" : {
+
+    },
     "Boards, lists, and cards in Trello" : {
       "localizations" : {
         "de" : {
@@ -63832,6 +64504,9 @@
           }
         }
       }
+    },
+    "Both" : {
+
     },
     "Bottom Center" : {
       "extractionState" : "manual",
@@ -65950,6 +66625,10 @@
         }
       }
     },
+    "Build" : {
+      "comment" : "Title of the stage of making a workflow where the user builds it.",
+      "isCommentAutoGenerated" : true
+    },
     "Build a team of AI agents for life and work. Your chats, files, and keys can stay private on your Mac. No account or cloud required." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -66235,6 +66914,10 @@
           }
         }
       }
+    },
+    "Building" : {
+      "comment" : "Text of a chip that indicates that the workflow is being built.",
+      "isCommentAutoGenerated" : true
     },
     "Building a workflow takes many tool calls in a row, and local models often lose the thread. %@ runs on Osaurus Cloud and uses your credits." : {
       "comment" : "A description of the Architect's model choice. The argument is the name of the Osaurus Cloud model.",
@@ -67185,6 +67868,9 @@
       }
     },
     "Bundled only" : {
+
+    },
+    "Bundled themes can't be changed. Duplicate it to make your own." : {
 
     },
     "Bundled workflow" : {
@@ -70790,6 +71476,10 @@
       "comment" : "Prompt for editing a workflow's output.",
       "isCommentAutoGenerated" : true
     },
+    "Change who can see it, publish a new version, or take it down" : {
+      "comment" : "Button label for the \"Manage\" action in the Architect preview panel.",
+      "isCommentAutoGenerated" : true
+    },
     "Change working folder" : {
       "localizations" : {
         "de" : {
@@ -70876,9 +71566,6 @@
           }
         }
       }
-    },
-    "Changed" : {
-
     },
     "Changed file matches (globs, comma separated)" : {
       "localizations" : {
@@ -71311,6 +71998,9 @@
       }
     },
     "Changes on Your Mac" : {
+
+    },
+    "Changes preview across Osaurus while this is open." : {
 
     },
     "Changes requested" : {
@@ -77590,6 +78280,9 @@
         }
       }
     },
+    "Choose Osaurus theme files to import" : {
+
+    },
     "Choose Project Folder" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -79356,6 +80049,9 @@
           }
         }
       }
+    },
+    "Classic Theme" : {
+
     },
     "Classifier-free guidance" : {
       "localizations" : {
@@ -81867,6 +82563,10 @@
           }
         }
       }
+    },
+    "Close this step" : {
+      "comment" : "Label for a button that closes an open step.",
+      "isCommentAutoGenerated" : true
     },
     "Close window" : {
       "localizations" : {
@@ -93047,6 +93747,9 @@
         }
       }
     },
+    "Cool" : {
+
+    },
     "Copied" : {
       "localizations" : {
         "de" : {
@@ -100005,7 +100708,6 @@
       }
     },
     "Create Theme" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -101877,6 +102579,9 @@
         }
       }
     },
+    "Custom accent" : {
+
+    },
     "Custom AI assistants with unique prompts, tools, and styles." : {
       "localizations" : {
         "de" : {
@@ -102014,6 +102719,9 @@
           }
         }
       }
+    },
+    "Custom color" : {
+
     },
     "Custom directory selected" : {
       "localizations" : {
@@ -103670,6 +104378,9 @@
           }
         }
       }
+    },
+    "Dark only" : {
+
     },
     "Dashboard" : {
       "comment" : "A label displayed above a section of the Home view that shows no pinned views.",
@@ -107915,6 +108626,9 @@
         }
       }
     },
+    "Delete Theme?" : {
+
+    },
     "Delete this agent's database?" : {
       "localizations" : {
         "de" : {
@@ -109476,6 +110190,10 @@
     "Describe it below in your own words. The Configurator asks only what it needs and builds the agent beside the chat. Nothing is saved until you click Create Agent." : {
 
     },
+    "Describe it in the chat and it takes shape here." : {
+      "comment" : "Text shown in the footer of the Architect when it is in the \"building\" phase, before the user has started creating any actions.",
+      "isCommentAutoGenerated" : true
+    },
     "Describe one in the chat and the Architect builds it. Saved workflows show up here to edit." : {
       "comment" : "Description of a workflow that shows up in the Architect's chat.",
       "isCommentAutoGenerated" : true
@@ -109581,9 +110299,6 @@
           }
         }
       }
-    },
-    "Describe the task in your own words below. The Architect asks only what it needs, builds the steps, and tests them with you before anything is saved." : {
-
     },
     "Describe the video..." : {
       "comment" : "Placeholder text for the input field when a video is selected.",
@@ -111293,6 +112008,14 @@
     },
     "Didn't publish" : {
 
+    },
+    "Didn't run" : {
+      "comment" : "Text describing a step that was skipped.",
+      "isCommentAutoGenerated" : true
+    },
+    "Didn't work" : {
+      "comment" : "Text of a chip that indicates that the workflow didn't work.",
+      "isCommentAutoGenerated" : true
     },
     "Different conversations run side by side, each in order" : {
       "extractionState" : "manual",
@@ -116961,10 +117684,6 @@
         }
       }
     },
-    "Drafting" : {
-      "comment" : "Title of the \"Drafting\" state of a draft.",
-      "isCommentAutoGenerated" : true
-    },
     "Drafts" : {
       "comment" : "Title of the section of the outbound outbox that shows drafts.",
       "isCommentAutoGenerated" : true,
@@ -119472,10 +120191,6 @@
     "Earlier Runs" : {
 
     },
-    "Earlier tests" : {
-      "comment" : "Title of a section of the sidebar panel that shows a list of previous tests.",
-      "isCommentAutoGenerated" : true
-    },
     "Earlier This Week" : {
 
     },
@@ -120258,6 +120973,12 @@
         }
       }
     },
+    "Edit JSON" : {
+
+    },
+    "Edit JSON…" : {
+
+    },
     "Edit Key" : {
       "comment" : "Keys (credentials) UI.",
       "extractionState" : "manual",
@@ -121023,6 +121744,9 @@
           }
         }
       }
+    },
+    "Edit Theme" : {
+
     },
     "Edit this rule." : {
       "comment" : "Label for an action button that opens the custom rule editor for editing an existing rule.",
@@ -131661,6 +132385,9 @@
         }
       }
     },
+    "Export Active Theme…" : {
+
+    },
     "Export Activity Log" : {
 
     },
@@ -138029,10 +138756,6 @@
         }
       }
     },
-    "Find it under Workflows beside any chat." : {
-      "comment" : "A description of the saved workflow.",
-      "isCommentAutoGenerated" : true
-    },
     "Find places and get directions." : {
       "comment" : "Onboarding plugin picker blurb for Maps.",
       "extractionState" : "stale",
@@ -142520,6 +143243,10 @@
         }
       }
     },
+    "Frosted" : {
+      "comment" : "Transparency choice: how much of the desktop shows through the icon rail and title bar.",
+      "isCommentAutoGenerated" : true
+    },
     "Full" : {
       "localizations" : {
         "de" : {
@@ -145317,6 +146044,9 @@
         }
       }
     },
+    "Getting it ready to add" : {
+
+    },
     "Getting Osaurus Cloud ready…" : {
       "comment" : "Polished pending-local-setup status copy.",
       "extractionState" : "manual",
@@ -146170,7 +146900,6 @@
       }
     },
     "Glass" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -148124,6 +148853,9 @@
         }
       }
     },
+    "Graphite" : {
+
+    },
     "Grayed-out conversations don't allow bot posts yet — enable posting for them in the channel's settings." : {
       "comment" : "A warning message displayed in the room selector if a room is selected that doesn't allow posting.",
       "isCommentAutoGenerated" : true
@@ -148164,6 +148896,9 @@
           }
         }
       }
+    },
+    "Green" : {
+
     },
     "Greeting" : {
       "localizations" : {
@@ -150567,6 +151302,9 @@
         }
       }
     },
+    "Here are three themes from this week." : {
+
+    },
     "Here is what is left to set up. Pick one, or ask me anything." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -151797,6 +152535,9 @@
           }
         }
       }
+    },
+    "High contrast" : {
+
     },
     "High impact" : {
       "comment" : "Label for the impact of an ability when it's in a warning or critical state.",
@@ -153234,6 +153975,10 @@
           }
         }
       }
+    },
+    "How it works" : {
+      "comment" : "Section title for the \"How it works\" section of the workflow preview.",
+      "isCommentAutoGenerated" : true
     },
     "How local data is protected on disk, and how long agent file changes stay revertible." : {
       "comment" : "A description of how data is stored and backed up.",
@@ -159053,6 +159798,9 @@
         }
       }
     },
+    "Import Theme…" : {
+
+    },
     "Import Update" : {
 
     },
@@ -159899,6 +160647,10 @@
           }
         }
       }
+    },
+    "In My Workflows" : {
+      "comment" : "Text of a workflow chip when it's been added to the user's list of saved workflows.",
+      "isCommentAutoGenerated" : true
     },
     "In order" : {
       "extractionState" : "manual",
@@ -161178,6 +161930,9 @@
           }
         }
       }
+    },
+    "Increase Contrast is on" : {
+
     },
     "Increase discovery timeout or check that the MCP server responds to listTools." : {
       "localizations" : {
@@ -166259,6 +167014,16 @@
         }
       }
     },
+    "Invalid value at %@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Invalid value at %1$@: %2$@"
+          }
+        }
+      }
+    },
     "Invalid Workspaces link" : {
       "localizations" : {
         "de" : {
@@ -167770,6 +168535,10 @@
     "It stopped at %@." : {
 
     },
+    "It stopped before it finished." : {
+      "comment" : "Text describing the error message when the workflow is not running.",
+      "isCommentAutoGenerated" : true
+    },
     "It stopped before the end." : {
 
     },
@@ -167788,6 +168557,10 @@
     },
     "It was stopped." : {
 
+    },
+    "It worked when you tried it." : {
+      "comment" : "What happens when a workflow's test passes.",
+      "isCommentAutoGenerated" : true
     },
     "It worked." : {
 
@@ -167822,6 +168595,14 @@
           }
         }
       }
+    },
+    "It's in My Workflows on this Mac. Resubmit it so the Osaurus team can review the fix." : {
+      "comment" : "Text displayed in a prompt card when a workflow is added to My Workflows but the user has not yet resubmitted it for review.",
+      "isCommentAutoGenerated" : true
+    },
+    "It's in My Workflows on this Mac. Share it so others can use it too." : {
+      "comment" : "Text displayed in a prompt card when a workflow is added to My Workflows.",
+      "isCommentAutoGenerated" : true
     },
     "It's in your Templates. Share it as a file, or publish a page you control." : {
 
@@ -167859,12 +168640,6 @@
           }
         }
       }
-    },
-    "It's on this Mac and ready to run. Resubmit it so the Osaurus team can review the fix." : {
-
-    },
-    "It's on this Mac and ready to run. Try it with the example from testing, or share it." : {
-
     },
     "It's ready now. Press Use this model to keep going." : {
       "localizations" : {
@@ -168343,6 +169118,10 @@
           }
         }
       }
+    },
+    "Its page" : {
+      "comment" : "Title of a section that shows the URL of the page for the workflow's template.",
+      "isCommentAutoGenerated" : true
     },
     "Its page came with publishing the %@ agent. Taking that agent down leaves this page up." : {
 
@@ -169255,6 +170034,10 @@
     },
     "Keep history" : {
 
+    },
+    "Keep it on this Mac, ready to run any time" : {
+      "comment" : "A message that appears when a user adds a workflow to their list of saved workflows.",
+      "isCommentAutoGenerated" : true
     },
     "Keep it private, on this Mac" : {
       "localizations" : {
@@ -170837,6 +171620,9 @@
         }
       }
     },
+    "Large" : {
+
+    },
     "Large (4 GB+)" : {
       "localizations" : {
         "de" : {
@@ -170870,6 +171656,9 @@
           }
         }
       }
+    },
+    "Larger" : {
+
     },
     "Larger incoming media is skipped (the message still arrives with a placeholder) and larger outgoing files are refused." : {
       "comment" : "Tooltip for the max attachment size setting.",
@@ -175002,6 +175791,9 @@
         }
       }
     },
+    "Light and dark" : {
+
+    },
     "Light and fast — runs on any Mac." : {
       "comment" : "Description of a MLX model with a \"smallest\" use case.",
       "isCommentAutoGenerated" : true,
@@ -175037,6 +175829,9 @@
           }
         }
       }
+    },
+    "Light only" : {
+
     },
     "Light Sleep After (seconds)" : {
       "localizations" : {
@@ -175382,8 +176177,15 @@
         }
       }
     },
+    "line %lld" : {
+
+    },
     "Link" : {
 
+    },
+    "Link copied" : {
+      "comment" : "Text for a button that copies a workflow's URL to the clipboard.",
+      "isCommentAutoGenerated" : true
     },
     "Link expires after" : {
       "localizations" : {
@@ -180425,6 +181227,12 @@
         }
       }
     },
+    "Looked at how it ran" : {
+
+    },
+    "Looked for what it can use" : {
+
+    },
     "Looking" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -180459,6 +181267,9 @@
           }
         }
       }
+    },
+    "Looking at how it ran" : {
+
     },
     "Looking for AppleScript models?" : {
       "localizations" : {
@@ -180531,6 +181342,9 @@
           }
         }
       }
+    },
+    "Looking for what it can use" : {
+
     },
     "Loopback traffic never leaves this Mac. Encryption is optional; binding a local agent in Who answers? adds it." : {
       "localizations" : {
@@ -180668,6 +181482,9 @@
           }
         }
       }
+    },
+    "Low contrast" : {
+
     },
     "Low impact" : {
       "comment" : "Label for the impact of an agent's setup on the model's working space.",
@@ -180962,6 +181779,9 @@
 
     },
     "macOS has not granted: %@. Click to grant or open System Settings." : {
+
+    },
+    "macOS Increase Contrast is on, so every theme uses its high-contrast colors." : {
 
     },
     "macOS notifications with Allow, Deny and Reply." : {
@@ -191063,6 +191883,16 @@
         }
       }
     },
+    "Missing \"%@\" at %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Missing \"%1$@\" at %2$@."
+          }
+        }
+      }
+    },
     "Missing agent" : {
       "localizations" : {
         "de" : {
@@ -195605,6 +196435,9 @@
         }
       }
     },
+    "My Theme" : {
+
+    },
     "My workspace" : {
       "localizations" : {
         "de" : {
@@ -198728,6 +199561,9 @@
         }
       }
     },
+    "Neutral" : {
+
+    },
     "Never" : {
       "localizations" : {
         "de" : {
@@ -200464,6 +201300,9 @@
         }
       }
     },
+    "New Theme" : {
+
+    },
     "New Tool" : {
       "localizations" : {
         "de" : {
@@ -201154,21 +201993,6 @@
           }
         }
       }
-    },
-    "Next: finish the steps with the Architect" : {
-
-    },
-    "Next: fix the failed step and test again" : {
-
-    },
-    "Next: save it, then publish from Workflows" : {
-
-    },
-    "Next: set up what it needs" : {
-
-    },
-    "Next: test it on real input" : {
-
     },
     "NIL" : {
       "localizations" : {
@@ -209185,6 +210009,9 @@
         }
       }
     },
+    "No problems found" : {
+
+    },
     "No processing log entries yet. If you've been chatting, the distill pipeline never reached the model." : {
       "localizations" : {
         "de" : {
@@ -216484,6 +217311,10 @@
     "Nothing blocks this workflow. The notes below are worth a look." : {
 
     },
+    "Nothing changes in My Workflows until you try it and add it." : {
+      "comment" : "Text describing what happens when you try a saved workflow and add it to your list.",
+      "isCommentAutoGenerated" : true
+    },
     "Nothing else to filter by" : {
       "localizations" : {
         "de" : {
@@ -216517,9 +217348,6 @@
           }
         }
       }
-    },
-    "Nothing entered yet" : {
-
     },
     "Nothing has gone along this line yet." : {
 
@@ -216725,9 +217553,6 @@
           }
         }
       }
-    },
-    "Nothing is saved until you test it and choose Save." : {
-
     },
     "Nothing is stored yet." : {
 
@@ -217480,8 +218305,16 @@
       "comment" : "Text describing what a workflow does when it has no outputs.",
       "isCommentAutoGenerated" : true
     },
+    "Nothing, it runs on its own" : {
+      "comment" : "Text describing the output of a workflow when it has no outputs.",
+      "isCommentAutoGenerated" : true
+    },
     "Nothing. It runs as is." : {
       "comment" : "Note displayed in the \"What it does\" section of the preview sheet when the workflow has no fields.",
+      "isCommentAutoGenerated" : true
+    },
+    "Nothing. It runs on its own." : {
+      "comment" : "Text displayed in a workflow form view when the workflow has no input fields.",
       "isCommentAutoGenerated" : true
     },
     "Notifications" : {
@@ -222207,6 +223040,10 @@
     "Only inside the agent. Publishing the agent again gives it its own page." : {
 
     },
+    "Only its name or description changed." : {
+      "comment" : "What happens when a workflow's test runs don't prove it works.",
+      "isCommentAutoGenerated" : true
+    },
     "Only mail from these addresses, or from anyone at an @domain, reaches an agent. Everything else stays in your mailbox untouched. Automated senders such as no-reply addresses are always skipped." : {
 
     },
@@ -224843,6 +225680,10 @@
           }
         }
       }
+    },
+    "Open its form, filled with the example" : {
+      "comment" : "Button label for opening a workflow's form, pre-filled with the workflow's example data.",
+      "isCommentAutoGenerated" : true
     },
     "Open Keys" : {
       "comment" : "Keys (credentials) UI.",
@@ -228328,9 +229169,6 @@
     "or" : {
 
     },
-    "Or add a ready-made workflow" : {
-
-    },
     "or an automation" : {
       "localizations" : {
         "de" : {
@@ -228498,8 +229336,15 @@
         }
       }
     },
+    "Or start from a ready-made one" : {
+
+    },
     "Or start from an idea" : {
 
+    },
+    "Or start from one of these" : {
+      "comment" : "Title for a section of the Architect chat that shows quick actions.",
+      "isCommentAutoGenerated" : true
     },
     "Or type a custom answer…" : {
       "localizations" : {
@@ -229757,9 +230602,6 @@
       }
     },
     "Osaurus didn't find anything it can install there." : {
-
-    },
-    "Osaurus drafts the steps, tests them with you, and saves the workflow to your library." : {
 
     },
     "Osaurus for iPhone" : {
@@ -242561,6 +243403,10 @@
       "comment" : "Action-aware label for `osaurus_config` when planning configuration changes.",
       "isCommentAutoGenerated" : true
     },
+    "Planning the steps…" : {
+      "comment" : "\"Planning the steps\" is the text that appears in the \"live line\" when the user is in the \"building\" phase of the Architect.",
+      "isCommentAutoGenerated" : true
+    },
     "Platform" : {
       "localizations" : {
         "de" : {
@@ -242666,6 +243512,10 @@
           }
         }
       }
+    },
+    "Please finish the workflow so I can try it." : {
+      "comment" : "Text displayed in a notification when a workflow is ready to be tried.",
+      "isCommentAutoGenerated" : true
     },
     "Please translate the following to Spanish:" : {
       "localizations" : {
@@ -265397,6 +266247,9 @@
         }
       }
     },
+    "Ready to add" : {
+
+    },
     "Ready to chat now" : {
       "comment" : "Polished pending-local-setup status copy.",
       "extractionState" : "manual",
@@ -265479,8 +266332,8 @@
         }
       }
     },
-    "Ready to test" : {
-      "comment" : "Title of the \"Ready to test\" state in the Architect sidebar.",
+    "Ready to try" : {
+      "comment" : "Text of a chip that indicates that the workflow is ready to be tested.",
       "isCommentAutoGenerated" : true
     },
     "Ready to use" : {
@@ -272629,6 +273482,9 @@
           }
         }
       }
+    },
+    "Remove every JSON token edit and keep the simple choices" : {
+
     },
     "Remove file" : {
       "localizations" : {
@@ -286620,6 +287476,9 @@
         }
       }
     },
+    "Rose" : {
+
+    },
     "Rotate" : {
       "localizations" : {
         "de" : {
@@ -286925,6 +287784,9 @@
       }
     },
     "Rotating changes the pairing code; re-paste it into n8n." : {
+
+    },
+    "Rounded" : {
 
     },
     "Route Endpoints" : {
@@ -288319,9 +289181,6 @@
         }
       }
     },
-    "Run a test to watch each step work on real input. The Architect can run tests too." : {
-
-    },
     "Run a workflow for messages in #support" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -289258,6 +290117,10 @@
       "comment" : "Text displayed in a chat quick action when the user wants to run a workflow on a different model.",
       "isCommentAutoGenerated" : true
     },
+    "Run it once on what you entered" : {
+      "comment" : "Text for the button that runs a workflow.",
+      "isCommentAutoGenerated" : true
+    },
     "Run it to see what goes along this line." : {
 
     },
@@ -289822,13 +290685,6 @@
       "isCommentAutoGenerated" : true
     },
     "Run the draft for real with your models and keys to check it works." : {
-
-    },
-    "Run the draft on the test input" : {
-      "comment" : "Label for a button that runs the draft on the test input.",
-      "isCommentAutoGenerated" : true
-    },
-    "Run the draft on the test input again" : {
 
     },
     "Run the full agent chat loop server-side, streaming SSE text deltas" : {
@@ -294853,28 +295709,6 @@
       "comment" : "Button label for saving a draft.",
       "isCommentAutoGenerated" : true
     },
-    "Save %@ as v%lld" : {
-      "comment" : "Save a version of a workflow. The argument is the name of the workflow.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Save %1$@ as v%2$lld"
-          }
-        }
-      }
-    },
-    "Save %@ as v%lld of %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Save %1$@ as v%2$lld of %3$@"
-          }
-        }
-      }
-    },
     "Save a copy as a file to send" : {
 
     },
@@ -295657,10 +296491,6 @@
         }
       }
     },
-    "Save this workflow on this Mac" : {
-      "comment" : "Button label for saving a workflow on the current machine.",
-      "isCommentAutoGenerated" : true
-    },
     "Save to Library" : {
 
     },
@@ -295775,9 +296605,6 @@
           }
         }
       }
-    },
-    "Save workflow?" : {
-
     },
     "Save, build the workflow in n8n, and run it once. Its conversation and sender ids show up here for you to allow. Nothing reaches the agent before you do." : {
 
@@ -296938,20 +297765,6 @@
         }
       }
     },
-    "Saving creates the next version. Choose Save as New Workflow to keep the saved version unchanged." : {
-
-    },
-    "Saving installs it on this Mac with the models picked on each step." : {
-      "comment" : "A description of what happens when you save a new version.",
-      "isCommentAutoGenerated" : true
-    },
-    "Saving installs it on this Mac, set up with the models used in testing." : {
-      "comment" : "Footnote for the prompt card when the user is saving a workflow.",
-      "isCommentAutoGenerated" : true
-    },
-    "Saving makes the next version; the one you run now stays until then." : {
-
-    },
     "Saving these changes will restart the NIO server to bind the new socket and refresh middleware." : {
       "comment" : "A description of the server restart required when saving server settings.",
       "isCommentAutoGenerated" : true,
@@ -297257,6 +298070,14 @@
           }
         }
       }
+    },
+    "Say it in your own words below. The Architect asks only what it needs, builds it while you watch, and tries it with you." : {
+      "comment" : "Text describing the workflow creation process.",
+      "isCommentAutoGenerated" : true
+    },
+    "Say it in your own words. Osaurus builds it, tries it with you, and adds it to My Workflows when you're happy." : {
+      "comment" : "A description of how to create a new workflow.",
+      "isCommentAutoGenerated" : true
     },
     "Say where your n8n runs and the pairing code appears here." : {
       "localizations" : {
@@ -302259,6 +303080,9 @@
         }
       }
     },
+    "Secondary text reads clearly." : {
+
+    },
     "Seconds before auto-dismiss. Empty uses default 5s" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -303319,6 +304143,10 @@
           }
         }
       }
+    },
+    "See this step's settings" : {
+      "comment" : "Label for a button that opens a step's settings.",
+      "isCommentAutoGenerated" : true
     },
     "See What Happened" : {
 
@@ -309113,9 +309941,6 @@
         }
       }
     },
-    "Set up what the draft needs before it can be tested" : {
-
-    },
     "Set Up Workflow" : {
 
     },
@@ -310109,6 +310934,9 @@
     "Shape" : {
 
     },
+    "Shaped your workflow" : {
+
+    },
     "Shapes the voice of AI-generated empty-state greetings and quick actions. Each agent can override this in its Customization tab." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -310143,6 +310971,9 @@
           }
         }
       }
+    },
+    "Shaping your workflow" : {
+
     },
     "Share" : {
       "comment" : "A button label that triggers sharing functionality.",
@@ -312753,6 +313584,9 @@
         }
       }
     },
+    "Shell and Python steps of this workflow run in the Sandbox, not on your Mac. Set up the Sandbox once and every run reuses it." : {
+
+    },
     "Shell command" : {
       "localizations" : {
         "de" : {
@@ -314716,6 +315550,9 @@
           }
         }
       }
+    },
+    "Show Themes Folder" : {
+
     },
     "Show this workflow's steps" : {
 
@@ -318876,6 +319713,10 @@
         }
       }
     },
+    "Sketching your workflow…" : {
+      "comment" : "Text shown in the footer of the Architect when it is generating a workflow.",
+      "isCommentAutoGenerated" : true
+    },
     "skill" : {
 
     },
@@ -321259,7 +322100,6 @@
       }
     },
     "Solid" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -324219,6 +325059,9 @@
         }
       }
     },
+    "Standard" : {
+
+    },
     "Standard Actions" : {
       "comment" : "A heading for a section of the agent channel connection center view that lists standard actions.",
       "extractionState" : "stale",
@@ -327169,9 +328012,6 @@
     "Steps with the same slot id share one model." : {
 
     },
-    "Steps, what you fill in, and what you get show up here as the Architect drafts them." : {
-
-    },
     "Still asks:" : {
       "localizations" : {
         "de" : {
@@ -330100,6 +330940,9 @@
     "Subtitle" : {
 
     },
+    "Subtle" : {
+
+    },
     "Succeeded" : {
       "localizations" : {
         "de" : {
@@ -330684,6 +331527,9 @@
           }
         }
       }
+    },
+    "Summarize my notes" : {
+
     },
     "Summarize older messages to free up context" : {
       "localizations" : {
@@ -334050,6 +334896,9 @@
         }
       }
     },
+    "Teal" : {
+
+    },
     "Team" : {
       "comment" : "The title of the third onboarding chapter.",
       "extractionState" : "manual",
@@ -336150,10 +336999,6 @@
         }
       }
     },
-    "Test Run" : {
-      "comment" : "A button to run a workflow on the test input.",
-      "isCommentAutoGenerated" : true
-    },
     "Test run: skipped the wait of %@." : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",
@@ -336522,13 +337367,6 @@
           }
         }
       }
-    },
-    "Tested" : {
-      "comment" : "Status of a draft when it has been tested.",
-      "isCommentAutoGenerated" : true
-    },
-    "Testing on real input…" : {
-
     },
     "Testing..." : {
       "localizations" : {
@@ -337933,6 +338771,9 @@
           }
         }
       }
+    },
+    "That theme no longer exists." : {
+
     },
     "That value isn't valid. Check it and try again." : {
       "localizations" : {
@@ -339560,11 +340401,13 @@
     "The Architect" : {
 
     },
-    "The Architect changed this step in its latest edit." : {
-
+    "The Architect can find the problem and fix it." : {
+      "comment" : "Text displayed in a note when the Architect can find and fix the problem.",
+      "isCommentAutoGenerated" : true
     },
-    "The Architect is planning the steps…" : {
-
+    "The Architect stopped before it was done. Finish it, or say what's missing in the chat." : {
+      "comment" : "Note displayed when the Architect stops before the workflow is fully built.",
+      "isCommentAutoGenerated" : true
     },
     "The Architect works best with a frontier model." : {
       "comment" : "A description of the benefits of using a frontier model.",
@@ -342679,6 +343522,9 @@
         }
       }
     },
+    "The JSON can't be read: %@" : {
+
+    },
     "The key your Osaurus ID, agents and sign-ins are built from. Your recovery phrase restores it on a new Mac, so keep the phrase somewhere safe." : {
       "localizations" : {
         "de" : {
@@ -342857,6 +343703,7 @@
       }
     },
     "The latest test passed and the steps haven't changed since." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -344203,6 +345050,10 @@
     },
     "The old recovery phrase stops working." : {
 
+    },
+    "The one in My Workflows stays as it is until you update it." : {
+      "comment" : "Text that appears below the workflow's step count, indicating that the workflow in My Workflows will remain unchanged until it is updated.",
+      "isCommentAutoGenerated" : true
     },
     "The one macOS folder this agent works inside. Remembered from the chat Folder chip or set here." : {
       "localizations" : {
@@ -348215,6 +349066,12 @@
         }
       }
     },
+    "the theme" : {
+
+    },
+    "The theme isn't valid. %@" : {
+
+    },
     "The token is stored in Keychain and is never written to the Discord configuration file." : {
       "comment" : "A description of how the bot token is managed.",
       "extractionState" : "stale",
@@ -348324,6 +349181,9 @@
       }
     },
     "The tool %@ is not available on this Mac." : {
+
+    },
+    "the top level" : {
 
     },
     "The trade-off is reliability: if the Keychain key is lost (Keychain wipe, app re-sign, or Mac migration without iCloud Keychain), encrypted data can't be opened. Plaintext data is never at that risk." : {
@@ -349483,6 +350343,9 @@
           }
         }
       }
+    },
+    "Theme Error" : {
+
     },
     "Theme ID" : {
       "extractionState" : "stale",
@@ -356928,6 +357791,9 @@
       "comment" : "Error message displayed when a text-to-video model is used with attachments.",
       "isCommentAutoGenerated" : true
     },
+    "This theme has JSON edits" : {
+
+    },
     "This tool creates and changes files; it doesn't delete them." : {
       "localizations" : {
         "de" : {
@@ -357998,10 +358864,6 @@
           }
         }
       }
-    },
-    "This workflow takes no input." : {
-      "comment" : "Text displayed in the workflow form when the workflow takes no input.",
-      "isCommentAutoGenerated" : true
     },
     "This workflow takes no inputs." : {
 
@@ -360424,6 +361286,9 @@
           }
         }
       }
+    },
+    "Token values outside safe ranges are clamped or rejected." : {
+
     },
     "Tokenizer missing" : {
       "localizations" : {
@@ -363837,6 +364702,9 @@
         }
       }
     },
+    "Tried it out" : {
+
+    },
     "Tried top to bottom — if one fails, the next takes over." : {
       "comment" : "A description below the list of the user's search",
       "isCommentAutoGenerated" : true,
@@ -365181,6 +366049,10 @@
     "Try it once to see what you get." : {
 
     },
+    "Try it with" : {
+      "comment" : "Section title for the form to try the workflow with.",
+      "isCommentAutoGenerated" : true
+    },
     "Try one of these, or ask me anything." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -365259,6 +366131,17 @@
     },
     "Try widening the time range or clearing a filter." : {
 
+    },
+    "Trying" : {
+      "comment" : "Chip text for the \"Trying\" state of the Architect preview panel.",
+      "isCommentAutoGenerated" : true
+    },
+    "Trying it out" : {
+
+    },
+    "Trying it out · " : {
+      "comment" : "Prefix for a live line that describes a workflow run.",
+      "isCommentAutoGenerated" : true
     },
     "TTFT %.0fms" : {
       "localizations" : {
@@ -367996,6 +368879,10 @@
     "Unfiltered" : {
 
     },
+    "Unfinished" : {
+      "comment" : "Text of a chip that indicates that the workflow is almost ready to be tested.",
+      "isCommentAutoGenerated" : true
+    },
     "Uninstall" : {
       "localizations" : {
         "de" : {
@@ -368331,6 +369218,16 @@
         }
       }
     },
+    "Unknown key \"%@\" in %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Unknown key \"%1$@\" in %2$@."
+          }
+        }
+      }
+    },
     "Unknown model" : {
       "comment" : "Placeholder shown when a usage row has no model name.",
       "localizations" : {
@@ -368428,6 +369325,9 @@
           }
         }
       }
+    },
+    "Unknown token \"%@\"." : {
+
     },
     "Unknown workflow" : {
 
@@ -370054,6 +370954,9 @@
         }
       }
     },
+    "Untitled Theme" : {
+
+    },
     "Untitled workflow" : {
 
     },
@@ -370858,6 +371761,10 @@
         }
       }
     },
+    "Update My Workflow?" : {
+      "comment" : "Title of a prompt card that appears when the user is updating a workflow.",
+      "isCommentAutoGenerated" : true
+    },
     "Update them all at once" : {
       "localizations" : {
         "de" : {
@@ -371373,6 +372280,10 @@
           }
         }
       }
+    },
+    "Updating keeps it on this Mac, set up the way you tried it." : {
+      "comment" : "Footnote for the Add to My Workflows? card, when the user is updating a workflow.",
+      "isCommentAutoGenerated" : true
     },
     "Updating the database" : {
       "localizations" : {
@@ -374377,9 +375288,6 @@
         }
       }
     },
-    "Use This Input" : {
-
-    },
     "Use this model" : {
       "localizations" : {
         "de" : {
@@ -374413,6 +375321,9 @@
           }
         }
       }
+    },
+    "Use this theme" : {
+
     },
     "Use with Codex CLI" : {
       "comment" : "Title of the Server → Overview card that configures OpenAI's Codex CLI to use this Osaurus.",
@@ -378085,6 +378996,9 @@
         }
       }
     },
+    "Violet" : {
+
+    },
     "Visible to the Orchestrator" : {
       "comment" : "A badge that indicates that the template is visible to the Orchestrator.",
       "isCommentAutoGenerated" : true
@@ -381389,6 +382303,9 @@
     "Want this to run on its own?" : {
 
     },
+    "Warm" : {
+
+    },
     "Warm restart rootfs" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -383485,10 +384402,6 @@
         }
       }
     },
-    "What changed in this version" : {
-      "comment" : "Label for a text field that lets the user describe changes to a saved workflow.",
-      "isCommentAutoGenerated" : true
-    },
     "What chats in this project have learned, shared across every agent." : {
       "localizations" : {
         "de" : {
@@ -383986,10 +384899,6 @@
     },
     "What It Does" : {
 
-    },
-    "What it does (optional)" : {
-      "comment" : "Placeholder text for a text field that lets the user add a description of the changes made to a workflow.",
-      "isCommentAutoGenerated" : true
     },
     "What it does and who it's for" : {
 
@@ -384543,9 +385452,6 @@
           }
         }
       }
-    },
-    "What should this workflow do?" : {
-
     },
     "What should your new agent do?" : {
 
@@ -385133,6 +386039,10 @@
     },
     "What Will Be Created" : {
 
+    },
+    "What would you like to automate?" : {
+      "comment" : "Title of the first section of the Architect chat, before the user has drafted anything.",
+      "isCommentAutoGenerated" : true
     },
     "What you answered, and what timed out, in Insights → Interactions" : {
       "localizations" : {
@@ -390013,9 +390923,6 @@
     "Workflow update" : {
 
     },
-    "Workflow view" : {
-
-    },
     "Workflow's choice (%@)" : {
       "comment" : "A label for a picker that lets the user select a model.",
       "isCommentAutoGenerated" : true
@@ -390619,6 +391526,10 @@
           }
         }
       }
+    },
+    "Works" : {
+      "comment" : "Text of a chip that indicates that the workflow is working.",
+      "isCommentAutoGenerated" : true
     },
     "Works in a folder" : {
 
@@ -392492,6 +393403,16 @@
     },
     "Writing: %@" : {
 
+    },
+    "Wrong type at %@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Wrong type at %1$@: %2$@"
+          }
+        }
+      }
     },
     "Wrote a file" : {
       "localizations" : {

@@ -102,6 +102,11 @@ struct RunProgressEvaluatorTests {
         #expect(evaluate(idle: 24 * 60 * 60, previous: .active, loading: .workflowAwaitingPerson) == .active)
     }
 
+    @Test func privacyReviewWaitingOnAPersonNeverStalls() {
+        #expect(evaluate(idle: 45, previous: .active, loading: .privacyReview) == .active, "no Still working chip")
+        #expect(evaluate(idle: 24 * 60 * 60, previous: .active, loading: .privacyReview) == .active)
+    }
+
     @Test func loadingStartClearsPreviousAndDoesNotSnapBack() {
         let afterBootStart = evaluate(
             idle: 0,

@@ -129,8 +129,7 @@ struct WorkflowRowList<Item: Identifiable, Row: View>: View {
                 row(item)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
-        .settingsChrome(.card)
+        .workflowCardContents()
     }
 }
 
@@ -201,7 +200,27 @@ struct WorkflowStepList: View {
                 .background(theme.surface.subtle)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
-        .settingsChrome(.card)
+        .workflowCardContents()
+    }
+}
+
+extension View {
+    /// A card whose rows paint their own fills (a hovered row, a footer
+    /// band): the rows sit inside the card's border, clipped to its corners,
+    /// since the card draws its border beneath them.
+    func workflowCardContents() -> some View {
+        modifier(WorkflowCardContents())
+    }
+}
+
+private struct WorkflowCardContents: ViewModifier {
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        let border = theme.stroke.default
+        content
+            .clipShape(RoundedRectangle(cornerRadius: max(0, theme.radius.large - border), style: .continuous))
+            .padding(border)
+            .settingsChrome(.card)
     }
 }

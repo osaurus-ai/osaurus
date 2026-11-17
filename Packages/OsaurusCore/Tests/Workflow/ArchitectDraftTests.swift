@@ -1038,26 +1038,7 @@ struct ArchitectToolExposureTests {
 struct DraftTestTabTests {
 
     @Test
-    func inputSummary_listsEnteredFields_inFormOrder_hidingSecrets() {
-        let fields = [
-            DialogField(key: "url", label: "Channel URL"),
-            DialogField(key: "token", label: "Token", type: .secret),
-            DialogField(key: "notes", label: "Notes", required: false),
-        ]
-        let summary = ArchitectSidebarPanel.inputSummary(
-            fields, values: ["url": .string(" https://youtube.com/@bob "), "token": .string("abc"), "notes": .string("")])
-        #expect(summary == "Channel URL: https://youtube.com/@bob · Token: ••••")
-        #expect(ArchitectSidebarPanel.inputSummary(fields, values: [:]) == "Nothing entered yet")
-    }
-
-    @Test
-    func longSectionsScrollInABoxOfMostOfTheList() {
-        #expect(DraftSectionList<ArchitectSidebarPanel.TestPanel>.boundedHeight(listHeight: 600) == 360)
-        #expect(DraftSectionList<ArchitectSidebarPanel.TestPanel>.boundedHeight(listHeight: 240) == 200)
-    }
-
-    @Test
-    func aFinishedTestOpensItsResult_otherwiseItsSteps() {
+    func aTryInProgressReadsHowFarItGot() {
         let def = WorkflowDefinition(nodes: [
             WorkflowNode(id: "ask", name: "Ask", intent: "a", kind: nil),
             WorkflowNode(id: "fetch", name: "Download", intent: "b", kind: nil),
@@ -1066,15 +1047,11 @@ struct DraftTestTabTests {
             workflowID: UUID(), workflowName: "X", templateID: UUID(), templateVersion: 1,
             caller: WorkflowCaller(kind: .test), input: .object([:]), nodeIDs: ["ask", "fetch"])
         run.status = .running
-        #expect(ArchitectSidebarPanel.panel(after: run) == .progress)
         run.nodes[0].status = .done
-        #expect(ArchitectSidebarPanel.progressSummary(run, definition: def).hasSuffix("1 of 2 steps"))
+        #expect(ArchitectPreviewPanel.progressSummary(run, definition: def).hasSuffix("1 of 2 steps"))
+        #expect(ArchitectPreviewPanel.liveLine(WorkflowDraft(name: "X"), latest: run).hasPrefix("Trying it out · "))
         run.nodes[1].status = .failed
         run.status = .failed
-        #expect(ArchitectSidebarPanel.panel(after: run) == .progress)
-        #expect(ArchitectSidebarPanel.progressSummary(run, definition: def).hasSuffix("failed at Download"))
-        run.status = .completed
-        run.output = .object(["count": .number(3)])
-        #expect(ArchitectSidebarPanel.panel(after: run) == .result)
+        #expect(ArchitectPreviewPanel.progressSummary(run, definition: def).hasSuffix("failed at Download"))
     }
 }

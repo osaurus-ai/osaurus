@@ -380,6 +380,13 @@ enum ToolDisplayName {
     /// `clarify`) are listed for completeness even though they render as
     /// first-class UI rather than chips.
     private static let curated: [String: ToolLabel] = [
+        // The Architect, in the words of the person it is making a workflow for.
+        "workflow_draft": ToolLabel(L("Shaping your workflow"), L("Shaped your workflow")),
+        "workflow_test": ToolLabel(L("Trying it out"), L("Tried it out")),
+        "workflow_propose_save": ToolLabel(L("Getting it ready to add"), L("Ready to add")),
+        "workflow_runs": ToolLabel(L("Looking at how it ran"), L("Looked at how it ran")),
+        "workflow_discover": ToolLabel(L("Looking for what it can use"), L("Looked for what it can use")),
+
         // Database
         "db_schema": ToolLabel(L("Reading the database schema"), L("Read the database schema")),
         "db_create_table": ToolLabel(L("Creating a database table"), L("Created a database table")),

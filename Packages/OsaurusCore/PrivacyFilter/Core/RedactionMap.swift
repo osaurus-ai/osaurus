@@ -23,6 +23,7 @@
 //      canceled placeholders never escaped this map.
 //
 
+import CryptoKit
 import Foundation
 
 public actor RedactionMap {
@@ -55,6 +56,12 @@ public actor RedactionMap {
     /// call (every agent-loop iteration is one) auto-approved it as a
     /// "prior turn" carry-over and redacted it anyway.
     private var skipped: Set<String> = []
+
+    /// SHA-256 digests of message segments that went through detection
+    /// on a send that shipped. History outside this set has never been
+    /// checked against this map (a reopened chat, a forgotten or evicted
+    /// map), so the next send scans it before it goes out again.
+    private var scannedSegments: Set<Data> = []
 
     public init(conversationID: UUID) {
         self.conversationID = conversationID
@@ -158,6 +165,39 @@ public actor RedactionMap {
         skipped
     }
 
+    /// Stop redacting originals that may already have shipped: later
+    /// sends carry them as written (they join `skipped`), but their
+    /// placeholders keep resolving, so a reply that still echoes
+    /// `[EMAIL_1]` unscrubs correctly.
+    public func stopRedacting(_ originals: Set<String>) {
+        guard !originals.isEmpty else { return }
+        for original in originals {
+            forward.removeValue(forKey: original)
+        }
+        skipped.formUnion(originals)
+    }
+
+    /// Undo `stopRedacting` / a skip: the original is detected and
+    /// reviewed again on the next send.
+    public func resumeRedacting(_ originals: Set<String>) {
+        skipped.subtract(originals)
+    }
+
+    // MARK: - Scanned segments
+
+    public static func segmentDigest(_ text: String) -> Data {
+        Data(SHA256.hash(data: Data(text.utf8)))
+    }
+
+    /// The subset of `digests` already scanned in this conversation.
+    public func scanned(among digests: [Data]) -> Set<Data> {
+        Set(digests.filter(scannedSegments.contains))
+    }
+
+    public func markScanned(_ digests: [Data]) {
+        scannedSegments.formUnion(digests)
+    }
+
     /// Snapshot of the per-prefix counters. Captured pre-detection
     /// and replayed via `rollbackToSnapshot` on a canceled review.
     public var counterSnapshot: [String: Int] {
@@ -165,18 +205,29 @@ public actor RedactionMap {
     }
 
     /// Restore the map to a pre-detection state: drop the freshly
-    /// interned originals AND rewind per-category counters.
+    /// interned originals AND rewind per-prefix counters.
     ///
-    /// Safe iff the canceled placeholders never escaped this map
-    /// (no wire send, no log, no peer process). The pipeline's
-    /// cancel branch satisfies that — Insights wire-body capture
-    /// is gated on a successful send.
+    /// A prefix rewinds only when no index minted after the snapshot is
+    /// still live (resolvable). The map is shared by a conversation and
+    /// its subagents, so another call may have minted — and shipped —
+    /// an index above the snapshot in the meantime; rewinding past it
+    /// would hand the same token to a different original.
     public func rollbackToSnapshot(
         removingOriginals originals: Set<String>,
         counters snapshot: [String: Int]
     ) {
         removeOriginals(originals)
-        counters = snapshot
+        for (prefix, current) in counters {
+            let base = snapshot[prefix] ?? 0
+            guard current > base else { continue }
+            let stillLive = (base + 1 ... current).contains { reverse["[\(prefix)_\($0)]"] != nil }
+            guard !stillLive else { continue }
+            if base == 0 {
+                counters.removeValue(forKey: prefix)
+            } else {
+                counters[prefix] = base
+            }
+        }
     }
 
     // MARK: - Inspection

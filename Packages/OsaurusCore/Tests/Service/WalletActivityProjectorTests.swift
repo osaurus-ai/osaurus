@@ -166,6 +166,30 @@ struct WalletActivityProjectorTests {
         #expect(rows.map(\.id) == ["usage-u1"])
     }
 
+    @Test func holdReleaseAndSettleAreHiddenBehindUsageRows() {
+        // Each billed request writes hold (-max), then hold_release (+max) and
+        // settle (-actual) in the usage row's transaction, so they share its
+        // timestamp. Only the usage rows and the real top-up should show.
+        let rows = WalletActivityProjector().rows(
+            usageItems: [
+                usage(id: "u-old", cost: "16700", createdAt: Self.timestamp(offset: -100)),
+                usage(id: "u-new", cost: "17100", createdAt: Self.timestamp(offset: 100)),
+            ],
+            transactions: [
+                transaction(id: "topup", amount: "5000000", entryType: "topup", createdAt: Self.timestamp(offset: -300)),
+                transaction(id: "hold-old", amount: "-39000", entryType: "hold", createdAt: Self.timestamp(offset: -105)),
+                transaction(id: "release-old", amount: "39000", entryType: "hold_release", createdAt: Self.timestamp(offset: -100)),
+                transaction(id: "settle-old", amount: "-16700", entryType: "settle", createdAt: Self.timestamp(offset: -100)),
+                transaction(id: "hold-new", amount: "-38900", entryType: "hold", createdAt: Self.timestamp(offset: 95)),
+                transaction(id: "release-new", amount: "38900", entryType: "hold_release", createdAt: Self.timestamp(offset: 100)),
+                transaction(id: "settle-new", amount: "-17100", entryType: "settle", createdAt: Self.timestamp(offset: 100)),
+            ]
+        )
+
+        #expect(rows.map(\.id) == ["usage-u-new", "usage-u-old", "txn-topup"])
+        #expect(rows.map(\.amountLabel) == ["-171 credits", "-167 credits", "+50,000 credits"])
+    }
+
     @Test func recognizedDebitEntryTypesStayVisible() {
         let rows = WalletActivityProjector().rows(
             usageItems: [],

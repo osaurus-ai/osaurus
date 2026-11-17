@@ -817,10 +817,10 @@ public struct ThemeWindowMaterial: Codable, Equatable, Hashable, Sendable {
     }
 
     public static var lightDefaults: ThemeWindowMaterial {
-        ThemeWindowMaterial(tint: "#F0EFEDFF", tintOpacity: 0.55, fallback: "#F0EFEDFF")
+        ThemeWindowMaterial(tint: "#D9D9CDFF", tintOpacity: 0.7, fallback: "#D9D9CDFF")
     }
     public static var darkDefaults: ThemeWindowMaterial {
-        ThemeWindowMaterial(tint: "#201F1DFF", tintOpacity: 0.55, fallback: "#201F1DFF")
+        ThemeWindowMaterial(tint: "#1A1919FF", tintOpacity: 0.55, fallback: "#3E3B37FF")
     }
 }
 

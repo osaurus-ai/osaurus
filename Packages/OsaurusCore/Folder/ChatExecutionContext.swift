@@ -499,6 +499,14 @@ public enum ChatExecutionContext {
     /// filter off.
     @TaskLocal static var voiceCallPrivacy: VoiceCallPrivacy? = nil
 
+    /// The conversation whose Privacy Filter state (redaction map, policy,
+    /// review queue) every cloud request in this task tree shares. Bound
+    /// once per chat turn to the root chat session id and inherited by the
+    /// subagents, browser runs and hand-offs its tools start, which mint
+    /// their own session ids. An already-bound value is kept, so a nested
+    /// delegate stays in the root conversation's scope.
+    @TaskLocal static var privacyScopeId: String? = nil
+
     /// The person (or remote agent) whose message drives this run when it is
     /// not the owner at this Mac: a workspace teammate, an invite-link peer,
     /// another person's agent, or a channel sender. Bound by

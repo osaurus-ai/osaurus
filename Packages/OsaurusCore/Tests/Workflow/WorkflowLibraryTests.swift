@@ -126,6 +126,23 @@ struct WorkflowSetupStepsTests {
     }
 
     @Test
+    func sandboxBlockerWithoutDeclaredPackagesGetsTheDependenciesStep() {
+        let t = Template(name: "Shell", payload: .workflow(WorkflowDefinition()))
+        let sandbox = SetupReport(subjectId: t.id, items: [blocking(.dependency, "sandbox")])
+        #expect(
+            WorkflowSetupWizardView.steps(for: subject(.draft(UUID()), t), report: sandbox, newRequirements: nil)
+                == [.dependencies, .review], "the Sandbox blocker needs a step with Open Sandbox")
+        #expect(
+            WorkflowSetupWizardView.steps(
+                for: subject(.update(UUID()), t), report: sandbox, newRequirements: TemplateDiff.NewRequirements())
+                == [.dependencies, .review])
+        #expect(
+            WorkflowSetupWizardView.steps(
+                for: subject(.draft(UUID()), t), report: SetupReport(subjectId: t.id, items: []), newRequirements: nil)
+                == [.review])
+    }
+
+    @Test
     func savedAnswersStepOnlyForInstalledWorkflowsWithRememberedFields() {
         var def = WorkflowDefinition()
         def.nodes = [

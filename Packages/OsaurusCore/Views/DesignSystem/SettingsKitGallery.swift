@@ -58,6 +58,10 @@
         @State private var statSelection: String? = "Errors"
         @State private var sliderValue = 0.6
         @State private var date = Date()
+        @State private var gallerySwatch: String? = "teal"
+        @State private var galleryCustomAccent = "#E0457B"
+        @State private var galleryFont = ThemeReadability.systemFont
+        @State private var galleryJSON = "{\n  \"colour\": {},\n  \"overrides\": {\n    \"type.body\": { \"size\": 40 }\n  }\n}"
         #if OSAURUS_DESIGN_INSPECTOR
         private static let verificationMinimumDate = Date(timeIntervalSince1970: 1_792_411_200)
         @State private var boundedDate = Date(timeIntervalSince1970: 1_792_411_200)
@@ -97,7 +101,7 @@
                 SettingsPageHeader(
                     title: "Settings Kit",
                     subtitle: "Every component in every state",
-                    count: 13,
+                    count: 14,
                     utilities: {
                         controlSwitch("Disabled", $isDisabled)
                         controlSwitch("Narrow", $isNarrow)
@@ -130,6 +134,7 @@
                             fields
                             sections
                             noticesAndSheets
+                            themeKit
                             library
                             dataTable
                             indicators
@@ -1253,6 +1258,48 @@ HStack(spacing: theme.space.s8) {
         }
 
         // MARK: Library
+
+        private var themeKit: some View {
+            SettingsSection(title: "Theme editing", layout: .plain, verbatimTitle: true) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
+                    SettingsRow(title: "Accent", description: "Swatches plus a custom well", verbatimTitle: true) {
+                        SettingsSwatchPicker(
+                            swatches: ThemeAccentSwatch.allCases.map { swatch in
+                                let pair = ThemeGenerator.previewAccent(.swatch(swatch))
+                                return .init(id: swatch.rawValue, label: swatch.label, color: Color(themeHex: theme.isDark ? pair.dark : pair.light))
+                            },
+                            selection: $gallerySwatch,
+                            customColor: $galleryCustomAccent,
+                            customPreview: Color(themeHex: ThemeGenerator.previewAccent(.custom(galleryCustomAccent)).light)
+                        )
+                    }
+                    SettingsRow(title: "Interface Font", description: "System, then installed readable families", verbatimTitle: true) {
+                        SettingsFontPicker(kind: .ui, selection: $galleryFont)
+                    }
+                    HStack(alignment: .top, spacing: theme.space.s12) {
+                        SettingsThemePreview(theme: CustomizableTheme(config: .lightDefault), caption: "Light")
+                        SettingsThemePreview(theme: CustomizableTheme(config: .darkDefault), caption: "Dark")
+                    }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: theme.space.s12)], spacing: theme.space.s12) {
+                        LibraryCard(title: "Osaurus", subtitle: "Light and dark · Warm · Teal", isSelected: true) {
+                            SettingsThemeCardHero(modes: [CustomizableTheme(config: .lightDefault), CustomizableTheme(config: .darkDefault)])
+                        } leading: {
+                            EmptyView()
+                        } badges: {
+                            StatusChip("Active", tone: .accent)
+                        }
+                    }
+                    SettingsJSONEditor(
+                        text: $galleryJSON,
+                        findings: [
+                            .init(id: "w", severity: .warning, message: "type.body size 40 clamped to 32", line: 4),
+                            .init(id: "e", severity: .error, message: "Unknown key \"colour\"", line: 2),
+                        ],
+                        minHeight: 120
+                    )
+                }
+            }
+        }
 
         private var library: some View {
             SettingsSection(title: "Library", layout: .plain, verbatimTitle: true) {

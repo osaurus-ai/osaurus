@@ -525,7 +525,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         parameters: GenerationParameters
     ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
         do {
-            let scrubbed = try await PrivacyFilterPipeline.applyOutbound(
+            let scrubbed = try await PrivacyFilterPipeline.applyOutboundDetailed(
                 messages: messages,
                 sessionId: parameters.sessionId,
                 providerId: provider.id,
@@ -543,7 +543,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             // the activity row can say "privacy filter: N redacted" next
             // to the bytes that left the Mac.
             if let probe = WireTransportProbe.current {
-                if let map = scrubbed.map {
+                if scrubbed.filterApplied, let map = scrubbed.map {
                     let redacted = await map.snapshot().count
                     probe.recordPrivacyFilter(applied: true, redactedCount: redacted)
                 } else {
@@ -5420,7 +5420,13 @@ struct RemoteChatRequest: Encodable {
             RemoteProviderService.mergingDuplicateToolResults(messages),
             provider: "anthropic"
         )
-        for msg in pairedMessages {
+        // A signed thinking block is bound to the exact content before it.
+        // Older user messages are rewritten between turns (session state rides
+        // only the latest one; windowing and summaries drop or replace turns),
+        // so blocks from earlier exchanges fail with a prefix-mismatch 400.
+        // Anthropic only requires them within the current tool-use loop.
+        let currentExchangeStart = pairedMessages.lastIndex { $0.role == "user" } ?? -1
+        for (index, msg) in pairedMessages.enumerated() {
             switch msg.role {
             case "system":
                 // Flush any pending tool results before system message
@@ -5459,7 +5465,8 @@ struct RemoteChatRequest: Encodable {
                 flushToolResults()
                 // Convert assistant messages, including tool calls
                 var blocks: [AnthropicContentBlock] = []
-                for raw in msg.anthropic_thinking_blocks ?? [] {
+                let replayedThinking = index > currentExchangeStart ? msg.anthropic_thinking_blocks ?? [] : []
+                for raw in replayedThinking {
                     let data = try? JSONEncoder.osaurusCanonical().encode(raw)
                     if let data, let block = try? JSONDecoder().decode(AnthropicContentBlock.self, from: data) {
                         switch block {

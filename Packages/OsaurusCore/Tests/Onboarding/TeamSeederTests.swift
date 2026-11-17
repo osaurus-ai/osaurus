@@ -334,7 +334,7 @@ struct TeamSeedingTests {
             let filter = try #require(PrivacyFilterStore.load())
             #expect(filter.enabled)
             #expect(!filter.aiDetectionEnabled)
-            #expect(!filter.alwaysApproveByDefault)
+            #expect(filter.defaultReviewPolicy == .ask)
 
             let scout = try #require(first.first { $0.teammate == .scout })
             _ = await AgentManager.shared.delete(id: scout.id)

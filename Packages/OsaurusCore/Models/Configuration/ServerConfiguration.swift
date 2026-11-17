@@ -46,6 +46,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Appearance mode (system, light, or dark)
     public var appearanceMode: AppearanceMode
 
+    /// The active custom theme; nil is the built-in Osaurus theme.
+    public var activeThemeId: UUID?
+
     /// Global UI font scale applied on top of the active theme's font sizes.
     /// 1.0 is the theme's own sizing; clamped to `fontSizeMultiplierRange`.
     public var fontSizeMultiplier: Double
@@ -100,6 +103,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case startAtLogin
         case hideDockIcon
         case appearanceMode
+        case activeThemeId
         case fontSizeMultiplier
         case numberOfThreads
         case backlog
@@ -126,6 +130,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Bool.self, forKey: .hideDockIcon) ?? defaults.hideDockIcon
         self.appearanceMode =
             try container.decodeIfPresent(AppearanceMode.self, forKey: .appearanceMode) ?? defaults.appearanceMode
+        self.activeThemeId = try? container.decodeIfPresent(UUID.self, forKey: .activeThemeId)
         self.fontSizeMultiplier = Self.clampedFontSizeMultiplier(
             try container.decodeIfPresent(Double.self, forKey: .fontSizeMultiplier)
                 ?? defaults.fontSizeMultiplier
@@ -178,6 +183,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         try container.encode(startAtLogin, forKey: .startAtLogin)
         try container.encode(hideDockIcon, forKey: .hideDockIcon)
         try container.encode(appearanceMode, forKey: .appearanceMode)
+        try container.encodeIfPresent(activeThemeId, forKey: .activeThemeId)
         try container.encode(fontSizeMultiplier, forKey: .fontSizeMultiplier)
         try container.encode(numberOfThreads, forKey: .numberOfThreads)
         try container.encode(backlog, forKey: .backlog)
@@ -198,6 +204,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         startAtLogin: Bool,
         hideDockIcon: Bool = false,
         appearanceMode: AppearanceMode = .system,
+        activeThemeId: UUID? = nil,
         fontSizeMultiplier: Double = 1.0,
         numberOfThreads: Int,
         backlog: Int32,
@@ -216,6 +223,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.startAtLogin = startAtLogin
         self.hideDockIcon = hideDockIcon
         self.appearanceMode = appearanceMode
+        self.activeThemeId = activeThemeId
         self.fontSizeMultiplier = Self.clampedFontSizeMultiplier(fontSizeMultiplier)
         self.numberOfThreads = numberOfThreads
         self.backlog = backlog

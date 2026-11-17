@@ -63,10 +63,6 @@ struct ArchitectChatEmptyState: View {
                 .foregroundStyle(theme.text.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            if mode == .start {
-                WorkflowStageStepper(stage: .design)
-                    .padding(.top, theme.space.s8)
-            }
         }
     }
 
@@ -79,7 +75,7 @@ struct ArchitectChatEmptyState: View {
 
     private var title: String {
         switch mode {
-        case .start: return L("What should this workflow do?")
+        case .start: return L("What would you like to automate?")
         case .edit(let name, _, _): return L("What should change in \(name)?")
         }
     }
@@ -88,13 +84,13 @@ struct ArchitectChatEmptyState: View {
         switch mode {
         case .start:
             return L(
-                "Describe the task in your own words below. The Architect asks only what it needs, builds the steps, and tests them with you before anything is saved."
+                "Say it in your own words below. The Architect asks only what it needs, builds it while you watch, and tries it with you."
             )
         case .edit(_, let steps, let isSaved):
             let stepLine = steps == 1 ? L("Its step is on the right.") : L("Its \(steps) steps are on the right.")
             let saveLine = isSaved
-                ? L("Saving makes the next version; the one you run now stays until then.")
-                : L("Nothing is saved until you test it and choose Save.")
+                ? L("The one in My Workflows stays as it is until you update it.")
+                : L("Nothing changes in My Workflows until you try it and add it.")
             return "\(stepLine) \(L("Tell the Architect what to change, or start from one of these.")) \(saveLine)"
         }
     }
@@ -103,7 +99,7 @@ struct ArchitectChatEmptyState: View {
     private var suggestions: some View {
         if !quickActions.isEmpty {
             VStack(alignment: .leading, spacing: theme.space.s8) {
-                WorkflowSectionHeader(title: mode == .start ? L("Or start from an idea") : L("Start from"))
+                WorkflowSectionHeader(title: mode == .start ? L("Or start from one of these") : L("Start from"))
                 VStack(spacing: theme.space.s0) {
                     ForEach(Array(quickActions.enumerated()), id: \.element.id) { index, action in
                         if index > 0 { ThemeHairlineDivider(color: theme.border.subtle) }

@@ -437,6 +437,31 @@ private struct AppearanceMenuItems: View {
         } label: {
             Text(verbatim: LCached("Appearance"))
         }
+        .disabled(themeManager.isAppearanceLocked)
+
+        Menu {
+            ForEach(themeManager.selectableThemes) { document in
+                Button {
+                    themeManager.setActiveTheme(document.id)
+                } label: {
+                    HStack {
+                        Text(verbatim: document.name)
+                        if themeManager.selectedThemeId == document.id {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button {
+                themeManager.showThemesPage()
+            } label: {
+                Text(verbatim: LCached("Themes…"))
+            }
+        } label: {
+            Text(verbatim: LCached("Theme"))
+        }
 
         Divider()
 
@@ -473,7 +498,7 @@ private struct AppearanceMenuItems: View {
         } label: {
             HStack {
                 Text(verbatim: title)
-                if themeManager.appearanceMode == mode {
+                if themeManager.effectiveAppearanceMode == mode {
                     Spacer()
                     Image(systemName: "checkmark")
                 }

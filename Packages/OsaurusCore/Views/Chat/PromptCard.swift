@@ -296,6 +296,31 @@ struct PromptCard<BodyContent: View, InputRow: View>: View {
 
 // MARK: - PromptOverlayHost
 
+/// Where a prompt card sits: in place of the composer at the foot of the
+/// chat column, or centered over a wider area (the workflow-creation
+/// split, where it pauses the chat and the draft together).
+enum PromptOverlayPlacement: Equatable {
+    case composer
+    case centered
+
+    /// Centered when the chat sits beside a draft; the composer's place
+    /// otherwise, including a narrow window's stacked split.
+    static func forLayout(isSplit: Bool, isStacked: Bool) -> Self {
+        isSplit && !isStacked ? .centered : .composer
+    }
+}
+
+private struct PromptOverlayPlacementKey: EnvironmentKey {
+    static let defaultValue = PromptOverlayPlacement.composer
+}
+
+extension EnvironmentValues {
+    var promptOverlayPlacement: PromptOverlayPlacement {
+        get { self[PromptOverlayPlacementKey.self] }
+        set { self[PromptOverlayPlacementKey.self] = newValue }
+    }
+}
+
 /// Bottom-pinned host shared by all prompt overlays. Owns the entry
 /// animation (fade + slight rise + scale-in) so concrete overlays only
 /// need to wire up their card.
@@ -310,6 +335,7 @@ struct PromptOverlayHost<Card: View>: View {
     @Environment(\.theme) private var environmentTheme
     private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.promptOverlayPlacement) private var placement
     @State private var isAppearing = false
 
     var body: some View {
@@ -320,10 +346,14 @@ struct PromptOverlayHost<Card: View>: View {
                 .opacity(isAppearing ? 1 : 0)
                 .offset(y: isAppearing ? 0 : (reduceMotion ? 0 : 30))
                 .scaleEffect(isAppearing ? 1.0 : (reduceMotion ? 1.0 : 0.985))
-                .padding(.bottom, ChatShellLayout.columnInset)
+                .padding(.bottom, placement == .composer ? ChatShellLayout.columnInset : theme.space.s0)
                 // Same column as the thread and the composer card it
                 // stands in for, centered in the chat column.
                 .readableColumnRow()
+
+            if placement == .centered {
+                Spacer(minLength: ChatView.headerHeight(theme) + theme.space.s12)
+            }
         }
         .onAppear {
             if reduceMotion {

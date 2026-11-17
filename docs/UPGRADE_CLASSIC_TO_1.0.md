@@ -34,8 +34,14 @@ Classic until Classic support ends.
   it again, and no starter teammates or default workflows are added to
   their library (**Create starter agents** in Agents → Delegation adds the
   team on request). What's New is gone.
-- A custom theme that was active becomes Light or Dark to match it. Custom
-  themes are gone in 1.0: appearance is System, Light or Dark.
+- Custom themes. `ClassicThemeMigrator` converts each Classic theme once into
+  the 1.0 theme library (`~/.osaurus/themes/library`), keeping its id: the
+  tone and accent are matched from its colors, and fonts, text sizes, corner
+  roundness, border width and motion carry over. The theme that was active
+  stays active. Classic's built-in Light, Dark and Osaurus themes map to the
+  default Osaurus theme in that appearance, Neon to Osaurus Dark, and Nord,
+  Paper and Terminal to the 1.0 presets of the same name. The Classic files
+  are left in place. See [THEMES.md](THEMES.md).
 
 ## Changes on first use
 

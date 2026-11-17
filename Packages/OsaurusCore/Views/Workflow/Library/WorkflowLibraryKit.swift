@@ -222,19 +222,19 @@ extension View {
 
 // MARK: - Making a workflow
 
-/// Making a workflow, in order. Each draft row and the Architect's
-/// header show where a draft stands.
+/// Making a workflow, in order: the Architect makes it, you try it, you
+/// share it. The preview and the Architect's details show where a draft
+/// stands.
 enum WorkflowMakeStage: Int, CaseIterable, Comparable, Identifiable {
-    case design, test, save, publish
+    case make, tryIt, share
 
     var id: Int { rawValue }
 
     var title: String {
         switch self {
-        case .design: return L("Design")
-        case .test: return L("Test")
-        case .save: return L("Save")
-        case .publish: return L("Publish")
+        case .make: return L("Build")
+        case .tryIt: return L("Run")
+        case .share: return L("Share")
         }
     }
 
@@ -242,31 +242,43 @@ enum WorkflowMakeStage: Int, CaseIterable, Comparable, Identifiable {
 }
 
 extension DraftStatus {
-    /// The stage a draft is at: designing until it has valid steps that
-    /// can run, testing until a test passes, then saving.
+    /// The stage a draft is at: making until it has valid steps that can
+    /// run, trying until it is saved. Saved drafts are at Share; see
+    /// `ArchitectPreviewPhase.stage`.
     var stage: WorkflowMakeStage {
         switch kind {
-        case .drafting, .needsSetup: return .design
-        case .ready, .testing, .testFailed: return .test
-        case .tested: return .save
+        case .drafting, .needsSetup: return .make
+        case .ready, .testing, .testFailed, .tested: return .tryIt
         }
     }
 }
 
-/// Design → Test → Save → Publish, the current stage marked. Compact shows
-/// only the current stage's name.
+/// Build → Run → Share, the current stage marked. Compact shows
+/// only the current stage's name. `isActive` pulses the current marker
+/// while something is happening that the person is waiting on.
 struct WorkflowStageStepper: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let stage: WorkflowMakeStage
     var compact = false
+    var isActive = false
+    /// Every stage checked: the workflow is made, tried, and shared.
+    var isComplete = false
+
+    @State private var pulse = false
 
     var body: some View {
         HStack(spacing: compact ? theme.space.s4 : theme.space.s6) {
             ForEach(WorkflowMakeStage.allCases) { item in
-                if item != .design {
-                    Rectangle()
-                        .fill(item <= stage ? theme.statusInk(.success) : theme.border.default)
-                        .frame(width: compact ? theme.space.s6 : theme.space.s16, height: theme.stroke.default)
+                if item != .make {
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(theme.border.default)
+                        Rectangle()
+                            .fill(theme.statusInk(.success))
+                            .frame(width: item <= stage ? nil : 0)
+                    }
+                    .frame(width: compact ? theme.space.s6 : theme.space.s24, height: theme.stroke.default)
+                    .clipped()
                 }
                 HStack(spacing: theme.space.s4) {
                     marker(item)
@@ -280,22 +292,37 @@ struct WorkflowStageStepper: View {
                 }
             }
         }
+        .animation(reduceMotion ? nil : theme.motion.standard, value: stage)
+        .animation(reduceMotion ? nil : theme.motion.standard, value: isComplete)
+        .onAppear { updatePulse() }
+        .onChange(of: isActive) { _, _ in updatePulse() }
         .accessibilityElement()
         .accessibilityLabel(Text("Progress", bundle: .module))
         .accessibilityValue(
             Text(verbatim: L("Step \(stage.rawValue + 1) of \(WorkflowMakeStage.allCases.count): \(stage.title)")))
     }
 
+    private func updatePulse() {
+        guard isActive, !reduceMotion else {
+            pulse = false
+            return
+        }
+        withAnimation(theme.motion.loop(.easeInOut, duration: 0.9, autoreverses: true)) { pulse = true }
+    }
+
     @ViewBuilder
     private func marker(_ item: WorkflowMakeStage) -> some View {
-        if item < stage {
+        if item < stage || (isComplete && item == stage) {
             Image(systemName: "checkmark.circle.fill")
                 .glyphSize(.micro, weight: .semibold)
                 .foregroundStyle(theme.statusInk(.success))
+                .transition(.scale.combined(with: .opacity))
         } else if item == stage {
             Image(systemName: "circle.inset.filled")
                 .glyphSize(.micro, weight: .semibold)
                 .foregroundStyle(theme.statusInk(.info))
+                .opacity(pulse ? 0.45 : 1)
+                .scaleEffect(pulse ? 0.85 : 1)
         } else {
             Image(systemName: "circle")
                 .glyphSize(.micro)

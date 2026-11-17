@@ -159,10 +159,10 @@ struct ListingExamplesEditor: View {
                 .font(SettingsFont.rowDescription)
                 .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
-            ForEach($examples) { $draft in
+            ForEach(examples) { draft in
                 let id = draft.id
                 ListingExampleRow(
-                    draft: $draft, latestVersion: latestVersion,
+                    draft: binding(for: draft), latestVersion: latestVersion,
                     onMoveUp: examples.first?.id == id ? nil : { moveUp(id) },
                     onRemove: { remove(id) })
             }
@@ -188,6 +188,19 @@ struct ListingExamplesEditor: View {
                 },
                 onCancel: { picking = false })
         }
+    }
+
+    /// A row's example by id, not position: a focused title field writes
+    /// back when it loses focus, which can be after Remove or Move Up
+    /// shifted the list. A write for a removed example is dropped.
+    private func binding(for draft: ListingExampleDraft) -> Binding<ListingExampleDraft> {
+        let id = draft.id
+        return Binding(
+            get: { examples.first { $0.id == id } ?? draft },
+            set: { edited in
+                guard let index = examples.firstIndex(where: { $0.id == id }) else { return }
+                examples[index] = edited
+            })
     }
 
     private func moveUp(_ id: String) {

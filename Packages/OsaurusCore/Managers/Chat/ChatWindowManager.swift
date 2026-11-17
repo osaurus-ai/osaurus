@@ -1368,7 +1368,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.titlebarSeparatorStyle = .none
         panel.isMovableByWindowBackground = false
         panel.acceptsMouseMovedEvents = true
-        panel.appearance = NSAppearance(named: windowState.theme.isDark ? .darkAqua : .aqua)
 
         let toolbar = NSToolbar(identifier: "ChatToolbar")
         toolbar.allowsUserCustomization = false

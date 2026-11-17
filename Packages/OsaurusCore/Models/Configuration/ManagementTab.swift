@@ -165,8 +165,8 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     /// Resolves a tab id, including legacy raw values whose destination has
     /// moved (`"dashboard"` → Credits, `"channels"` → Channels, `"storage"`
     /// → Privacy & Security, whose Data & Storage page hosts encryption and
-    /// file history (see `legacySubTab(from:)`), `"themes"` → General's
-    /// Appearance, `"schedules"` / `"watchers"` / `"events"` → Automations,
+    /// file history (see `legacySubTab(from:)`), `"themes"` → General →
+    /// Themes, `"schedules"` / `"watchers"` / `"events"` → Automations,
     /// `"teams"` → Workspaces, `"sync"` → Devices, `"mobile"` → Devices →
     /// Mobile, `"relays"` → Access).
     /// The inner page a legacy tab id opens when it became a drill-in inside
@@ -174,6 +174,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     public static func legacySubTab(from rawValue: String) -> String? {
         switch rawValue {
         case "storage": PrivacyTab.storage.rawValue
+        case "themes": GeneralSubPage.themes.rawValue
         default: nil
         }
     }

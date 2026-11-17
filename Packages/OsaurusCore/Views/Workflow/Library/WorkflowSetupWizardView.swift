@@ -391,7 +391,11 @@ struct WorkflowSetupWizardView: View {
         {
             out.append(.tools)
         }
-        if wanted(!reqs.dependencies.isEmpty, !new.dependencies.isEmpty, [.dependency]) {
+        // Shell and Python steps need the Sandbox even with no declared
+        // packages; its blocker is only fixable from this step.
+        if wanted(
+            !reqs.dependencies.isEmpty || blocking.contains(.dependency), !new.dependencies.isEmpty, [.dependency])
+        {
             out.append(.dependencies)
         }
         if wanted(!reqs.permissions.isEmpty, !new.permissions.isEmpty, [.systemPermission]) {
@@ -1453,7 +1457,9 @@ struct WorkflowDependenciesStep: View {
                 StepDoneBanner(text: L("Every dependency is installed in this workflow's sandbox."))
             }
             Text(
-                "Shell steps of this workflow run in its own sandbox environment, not on your Mac. The packages below are installed there once and reused by every run.",
+                dependencies.isEmpty
+                    ? "Shell and Python steps of this workflow run in the Sandbox, not on your Mac. Set up the Sandbox once and every run reuses it."
+                    : "Shell steps of this workflow run in its own sandbox environment, not on your Mac. The packages below are installed there once and reused by every run.",
                 bundle: .module
             )
             .font(SettingsFont.caption)

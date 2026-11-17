@@ -345,16 +345,157 @@ public enum SettingsSearchIndex {
     static let catalog: [SettingsSearchEntry] = [
         // MARK: Settings (General)
         .init(
+            id: "settings.general.theme",
+            tab: .settings,
+            section: "Appearance",
+            title: "Theme",
+            keywords: [
+                "themes", "custom theme", "color theme", "colour theme", "accent color", "palette", "skin",
+                "graphite", "nord", "paper", "terminal",
+            ],
+            disambiguation:
+                "Which theme paints every window: colors, fonts and readability. Light or dark is Appearance; "
+                + "text zoom is Text Size. Also in View → Theme."
+        ),
+        .init(
             id: "settings.general.appearance",
             tab: .settings,
             section: "Appearance",
             title: "Appearance",
             keywords: [
-                "theme", "themes", "dark mode", "light mode", "night mode", "system appearance", "color scheme",
-                "match macos", "auto dark", "custom theme",
+                "dark mode", "light mode", "night mode", "system appearance", "color scheme",
+                "match macos", "auto dark",
             ],
             disambiguation:
-                "System, Light or Dark for every Osaurus window. Custom themes were removed; also in View → Appearance."
+                "System, Light or Dark for every Osaurus window; also in View → Appearance. "
+                + "Locked while a light-only or dark-only theme is active. Colors and fonts are Theme."
+        ),
+        .init(
+            id: "settings.general.themes",
+            tab: .settings,
+            section: "Themes",
+            title: "Themes",
+            keywords: [
+                "new theme", "import theme", "export theme", "export active theme", "duplicate theme",
+                "delete theme", "theme file", "show themes folder", "classic themes",
+            ],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "The theme library: built-in themes and your own. Pick, create, import or export."
+        ),
+        .init(
+            id: "settings.general.themes.accent",
+            tab: .settings,
+            section: "Themes",
+            title: "Accent",
+            keywords: ["accent color", "brand color", "button color", "link color", "highlight color", "tint"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor. Any color is adjusted to stay readable."
+        ),
+        .init(
+            id: "settings.general.themes.tone",
+            tab: .settings,
+            section: "Themes",
+            title: "Tone",
+            keywords: ["warm", "cool", "neutral", "background tint", "cream"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor: the tint of backgrounds and borders."
+        ),
+        .init(
+            id: "settings.general.themes.appearance",
+            tab: .settings,
+            section: "Themes",
+            title: "Appearance",
+            keywords: ["light only", "dark only", "light-only theme", "dark-only theme"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor: locks one theme to light or dark. The app-wide switch is General → Appearance."
+        ),
+        .init(
+            id: "settings.general.themes.contrast",
+            tab: .settings,
+            section: "Themes",
+            title: "Contrast",
+            keywords: ["high contrast", "increase contrast", "low vision", "accessibility", "readability"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor. macOS Increase Contrast turns this on for every theme."
+        ),
+        .init(
+            id: "settings.general.themes.corners",
+            tab: .settings,
+            section: "Themes",
+            title: "Corners",
+            keywords: ["corner radius", "rounded corners", "square corners", "roundness"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.transparency",
+            tab: .settings,
+            section: "Themes",
+            title: "Transparency",
+            keywords: [
+                "glass", "frosted", "translucent", "translucency", "blur", "vibrancy", "see-through", "opaque",
+                "solid", "window material", "icon rail", "title bar",
+            ],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation:
+                "In the theme editor: Solid, Frosted or Glass for the icon rail and title bar. macOS Reduce Transparency and Increase Contrast make it solid."
+        ),
+        .init(
+            id: "settings.general.themes.readingSize",
+            tab: .settings,
+            section: "Readability",
+            title: "Reading Size",
+            keywords: ["bigger text", "larger text", "large font", "chat text size", "accessibility"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor: larger chat and body text. Stacks with General → Text Size."
+        ),
+        .init(
+            id: "settings.general.themes.lineSpacing",
+            tab: .settings,
+            section: "Readability",
+            title: "Line Spacing",
+            keywords: ["line height", "leading", "relaxed", "dyslexia"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.uiFont",
+            tab: .settings,
+            section: "Readability",
+            title: "Interface Font",
+            keywords: ["font", "typeface", "atkinson hyperlegible", "lexend", "opendyslexic", "dyslexia font"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.codeFont",
+            tab: .settings,
+            section: "Readability",
+            title: "Code Font",
+            keywords: ["monospace font", "monospaced", "jetbrains mono", "fira code", "menlo"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.strongerOutlines",
+            tab: .settings,
+            section: "Readability",
+            title: "Stronger Outlines",
+            keywords: ["thicker borders", "focus ring", "border width", "outline"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.largerControls",
+            tab: .settings,
+            section: "Readability",
+            title: "Larger Controls",
+            keywords: ["bigger buttons", "taller rows", "touch target", "control size"],
+            subTab: GeneralSubPage.themes.rawValue
+        ),
+        .init(
+            id: "settings.general.themes.json",
+            tab: .settings,
+            section: "Themes",
+            title: "Edit JSON",
+            keywords: ["theme json", "design tokens", "advanced theme", "token override"],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation: "In the theme editor: per-token colors, sizes and fonts, kept within safe ranges."
         ),
         .init(
             id: "settings.general.textSize",
@@ -2567,11 +2708,57 @@ public enum SettingsSearchIndex {
             subTab: "overview"
         ),
         .init(
-            id: "privacy.filter.alwaysApprove",
+            id: "privacy.filter.detectionModel",
             tab: .privacy,
             section: "Filter",
-            title: "Always Approve by Default",
-            keywords: ["always approve", "review sheet", "skip review", "auto approve redaction"],
+            title: "Detection Model",
+            keywords: ["detection model", "install privacy model", "manage model", "privacy detection model"],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.reviewPolicy",
+            tab: .privacy,
+            section: "Review",
+            title: "When New Items Are Found",
+            keywords: [
+                "always approve", "always approve by default", "review sheet", "skip review",
+                "auto approve redaction", "redact automatically", "ask me", "stop asking", "privacy prompt",
+            ],
+            subTab: "overview",
+            disambiguation:
+                "Privacy & Security → Privacy Filter → Review. Global default for personal data in your own messages: ask in the review sheet, or redact automatically. Each conversation can override it from the composer's privacy chip (Review / Auto / Off). Not Tool Results or Model's Own Output."
+        ),
+        .init(
+            id: "privacy.filter.toolResults",
+            tab: .privacy,
+            section: "Review",
+            title: "Tool Results",
+            keywords: [
+                "tool results", "web fetch privacy", "tool output redaction", "review tool results",
+                "agent loop privacy",
+            ],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.modelOutput",
+            tab: .privacy,
+            section: "Review",
+            title: "Model's Own Output",
+            keywords: [
+                "model output", "tool arguments", "assistant replies", "review model output",
+                "tool call arguments redaction",
+            ],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.neverRedact",
+            tab: .privacy,
+            section: "Never Redact",
+            title: "Never Redact",
+            keywords: [
+                "never redact", "allowlist", "allow list", "exceptions", "always send", "trusted domain",
+                "don't redact", "whitelist",
+            ],
             subTab: "overview"
         ),
         .init(
@@ -2593,7 +2780,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "privacy.filter.nonInteractive",
             tab: .privacy,
-            section: "Advanced",
+            section: "Review",
             title: "Require Review for Background Requests",
             keywords: [
                 "non-interactive", "background requests", "http api review", "schedules review",
@@ -2611,7 +2798,6 @@ public enum SettingsSearchIndex {
                 "how long", "insights retention", "delete old activity", "7 days", "30 days", "keep forever",
                 "prune",
             ],
-            subTab: "overview",
             disambiguation:
                 "Privacy & Security → Activity Log. How many days of Insights activity (model requests, web searches, URL fetches, MCP calls, channel deliveries, Router calls) stay on disk before automatic pruning. Not Memory retention (Memory → Settings) and not File History (General → Advanced)."
         ),
@@ -2624,7 +2810,6 @@ public enum SettingsSearchIndex {
                 "activity log", "audit log", "store content", "store prompts", "log bodies", "metadata only",
                 "prompt logging", "response logging", "wire payload", "insights content",
             ],
-            subTab: "overview",
             disambiguation:
                 "Privacy & Security → Activity Log. When off, new Insights records keep metadata (destination, bytes, tokens, timing) but replace prompt/response/tool bodies with a withheld marker. Not the Privacy Filter redaction switch."
         ),
@@ -2633,8 +2818,7 @@ public enum SettingsSearchIndex {
             tab: .privacy,
             section: "Activity Log",
             title: "Review Activity in Insights",
-            keywords: ["open insights", "review activity", "audit", "export log", "verify chain"],
-            subTab: "overview"
+            keywords: ["open insights", "review activity", "audit", "export log", "verify chain"]
         ),
         .init(
             id: "privacy.rules.detectionPatterns",
@@ -3066,7 +3250,7 @@ public enum SettingsSearchIndex {
                 "agent template link", "agent page", "save as file", "live badge", "copy link", "open page",
                 "publish version",
             ],
-            disambiguation: "Agents → Templates → a template card's Share button → Publish to store.osaurus.ai (also Publish… in its … menu). Needs an Osaurus ID, which signs the template; bundled workflows go with it. Afterward the button reads Live with who can see it and installs, and Manage Published…, Copy Link, Open Page, Publish Version N… and Take Down… are in the … menu. Built-in templates show Export instead; Save to Library first to publish your copy. Workflows publish from Workflows."
+            disambiguation: "Agents → Templates → a template card's Share button → Publish to store.osaurus.ai (also Publish… in its … menu). Needs an Osaurus ID, which signs the template; bundled workflows go with it. Afterward the button reads Live with who can see it and installs, and Manage Published…, Copy Link, Open Page, Publish Version N… and Take Down… are in the … menu. Built-in templates show Export instead; Save to Library first to publish your copy. Workflows publish from Workflows, or from Share… in the Architect chat once added."
         ),
         .init(
             id: "agents.templates.share",
@@ -4637,10 +4821,11 @@ public enum SettingsSearchIndex {
             keywords: [
                 "describe a task", "new workflow", "start something new", "create a workflow", "ready-made workflows",
                 "or add a ready-made workflow", "add a workflow", "starter workflows", "templates to add",
-                "create your first workflow", "ready to add",
+                "create your first workflow", "ready to add", "what would you like to automate",
+                "or start from a ready-made one",
             ],
             subTab: "new",
-            disambiguation: "The New Workflow page, opened from New Workflow in the Workflows header, the + beside All Workflows in the sidebar, or ⌘N: the Architect's composer (sending starts a new draft with your words as its first message), then Or add a ready-made workflow, the templates not set up yet, each opening a preview with Add, and Import a workflow. With no workflows and no drafts it is the whole Workflows page, titled Create your first workflow."
+            disambiguation: "The New Workflow page, titled What would you like to automate?, opened from New Workflow in the Workflows header, the + beside All Workflows in the sidebar, or ⌘N (with no workflows and no drafts it is the whole Workflows page): the Architect's composer (sending starts a new draft with your words as its first message), then Or start from a ready-made one, the templates not set up yet, each opening a preview with Add, and Import a Workflow."
         ),
         .init(
             id: "workflows.drafts",
@@ -4804,7 +4989,7 @@ public enum SettingsSearchIndex {
                 "replaces files", "folder access", "your mac", "sandbox", "access summary", "least access",
                 "write scope", "read only folder",
             ],
-            disambiguation: "A section in the Architect's Design tab: what the draft reads, writes, deletes, and replaces on your Mac, read from its steps, and whether it works in the sandbox. Runs enforce it: file steps save only where it says, read-only folders stay read-only, and replacing an existing file asks first. The same rows show in the import review, and as one line under What It Does on a saved workflow's page, in the save card, starter previews, and the publish review. Not a setting. Folders always allowed for a saved workflow are on its page under More Options → Before It Runs."
+            disambiguation: "A row at the foot of the Architect's preview card (click it to open): what the draft reads, writes, deletes, and replaces on your Mac, read from its steps, and whether it works in the sandbox. Runs enforce it: file steps save only where it says, read-only folders stay read-only, and replacing an existing file asks first. The same rows show in the import review, and as one line under What It Does on a saved workflow's page, in the save card, starter previews, and the publish review. Not a setting. Folders always allowed for a saved workflow are on its page under More Options → Before It Runs."
         ),
         .init(
             id: "workflows.draftChanges",
@@ -4815,7 +5000,7 @@ public enum SettingsSearchIndex {
                 "change summary", "what changed", "why it changed", "architect edits", "edit history", "undo",
                 "review changes", "patch summary", "draft history", "diff",
             ],
-            disambiguation: "A section in the Architect's Design tab: every edit to the draft, newest first, with who made it (the Architect or you), why in the Architect's words, and each change in plain language. Undo is on the newest. Version history of saved workflows is in Workflow Details."
+            disambiguation: "A row at the foot of the Architect's preview card (click it to open): every edit to the draft, newest first, with who made it (the Architect or you), why in the Architect's words, and each change in plain language. Undo is on the newest. Version history of saved workflows is in Workflow Details."
         ),
         .init(
             id: "workflows.saveEvidence",
@@ -4837,7 +5022,7 @@ public enum SettingsSearchIndex {
                 "fix with the architect", "fix failed run", "repair workflow", "workflow failed", "step failed", "fix workflow", "architect fix",
                 "retry from failed step", "failed step", "why did it fail", "error hint",
             ],
-            disambiguation: "On a failed run (its run page, the Architect's Test tab, and the Runs list's … menu): opens an Architect chat that reads the run's error, failed step, logs, and where the fix belongs (the step, setup, an app setting, a retry, or you), fixes it, re-tests from the failed step, and proposes the next version. The line under the error says what to change. Retry from Failed Step re-runs from that step without changing anything. Saving stays your click."
+            disambiguation: "On a failed run (its run page, Fix It on the Architect's preview when a try didn't work, and the Runs list's … menu): opens an Architect chat that reads the run's error, failed step, logs, and where the fix belongs (the step, setup, an app setting, a retry, or you), fixes it, re-tests from the failed step, and proposes the next version. The line under the error says what to change. Retry from Failed Step re-runs from that step without changing anything. Saving stays your click."
         ),
         .init(
             id: "workflows.share",
@@ -4992,9 +5177,23 @@ public enum SettingsSearchIndex {
             title: "Share…",
             keywords: [
                 "share after save", "saved card share", "share from architect", "publish after save", "saved workflow share",
-                "resubmit for review", "resubmit after changes requested",
+                "resubmit for review", "resubmit after changes requested", "add to my workflows", "share it",
+                "publish from the architect", "copy link", "live",
             ],
-            disambiguation: "On the Architect's Saved card, next to Try It: opens Workflows with Share up for the workflow just saved. Try It opens its run form in Workflows, filled with its first example. When the Osaurus team asked for changes on its published listing, the button reads Resubmit for Review… and opens Share on the publish step for the new version."
+            disambiguation: "Once a draft is in My Workflows (Add to My Workflows on the Architect's preview, or Add on its card in the chat), Share… opens Share right there in the Architect chat, beside Run… in the preview's footer. After it is published the preview's chip reads Live, Its page shows the link and installs, and the footer has Manage… and Copy Link. The saved card in the chat has the same Share…. When the Osaurus team asked for changes on its published listing, the button reads Resubmit for Review… and opens Share on the publish step for the new version."
+        ),
+        .init(
+            id: "workflows.architectSteps",
+            tab: .workflows,
+            section: "Architect Draft",
+            title: "How it works",
+            keywords: [
+                "show details", "architect details", "draft details", "steps editor", "edit steps", "step settings",
+                "edit step", "model for a step", "instructions", "workflow editor", "architect preview", "living preview",
+                "advanced", "technical view", "open full view", "flow graph", "test from this step", "bypass step",
+                "delete step",
+            ],
+            disambiguation: "The steps on the Architect's preview card. Click a step to open it in place: what it does, the model it runs on (change it there), its instructions, its badges, Edit Step…, and in its … menu Ask the Architect, Test From This Step, Bypass This Step and Delete Step. The open step is the one the Architect hears you have selected. Open Full View beside the heading shows the flow as a graph. While the Architect is building, the card can't be clicked."
         ),
         .init(
             id: "workflows.orchestratorVisible",
