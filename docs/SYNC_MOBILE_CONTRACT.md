@@ -1012,6 +1012,48 @@ which only that iPhone shows. An iPhone that lists `approval` in its registratio
 - Nothing new is sent for a run that is a turn of a live call (`hostRun.voiceCall`), or while a
   call placed from the chat is on: the call reads the card out itself. The clearing push still goes.
 
+### 5.9 Live Activities for workflow runs (`workflow_push`)
+
+An iPhone that shows workflow runs on its Lock Screen writes
+`ai.osaurus.push-activity/1/<its device key>` on the manage conversation, signed by that device
+(the Mac ignores one that isn't, or that another device signed):
+
+```json
+{ "v": 1,
+  "activities": [ { "runId": "…", "grant": "<base64>", "grantId": "…", "expiresMs": 1770163260000 } ],
+  "start": { "grant": "<base64>", "grantId": "…", "expiresMs": 1770163260000 } }
+```
+
+- Each `activities` entry is the grant (from `pushGrant`, as in §5.6) for one activity's push
+  token, for the run `runId`. `start`, when present, is the grant for the iPhone's
+  push-to-start token (iOS 17.2 or later, Live Activities on).
+- The content key is the one in the device's push registration (§5.6); without a registration
+  the Mac sends nothing.
+- For a run begun on this Mac after it launched, the Mac starts an activity on each iPhone with a
+  `start` grant. A run an iPhone started gets its activity from that iPhone.
+- Each change to the run's status or a step's status is an update; a run that ends
+  (`completed`, `failed`, `cancelled`, `needs_setup`) gets a final `end`. A push the service
+  couldn't take (a 5xx, an unreachable service, or a 429, which also holds that device's other
+  pushes for the wait) is sent once more, with the run's state as it is then.
+- The APNs payload, `apns-push-type` `liveactivity`:
+
+  ```json
+  { "aps": { "event": "update", "timestamp": 1767571260,
+             "content-state": { "sealed": "<base64>", "status": "running", "done": 2, "total": 5,
+                                "endedMs": 1767571290000 } } }
+  ```
+
+  `endedMs` only once the run ended. A start adds `"event": "start"`,
+  `"attributes-type": "WorkflowRunAttributes"`, `"attributes": { "device": "<Mac device key>",
+  "runId": "…", "startedMs": … }` and a generic alert ("Workflow running"), which Apple reads.
+- `sealed` is ChaChaPoly (combined) with the content key, over
+  `{ "name": "<run>", "mac": "<Mac name>", "steps": [ { "name": "…", "status": "completed" } ] }`.
+  Step `status` is `completed`, `running`, `failed`, `awaiting_user` or `pending`; skipped steps
+  are left out. Nothing readable is in the clear: only the status, counts and end time.
+- Under APNs' 4 KB: `name` at most 80 characters and `mac` 40; every step's status is kept, but
+  step names (at most 40 characters) only for the six around the current step. A card still
+  too large goes without step names, then without steps.
+
 ## 6. HTTP routes and their Sync replacements
 
 Every route the iPhone 1.0(11) calls (`SYNC_MOBILE_IOS_HANDOFF.md` has the full inventory),
@@ -1059,9 +1101,9 @@ and what replaces it:
   Streaming it needs a typed stream channel in osaurus-sync.
 - **Image preview frames.** Step progress is in `run-progress/1`, but the frames aren't sent:
   each one would be a durable blob write. This also waits for that channel.
-- **Push.** The Mac stores push registrations, but no transport sends anything
-  (`NoopPushTransport`), and there is no Sync record to register a token yet. Until both exist,
-  the iPhone learns about new items when Sync delivers them.
+- **Push for other attention items.** Workflow runs, Live Activities, approvals a chat run waits
+  on and agent calls go through the push service (§5.6–§5.9). Other attention items aren't
+  pushed: the iPhone learns about them when Sync delivers them.
 
 ## 8. The 6-digit pairing, kept for one release
 
