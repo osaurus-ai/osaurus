@@ -956,6 +956,13 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
     
     func deleteMessage(id: String) throws 
     
+    /**
+     * Diagnostics: `device`'s standing in `scope` in words (certificates, membership, revocation,
+     * roles), and this device's. For logs; the text has no fixed format. It carries ids, counts and
+     * states only, never content: no title, tag or message text.
+     */
+    func describeAccess(scope: String, device: String) throws  -> String
+    
     func deviceKey()  -> String
     
     func devices() throws  -> [Device]
@@ -991,12 +998,25 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
     func isOnline()  -> Bool
     
     /**
+     * This device leaving the account before it signs out: it revokes itself everywhere, so the user's other
+     * devices stop listing it. Then `sync_now`, wait while `leave_pending` is above 0 (a peer storing the
+     * revokes brings it down), and sign out; give up after a few seconds when no peer is reachable. Returns how
+     * many conversations it left.
+     */
+    func leaveAccount() throws  -> UInt32
+    
+    /**
      * Leaves a conversation: removes this user from its members and deletes the local copy
      * once another device has the removal. Other members keep theirs; an invite brings it
      * back. The last owner of a shared conversation has to make someone else an owner first
      * (`PermissionDenied`). This user's other devices stop listing it.
      */
     func leaveConversation(scope: String) throws 
+    
+    /**
+     * How many of `leave_account`'s revokes no peer has stored yet.
+     */
+    func leavePending() throws  -> UInt32
     
     /**
      * The live state every device currently holds in a conversation, this device's
@@ -1040,6 +1060,13 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
     func pairingOffer(ttlMs: UInt64) throws  -> PairingOffer
     
     /**
+     * Writes no peer has stored yet, across every scope. An entry leaves the outbox once any one
+     * peer stores it, so this reaches zero once a connected device has everything; a device that
+     * is never online doesn't hold it up. For an app going to the background: sent yet, or not.
+     */
+    func pendingOutboxTotal() throws  -> UInt32
+    
+    /**
      * Makes a device-local conversation synced: this user's other devices get it, with its
      * history.
      */
@@ -1050,6 +1077,29 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
      * host. Pass None to withdraw.
      */
     func publishAgentRecord(agentSecret: Data?, ttlMs: UInt64) throws  -> String?
+    
+    /**
+     * On the device that receives notifications: a grant that lets `audience` (a device of
+     * this user) send this device pushes through the push service whose key is `service_key`,
+     * until `ttl_ms` from now (at most 60 days). `token` is the APNs device token in hex and
+     * `topic` the app's bundle id. The grant is sealed to the service: `audience` can't read
+     * the token, and no other device can use the grant.
+     */
+    func pushGrant(serviceKey: String, audience: String, token: String, environment: ApnsEnvironment, topic: String, ttlMs: UInt64) throws  -> PushGrant
+    
+    /**
+     * On the device that made them: the body to POST to the push service's `/v1/revoke`, which
+     * refuses these grants (1 to 64 ids from `push_grant`) from then on. Make it before signing out:
+     * it stays valid, so it can be sent later, once the device is online again.
+     */
+    func pushRevokeRequest(grantIds: [String]) throws  -> Data
+    
+    /**
+     * On the sending device: the body to POST to the push service's `/v1/send`, which sends
+     * `payload` (the APNs JSON, at most 4 KB) with a grant this device was given.
+     * `collapse_id` (1 to 64 bytes) makes a later push replace an earlier one on the device.
+     */
+    func pushSendRequest(grant: Data, kind: PushKind, collapseId: String?, payload: Data) throws  -> Data
     
     /**
      * The decrypted bytes of an attachment (or app data blob), downloading it from a peer if
@@ -1122,7 +1172,9 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
     
     /**
      * Revokes a lost or wiped device. A revoked device keeps the user secret, so for a stolen
-     * device use `revoke_and_rotate`.
+     * device use `revoke_and_rotate`. Best effort: a scope where this device may not revoke it (it
+     * acts there only for another user, and this device isn't an Owner) is skipped with a warning,
+     * and the device is still recorded as removed here and never dialed.
      */
     func revokeDevice(device: String) throws 
     
@@ -1140,6 +1192,15 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
     func setBackfillPolicy(policy: BackfillPolicy) throws 
     
     /**
+     * Compacts without a storage server: hourly, each conversation's Loro updates fold into one
+     * snapshot (keeping their history) and superseded app data goes, so a device that pairs later
+     * downloads current state instead of every update ever written. Message edits are kept.
+     * Off by default; turn it on while the user has no storage server. Ignored for scopes a
+     * storage server shares, which compact to its watermark as before.
+     */
+    func setCompactWithoutStorage(on: Bool) throws 
+    
+    /**
      * Sets or (with None) removes conversation-level app data under `namespace`.
      */
     func setConversationAppData(scope: String, namespace: String, bytes: Data?) throws 
@@ -1148,6 +1209,13 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
      * Replaces the conversation's tags.
      */
     func setConversationTags(scope: String, tags: [Tag]) throws 
+    
+    /**
+     * Fewer reconciliations at once while `gentle`: the same catch-up spread out, for a device
+     * that is hot or saving power. `BackfillPolicyMonitor` sets it from the thermal state and
+     * Low Power Mode.
+     */
+    func setGentleSync(gentle: Bool) throws 
     
     /**
      * Sets the history mode for one scope, or the default for new scopes when `scope` is None.
@@ -1175,6 +1243,20 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
      * replaces what was there; empty bytes with no attachments clears it.
      */
     func setMessageAppData(id: String, appData: [AppDataWrite]) throws 
+    
+    /**
+     * Scopes a peer catching up on this device should get before any other, in this order: what
+     * the app needs before it works at all, such as its directory. Other scopes follow, most
+     * recently active first. Replaces any earlier list; takes effect from the next offer.
+     */
+    func setOfferFirst(scopes: [String]) throws 
+    
+    /**
+     * Scopes a peer catching up on this device should get after every other: state whose long
+     * history it doesn't need before the conversations, such as a feed of requests and results.
+     * Replaces any earlier list; takes effect from the next offer.
+     */
+    func setOfferLast(scopes: [String]) throws 
     
     func setPinned(scope: String, pinned: Bool) throws 
     
@@ -1534,6 +1616,21 @@ open func deleteMessage(id: String)throws   {try rustCallWithError(FfiConverterT
 }
 }
     
+    /**
+     * Diagnostics: `device`'s standing in `scope` in words (certificates, membership, revocation,
+     * roles), and this device's. For logs; the text has no fixed format. It carries ids, counts and
+     * states only, never content: no title, tag or message text.
+     */
+open func describeAccess(scope: String, device: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_describe_access(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(scope),
+        FfiConverterString.lower(device),$0
+    )
+})
+}
+    
 open func deviceKey() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_osaurus_sync_ffi_fn_method_synccore_device_key(
@@ -1646,6 +1743,20 @@ open func isOnline() -> Bool  {
 }
     
     /**
+     * This device leaving the account before it signs out: it revokes itself everywhere, so the user's other
+     * devices stop listing it. Then `sync_now`, wait while `leave_pending` is above 0 (a peer storing the
+     * revokes brings it down), and sign out; give up after a few seconds when no peer is reachable. Returns how
+     * many conversations it left.
+     */
+open func leaveAccount()throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_leave_account(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
      * Leaves a conversation: removes this user from its members and deletes the local copy
      * once another device has the removal. Other members keep theirs; an invite brings it
      * back. The last owner of a shared conversation has to make someone else an owner first
@@ -1657,6 +1768,17 @@ open func leaveConversation(scope: String)throws   {try rustCallWithError(FfiCon
         FfiConverterString.lower(scope),$0
     )
 }
+}
+    
+    /**
+     * How many of `leave_account`'s revokes no peer has stored yet.
+     */
+open func leavePending()throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_leave_pending(
+            self.uniffiCloneHandle(),$0
+    )
+})
 }
     
     /**
@@ -1768,6 +1890,19 @@ open func pairingOffer(ttlMs: UInt64)throws  -> PairingOffer  {
 }
     
     /**
+     * Writes no peer has stored yet, across every scope. An entry leaves the outbox once any one
+     * peer stores it, so this reaches zero once a connected device has everything; a device that
+     * is never online doesn't hold it up. For an app going to the background: sent yet, or not.
+     */
+open func pendingOutboxTotal()throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_pending_outbox_total(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
      * Makes a device-local conversation synced: this user's other devices get it, with its
      * history.
      */
@@ -1789,6 +1924,58 @@ open func publishAgentRecord(agentSecret: Data?, ttlMs: UInt64)throws  -> String
             self.uniffiCloneHandle(),
         FfiConverterOptionData.lower(agentSecret),
         FfiConverterUInt64.lower(ttlMs),$0
+    )
+})
+}
+    
+    /**
+     * On the device that receives notifications: a grant that lets `audience` (a device of
+     * this user) send this device pushes through the push service whose key is `service_key`,
+     * until `ttl_ms` from now (at most 60 days). `token` is the APNs device token in hex and
+     * `topic` the app's bundle id. The grant is sealed to the service: `audience` can't read
+     * the token, and no other device can use the grant.
+     */
+open func pushGrant(serviceKey: String, audience: String, token: String, environment: ApnsEnvironment, topic: String, ttlMs: UInt64)throws  -> PushGrant  {
+    return try  FfiConverterTypePushGrant_lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_push_grant(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(serviceKey),
+        FfiConverterString.lower(audience),
+        FfiConverterString.lower(token),
+        FfiConverterTypeApnsEnvironment_lower(environment),
+        FfiConverterString.lower(topic),
+        FfiConverterUInt64.lower(ttlMs),$0
+    )
+})
+}
+    
+    /**
+     * On the device that made them: the body to POST to the push service's `/v1/revoke`, which
+     * refuses these grants (1 to 64 ids from `push_grant`) from then on. Make it before signing out:
+     * it stays valid, so it can be sent later, once the device is online again.
+     */
+open func pushRevokeRequest(grantIds: [String])throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_push_revoke_request(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(grantIds),$0
+    )
+})
+}
+    
+    /**
+     * On the sending device: the body to POST to the push service's `/v1/send`, which sends
+     * `payload` (the APNs JSON, at most 4 KB) with a grant this device was given.
+     * `collapse_id` (1 to 64 bytes) makes a later push replace an earlier one on the device.
+     */
+open func pushSendRequest(grant: Data, kind: PushKind, collapseId: String?, payload: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_push_send_request(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(grant),
+        FfiConverterTypePushKind_lower(kind),
+        FfiConverterOptionString.lower(collapseId),
+        FfiConverterData.lower(payload),$0
     )
 })
 }
@@ -1990,7 +2177,9 @@ open func revokeAndRotate(devices: [String])throws  -> IdentityRotation  {
     
     /**
      * Revokes a lost or wiped device. A revoked device keeps the user secret, so for a stolen
-     * device use `revoke_and_rotate`.
+     * device use `revoke_and_rotate`. Best effort: a scope where this device may not revoke it (it
+     * acts there only for another user, and this device isn't an Owner) is skipped with a warning,
+     * and the device is still recorded as removed here and never dialed.
      */
 open func revokeDevice(device: String)throws   {try rustCallWithError(FfiConverterTypeSyncError_lift) {
     uniffi_osaurus_sync_ffi_fn_method_synccore_revoke_device(
@@ -2052,6 +2241,21 @@ open func setBackfillPolicy(policy: BackfillPolicy)throws   {try rustCallWithErr
 }
     
     /**
+     * Compacts without a storage server: hourly, each conversation's Loro updates fold into one
+     * snapshot (keeping their history) and superseded app data goes, so a device that pairs later
+     * downloads current state instead of every update ever written. Message edits are kept.
+     * Off by default; turn it on while the user has no storage server. Ignored for scopes a
+     * storage server shares, which compact to its watermark as before.
+     */
+open func setCompactWithoutStorage(on: Bool)throws   {try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_set_compact_without_storage(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(on),$0
+    )
+}
+}
+    
+    /**
      * Sets or (with None) removes conversation-level app data under `namespace`.
      */
 open func setConversationAppData(scope: String, namespace: String, bytes: Data?)throws   {try rustCallWithError(FfiConverterTypeSyncError_lift) {
@@ -2072,6 +2276,19 @@ open func setConversationTags(scope: String, tags: [Tag])throws   {try rustCallW
             self.uniffiCloneHandle(),
         FfiConverterString.lower(scope),
         FfiConverterSequenceTypeTag.lower(tags),$0
+    )
+}
+}
+    
+    /**
+     * Fewer reconciliations at once while `gentle`: the same catch-up spread out, for a device
+     * that is hot or saving power. `BackfillPolicyMonitor` sets it from the thermal state and
+     * Low Power Mode.
+     */
+open func setGentleSync(gentle: Bool)throws   {try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_set_gentle_sync(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(gentle),$0
     )
 }
 }
@@ -2127,6 +2344,32 @@ open func setMessageAppData(id: String, appData: [AppDataWrite])throws   {try ru
             self.uniffiCloneHandle(),
         FfiConverterString.lower(id),
         FfiConverterSequenceTypeAppDataWrite.lower(appData),$0
+    )
+}
+}
+    
+    /**
+     * Scopes a peer catching up on this device should get before any other, in this order: what
+     * the app needs before it works at all, such as its directory. Other scopes follow, most
+     * recently active first. Replaces any earlier list; takes effect from the next offer.
+     */
+open func setOfferFirst(scopes: [String])throws   {try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_set_offer_first(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(scopes),$0
+    )
+}
+}
+    
+    /**
+     * Scopes a peer catching up on this device should get after every other: state whose long
+     * history it doesn't need before the conversations, such as a feed of requests and results.
+     * Replaces any earlier list; takes effect from the next offer.
+     */
+open func setOfferLast(scopes: [String])throws   {try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_set_offer_last(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(scopes),$0
     )
 }
 }
@@ -4063,6 +4306,12 @@ public struct NetworkConfig: Equatable, Hashable {
      * 0 picks any port.
      */
     public var bindPort: UInt16
+    /**
+     * Platforms this device never dials; it still accepts their connections. An iPhone that syncs
+     * only with Macs passes `[Ios]`, so a phone left in the account after it was deleted isn't
+     * looked up again and again. Empty (the default) dials every device in the account.
+     */
+    public var skipDialing: [Platform]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4084,7 +4333,12 @@ public struct NetworkConfig: Equatable, Hashable {
          */mdns: Bool, 
         /**
          * 0 picks any port.
-         */bindPort: UInt16) {
+         */bindPort: UInt16, 
+        /**
+         * Platforms this device never dials; it still accepts their connections. An iPhone that syncs
+         * only with Macs passes `[Ios]`, so a phone left in the account after it was deleted isn't
+         * looked up again and again. Empty (the default) dials every device in the account.
+         */skipDialing: [Platform] = []) {
         self.enabled = enabled
         self.relays = relays
         self.discoveryServer = discoveryServer
@@ -4092,6 +4346,7 @@ public struct NetworkConfig: Equatable, Hashable {
         self.publish = publish
         self.mdns = mdns
         self.bindPort = bindPort
+        self.skipDialing = skipDialing
     }
 
     
@@ -4116,7 +4371,8 @@ public struct FfiConverterTypeNetworkConfig: FfiConverterRustBuffer {
                 discoveryOrigin: FfiConverterOptionString.read(from: &buf), 
                 publish: FfiConverterTypeAddressPublishing.read(from: &buf), 
                 mdns: FfiConverterBool.read(from: &buf), 
-                bindPort: FfiConverterUInt16.read(from: &buf)
+                bindPort: FfiConverterUInt16.read(from: &buf), 
+                skipDialing: FfiConverterSequenceTypePlatform.read(from: &buf)
         )
     }
 
@@ -4128,6 +4384,7 @@ public struct FfiConverterTypeNetworkConfig: FfiConverterRustBuffer {
         FfiConverterTypeAddressPublishing.write(value.publish, into: &buf)
         FfiConverterBool.write(value.mdns, into: &buf)
         FfiConverterUInt16.write(value.bindPort, into: &buf)
+        FfiConverterSequenceTypePlatform.write(value.skipDialing, into: &buf)
     }
 }
 
@@ -4591,6 +4848,68 @@ public func FfiConverterTypePointInTimeView_lift(_ buf: RustBuffer) throws -> Po
 #endif
 public func FfiConverterTypePointInTimeView_lower(_ value: PointInTimeView) -> RustBuffer {
     return FfiConverterTypePointInTimeView.lower(value)
+}
+
+
+/**
+ * A push grant for one sending device, sealed to the push service. Hand `grant` to that device
+ * over Sync; keep `id` to revoke it before `expires_ms`.
+ */
+public struct PushGrant: Equatable, Hashable {
+    public var grant: Data
+    public var id: String
+    public var expiresMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(grant: Data, id: String, expiresMs: UInt64) {
+        self.grant = grant
+        self.id = id
+        self.expiresMs = expiresMs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PushGrant: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePushGrant: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PushGrant {
+        return
+            try PushGrant(
+                grant: FfiConverterData.read(from: &buf), 
+                id: FfiConverterString.read(from: &buf), 
+                expiresMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PushGrant, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.grant, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterUInt64.write(value.expiresMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePushGrant_lift(_ buf: RustBuffer) throws -> PushGrant {
+    return try FfiConverterTypePushGrant.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePushGrant_lower(_ value: PushGrant) -> RustBuffer {
+    return FfiConverterTypePushGrant.lower(value)
 }
 
 
@@ -5285,6 +5604,77 @@ public func FfiConverterTypeAddressPublishing_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeAddressPublishing_lower(_ value: AddressPublishing) -> RustBuffer {
     return FfiConverterTypeAddressPublishing.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Which APNs servers a token belongs to: debug builds get sandbox tokens, TestFlight and the
+ * App Store production ones.
+ */
+
+public enum ApnsEnvironment: Equatable, Hashable {
+    
+    case sandbox
+    case production
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ApnsEnvironment: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeApnsEnvironment: FfiConverterRustBuffer {
+    typealias SwiftType = ApnsEnvironment
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ApnsEnvironment {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .sandbox
+        
+        case 2: return .production
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ApnsEnvironment, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .sandbox:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .production:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApnsEnvironment_lift(_ buf: RustBuffer) throws -> ApnsEnvironment {
+    return try FfiConverterTypeApnsEnvironment.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApnsEnvironment_lower(_ value: ApnsEnvironment) -> RustBuffer {
+    return FfiConverterTypeApnsEnvironment.lower(value)
 }
 
 
@@ -6100,6 +6490,104 @@ public func FfiConverterTypePlatform_lift(_ buf: RustBuffer) throws -> Platform 
 #endif
 public func FfiConverterTypePlatform_lower(_ value: Platform) -> RustBuffer {
     return FfiConverterTypePlatform.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * What a push does on the receiving device.
+ */
+
+public enum PushKind: Equatable, Hashable {
+    
+    /**
+     * Shows a notification.
+     */
+    case alert
+    /**
+     * Wakes the app without showing anything.
+     */
+    case background
+    /**
+     * Updates or ends a Live Activity, with a grant for the activity's push token and the
+     * app's topic plus `.push-type.liveactivity`.
+     */
+    case liveActivity
+    /**
+     * Rings an incoming call, with a grant for the PushKit token and the app's topic plus
+     * `.voip`. Delivered now or never.
+     */
+    case voip
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PushKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePushKind: FfiConverterRustBuffer {
+    typealias SwiftType = PushKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PushKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .alert
+        
+        case 2: return .background
+        
+        case 3: return .liveActivity
+        
+        case 4: return .voip
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PushKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .alert:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .background:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .liveActivity:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .voip:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePushKind_lift(_ buf: RustBuffer) throws -> PushKind {
+    return try FfiConverterTypePushKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePushKind_lower(_ value: PushKind) -> RustBuffer {
+    return FfiConverterTypePushKind.lower(value)
 }
 
 
@@ -8295,6 +8783,31 @@ fileprivate struct FfiConverterSequenceTypeConversationChange: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypePlatform: FfiConverterRustBuffer {
+    typealias SwiftType = [Platform]
+
+    public static func write(_ value: [Platform], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePlatform.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Platform] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Platform]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePlatform.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeScopeChange: FfiConverterRustBuffer {
     typealias SwiftType = [ScopeChange]
 
@@ -8580,6 +9093,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_delete_message() != 41746) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_describe_access() != 41920) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_device_key() != 25827) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8607,7 +9123,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_is_online() != 20242) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_leave_account() != 16591) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_leave_conversation() != 55451) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_leave_pending() != 3102) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_live_state() != 13237) {
@@ -8634,10 +9156,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_pairing_offer() != 45202) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_pending_outbox_total() != 45508) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_promote_to_synced() != 25097) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_publish_agent_record() != 12010) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_push_grant() != 27084) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_push_revoke_request() != 41710) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_push_send_request() != 56906) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_read_attachment() != 16612) {
@@ -8682,7 +9216,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_revoke_and_rotate() != 16312) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_revoke_device() != 755) {
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_revoke_device() != 227) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_search() != 46797) {
@@ -8700,10 +9234,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_backfill_policy() != 17490) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_compact_without_storage() != 61411) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_conversation_app_data() != 59002) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_conversation_tags() != 47636) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_gentle_sync() != 45355) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_history_mode() != 35829) {
@@ -8716,6 +9256,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_message_app_data() != 51680) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_offer_first() != 41498) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_offer_last() != 20431) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_pinned() != 53995) {
