@@ -45,6 +45,8 @@ final class AgentCallPolicy {
         /// Each agent's limit on calls in any 24 hours, set in its settings; absent, `defaultDailyCap`.
         /// Optional so a state saved before it was kept still reads.
         var dailyCaps: [UUID: Int]?
+        /// Approval calls by chat (`AgentCallPolicy.ApprovalCalls`); optional so an older state still reads.
+        var approvalCalls: [UUID: ApprovalCalls]?
 
         func dailyCap(for agentId: UUID) -> Int {
             dailyCaps?[agentId] ?? AgentCallPolicy.defaultDailyCap
@@ -147,8 +149,8 @@ final class AgentCallPolicy {
                     + "or when the user allows this agent to call in its settings. Use `notify` instead."
             )
         }
-        let misses = state.missedInRow[agentId] ?? 0
-        if misses >= missedInRowCap, let last = state.lastMissMs[agentId], last > nowMs - dayMs {
+        if lockedOut(state, agentId: agentId, nowMs: nowMs) {
+            let misses = state.missedInRow[agentId] ?? 0
             return .refused("The user missed your last \(misses) calls. Use `notify` instead.")
         }
         if let last = recent.max(), last > nowMs - spacingMs {
@@ -157,29 +159,119 @@ final class AgentCallPolicy {
         return .onItsOwn
     }
 
-    /// A call rang: counts it, and uses up the grant it was arranged with.
-    func rang(_ decision: Decision, agentId: UUID, nowMs: Int64) {
-        var recent = (state.calls[agentId] ?? []).filter { $0 > nowMs - Self.dayMs }
-        recent.append(nowMs)
-        state.calls[agentId] = recent
-        if case .arranged(let id) = decision {
-            state.grants.removeAll { $0.id == id }
-        }
+    /// A call is about to ring: counts it and takes the grant it was arranged with, before the
+    /// ring, so a second call can't pass `decide` while this one rings. `ended` gives both back
+    /// when nothing rang.
+    func rang(_ decision: Decision, agentId: UUID, nowMs: Int64) -> Grant? {
+        let taken = Self.rang(&state, decision: decision, agentId: agentId, nowMs: nowMs)
+        save()
+        return taken
+    }
+
+    func ended(_ outcome: SyncAgentCalls.Outcome, decision: Decision, agentId: UUID, rangMs: Int64, taken: Grant?) {
+        Self.ended(
+            &state, outcome: outcome, decision: decision, agentId: agentId, rangMs: rangMs, taken: taken,
+            nowMs: SyncHostedRunContract.nowMs())
         save()
     }
 
-    func ended(_ outcome: SyncAgentCalls.Outcome, decision: Decision, agentId: UUID, nowMs: Int64) {
+    nonisolated static func rang(_ state: inout State, decision: Decision, agentId: UUID, nowMs: Int64) -> Grant? {
+        var recent = (state.calls[agentId] ?? []).filter { $0 > nowMs - dayMs }
+        recent.append(nowMs)
+        state.calls[agentId] = recent
+        guard case .arranged(let id) = decision, let index = state.grants.firstIndex(where: { $0.id == id })
+        else { return nil }
+        return state.grants.remove(at: index)
+    }
+
+    /// Whether `outcome` means a device rang: only then does the call count and the grant stay used.
+    nonisolated static func didRing(_ outcome: SyncAgentCalls.Outcome) -> Bool {
+        switch outcome {
+        case .answered, .missed, .declined, .cancelled: return true
+        case .busy, .unavailable, .notSent: return false
+        }
+    }
+
+    nonisolated static func ended(
+        _ state: inout State,
+        outcome: SyncAgentCalls.Outcome,
+        decision: Decision,
+        agentId: UUID,
+        rangMs: Int64,
+        taken: Grant?,
+        nowMs: Int64
+    ) {
+        guard didRing(outcome) else {
+            // Nothing rang (another call on, no device, the push service down): the call isn't
+            // counted, and the user's arranged call is kept unless they arranged a new one since.
+            if var calls = state.calls[agentId], let index = calls.lastIndex(of: rangMs) {
+                calls.remove(at: index)
+                state.calls[agentId] = calls
+            }
+            if let taken, taken.expiresMs > nowMs,
+                !state.grants.contains(where: { $0.sessionId == taken.sessionId && $0.agentId == taken.agentId })
+            {
+                state.grants.append(taken)
+            }
+            return
+        }
         switch outcome {
         case .answered:
             state.missedInRow[agentId] = nil
         case .missed, .declined:
             guard decision == .onItsOwn else { return }
+            // Misses before a day-long lockout ended don't count toward the next one.
+            if let last = state.lastMissMs[agentId], last <= nowMs - dayMs { state.missedInRow[agentId] = nil }
             state.missedInRow[agentId, default: 0] += 1
             state.lastMissMs[agentId] = nowMs
-        case .busy, .unavailable, .cancelled, .notSent:
-            return
+        default:
+            break
+        }
+    }
+
+    /// Whether the agent's own calls are locked out after two misses in a row.
+    nonisolated static func lockedOut(_ state: State, agentId: UUID, nowMs: Int64) -> Bool {
+        let misses = state.missedInRow[agentId] ?? 0
+        guard misses >= missedInRowCap, let last = state.lastMissMs[agentId] else { return false }
+        return last > nowMs - dayMs
+    }
+
+    // MARK: Approval calls
+
+    /// Each chat's approval calls (`SyncApprovalPush`), kept with the rest so a relaunch doesn't
+    /// reset the spacing or the stop after two in a row went unanswered.
+    struct ApprovalCalls: Codable, Equatable, Sendable {
+        var lastMs: Int64
+        var missed: Int
+    }
+
+    /// Whether an approval call may ring in `sessionId` now, and if so marks it rung.
+    func startApprovalCall(sessionId: UUID, agentId: UUID, nowMs: Int64) -> Bool {
+        guard Self.mayCallAboutApproval(state, sessionId: sessionId, agentId: agentId, nowMs: nowMs) else {
+            return false
+        }
+        var calls = (state.approvalCalls ?? [:]).filter { $0.value.lastMs > nowMs - Self.dayMs }
+        calls[sessionId] = ApprovalCalls(lastMs: nowMs, missed: calls[sessionId]?.missed ?? 0)
+        state.approvalCalls = calls
+        save()
+        return true
+    }
+
+    func endedApprovalCall(_ outcome: SyncAgentCalls.Outcome, sessionId: UUID) {
+        switch outcome {
+        case .answered: state.approvalCalls?[sessionId]?.missed = 0
+        case .missed, .declined: state.approvalCalls?[sessionId]?.missed += 1
+        case .busy, .unavailable, .cancelled, .notSent: return
         }
         save()
+    }
+
+    /// As spaced as the agent's own calls, not again after two in a row went unanswered in this
+    /// chat, and never while the agent itself is locked out for missed calls.
+    nonisolated static func mayCallAboutApproval(_ state: State, sessionId: UUID, agentId: UUID, nowMs: Int64) -> Bool {
+        if lockedOut(state, agentId: agentId, nowMs: nowMs) { return false }
+        guard let previous = state.approvalCalls?[sessionId], previous.lastMs > nowMs - dayMs else { return true }
+        return previous.lastMs <= nowMs - spacingMs && previous.missed < missedInRowCap
     }
 }
 
@@ -278,7 +370,7 @@ final class CallUserTool: OsaurusTool, @unchecked Sendable {
         let nowMs = SyncHostedRunContract.nowMs()
         let decision = policy.decide(agentId: agentId, sessionId: sessionId, nowMs: nowMs)
         if case .refused(let why) = decision { throw Refusal(message: why) }
-        policy.rang(decision, agentId: agentId, nowMs: nowMs)
+        let taken = policy.rang(decision, agentId: agentId, nowMs: nowMs)
         let outcome = await calls.ring(
             SyncAgentCalls.Request(
                 agentId: agentId,
@@ -288,7 +380,7 @@ final class CallUserTool: OsaurusTool, @unchecked Sendable {
                 reason: reason
             )
         )
-        policy.ended(outcome, decision: decision, agentId: agentId, nowMs: SyncHostedRunContract.nowMs())
+        policy.ended(outcome, decision: decision, agentId: agentId, rangMs: nowMs, taken: taken)
         return outcome
     }
 

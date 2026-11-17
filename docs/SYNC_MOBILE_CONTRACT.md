@@ -951,8 +951,8 @@ A call is a `voip` push (no `aps`, sent now or never) to each device set to ring
   ```
 
   `outcome` is `answered`, `declined`, `missed` (it rang out) or `busy` (another call was on).
-  A device that answered writes `ended` for the same call when it hangs up. Until then (two
-  hours at most) the Mac takes the user to be on that call: `call_user` from any run in the chat
+  A device that answered writes `ended` for the same call when it hangs up; only that device's
+  `ended` counts. Until then (two hours at most) the Mac takes the user to be on that call: `call_user` from any run in the chat
   doesn't ring (the agent is told to say it in the call), and its approvals get no notice or call.
 - The first `answered` takes the call: the Mac sends a `cancel` to each device that hasn't
   answered. When every device has turned it down, or after 45 seconds, the call is over.
@@ -961,11 +961,16 @@ A call is a `voip` push (no `aps`, sent now or never) to each device set to ring
   A device still ringing for a call that isn't `ringing` there stops, in case its `cancel` was lost.
 - Answered, the device opens the chat `sessionId`, speaks `opening` as the agent's first line,
   and goes on as any voice call on that chat.
-- A call nobody took sends each device that rang a notification on its alert grant, with
+- A call that rang out with nobody taking it (`missed`; not `declined`, which the user chose)
+  sends each device that rang a notification on its alert grant, with
   `apns-collapse-id` `call-<sessionId>`. `o` opens to
   `{ "v": 1, "event": "missed_call", "device", "agentId", "sessionId", "title": "<agent>",
   "body": "Missed call: <reason>" }`; the plain alert reads "Missed call".
 - One call at a time per Mac.
+- The agent is offered `call_user` and `arrange_callback` only while a device's calling grant
+  is unexpired. `call_user` counts a call, and uses up an arranged one, only when something
+  rang (`answered`, `declined`, `missed`, or called off while ringing); `busy`,
+  `unavailable` and a call that couldn't be sent give both back.
 
 ### 5.8 Approval requests (`approval` in a push registration's `events`)
 
@@ -982,7 +987,10 @@ which only that iPhone shows. An iPhone that lists `approval` in its registratio
   report), to every iPhone that lists `approval`.
 - When a call was arranged from that chat (`arrange_callback`) and a device lists
   `approval_call` too, the agent also calls about it (§5.7), opening with what it waits on. That
-  call counts toward the agent's calls a day but leaves the arranged call for the result.
+  call counts toward the agent's calls a day but leaves the arranged call for the result. It is
+  spaced like the agent's own calls (10 minutes), stops after two in a row go unanswered in that
+  chat or while the agent is locked out for missed calls, and is called off when the approvals
+  are answered or go. The spacing and the misses survive a relaunch of the Mac.
 - Nothing new is sent for a run that is a turn of a live call (`hostRun.voiceCall`), or while a
   call placed from the chat is on: the call reads the card out itself. The clearing push still goes.
 

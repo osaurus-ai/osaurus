@@ -31,11 +31,9 @@ final class SyncApprovalPush {
     /// The registration event for being called about it too, when a call was arranged.
     nonisolated static let callEvent = "approval_call"
 
-    /// Approval calls in progress, by session: one at a time per chat.
-    private var calling: Set<UUID> = []
-    /// Each chat's approval calls: when the last rang, and how many in a row went unanswered. An arranged
-    /// call isn't used up by them, so without these an agent could ring once per approval, back to back.
-    private var approvalCalls: [UUID: (lastMs: Int64, missed: Int)] = [:]
+    /// Approval calls in progress, by session: one at a time per chat. Cancelled when the approvals
+    /// are answered or go, so the phone stops ringing about one that's no longer waiting.
+    private var calling: [UUID: Task<Void, Never>] = [:]
 
     private init() {}
 
@@ -72,6 +70,7 @@ final class SyncApprovalPush {
                 callIfArranged(sessionId: sessionId, agentId: agentId, agentName: agentName, what: what)
             }
         } else if after.isEmpty, !before.isEmpty {
+            calling[sessionId]?.cancel()
             for target in targets {
                 send(.cleared, sessionId: sessionId, agentId: agentId, to: target)
             }
@@ -95,24 +94,18 @@ final class SyncApprovalPush {
     private func callIfArranged(sessionId: UUID, agentId: UUID, agentName: String, what: String) {
         let policy = AgentCallPolicy.shared
         let nowMs = SyncHostedRunContract.nowMs()
-        let previous = approvalCalls[sessionId]
-        // As spaced as the agent's own calls, and not again after two in a row went unanswered.
-        if let previous,
-            previous.lastMs > nowMs - AgentCallPolicy.spacingMs
-                || previous.missed >= AgentCallPolicy.missedInRowCap
-        {
+        guard calling[sessionId] == nil, SyncAgentCalls.shared.canRing,
+            case .arranged = policy.decide(agentId: agentId, sessionId: sessionId, nowMs: nowMs)
+        else { return }
+        // Spaced, stopped after two misses in a row, and kept across relaunches (`AgentCallPolicy`).
+        guard policy.startApprovalCall(sessionId: sessionId, agentId: agentId, nowMs: nowMs) else {
             Self.trace("not calling about the approval in \(sessionId.uuidString.prefix(8)): too soon or missed")
             return
         }
-        guard !calling.contains(sessionId), SyncAgentCalls.shared.canRing,
-            case .arranged = policy.decide(agentId: agentId, sessionId: sessionId, nowMs: nowMs)
-        else { return }
-        approvalCalls[sessionId] = (nowMs, previous?.missed ?? 0)
-        calling.insert(sessionId)
         // Counted toward the agent's calls a day, but the arranged call is kept for the result.
-        policy.rang(.onItsOwn, agentId: agentId, nowMs: nowMs)
+        _ = policy.rang(.onItsOwn, agentId: agentId, nowMs: nowMs)
         Self.trace("calling about the approval in \(sessionId.uuidString.prefix(8))")
-        Task { @MainActor in
+        calling[sessionId] = Task { @MainActor in
             let outcome = await SyncAgentCalls.shared.ring(
                 SyncAgentCalls.Request(
                     agentId: agentId,
@@ -123,23 +116,11 @@ final class SyncApprovalPush {
                 )
             )
             Self.trace("approval call in \(sessionId.uuidString.prefix(8)): \(outcome.rawValue)")
-            SyncApprovalPush.shared.calling.remove(sessionId)
-            SyncApprovalPush.shared.noteApprovalCall(outcome, sessionId: sessionId, agentId: agentId)
+            SyncApprovalPush.shared.calling[sessionId] = nil
+            // Unanswered approval calls count against the chat and the agent, as its own calls do.
+            policy.endedApprovalCall(outcome, sessionId: sessionId)
+            policy.ended(outcome, decision: .onItsOwn, agentId: agentId, rangMs: nowMs, taken: nil)
         }
-    }
-
-    /// Counts an unanswered approval call against the chat and the agent, as its own calls are.
-    private func noteApprovalCall(_ outcome: SyncAgentCalls.Outcome, sessionId: UUID, agentId: UUID) {
-        let nowMs = SyncHostedRunContract.nowMs()
-        switch outcome {
-        case .answered:
-            approvalCalls[sessionId]?.missed = 0
-        case .missed, .declined:
-            approvalCalls[sessionId]?.missed += 1
-        case .busy, .unavailable, .cancelled, .notSent:
-            break
-        }
-        AgentCallPolicy.shared.ended(outcome, decision: .onItsOwn, agentId: agentId, nowMs: nowMs)
     }
 
     // MARK: Notifications

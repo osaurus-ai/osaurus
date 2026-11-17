@@ -114,4 +114,125 @@ struct AgentCallPolicyTests {
         state.lastMissMs[Self.agent] = Self.now - AgentCallPolicy.dayMs - 1
         #expect(Self.decide(state) == .onItsOwn)
     }
+
+    @Test("once a lockout ends, one more miss doesn't lock the agent out again")
+    func lockoutDoesNotReArm() {
+        var state = AgentCallPolicy.State()
+        state.allowed = [Self.agent]
+        state.missedInRow[Self.agent] = AgentCallPolicy.missedInRowCap
+        state.lastMissMs[Self.agent] = Self.now - AgentCallPolicy.dayMs - 1
+        AgentCallPolicy.ended(
+            &state, outcome: .missed, decision: .onItsOwn, agentId: Self.agent, rangMs: Self.now, taken: nil,
+            nowMs: Self.now)
+        #expect(state.missedInRow[Self.agent] == 1)
+        #expect(!AgentCallPolicy.lockedOut(state, agentId: Self.agent, nowMs: Self.now))
+        #expect(Self.decide(state) == .onItsOwn)
+    }
+
+    // MARK: Using up the arranged call
+
+    private static func ring(_ state: inout AgentCallPolicy.State, outcome: SyncAgentCalls.Outcome) {
+        let decision = decide(state)
+        let taken = AgentCallPolicy.rang(&state, decision: decision, agentId: agent, nowMs: now)
+        AgentCallPolicy.ended(
+            &state, outcome: outcome, decision: decision, agentId: agent, rangMs: now, taken: taken, nowMs: now + 1)
+    }
+
+    @Test("an arranged call that rang is used up and counted", arguments: [
+        SyncAgentCalls.Outcome.answered, .declined, .missed, .cancelled,
+    ])
+    func arrangedCallRang(outcome: SyncAgentCalls.Outcome) {
+        var state = AgentCallPolicy.State()
+        state.grants = [Self.grant(expiresMs: Self.now + 60_000)]
+        Self.ring(&state, outcome: outcome)
+        #expect(state.grants.isEmpty)
+        #expect(state.calls[Self.agent] == [Self.now])
+        #expect(Self.isRefused(Self.decide(state)))
+    }
+
+    @Test("an arranged call that didn't ring is given back and not counted", arguments: [
+        SyncAgentCalls.Outcome.busy, .unavailable, .notSent,
+    ])
+    func arrangedCallGivenBack(outcome: SyncAgentCalls.Outcome) {
+        let grant = Self.grant(expiresMs: Self.now + 60_000)
+        var state = AgentCallPolicy.State()
+        state.grants = [grant]
+        Self.ring(&state, outcome: outcome)
+        #expect(state.grants == [grant])
+        #expect((state.calls[Self.agent] ?? []).isEmpty)
+        #expect(Self.decide(state) == .arranged(grant.id))
+    }
+
+    @Test("while a call rings, its arranged call is taken, so a second call can't use it")
+    func arrangedCallTakenWhileRinging() {
+        var state = AgentCallPolicy.State()
+        state.grants = [Self.grant(expiresMs: Self.now + 60_000)]
+        _ = AgentCallPolicy.rang(&state, decision: Self.decide(state), agentId: Self.agent, nowMs: Self.now)
+        #expect(Self.isRefused(Self.decide(state)))
+    }
+
+    @Test("a given-back call doesn't replace one the user arranged since")
+    func givenBackKeepsNewerGrant() {
+        var state = AgentCallPolicy.State()
+        state.grants = [Self.grant(expiresMs: Self.now + 60_000)]
+        let decision = Self.decide(state)
+        let taken = AgentCallPolicy.rang(&state, decision: decision, agentId: Self.agent, nowMs: Self.now)
+        let newer = Self.grant(expiresMs: Self.now + 120_000)
+        state.grants = [newer]
+        AgentCallPolicy.ended(
+            &state, outcome: .busy, decision: decision, agentId: Self.agent, rangMs: Self.now, taken: taken,
+            nowMs: Self.now + 1)
+        #expect(state.grants == [newer])
+    }
+
+    // MARK: Approval calls
+
+    private static func mayCall(_ state: AgentCallPolicy.State, session: UUID = chat) -> Bool {
+        AgentCallPolicy.mayCallAboutApproval(state, sessionId: session, agentId: agent, nowMs: now)
+    }
+
+    @Test("approval calls in a chat are spaced like the agent's own calls")
+    func approvalCallSpacing() {
+        var state = AgentCallPolicy.State()
+        #expect(Self.mayCall(state))
+        state.approvalCalls = [Self.chat: .init(lastMs: Self.now - AgentCallPolicy.spacingMs + 1, missed: 0)]
+        #expect(!Self.mayCall(state))
+        // Another chat isn't held to it.
+        #expect(Self.mayCall(state, session: UUID()))
+        state.approvalCalls = [Self.chat: .init(lastMs: Self.now - AgentCallPolicy.spacingMs - 1, missed: 0)]
+        #expect(Self.mayCall(state))
+    }
+
+    @Test("approval calls stop after two in a row go unanswered in the chat")
+    func approvalCallMisses() {
+        var state = AgentCallPolicy.State()
+        state.approvalCalls = [
+            Self.chat: .init(lastMs: Self.now - AgentCallPolicy.spacingMs - 1, missed: AgentCallPolicy.missedInRowCap)
+        ]
+        #expect(!Self.mayCall(state))
+    }
+
+    @Test("no approval call while the agent is locked out for missed calls")
+    func approvalCallLockout() {
+        var state = AgentCallPolicy.State()
+        state.missedInRow[Self.agent] = AgentCallPolicy.missedInRowCap
+        state.lastMissMs[Self.agent] = Self.now - 1000
+        #expect(!Self.mayCall(state))
+    }
+
+    @Test("approval-call spacing and misses are kept in the saved state")
+    func approvalCallsPersist() throws {
+        var state = AgentCallPolicy.State()
+        state.approvalCalls = [Self.chat: .init(lastMs: Self.now, missed: 1)]
+        let data = try JSONEncoder().encode(state)
+        #expect(try JSONDecoder().decode(AgentCallPolicy.State.self, from: data) == state)
+        // A state saved before approval calls were kept still reads.
+        var old = AgentCallPolicy.State()
+        old.allowed = [Self.agent]
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(old)) as? [String: Any] ?? [:]
+        json["approvalCalls"] = nil
+        let decoded = try JSONDecoder().decode(
+            AgentCallPolicy.State.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.approvalCalls == nil && decoded.allowed == [Self.agent])
+    }
 }

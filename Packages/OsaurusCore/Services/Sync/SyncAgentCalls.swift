@@ -119,21 +119,34 @@ final class SyncAgentCalls {
     /// The agent call tools' names, in the schema only while `ringAvailable`.
     nonisolated static let toolNames: Set<String> = [CallUserTool.toolName, ArrangeCallbackTool.toolName]
 
-    private nonisolated static let available = OSAllocatedUnfairLock(initialState: false)
+    /// When the last of the ringing devices' calling grants runs out, as of the last registrations
+    /// read; 0 with none. A time rather than a flag, so the tools go when the grants do.
+    private nonisolated static let availableUntilMs = OSAllocatedUnfairLock<Int64>(initialState: 0)
+    private var expiryTask: Task<Void, Never>?
 
     /// `canRing` as of the last registrations read, for the prompt composer off the main actor.
-    nonisolated static var ringAvailable: Bool { available.withLock { $0 } }
+    nonisolated static var ringAvailable: Bool {
+        availableUntilMs.withLock { $0 } > SyncHostedRunContract.nowMs()
+    }
 
     /// The registrations were read again (`SyncWorkflowPush.refresh`).
     func registrationsChanged() {
-        let now = canRing
-        let changed = Self.available.withLock { old in
-            defer { old = now }
-            return old != now
-        }
-        if changed {
+        let was = Self.ringAvailable
+        let until = targets.map { $0.push.registration.voipExpiresMs ?? 0 }.max() ?? 0
+        Self.availableUntilMs.withLock { $0 = until }
+        let now = Self.ringAvailable
+        if was != now {
             Self.trace(now ? "a device rings for agent calls" : "no device rings for agent calls")
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+        }
+        // The last grant running out with nothing else changing: read again then, so the tools go.
+        expiryTask?.cancel()
+        guard now else { return }
+        let waitMs = until - SyncHostedRunContract.nowMs() + 1000
+        expiryTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(waitMs))
+            guard !Task.isCancelled else { return }
+            SyncAgentCalls.shared.registrationsChanged()
         }
     }
 
@@ -283,13 +296,14 @@ final class SyncAgentCalls {
                 SyncAgentCalls.shared.apply(answers, call: id)
             }
         }
-        // Answered calls still on: the device writes `ended` for its call when it hangs up.
+        // Answered calls still on: the device that took the call writes `ended` when it hangs up.
+        // Only its answer counts: another device can't say the user left a call it never had.
         let live = liveCalls
         guard !live.isEmpty else { return }
         Task { @MainActor in
             let ended = await Task.detached(priority: .utility) { () -> [UUID] in
                 live.compactMap { sessionId, call in
-                    Self.answers(core: core, call: call.id).values.contains("ended") ? sessionId : nil
+                    Self.answers(core: core, call: call.id)[call.device] == "ended" ? sessionId : nil
                 }
             }.value
             for sessionId in ended {
@@ -302,7 +316,7 @@ final class SyncAgentCalls {
     // MARK: Calls on
 
     /// Answered calls, by chat, until the device says the call ended.
-    private var liveCalls: [UUID: (id: String, sinceMs: Int64)] = [:]
+    private var liveCalls: [UUID: (id: String, device: String, sinceMs: Int64)] = [:]
     /// A call no device has said ended counts as over after this.
     nonisolated static let liveCallLimitMs: Int64 = 2 * 3600 * 1000
 
@@ -384,10 +398,12 @@ final class SyncAgentCalls {
             }
         }
         setState(.init(callId: id, state: outcome == .answered ? "answered" : "ended", answeredBy: answeredBy))
-        if outcome == .answered {
-            liveCalls[active.request.sessionId] = (id, SyncHostedRunContract.nowMs())
+        if outcome == .answered, let answeredBy {
+            liveCalls[active.request.sessionId] = (id, answeredBy, SyncHostedRunContract.nowMs())
         }
-        if outcome == .missed || outcome == .declined {
+        // Rang out with nobody taking it. A decline was the user's own choice, and the contract
+        // (§5.7) sends the notice only for a call nobody took.
+        if outcome == .missed {
             for target in active.rang {
                 sendMissedCall(active.request, to: target.push)
             }
