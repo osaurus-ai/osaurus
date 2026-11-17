@@ -30,6 +30,7 @@ struct ThemeDocumentCodecTests {
                 tone: .cool,
                 contrast: .high,
                 corners: .subtle,
+                transparency: .glass,
                 readability: ThemeReadability(
                     uiFont: "Atkinson Hyperlegible", codeFont: "Menlo", readingSize: .larger,
                     lineSpacing: .relaxed, strongerOutlines: true, largerControls: true
@@ -65,6 +66,11 @@ struct ThemeDocumentCodecTests {
         #expect(readability.uiFont == ThemeReadability.systemFont)
         #expect(readability.lineSpacing == .default)
         #expect(!readability.largerControls)
+    }
+
+    @Test func preferencesWithoutTransparencyAreFrosted() throws {
+        let preferences = try JSONDecoder().decode(ThemePreferences.self, from: Data(#"{"tone":"cool"}"#.utf8))
+        #expect(preferences.transparency == .frosted)
     }
 
     @Test func newerSchemaVersionFailsToDecode() throws {

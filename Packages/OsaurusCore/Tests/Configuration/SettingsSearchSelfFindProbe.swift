@@ -103,6 +103,7 @@ struct SettingsSearchSelfFindProbe {
             ("Appearance", "settings.general.themes.appearance"),
             ("Contrast", "settings.general.themes.contrast"),
             ("Corners", "settings.general.themes.corners"),
+            ("Transparency", "settings.general.themes.transparency"),
             ("Reading Size", "settings.general.themes.readingSize"),
             ("Line Spacing", "settings.general.themes.lineSpacing"),
             ("Interface Font", "settings.general.themes.uiFont"),

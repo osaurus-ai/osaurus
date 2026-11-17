@@ -255,7 +255,9 @@ enum ThemeTokenPolicy {
         "schemaVersion", "id", "name", "author", "createdAt", "updatedAt", "appearance", "preferences", "overrides",
         "codeHighlightTheme", "messages",
     ]
-    private static let preferenceKeys: Set<String> = ["accent", "tone", "contrast", "corners", "readability"]
+    private static let preferenceKeys: Set<String> = [
+        "accent", "tone", "contrast", "corners", "transparency", "readability",
+    ]
     private static let readabilityKeys: Set<String> = [
         "uiFont", "codeFont", "readingSize", "lineSpacing", "strongerOutlines", "largerControls",
     ]

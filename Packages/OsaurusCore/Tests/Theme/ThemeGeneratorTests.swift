@@ -165,6 +165,22 @@ struct ThemeGeneratorTests {
     }
 
     @Test
+    func transparencySetsTheWindowTint() throws {
+        func tint(_ transparency: ThemeTransparency) throws -> (light: Double, dark: Double) {
+            let document = ThemeDocument(name: "Pane", preferences: ThemePreferences(transparency: transparency))
+            let snapshot = try ThemeCompiler.compile(document, highContrast: false).snapshot
+            return (snapshot.light.windowMaterial.tintOpacity, snapshot.dark.windowMaterial.tintOpacity)
+        }
+        let bundled = ThemeWindowMaterial.lightDefaults.tintOpacity
+        #expect(try tint(.frosted).light == bundled)
+        #expect(try tint(.frosted).dark == ThemeWindowMaterial.darkDefaults.tintOpacity)
+        #expect(try tint(.glass).light < bundled)
+        #expect(try tint(.glass).dark < ThemeWindowMaterial.darkDefaults.tintOpacity)
+        let solid = try tint(.solid)
+        #expect(solid.light == 1 && solid.dark == 1)
+    }
+
+    @Test
     func systemIncreaseContrastForcesHighRecipe() throws {
         let standard = try ThemeCompiler.compile(ThemePresets.osaurus, highContrast: false)
         let forced = try ThemeCompiler.compile(ThemePresets.osaurus, highContrast: true)

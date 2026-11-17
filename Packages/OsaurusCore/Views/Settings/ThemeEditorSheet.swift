@@ -2,7 +2,7 @@
 //  ThemeEditorSheet.swift
 //  osaurus
 //
-//  The simple theme editor (accent, tone, contrast, corners, readability)
+//  The simple theme editor (accent, tone, contrast, corners, transparency, readability)
 //  and the JSON editor for everything else. Both paint the draft app-wide
 //  while open, and Cancel puts the saved theme back.
 //
@@ -101,6 +101,13 @@ struct ThemeEditorSheet: View {
                     anchorId: "settings.general.themes.corners",
                     selection: $draft.preferences.corners,
                     options: ThemeCorners.allCases.map { .init($0, $0.label, verbatim: true) }
+                )
+                SettingsPickerRow(
+                    title: "Transparency",
+                    description: "How much of the desktop shows through the icon rail and title bar",
+                    anchorId: "settings.general.themes.transparency",
+                    selection: $draft.preferences.transparency,
+                    options: ThemeTransparency.allCases.map { .init($0, $0.label, verbatim: true) }
                 )
             }
             readabilitySection
