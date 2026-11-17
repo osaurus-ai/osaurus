@@ -34,7 +34,7 @@ struct BundledDesignLibraryTests {
     @Test func primitiveEditsStayIndependentAndResolveSharedAliases() throws {
         var doc = try savedDocument()
         let original = try doc.resolvingColors()
-        let primitive = try #require(doc.colorAliases?["color.surface.canvas"]?.dark)
+        let primitive = try #require(doc.colorAliases?["color.surface.subtle"]?.dark)
         doc.primitives?[primitive]?.dark = "#123456FF"
         let changed = try doc.resolvingColors()
         let paths = (doc.colorAliases ?? [:]).filter { $0.value.dark == primitive }.map(\.key)

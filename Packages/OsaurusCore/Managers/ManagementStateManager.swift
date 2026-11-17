@@ -117,11 +117,20 @@ public final class ManagementStateManager: ObservableObject {
     @Published public var privacySubTabRequest: String?
 
     /// Opens the drill-in a legacy tab id now lives on (`"storage"` →
-    /// Privacy & Security → Data & Storage). No-op for every other id.
+    /// Privacy & Security → Data & Storage, `"themes"` → General → Themes).
+    /// No-op for every other id.
     func requestLegacySubTab(for rawValue: String) {
         guard let subTab = ManagementTab.legacySubTab(from: rawValue) else { return }
-        privacySubTabRequest = subTab
+        if ManagementTab.resolved(from: rawValue) == .settings {
+            generalSubPageRequest = subTab
+        } else {
+            privacySubTabRequest = subTab
+        }
     }
+
+    /// One-shot request to open a page inside General (raw value of
+    /// `GeneralSubPage`, e.g. "themes"). `ConfigurationView` resets it after applying.
+    @Published public var generalSubPageRequest: String?
 
     /// One-shot request to focus a tab inside `KeysView` (raw value of
     /// `KeysTab`, e.g. "appKeys"). `KeysView` resets it after applying.

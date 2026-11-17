@@ -16,6 +16,11 @@
 import AppKit
 import SwiftUI
 
+/// Pages that open in place of General (settings-search `subTab`).
+enum GeneralSubPage: String {
+    case themes
+}
+
 // MARK: - Configuration View
 struct ConfigurationView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -66,7 +71,30 @@ struct ConfigurationView: View {
     /// thread each (auto-)save.
     @State private var loadedServerConfig: ServerConfiguration = .default
 
+    @ObservedObject private var managementState = ManagementStateManager.shared
+    @State private var subPage: GeneralSubPage?
+
     var body: some View {
+        Group {
+            switch subPage {
+            case .themes:
+                ThemesView(onBack: { withAnimation(theme.motion.springAnimation) { subPage = nil } })
+            case nil:
+                generalPage
+            }
+        }
+        .environment(\.theme, themeManager.currentTheme)
+        .onAppear { applySubPageRequest(managementState.generalSubPageRequest) }
+        .onChange(of: managementState.generalSubPageRequest) { _, request in applySubPageRequest(request) }
+    }
+
+    private func applySubPageRequest(_ request: String?) {
+        guard let request else { return }
+        subPage = GeneralSubPage(rawValue: request)
+        managementState.generalSubPageRequest = nil
+    }
+
+    private var generalPage: some View {
         ZStack {
             SettingsPage {
                 headerView
@@ -133,16 +161,26 @@ struct ConfigurationView: View {
 
     private var appearanceSection: some View {
         SettingsSection(title: "Appearance") {
+            SettingsNavigationRow(
+                icon: "paintpalette",
+                title: "Theme",
+                subtitle: themeManager.activeTheme.name,
+                anchorId: "settings.general.theme"
+            ) {
+                withAnimation(theme.motion.springAnimation) { subPage = .themes }
+            }
+
             SettingsPickerRow(
                 title: "Appearance",
-                description: "System follows your Mac's light and dark setting",
+                description: appearanceDescription,
                 anchorId: "settings.general.appearance",
                 selection: Binding(
-                    get: { themeManager.appearanceMode },
+                    get: { themeManager.effectiveAppearanceMode },
                     set: { themeManager.setAppearanceMode($0) }
                 ),
                 options: AppearanceMode.allCases.map { .init($0, $0.displayName, verbatim: true) }
             )
+            .disabled(themeManager.isAppearanceLocked)
 
             SettingsPickerRow(
                 title: "Text Size",
@@ -157,6 +195,15 @@ struct ConfigurationView: View {
                     .init($0, $0 == 100 ? "\($0)% (\(L("Default")))" : "\($0)%", verbatim: true)
                 }
             )
+        }
+    }
+
+    private var appearanceDescription: String {
+        let name = themeManager.activeTheme.name
+        switch themeManager.activeTheme.lockedAppearance {
+        case .dark: return L("\(name) is a dark-only theme")
+        case .light: return L("\(name) is a light-only theme")
+        default: return L("System follows your Mac's light and dark setting")
         }
     }
 

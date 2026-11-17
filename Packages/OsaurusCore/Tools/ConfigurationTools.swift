@@ -1698,12 +1698,12 @@ extension OsaurusInspectTool {
     /// only" answer instead of an export redirect it would loop on.
     static let settingsUIOnlyScopes: Set<String> = ["server"]
 
-    /// Scopes whose feature was removed. Still in the schema enum so a model
-    /// guessing them gets the replacement instead of a bare rejection.
+    /// Scopes these tools don't read or apply. Still in the schema enum so a
+    /// model guessing them gets the Settings path instead of a bare rejection.
     static let retiredScopes: [String: String] = [
         "themes":
-            "Custom themes were removed. Osaurus has System, Light and Dark appearance only: "
-            + "Settings… (⌘,) → General → Appearance, or View → Appearance.",
+            "Themes are not part of the configuration tools. The user picks and edits them in "
+            + "Settings… (⌘,) → General → Appearance → Theme, or View → Theme.",
     ]
 
     /// Unknown-scope failure that TEACHES instead of just rejecting. Small

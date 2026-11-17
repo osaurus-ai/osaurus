@@ -113,8 +113,9 @@ struct ManagementTabTests {
         #expect(ManagementTab.resolved(from: "storage") == .privacy)
         #expect(ManagementTab.legacySubTab(from: "storage") == PrivacyTab.storage.rawValue)
         #expect(ManagementTab.legacySubTab(from: "privacy") == nil)
-        // Custom themes were retired; Appearance lives on General.
+        // The old Themes tab is General → Themes.
         #expect(ManagementTab.resolved(from: "themes") == .settings)
+        #expect(ManagementTab.legacySubTab(from: "themes") == GeneralSubPage.themes.rawValue)
         #expect(ManagementTab.resolved(from: "teams") == .workspaces)
         #expect(ManagementTab.resolved(from: "schedules") == .automations)
         #expect(ManagementTab.resolved(from: "watchers") == .automations)

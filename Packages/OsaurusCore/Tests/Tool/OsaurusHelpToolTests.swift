@@ -102,9 +102,9 @@ struct OsaurusGuideTests {
     }
 
     @Test
-    func retiredThemesTopic_resolvesToSettings() {
-        for retired in ["themes", "theme", "guide-themes", "appearance"] {
-            #expect(OsaurusGuide.topic(id: retired)?.id == "settings", "`\(retired)` should resolve to settings")
+    func themesTopic_resolvesToSettings() {
+        for alias in ["themes", "theme", "guide-themes", "appearance"] {
+            #expect(OsaurusGuide.topic(id: alias)?.id == "settings", "`\(alias)` should resolve to settings")
         }
     }
 

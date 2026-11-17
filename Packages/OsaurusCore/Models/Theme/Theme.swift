@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 extension NSFont {
@@ -253,34 +254,29 @@ extension ThemeProtocol {
         let size = CGFloat(style.size)
         switch style.family {
         case .ui:
-            if ThemeFontNameClassifier.isSystemFamily(typography.families.ui, matching: "sf pro") {
-                return NSFont.systemFont(ofSize: size, weight: style.nsFontWeight)
-            }
-            return NSFont(name: typography.families.ui, size: size)
-                ?? NSFont.systemFont(ofSize: size, weight: style.nsFontWeight)
+            return ThemeFontNameClassifier.nsFont(family: typography.families.ui, size: size, weight: style.nsFontWeight)
         case .code:
-            if ThemeFontNameClassifier.isSystemFamily(typography.families.code, matching: "sf mono") {
-                return NSFont.monospacedSystemFont(ofSize: size, weight: style.nsFontWeight)
+            if case .named(let name) = ThemeFontNameClassifier.kind(of: typography.families.code),
+                let font = NSFont(name: name, size: size)
+            {
+                return font
             }
-            return NSFont(name: typography.families.code, size: size)
-                ?? NSFont.monospacedSystemFont(ofSize: size, weight: style.nsFontWeight)
+            return NSFont.monospacedSystemFont(ofSize: size, weight: style.nsFontWeight)
         }
     }
 
     /// Creates a font using the theme's UI font family at an explicit size.
+    /// A family that isn't installed falls back to the system font.
     func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        if ThemeFontNameClassifier.isSystemFamily(typography.families.ui, matching: "sf pro") {
-            return .system(size: size, weight: weight)
-        }
-        return .custom(typography.families.ui, size: size).weight(weight)
+        ThemeFontNameClassifier.font(family: typography.families.ui, size: size, weight: weight)
     }
 
     /// Creates a monospace font using the theme's code font family.
     func monoFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        if ThemeFontNameClassifier.isSystemFamily(typography.families.code, matching: "sf mono") {
-            return .system(size: size, weight: weight, design: .monospaced)
+        if case .named(let name) = ThemeFontNameClassifier.kind(of: typography.families.code) {
+            return .custom(name, size: size).weight(weight)
         }
-        return .custom(typography.families.code, size: size).weight(weight)
+        return .system(size: size, weight: weight, design: .monospaced)
     }
 
     /// Leading added between wrapped lines so each line lands on the
@@ -634,7 +630,7 @@ public class ThemeManager: ObservableObject {
 
         // Rebuild the live theme instances so every observer re-renders with
         // the new scale.
-        applyResolvedTheme(for: appearanceMode, animated: false)
+        applyResolvedTheme(animated: false)
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
@@ -646,11 +642,43 @@ public class ThemeManager: ObservableObject {
         refreshDesignInspection()
     }
     func refreshDesignInspection() {
-        let refreshed = CustomizableTheme(config: Self.seed(isDark: currentTheme.isDark))
+        let refreshed = CustomizableTheme(config: seed(isDark: currentTheme.isDark))
         currentTheme = refreshed
         chatTheme = refreshed
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
+
+    // MARK: Custom themes
+
+    /// The saved active theme; nil is the Osaurus default.
+    @Published public private(set) var activeThemeId: UUID?
+    /// The active theme's document (the Osaurus preset when none is set).
+    @Published private(set) var activeTheme: ThemeDocument = ThemePresets.osaurus
+    /// An unsaved editor draft shown app-wide until `endLiveDraft()`.
+    @Published private(set) var liveDraft: ThemeDocument?
+    /// macOS Increase Contrast; forces the High contrast recipe.
+    @Published private(set) var systemIncreaseContrast = false
+    /// Every theme the user can pick, presets first.
+    @Published public private(set) var selectableThemes: [ThemeDocument] = ThemePresets.all
+
+    /// The active theme's id, with the Osaurus preset standing in for nil.
+    public var selectedThemeId: UUID { activeThemeId ?? ThemePresets.osaurusID }
+
+    /// The document currently painting the app.
+    var displayedTheme: ThemeDocument { liveDraft ?? activeTheme }
+
+    /// The appearance the app actually uses: a single-mode theme wins over
+    /// the Appearance setting while it is active.
+    public var effectiveAppearanceMode: AppearanceMode { displayedTheme.lockedAppearance ?? appearanceMode }
+    public var isAppearanceLocked: Bool { displayedTheme.lockedAppearance != nil }
+
+    /// The bundled library, reinstalled when the default theme is active.
+    private let bundledSnapshot = DesignThemeOverlay.shared.current()
+    private var compileTask: Task<Void, Never>?
+    private var storeObservation: AnyCancellable?
+
+    /// The design inspector owns the overlay in inspection builds.
+    private var installsThemes: Bool { !DevelopmentDesignInspector.isAvailable }
 
     private init() {
         let config = ServerConfigurationStore.load() ?? ServerConfiguration.default
@@ -658,11 +686,21 @@ public class ThemeManager: ObservableObject {
         // so the initial themes capture the correct scale.
         Self.fontScale = ServerConfiguration.clampedFontSizeMultiplier(config.fontSizeMultiplier)
 
-        let mode = Self.migrateRetiredActiveTheme(configured: config.appearanceMode)
-        let themeInstance = CustomizableTheme(config: Self.seed(isDark: Self.isDarkMode(for: mode)))
-        self.currentTheme = themeInstance
-        self.chatTheme = themeInstance
-        self.appearanceMode = mode
+        let migrated = Self.migrateClassicThemes(configured: config.appearanceMode, activeThemeId: config.activeThemeId)
+        let store = ThemeLibraryStore.shared
+        let active = store.document(id: migrated.activeThemeId)
+        self.activeThemeId = active == nil ? nil : migrated.activeThemeId
+        self.activeTheme = active ?? ThemePresets.osaurus
+        self.appearanceMode = migrated.mode
+        self.systemIncreaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        self.selectableThemes = store.all
+
+        let placeholder = CustomizableTheme(config: .lightDefault)
+        self.currentTheme = placeholder
+        self.chatTheme = placeholder
+        // Compiled synchronously once so the first frame is already themed.
+        installSnapshotSynchronously(for: displayedTheme)
+        applyResolvedTheme(animated: false)
 
         DistributedNotificationCenter.default().addObserver(
             self,
@@ -670,26 +708,168 @@ public class ThemeManager: ObservableObject {
             name: Notification.Name("AppleInterfaceThemeChangedNotification"),
             object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(accessibilityDisplayOptionsChanged),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil
+        )
+        storeObservation = store.$themes.dropFirst().sink { [weak self] themes in
+            Task { @MainActor in
+                self?.selectableThemes = ThemePresets.all + themes
+                self?.activeThemeFilesChanged()
+            }
+        }
+        Self.migrateRemainingClassicThemesInBackground()
     }
 
-    /// Custom themes were retired. A user who still has one active keeps its
-    /// light or dark look as their appearance; the theme file stays on disk.
-    private static func migrateRetiredActiveTheme(configured: AppearanceMode) -> AppearanceMode {
-        let defaults = UserDefaults.standard
-        guard let rawId = defaults.string(forKey: retiredActiveThemeKey) else { return configured }
-        defaults.removeObject(forKey: retiredActiveThemeKey)
-        let themesDirectory = OsaurusPaths.resolvePath(new: OsaurusPaths.themes(), legacy: "Themes")
-        let mode = retiredThemeAppearance(
-            activeThemeId: rawId,
-            readThemeFile: { id in
-                try? Data(contentsOf: themesDirectory.appendingPathComponent("\(id.uuidString).json"))
-            },
-            configured: configured
-        )
-        if mode != configured {
-            ServerConfigurationStore.updateAppearanceMode(mode)
+    /// Makes `id` the active theme (nil or the Osaurus preset is the default).
+    public func setActiveTheme(_ id: UUID?) {
+        let resolvedId = id == ThemePresets.osaurusID ? nil : id
+        guard let document = ThemeLibraryStore.shared.document(id: resolvedId) else { return }
+        activeThemeId = resolvedId
+        activeTheme = document
+        ServerConfigurationStore.updateActiveThemeId(resolvedId)
+        refreshTheme(animated: true)
+    }
+
+    /// Opens General → Themes in the management window.
+    public func showThemesPage() {
+        SettingsLanding.open(id: "settings.general.themes")
+    }
+
+    /// Paints `draft` app-wide without saving it. Compiles off the main
+    /// actor; rapid edits coalesce.
+    func applyLiveDraft(_ draft: ThemeDocument) {
+        guard draft != liveDraft else { return }
+        liveDraft = draft
+        refreshTheme(animated: false, debounce: .milliseconds(120))
+    }
+
+    /// Drops the draft and returns to the saved active theme.
+    func endLiveDraft() {
+        guard liveDraft != nil else { return }
+        liveDraft = nil
+        refreshTheme(animated: false)
+    }
+
+    /// The saved files changed (save, delete, external edit).
+    private func activeThemeFilesChanged() {
+        guard let id = activeThemeId else { return }
+        guard let document = ThemeLibraryStore.shared.document(id: id) else {
+            setActiveTheme(nil)
+            return
         }
-        return mode
+        guard document != activeTheme else { return }
+        activeTheme = document
+        if liveDraft == nil { refreshTheme(animated: false) }
+    }
+
+    @objc private func accessibilityDisplayOptionsChanged() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let increase = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            guard increase != self.systemIncreaseContrast else { return }
+            self.systemIncreaseContrast = increase
+            self.refreshTheme(animated: true)
+        }
+    }
+
+    /// True when the displayed theme renders exactly as the bundled library.
+    private func usesBundledSnapshot(_ document: ThemeDocument) -> Bool {
+        document == ThemePresets.osaurus && !systemIncreaseContrast
+    }
+
+    private func installSnapshotSynchronously(for document: ThemeDocument) {
+        guard installsThemes else { return }
+        if usesBundledSnapshot(document) {
+            if let bundledSnapshot { DesignThemeOverlay.shared.install(bundledSnapshot) }
+            return
+        }
+        do {
+            let compiled = try ThemeCompiler.cached(document, highContrast: systemIncreaseContrast)
+            DesignThemeOverlay.shared.install(compiled.snapshot)
+        } catch {
+            if let bundledSnapshot { DesignThemeOverlay.shared.install(bundledSnapshot) }
+        }
+    }
+
+    /// Recompiles the displayed theme off the main actor, then installs it.
+    private func refreshTheme(animated: Bool, debounce: Duration? = nil) {
+        compileTask?.cancel()
+        let document = displayedTheme
+        guard installsThemes, !usesBundledSnapshot(document) else {
+            installSnapshotSynchronously(for: document)
+            applyResolvedTheme(animated: animated)
+            NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
+            return
+        }
+        let high = systemIncreaseContrast
+        compileTask = Task { [weak self] in
+            if let debounce { try? await Task.sleep(for: debounce) }
+            guard !Task.isCancelled else { return }
+            let compiled = try? await ThemeCompiler.compileDetached(document, highContrast: high)
+            guard let self, !Task.isCancelled, self.displayedTheme == document else { return }
+            if let compiled {
+                DesignThemeOverlay.shared.install(compiled.snapshot)
+            } else if let bundled = self.bundledSnapshot {
+                DesignThemeOverlay.shared.install(bundled)
+            }
+            self.applyResolvedTheme(animated: animated)
+            NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
+        }
+    }
+
+    // MARK: Classic migration
+
+    /// Converts Classic themes once. A direct Classic upgrade (the old
+    /// `activeThemeId` default is still set) converts and activates its
+    /// theme now; everything else converts in the background.
+    private static func migrateClassicThemes(
+        configured: AppearanceMode, activeThemeId: UUID?
+    ) -> (mode: AppearanceMode, activeThemeId: UUID?) {
+        let defaults = UserDefaults.standard
+        guard let rawId = defaults.string(forKey: retiredActiveThemeKey) else { return (configured, activeThemeId) }
+        defaults.removeObject(forKey: retiredActiveThemeKey)
+        guard let classicId = UUID(uuidString: rawId) else { return (configured, activeThemeId) }
+        let legacy = OsaurusPaths.resolvePath(new: OsaurusPaths.themes(), legacy: "Themes")
+        let result = ClassicThemeMigrator.migrate(
+            legacyDirectory: legacy, libraryDirectory: ThemeLibraryFiles.directory(),
+            activeID: classicId, only: classicId
+        )
+        ThemeLibraryStore.shared.reload()
+        switch result.activation {
+        case .theme(let id):
+            ServerConfigurationStore.updateActiveThemeId(id)
+            return (configured, id)
+        case .defaultTheme(let mode?):
+            if mode != configured { ServerConfigurationStore.updateAppearanceMode(mode) }
+            return (mode, activeThemeId)
+        case .defaultTheme(nil):
+            return (configured, activeThemeId)
+        case nil:
+            // Unreadable theme: keep its light or dark look as the appearance.
+            let mode = retiredThemeAppearance(
+                activeThemeId: rawId,
+                readThemeFile: { id in try? Data(contentsOf: legacy.appendingPathComponent("\(id.uuidString).json")) },
+                configured: configured
+            )
+            if mode != configured { ServerConfigurationStore.updateAppearanceMode(mode) }
+            return (mode, activeThemeId)
+        }
+    }
+
+    private static func migrateRemainingClassicThemesInBackground() {
+        let library = ThemeLibraryFiles.directory()
+        guard !ClassicThemeMigrator.isCompleted(libraryDirectory: library) else { return }
+        let legacy = OsaurusPaths.resolvePath(new: OsaurusPaths.themes(), legacy: "Themes")
+        Task.detached(priority: .utility) {
+            let result = ClassicThemeMigrator.migrate(legacyDirectory: legacy, libraryDirectory: library, activeID: nil)
+            ClassicThemeMigrator.markCompleted(libraryDirectory: library)
+            if !result.converted.isEmpty {
+                await MainActor.run { ThemeLibraryStore.shared.reload() }
+            }
+        }
     }
 
     /// The appearance a retired active theme maps to: the built-in Dark and
@@ -716,12 +896,15 @@ public class ThemeManager: ObservableObject {
         if persist {
             ServerConfigurationStore.updateAppearanceMode(mode)
         }
-        applyResolvedTheme(for: mode, animated: true)
+        applyResolvedTheme(animated: true)
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
-    private static func seed(isDark: Bool) -> CustomTheme {
-        isDark ? CustomTheme.darkDefault : CustomTheme.lightDefault
+    /// The seed the overlay resolves; carries the theme's message preferences.
+    private func seed(isDark: Bool) -> CustomTheme {
+        var seed = isDark ? CustomTheme.darkDefault : CustomTheme.lightDefault
+        if let messages = displayedTheme.messages { seed.messages = messages }
+        return seed
     }
 
     /// Determine if dark mode should be used based on appearance mode
@@ -751,14 +934,14 @@ public class ThemeManager: ObservableObject {
     }
 
     private func applySystemAppearanceChange() {
-        guard appearanceMode == .system else { return }
+        guard effectiveAppearanceMode == .system else { return }
 
-        applyResolvedTheme(for: .system, animated: true)
+        applyResolvedTheme(animated: true)
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
-    private func applyResolvedTheme(for mode: AppearanceMode, animated: Bool) {
-        let themeInstance = CustomizableTheme(config: Self.seed(isDark: Self.isDarkMode(for: mode)))
+    private func applyResolvedTheme(animated: Bool) {
+        let themeInstance = CustomizableTheme(config: seed(isDark: Self.isDarkMode(for: effectiveAppearanceMode)))
 
         if animated {
             withAnimation(themeInstance.motion.standard) {

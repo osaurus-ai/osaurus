@@ -2574,7 +2574,7 @@ extension AppDelegate {
 
     /// `osaurus://<addr>?pair=<base64url(invite)>` — incoming agent share link.
     /// `osaurus://plugins-install?tool=<plugin_id>` — open Plugins tab on a plugin's detail page.
-    /// `osaurus://themes-install?hash=<sha256>` — retired theme share link; opens General → Appearance.
+    /// `osaurus://themes-install?hash=<sha256>` — retired theme share link; opens General → Themes.
     /// `osaurus://templates-import?url=<registry template URL>` — download a workflow from the
     /// store registry (no other host) and open its import review.
     /// `osaurus://workflows[/<tab>[/<workspace id>]]` — the Workflows window on a tab
@@ -2624,6 +2624,7 @@ extension AppDelegate {
             }
 
             if url.host?.lowercased() == "themes-install" {
+                ManagementStateManager.shared.generalSubPageRequest = GeneralSubPage.themes.rawValue
                 showManagementWindow(initialTab: .settings)
                 return
             }
