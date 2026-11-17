@@ -426,14 +426,23 @@ struct SyncAppDataFixtureTests {
             let scope = try importFixture("mobile-workflow-form", into: core)
             let conversation = try #require(try core.conversation(scope: scope))
 
-            // The iPhone's answer: `submit` with the form's values.
+            // The iPhone's answer: `submit` with the form's values. The fixture is
+            // imported unsigned, and only a set its own device signed may carry a
+            // form's answer.
             let answers = SyncAttentionFeed.answers(
                 in: conversation, deviceNames: [phone: "Sam's iPhone"], legacyLabel: "Your iPhone")
-            let submit = try #require(answers.first)
-            #expect(submit.answer.action == SyncDeviceFeedContract.submitAction)
-            #expect(submit.answer.values?["name"] == .string("Acme Corp"))
-            #expect(submit.answer.values?["rush"] == .bool(true))
-            #expect(submit.answer.values?["budget"] == nil, "an optional field left empty is left out")
+            #expect(answers.isEmpty, "an unsigned submit is never read")
+            let sets = SyncDeviceFeedContract.perDevice(
+                SyncDeviceFeedContract.AttentionAnswers.self,
+                prefix: SyncDeviceFeedContract.attentionAnswerNamespacePrefix,
+                in: conversation,
+                writtenByThatDevice: true
+            )
+            let submit = try #require(sets[phone]?.answers.first?.value)
+            #expect(submit.action == SyncDeviceFeedContract.submitAction)
+            #expect(submit.values?["name"] == .string("Acme Corp"))
+            #expect(submit.values?["rush"] == .bool(true))
+            #expect(submit.values?["budget"] == nil, "an optional field left empty is left out")
 
             // The detail this Mac writes for the same form has the fixture's shape.
             let feed = try object(conversation.appData(SyncDeviceFeedContract.attentionNamespace))
@@ -476,8 +485,8 @@ struct SyncAppDataFixtureTests {
             let form = AttentionItem(kind: .workflowDialog, title: "Client Intake needs your input")
             let id = center.raise(form) { _ in }
             let entry = SyncAttentionFeed.LabeledAnswer(
-                id: id.uuidString, answer: submit.answer, deviceLabel: submit.deviceLabel)
-            let now = submit.answer.answeredMs + 1_000
+                id: id.uuidString, answer: submit, deviceLabel: "Sam's iPhone")
+            let now = submit.answeredMs + 1_000
             var refused: Set<String> = []
             SyncAttentionFeed.apply(
                 [entry], applied: &refused, center: center, nowMs: now,
@@ -492,7 +501,7 @@ struct SyncAppDataFixtureTests {
                     sent = values
                     return .success(())
                 })
-            #expect(sent == submit.answer.values)
+            #expect(sent == submit.values)
             #expect(applied == [id.uuidString])
         }
     }

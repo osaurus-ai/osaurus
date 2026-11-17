@@ -188,7 +188,7 @@ enum SyncWorkflowOutput {
         // The steps in the digest too, with a mark for this shape: a message written before steps were sent
         // would otherwise match and be kept, leaving the phone without them.
         hasher.update(data: Data("steps/1".utf8))
-        if let encoded = try? JSONEncoder().encode(JSONValue.array(built.steps)) { hasher.update(data: encoded) }
+        _ = encoded(.array(built.steps))
         hasher.update(data: Data(run.status.rawValue.utf8))
         let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
         object["digest"] = .string(digest)

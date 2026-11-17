@@ -49,7 +49,12 @@
           "workflow_runs",
           "workflow_library",
           "workflow_outputs",
-          "workflow_details"
+          "workflow_details",
+          "workflow_push",
+          "agent_calls",
+          "workflow_step_details",
+          "directory_models",
+          "manage_workflows"
         ],
         "build": "0.25.31 (1234)",
         "presence": {
