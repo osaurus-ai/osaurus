@@ -537,7 +537,9 @@ Each iPhone answers in its own namespace, `ai.osaurus.attention-answer/1/<its de
     boolean for `bool`. Leave out an optional field with no answer. The Mac checks the values
     against the form as its own form does; an answer it can't accept is ignored until the iPhone
     writes a corrected one under the same id. Once the form takes it, the item is retracted.
-    `submit` isn't listed in `actions`.
+    `submit` isn't listed in `actions`. The Mac enforces the types: a value for a `file`,
+    `folder` or `secret` field, or for a key the form doesn't have, is ignored, and such a field
+    keeps what the Mac would start it with.
 
   `open` is local: open the chat (`session_id`) or the Mac.
 - `redact` is only for `privacy_review` with `approve`. It lists the detections to replace with
@@ -736,8 +738,10 @@ The manage state lists the Mac's installed workflows, sorted by name (at most 10
   `type`s are the dialog field types of §4 (`text`, `long_text`, `number`, `bool`, `choice`,
   `date`, `file`, `folder`).
 - `prefill` is the last run's input.
-- `phoneStartable` is false when a required field is a `file` or `folder`. Those workflows are
-  started on the Mac.
+- `phoneStartable` is false when a required field is a `file`, `folder` or `secret`. Those
+  workflows are started on the Mac: `runWorkflow` for one is refused (`invalid_input`). The Mac
+  takes `input` values only for the fields of types the phone fills in; the rest keep their
+  defaults.
 - `blocked`, when present, says what has to be set up on the Mac first.
 - `facts` and `steps` (`workflow_details`) are what the Mac's workflow page shows:
 

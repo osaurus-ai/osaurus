@@ -253,8 +253,12 @@ final class SyncAttentionFeed {
         applied: inout Set<String>,
         center: AttentionCenter = .shared,
         nowMs: Int64 = SyncHostedRunContract.nowMs(),
-        answerForm: (UUID, [String: JSONValue]) -> Result<Void, DialogAnswerError> = {
-            DialogCoordinator.shared.answer($0, values: $1)
+        answerForm: (UUID, [String: JSONValue]) -> Result<Void, DialogAnswerError> = { id, values in
+            let coordinator = DialogCoordinator.shared
+            guard let dialog = coordinator.pending.first(where: { $0.id == id }) else { return .failure(.notFound) }
+            // Only the field types the phone fills in (`WorkflowDialogAttention.phoneValues`).
+            let allowed = WorkflowDialogAttention.phoneValues(values, fields: dialog.fields, prefill: dialog.prefill)
+            return coordinator.answer(id, values: allowed)
         }
     ) {
         for entry in entries where !applied.contains(entry.id) {

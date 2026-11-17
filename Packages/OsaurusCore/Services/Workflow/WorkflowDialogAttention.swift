@@ -42,6 +42,27 @@ enum WorkflowDialogAttention {
         return AttentionDetail.encode(object, listKey: "fields")
     }
 
+    /// The values the iPhone may give `fields`, enforced here rather than trusted to the phone:
+    /// only fields of `phoneTypes`, and only fields the form has. A file, folder or secret field
+    /// keeps what the Mac would start it with (`prefill`, else its default), never the phone's
+    /// value: a path from the phone would widen what the workflow reaches on this Mac, and a
+    /// secret would sit in synced history.
+    static func phoneValues(
+        _ values: [String: JSONValue],
+        fields: [DialogField],
+        prefill: [String: JSONValue]
+    ) -> [String: JSONValue] {
+        var out: [String: JSONValue] = [:]
+        for field in fields {
+            if phoneTypes.contains(field.type) {
+                if let value = values[field.key] { out[field.key] = value }
+            } else if let kept = prefill[field.key] ?? field.defaultValue {
+                out[field.key] = kept
+            }
+        }
+        return out
+    }
+
     /// Whether every required field is one the iPhone fills in.
     static func phoneAnswerable(_ dialog: PendingDialog) -> Bool {
         dialog.fields.allSatisfy { !$0.required || phoneTypes.contains($0.type) }

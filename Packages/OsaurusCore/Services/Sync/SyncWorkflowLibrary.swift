@@ -143,7 +143,7 @@ enum SyncWorkflowLibrary {
     static let helpLimit = 500
 
     /// The phone fills these in; a file or folder is a path on this Mac.
-    static let phoneTypes: Set<DialogFieldType> = [.text, .longText, .number, .bool, .choice, .date]
+    static var phoneTypes: Set<DialogFieldType> { WorkflowDialogAttention.phoneTypes }
 
     // MARK: Library
 
@@ -358,7 +358,13 @@ enum SyncWorkflowLibrary {
         if report.hasBlockers { return .failure(.blocked(report.summary)) }
         let schema = workflow.definition.inputSchema
         let fields = WorkflowFormFields.fields(fromInputSchema: schema)
-        let given = values?.objectValue ?? [:]
+        // Enforced here, not left to the phone: a workflow that needs a file, folder or secret is
+        // started on the Mac, and the phone's values count only for the fields it fills in (a path
+        // from the phone would widen what the run reaches on this Mac).
+        guard fields.allSatisfy({ !$0.required || phoneTypes.contains($0.type) }) else {
+            return .failure(.invalidInput("This workflow needs a file, folder or secret, filled in on the Mac."))
+        }
+        let given = WorkflowDialogAttention.phoneValues(values?.objectValue ?? [:], fields: fields, prefill: [:])
         let input = WorkflowFormFields.inputValue(
             WorkflowFormFields.initialValues(fields, prefill: given), fields: fields, schema: schema)
         let problems = JSONSchemaValidator.validate(input, against: schema)
