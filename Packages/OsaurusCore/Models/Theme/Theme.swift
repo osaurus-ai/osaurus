@@ -952,6 +952,18 @@ public class ThemeManager: ObservableObject {
             currentTheme = themeInstance
             chatTheme = themeInstance
         }
+        syncAppKitAppearance(isDark: themeInstance.isDark)
+    }
+
+    /// AppKit draws sheets (their shadow and the parent's dimming), menus,
+    /// popovers, scrollers and text cursors from the app's appearance, so it
+    /// follows the theme rather than macOS. System-mode detection reads
+    /// UserDefaults, so pinning this does not stop it tracking macOS.
+    private func syncAppKitAppearance(isDark: Bool) {
+        guard let app = NSApp else { return }
+        let name: NSAppearance.Name = isDark ? .darkAqua : .aqua
+        guard app.appearance?.name != name else { return }
+        app.appearance = NSAppearance(named: name)
     }
 }
 
