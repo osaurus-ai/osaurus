@@ -9,6 +9,10 @@ import Testing
 
 @testable import OsaurusCore
 
+private final class PostedFlag: @unchecked Sendable {
+    var value = false
+}
+
 struct LocalModelsFolderWatcherTests {
     private let roots = ["/Users/me/MLXModels"]
 
@@ -68,6 +72,35 @@ struct LocalModelsFolderWatcherTests {
         #expect(LocalModelsFolderWatcher.isInventoryChange(
             path: canonical + "/OsaurusAI/Model-4bit", flags: created, roots: [canonical]))
         #expect(LocalModelsFolderWatcher.canonicalDirectoryPath(root.appendingPathComponent("missing")) == nil)
+    }
+
+    /// End to end against the real models directory (`OSU_MODELS_DIR`):
+    /// removing a bundle folder on disk posts `.localModelsChanged`.
+    @MainActor
+    @Test func removingABundleOnDiskPostsLocalModelsChanged() async throws {
+        let fm = FileManager.default
+        let root = DirectoryPickerService.effectiveModelsDirectory()
+        let bundle = root.appendingPathComponent("watcher-probe-\(UUID().uuidString.prefix(8))/Model-4bit")
+        try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: bundle.appendingPathComponent("config.json"))
+        defer { try? fm.removeItem(at: bundle.deletingLastPathComponent()) }
+
+        let watcher = LocalModelsFolderWatcher.shared
+        watcher.start()
+        defer { watcher.stop() }
+        try await Task.sleep(for: .seconds(1))
+
+        let posted = PostedFlag()
+        let token = NotificationCenter.default.addObserver(
+            forName: .localModelsChanged, object: nil, queue: .main
+        ) { _ in posted.value = true }
+        defer { NotificationCenter.default.removeObserver(token) }
+        try fm.removeItem(at: bundle)
+
+        for _ in 0 ..< 60 where !posted.value {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(posted.value, "watching \(LocalModelsFolderWatcher.currentRoots())")
     }
 
     @Test func droppedEventsAndRootChangesForceARescan() {
