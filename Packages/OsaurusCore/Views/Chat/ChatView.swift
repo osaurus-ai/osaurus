@@ -11755,6 +11755,7 @@ struct ChatView: View {
                     contentWidth: creationContentWidth, spacing: theme.space.s24,
                     preferred: preferredCreationChatWidth)
             let workflowStacked = workflowSplit && workflowChatWidth == nil
+            let promptPlacement = PromptOverlayPlacement.forLayout(isSplit: workflowSplit, isStacked: workflowStacked)
             let workflowChatRange = !workflowSplit ? nil
                 : isAgentCreation
                 ? ChatShellLayout.agentCreationChatRange(
@@ -12116,8 +12117,11 @@ struct ChatView: View {
                     )
                     .modifier(WorkflowCreationChatFrame(isActive: isCreationLayout, width: workflowChatWidth))
                     // Prompt cards belong to the conversation they ask about:
-                    // scoped to this column, never over the sidebar or draft.
-                    .overlay { promptOverlayLayer }
+                    // scoped to this column, never over the sidebar. Beside a
+                    // draft they cover the whole split instead (below).
+                    .overlay {
+                        if promptPlacement == .composer { promptOverlayLayer }
+                    }
                     .overlay(alignment: .trailing) {
                         if let width = workflowChatWidth, let range = workflowChatRange {
                             creationChatResizeHandle(width: width, range: range)
@@ -12125,6 +12129,10 @@ struct ChatView: View {
                     }
                     }
                     if workflowSplit && (!workflowStacked || workflowCreationPane == .workflow) {
+                        // A centered prompt card overlaps the draft. Its
+                        // scroll view is AppKit-backed and would take the
+                        // card's clicks, like the thread's (see above).
+                        Group {
                         if isAgentCreation {
                             AgentDraftPanel(
                                 sessionId: session.sessionId,
@@ -12145,8 +12153,19 @@ struct ChatView: View {
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .transition(.opacity.combined(with: .move(edge: .trailing)))
                         }
+                        }
+                        .allowsHitTesting(!(promptPlacement == .centered && isPromptOverlayActive))
                     }
                     }
+                    }
+                    // A question while the chat sits beside its draft pauses
+                    // both: one scrim over the split, the card centered on it.
+                    .overlay {
+                        if promptPlacement == .centered {
+                            promptOverlayLayer
+                                .environment(\.promptOverlayPlacement, .centered)
+                                .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous))
+                        }
                     }
                     .padding(.horizontal, isCreationLayout ? theme.space.s16 : 0)
                     .padding(.top, isCreationLayout ? topInset + theme.space.s16 : 0)
@@ -12261,6 +12280,11 @@ struct ChatView: View {
             // workflow-creation layout, bring the Chat half forward.
             .onChange(of: session.promptQueue.current?.id) { _, id in
                 if id != nil && workflowStacked { workflowCreationPane = .chat }
+            }
+            // Share opens on the draft half; bring it forward so it can.
+            .onReceive(WorkflowDraftStore.shared.$shareRequest) { request in
+                guard workflowStacked, let request, request.draftID == architectDraft?.id else { return }
+                workflowCreationPane = .workflow
             }
             .onChange(of: session.sessionId, initial: true) { _, _ in
                 workflowCreationPane = .opening(

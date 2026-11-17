@@ -2,11 +2,12 @@
 //  WorkflowSavePrompt.swift
 //  osaurus
 //
-//  The confirm card `workflow_propose_save` raises. The Architect's turn has
-//  already ended; Save is the only thing that writes the template. Once
-//  saved, the card offers Try It, which opens the workflow's run form in
-//  the Workflows window with its example filled in, and Share, which opens
-//  Workflows on the share sheet for it.
+//  The "Add to My Workflows?" card `workflow_propose_save` raises, the same
+//  moment as the living preview's Add button. The Architect's turn has
+//  already ended; Add is the only thing that writes the template. Once
+//  added, the card offers Run It, which opens the workflow's run form with
+//  its example filled in, and Share, which opens Share right in the
+//  Architect.
 //
 
 import SwiftUI
@@ -59,9 +60,28 @@ public final class WorkflowSavePromptState: ObservableObject {
         return "\(name) · v\(version)"
     }
 
+    /// What trying it proved, in one line. The full evidence is in the
+    /// draft's details.
+    var evidenceLine: String {
+        if let blocker = evidence.blocker { return blocker }
+        if evidence.passed > 0 { return L("It worked when you tried it.") }
+        return L("Only its name or description changed.")
+    }
+
     /// True when saved.
     func save() -> Bool {
         guard !resolved else { return false }
+        // Added from the preview while this card waited: nothing new to save.
+        if let draft = WorkflowDraftStore.shared.draft(id: draftID), let templateID = draft.templateID,
+            DraftSavedState.live(draft).isSaved,
+            let existing = InstalledWorkflowStore.shared.workflow(templateID: templateID)
+        {
+            resolved = true
+            saved = existing
+            WorkflowDraftTrigger.setProposed(nil, for: draftID)
+            if let trigger, includeTrigger { applyTrigger(trigger, to: existing) }
+            return true
+        }
         do {
             let installed = try WorkflowDraftSaver.save(draftID: draftID, changelog: changelog)
             resolved = true
@@ -110,12 +130,11 @@ public final class WorkflowSavePromptState: ObservableObject {
         WorkflowRunLauncher.openTab(workflowID: saved.id)
     }
 
-    /// Opens Workflows with Share up for the saved workflow: save it as a
-    /// file, or publish it.
+    /// Opens Share for the saved workflow right in the Architect: save it
+    /// as a file, or publish it.
     func share() {
-        guard let saved else { return }
-        ChatWindowManager.shared.showWorkflowsSurface(tab: .all)
-        ManagementStateManager.shared.pendingWorkflowShare = saved.templateID
+        guard saved != nil else { return }
+        WorkflowDraftStore.shared.shareRequest = WorkflowShareRequest(draftID: draftID)
     }
 
     /// The published listing this save answers a change request on.
@@ -129,10 +148,8 @@ public final class WorkflowSavePromptState: ObservableObject {
 
     /// Opens Share on the publish step, ready to resubmit this version.
     func resubmit() {
-        guard let saved else { return }
-        ChatWindowManager.shared.showWorkflowsSurface(tab: .published)
-        ManagementStateManager.shared.pendingWorkflowShareResubmits = true
-        ManagementStateManager.shared.pendingWorkflowShare = saved.templateID
+        guard saved != nil else { return }
+        WorkflowDraftStore.shared.shareRequest = WorkflowShareRequest(draftID: draftID, resubmits: true)
     }
 
     func cancel() {
@@ -151,18 +168,22 @@ struct WorkflowSavePromptOverlay: View {
     var body: some View {
         PromptOverlayHost(onCancelDismiss: cancel) {
             PromptCard(
-                pillIcon: state.saved == nil ? "square.and.arrow.down" : "checkmark.circle",
-                pillLabel: state.saved == nil ? "Save workflow?" : "Saved",
+                pillIcon: state.saved == nil ? "plus.circle" : "checkmark.circle",
+                pillLabel: state.saved == nil
+                    ? (state.version > 1 ? "Update My Workflow?" : "Add to My Workflows?")
+                    : "Added",
                 title: state.title,
                 descriptionMarkdown: state.saved == nil
-                    ? state.changelog
+                    ? state.evidenceLine
                     : state.awaitingResubmit != nil
-                        ? L("It's on this Mac and ready to run. Resubmit it so the Osaurus team can review the fix.")
-                        : L("It's on this Mac and ready to run. Try it with the example from testing, or share it."),
+                        ? L("It's in My Workflows on this Mac. Resubmit it so the Osaurus team can review the fix.")
+                        : L("It's in My Workflows on this Mac. Share it so others can use it too."),
                 footnote: state.saved == nil
                     ? PromptCardFootnote(
                         icon: "flowchart",
-                        text: "Saving installs it on this Mac, set up with the models used in testing.")
+                        text: state.version > 1
+                            ? "Updating keeps it on this Mac, set up the way you tried it."
+                            : "Adding keeps it on this Mac, set up the way you tried it.")
                     : nil,
                 onCancel: cancel
             ) {
@@ -170,7 +191,6 @@ struct WorkflowSavePromptOverlay: View {
                     if let notice = state.renameNotice {
                         WorkflowRenameNotice(text: notice)
                     }
-                    WorkflowTestEvidenceView(evidence: state.evidence)
                     if let access = state.access {
                         WorkflowAccessLine(scope: access)
                     }
@@ -206,18 +226,18 @@ struct WorkflowSavePromptOverlay: View {
                 Text(localized: "Done")
             }
             .buttonStyle(.settings(.tertiary))
-            if state.awaitingResubmit != nil {
-                Button {
-                    state.tryIt()
-                    onDismiss()
-                } label: {
-                    Label {
-                        Text(localized: "Try It")
-                    } icon: {
-                        Image(systemName: "play.fill")
-                    }
+            Button {
+                state.tryIt()
+                onDismiss()
+            } label: {
+                Label {
+                    Text(localized: "Run…")
+                } icon: {
+                    Image(systemName: "play.fill")
                 }
-                .buttonStyle(.settings(.secondary))
+            }
+            .buttonStyle(.settings(.secondary))
+            if state.awaitingResubmit != nil {
                 Button {
                     state.resubmit()
                     onDismiss()
@@ -243,21 +263,10 @@ struct WorkflowSavePromptOverlay: View {
                         Image(systemName: "square.and.arrow.up")
                     }
                 }
-                .buttonStyle(.settings(.secondary))
-                .help(L("Save it as a file, or publish a page you control"))
-                .settingsLandingAnchor("workflows.shareAfterSave")
-                Button {
-                    state.tryIt()
-                    onDismiss()
-                } label: {
-                    Label {
-                        Text(localized: "Try It")
-                    } icon: {
-                        Image(systemName: "play.fill")
-                    }
-                }
                 .buttonStyle(.settings(.primary))
                 .keyboardShortcut(.defaultAction)
+                .help(L("Save it as a file, or publish a page you control"))
+                .settingsLandingAnchor("workflows.shareAfterSave")
             }
         }
     }
@@ -270,12 +279,16 @@ struct WorkflowSavePromptOverlay: View {
             }
             .buttonStyle(.settings(.tertiary))
             Button(action: save) {
-                Text(localized: "Save")
+                Label {
+                    Text(localized: state.version > 1 ? "Update" : "Add")
+                } icon: {
+                    Image(systemName: "plus.circle.fill")
+                }
             }
             .buttonStyle(.settings(.primary))
             .keyboardShortcut(.defaultAction)
             .disabled(!state.evidence.satisfied)
-            .help(state.evidence.blocker ?? L("Save this workflow on this Mac"))
+            .help(state.evidence.blocker ?? L("Keep it on this Mac, ready to run any time"))
         }
     }
 

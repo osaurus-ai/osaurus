@@ -27,7 +27,7 @@ struct InspectorContextMenuChecks: View {
                 case 7, 8: InspectorComposerContextMenuCheck(part: part)
                 case 9: MarkdownImageView(urlString: InspectorContextMenuData.cachedURL, altText: "Local menu image", baseWidth: 300)
                 case 10: inspectorWorkflowMediaContext(InspectorContextMenuData.imagePath, action: { action("Media open callback only") })
-                case 11: ArchitectSidebarPanel(sessionId: nil, inspectorMenuVerification: true)
+                case 11: Text("The Architect's test history and its Use This Input menu were removed with its details view. Nothing remains to check.")
                 case 13: inspectorSidebarSharingRow(action: action)
                 case 14: InspectorSidebarRemainingVerification()
                 default: Text("The current selector cluster never calls sandboxToggleChip. It has no reachable menu in this app version. Its visibility is not restored for this check.")

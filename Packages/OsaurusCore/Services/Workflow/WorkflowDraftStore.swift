@@ -17,6 +17,8 @@ public final class WorkflowDraftStore: ObservableObject {
     /// A draft whose test run needs setup first; its sidebar opens the
     /// setup wizard.
     @Published public var setupRequest: UUID?
+    /// A saved draft to share; its Architect panel opens Share in place.
+    @Published public var shareRequest: WorkflowShareRequest?
 
     nonisolated static var directory: URL { OsaurusPaths.workflowDrafts() }
 
@@ -606,6 +608,19 @@ final class WorkflowDraftDiskWriter: @unchecked Sendable {
         } catch {
             print("[Osaurus] Failed to save workflow draft: \(error)")
         }
+    }
+}
+
+/// Share asked for from the Architect: which draft, and whether to open
+/// straight on publishing (resubmitting after the Osaurus team asked for
+/// changes).
+public struct WorkflowShareRequest: Equatable, Sendable {
+    public var draftID: UUID
+    public var resubmits: Bool
+
+    public init(draftID: UUID, resubmits: Bool = false) {
+        self.draftID = draftID
+        self.resubmits = resubmits
     }
 }
 

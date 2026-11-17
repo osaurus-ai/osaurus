@@ -384,7 +384,27 @@ struct WorkflowsWindowRenderTests {
             }
             for (name, session) in [("12-architect-pane-steps", seeded.draftSession), ("13-architect-pane-empty", seeded.blankSession)] {
                 try await renderEverywhere(name) {
-                    ArchitectSidebarPanel(sessionId: session)
+                    ArchitectPreviewPanel(sessionId: session, isGenerating: false)
+                }
+            }
+            if let draft = WorkflowDraftStore.shared.draft(forSession: seeded.draftSession.uuidString),
+                let first = WorkflowSummary.steps(draft.definition).first
+            {
+                WorkflowDraftStore.shared.select(nodeID: first.id, in: draft.id)
+                try await renderEverywhere("12-architect-pane-step-open") {
+                    ArchitectPreviewPanel(sessionId: seeded.draftSession, isGenerating: false)
+                }
+                WorkflowDraftStore.shared.select(nodeID: nil, in: draft.id)
+            }
+            try await renderEverywhere("14-architect-pane-building") {
+                ArchitectPreviewPanel(sessionId: seeded.draftSession, isGenerating: true)
+            }
+            for status in [WorkflowRunStatus.running, .failed] {
+                let run = Self.run(seeded.inbox, status, ago: 20)
+                try await renderEverywhere("15-architect-steps-\(status.rawValue)", height: 500) {
+                    WorkflowStoryView(definition: seeded.inbox.definition, run: run)
+                        .padding(24)
+                        .frame(width: 460)
                 }
             }
         }
