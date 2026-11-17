@@ -75,7 +75,37 @@ final class CenteredMessageScrollView: NSScrollView {
     /// column stays centered) instead of re-wrapping on every frame.
     var columnWidthPolicy: ((CGFloat) -> CGFloat)?
 
+    /// True while `tile()` is running. Setting `contentInsets`, and the
+    /// table frame changes `sizeLastColumnToFit()` causes, make AppKit call
+    /// `tile()` again from inside the running pass. Those nested passes
+    /// pile up NSScrollView/NSClipView re-layout on the main thread and
+    /// showed up as multi-second app hangs, so a nested call is deferred.
+    private var isTiling = false
+    /// A `tile()` arrived while one was running; replay it once afterwards
+    /// so a genuine layout change (e.g. a scroller appearing) isn't lost.
+    private var needsRetileAfterCurrentPass = false
+
     override func tile() {
+        guard !isTiling else {
+            needsRetileAfterCurrentPass = true
+            ChatPerfTrace.shared.count("tile.reentrantDeferred")
+            return
+        }
+        isTiling = true
+        defer {
+            isTiling = false
+            needsRetileAfterCurrentPass = false
+        }
+        performTile()
+        // Replay at most once: the replay itself can't recurse (isTiling is
+        // still set), and a request it raises is a no-op on settled insets.
+        if needsRetileAfterCurrentPass {
+            needsRetileAfterCurrentPass = false
+            performTile()
+        }
+    }
+
+    private func performTile() {
         let outerInset = max(0, (bounds.width - maxContentWidth) / 2) + sideInset
         let legacyScrollerWidth: CGFloat =
             scrollerStyle == .legacy && hasVerticalScroller && verticalScroller?.isHidden == false
