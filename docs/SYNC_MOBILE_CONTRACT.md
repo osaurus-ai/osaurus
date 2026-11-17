@@ -62,6 +62,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `workflow_push` | Workflow notifications on the iPhone through the push service: push registrations on the manage conversation, `pushRegistered` in the manage state (§5.6) |
 | `agent_calls` | Agents calling the user back: PushKit grants in push registrations, `call-answer/1`, `call` in the manage state (§5.7) |
 | `workflow_step_details` | `steps` on every `workflow_outputs` message, an empty list for a run without any (§5.5) |
+| `manage_workflows` | the workflow library is a message in the manage conversation, not in the manage state, which a large library took past 64 KiB (§5.4) |
 | `directory_models` | each directory entry carries the agent's `model`, and the agent directory conversation carries the models message (§5.2) too, so a new iPhone has both before the manage conversation arrives |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
@@ -590,6 +591,9 @@ writes `ai.osaurus.manage-state/1` when its agents, models, workspaces or filter
 - `projects`, `plugins` and `workspaces` are the history's filters (`history_filters`), matched
   against a chat's `projectId`, `sourcePluginId` and `workspace.workspaceId`, as HTTP's
   `GET /projects` lists them.
+- The state is written under 56 KiB (the core takes at most 64 KiB a value). Past that, in turn,
+  `workflows` (an older Mac's), `models`, `workspaceAgents` and the history filters are left out;
+  `agents`, `pushRegistered` and `call` stay.
 
 ### 5.1 Requests
 
@@ -724,7 +728,12 @@ One `system` message per agent the iPhone can manage, with content `agent` and a
 
 ### 5.4 Workflows (`workflow_library`)
 
-The manage state lists the Mac's installed workflows, sorted by name (at most 100):
+The Mac's installed workflows, sorted by name (at most 100). A Mac with `manage_workflows` lists
+them on a message: one `system` message in the manage conversation with content `workflows` and
+app data `ai.osaurus.manage-workflows/1`, `{ "v": 1, "workflows": [ … ], "digest", "updatedMs" }`,
+`workflows` a blob reference (`{"$blob": i, "size": n}`) when over 16 KiB, and rewritten only when
+`digest` changes, as the models message is (§5.2). An older Mac lists them in the manage state's
+`workflows`; a Mac with `manage_workflows` leaves that out. Either way, each entry is:
 
 ```json
 "workflows": [ { "id": "…", "name": "Weekly Report", "summary": "Sums up the week's notes.",

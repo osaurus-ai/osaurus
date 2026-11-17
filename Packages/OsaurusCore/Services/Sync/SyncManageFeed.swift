@@ -292,7 +292,7 @@ final class SyncManageFeed {
                 localAddresses: Set(agents.compactMap { $0.agentAddress?.lowercased() })
             ),
             filters: Self.historyFilters(),
-            workflows: SyncWorkflowLibrary.managed(InstalledWorkflowStore.shared.workflows),
+            // The workflow library is its own message now (`manage_workflows`, `SyncManageDetail`).
             pushRegistered: SyncWorkflowPush.shared.registeredDevices,
             call: SyncAgentCalls.shared.state
         )
@@ -321,6 +321,8 @@ final class SyncManageFeed {
             device: me,
             core: core
         )
+        // Compared as it would be written: a state trimmed to fit still matches what was written.
+        let (state, bytes) = try fitted(state)
         if let existing,
             var current = SyncHostedRunContract.read(
                 SyncDeviceFeedContract.ManageState.self,
@@ -342,9 +344,50 @@ final class SyncManageFeed {
         try core.setConversationAppData(
             scope: scope,
             namespace: SyncDeviceFeedContract.manageStateNamespace,
-            bytes: try SyncHostedRunContract.encode(state)
+            bytes: bytes
         )
         core.syncNow()
+    }
+
+    /// The manage state as written: at most this, under the core's 64 KiB a conversation value
+    /// (past it every publish fails, and the phone gets no manage update at all).
+    nonisolated static let stateLimit = 56 * 1024
+
+    /// `state` encoded under `stateLimit`. Past it, in turn, the lists the phone has elsewhere or
+    /// can do without go: the workflow library (its own message), the chat models (the models
+    /// message), the teammates' agents, then the history filters. The agents, the call and the
+    /// registrations stay; a state still too large is an error, logged, rather than a value the
+    /// core refuses.
+    nonisolated static func fitted(
+        _ state: SyncDeviceFeedContract.ManageState
+    ) throws -> (SyncDeviceFeedContract.ManageState, Data) {
+        var state = state
+        let trims: [(String, (inout SyncDeviceFeedContract.ManageState) -> Void)] = [
+            ("workflows", { $0.workflows = nil }),
+            ("models", { $0.models = [] }),
+            ("workspace agents", { $0.workspaceAgents = [] }),
+            (
+                "history filters",
+                { state in
+                    state.projects = []
+                    state.plugins = []
+                    state.workspaces = []
+                }
+            ),
+        ]
+        var bytes = try SyncHostedRunContract.encode(state)
+        for (name, trim) in trims where bytes.count > stateLimit {
+            trim(&state)
+            bytes = try SyncHostedRunContract.encode(state)
+            log.error(
+                "manage state over \(stateLimit, privacy: .public) bytes: written without \(name, privacy: .public)")
+        }
+        guard bytes.count <= stateLimit else { throw StateTooLarge(bytes: bytes.count) }
+        return (state, bytes)
+    }
+
+    struct StateTooLarge: Error {
+        let bytes: Int
     }
 
     // MARK: - Requests

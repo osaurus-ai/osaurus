@@ -64,6 +64,7 @@ enum SyncDeviceFeedContract {
         "agent_calls",
         "workflow_step_details",
         "directory_models",
+        "manage_workflows",
     ]
 
     /// Each device's record under `prefix`, keyed by device key. With
@@ -236,6 +237,10 @@ enum SyncDeviceFeedContract {
     /// Content of those messages, so they're never taken for chat.
     static let modelsMessageContent = "models"
     static let agentDetailMessageContent = "agent"
+    /// Message app data on the manage conversation's workflows message (`manage_workflows`): the
+    /// workflow library, `workflows` a blob reference when too large to sit inline.
+    static let manageWorkflowsNamespace = "ai.osaurus.manage-workflows/1"
+    static let workflowsMessageContent = "workflows"
 
     // MARK: Requests
 
