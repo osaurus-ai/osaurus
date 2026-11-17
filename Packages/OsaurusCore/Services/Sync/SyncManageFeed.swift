@@ -847,12 +847,17 @@ final class SyncManageFeed {
         guard let scope = request.scope, !scope.isEmpty else {
             return .init(ok: false, error: "bad_request", message: "Expected scope", doneMs: now)
         }
-        guard let sessionId = SyncConversationStore.shared.sessionId(forScope: scope) else {
+        // Off the main thread (KEEP): both lookups wait on the store's queue and the core's lock.
+        let requested = request.agentId.flatMap(UUID.init(uuidString:))
+        let found = await Task.detached(priority: .userInitiated) { () -> (UUID, UUID?)? in
+            let store = SyncConversationStore.shared
+            guard let sessionId = store.sessionId(forScope: scope) else { return nil }
+            return (sessionId, requested == nil ? store.loadSession(id: sessionId)?.agentId : nil)
+        }.value
+        guard let (sessionId, stored) = found else {
             return .init(ok: false, error: "chat_not_found", message: "That chat isn't on this Mac.", doneMs: now)
         }
-        let agentId =
-            request.agentId.flatMap(UUID.init(uuidString:))
-            ?? SyncConversationStore.shared.loadSession(id: sessionId)?.agentId ?? Agent.defaultId
+        let agentId = requested ?? stored ?? Agent.defaultId
         guard AgentManager.shared.agent(for: agentId) != nil else {
             return .init(ok: false, error: "agent_not_found", message: "That agent isn't on this Mac.", doneMs: now)
         }

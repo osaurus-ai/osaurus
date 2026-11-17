@@ -460,10 +460,12 @@ final class SyncStatusModel: ObservableObject {
 
     // MARK: - Devices
 
-    func revoke(_ device: Device) throws {
+    /// The core calls run off the main thread (KEEP): they wait on its lock, held for seconds while it syncs.
+    func revoke(_ device: Device) async throws {
         guard let core = SyncService.shared.core else { return }
+        let id = device.id
         do {
-            try core.revokeDevice(device: device.id)
+            try await Task.detached(priority: .userInitiated) { try core.revokeDevice(device: id) }.value
         } catch {
             Self.logRemoveFailure(error, device: device)
             throw error
@@ -475,10 +477,11 @@ final class SyncStatusModel: ObservableObject {
 
     /// Revokes `device` and replaces this account's keys. Returns the new
     /// recovery phrase.
-    func revokeAndRotate(_ device: Device) throws -> [String] {
+    func revokeAndRotate(_ device: Device) async throws -> [String] {
         guard let core = SyncService.shared.core else { return [] }
+        let id = device.id
         do {
-            _ = try core.revokeAndRotate(devices: [device.id])
+            _ = try await Task.detached(priority: .userInitiated) { try core.revokeAndRotate(devices: [id]) }.value
         } catch {
             Self.logRemoveFailure(error, device: device)
             throw error
@@ -487,7 +490,7 @@ final class SyncStatusModel: ObservableObject {
         SyncWalletLink.clear()
         dismissPairingResult()
         refresh()
-        return try core.recoveryPhrase()
+        return try await Task.detached(priority: .userInitiated) { try core.recoveryPhrase() }.value
     }
 
     /// Removing a device shows only "That Didn't Work" and a short message; the full error goes to

@@ -211,7 +211,8 @@ final class SyncRunProgressPublisher {
 
     func update(_ session: ChatSession) {
         guard SyncTurnStreamer.canStream(session), let sessionId = session.sessionId,
-            let scope = SyncConversationStore.shared.scope(forSession: sessionId)
+            // Known scopes only (KEEP): a lookup waits on the core's lock, and this runs on main every tick.
+            let scope = SyncConversationStore.shared.cachedScope(forSession: sessionId)
         else { return }
         let now = SyncHostedRunContract.nowMs()
         guard let progress = SyncRunProgressContract.snapshot(of: session.turns, startedMs: startedMs, nowMs: now)
@@ -225,7 +226,7 @@ final class SyncRunProgressPublisher {
 
     /// The run ended: says so, keeping the final tool and file list.
     func runEnded(_ session: ChatSession) {
-        guard let scope = scope ?? session.sessionId.flatMap(SyncConversationStore.shared.scope(forSession:)),
+        guard let scope = scope ?? session.sessionId.flatMap(SyncConversationStore.shared.cachedScope(forSession:)),
             var last = written ?? session.sessionId.flatMap({ _ in
                 SyncRunProgressContract.snapshot(
                     of: session.turns, startedMs: startedMs, nowMs: SyncHostedRunContract.nowMs())

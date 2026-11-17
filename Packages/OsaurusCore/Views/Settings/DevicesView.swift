@@ -702,15 +702,17 @@ struct DevicesView: View {
         default: return
         }
         asOwner(L("remove a device from your sync account")) {
-            do {
-                if rotate {
-                    phrase = nil
-                    newPhrase = try model.revokeAndRotate(device)
-                } else {
-                    try model.revoke(device)
+            Task { @MainActor in
+                do {
+                    if rotate {
+                        phrase = nil
+                        newPhrase = try await model.revokeAndRotate(device)
+                    } else {
+                        try await model.revoke(device)
+                    }
+                } catch {
+                    actionError = error.syncUserMessage
                 }
-            } catch {
-                actionError = error.syncUserMessage
             }
         }
     }

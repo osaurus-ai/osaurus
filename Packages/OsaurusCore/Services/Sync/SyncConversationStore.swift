@@ -87,6 +87,8 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
     private var drafts: [UUID: ChatSessionData] = [:]
     private var lastLocalWrite: [String: Date] = [:]
     private var fetching: Set<String> = []
+    /// Sessions whose scope `cachedScope` is looking up off the main thread.
+    private var warming: Set<UUID> = []
     /// The agent this device's replies in a session are sent as, by session.
     private var agentSenders: [UUID: String] = [:]
     /// What a failed save was compared against, kept for its retry.
@@ -210,6 +212,20 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
     func scope(forSession id: UUID) -> String? {
         guard let core = currentCore() else { return nil }
         return scope(for: id, core: core)
+    }
+
+    /// The session's scope if it's known already, without touching the core: for the main thread. A miss
+    /// looks it up off the main thread (KEEP), so a later call finds it.
+    func cachedScope(forSession id: UUID) -> String? {
+        if let cached = lock.withLock({ scopes[id] }) { return cached }
+        let start = lock.withLock { warming.insert(id).inserted }
+        if start {
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                _ = scope(forSession: id)
+                lock.withLock { _ = warming.remove(id) }
+            }
+        }
+        return nil
     }
 
     func sessionId(forScope scope: String) -> UUID? {

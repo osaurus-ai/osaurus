@@ -15,12 +15,14 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct SyncInboundTests {
-    private func withStore(_ body: @MainActor @Sendable (SyncConversationStore, SyncCore) throws -> Void) async throws {
+    private func withStore(
+        _ body: @MainActor @Sendable (SyncConversationStore, SyncCore) async throws -> Void
+    ) async throws {
         try await ChatHistoryTestStorage.run {
             let core = try SyncService.shared.open()
             SyncInboundApplier.shared._resetForTesting()
             defer { SyncInboundApplier.shared._resetForTesting() }
-            try body(SyncConversationStore.shared, core)
+            try await body(SyncConversationStore.shared, core)
         }
     }
 
@@ -126,7 +128,7 @@ struct SyncInboundTests {
             let scope = try #require(store.scope(forSession: original.id))
             let arrived = try writeElsewhere("And food?", into: scope, core: core)
             SyncInboundApplier.shared._receiveForTesting([.reset], sessionId: original.id)
-            SyncInboundApplier.shared._flushForTesting()
+            await SyncInboundApplier.shared._flushForTesting()
 
             #expect(chat.turns.map(\.id) == original.turns.map(\.id) + [arrived])
             #expect(chat.turns.last?.content == "And food?")
@@ -267,11 +269,11 @@ struct SyncInboundTests {
             let scope = try #require(store.scope(forSession: original.id))
             _ = try writeElsewhere("And food?", into: scope, core: core)
             SyncInboundApplier.shared._receiveForTesting([.reset], sessionId: original.id)
-            SyncInboundApplier.shared._flushForTesting()
+            await SyncInboundApplier.shared._flushForTesting()
             #expect(chat.turns.count == 2)
 
             chat.isDirty = false
-            SyncInboundApplier.shared._flushForTesting()
+            await SyncInboundApplier.shared._flushForTesting()
             #expect(chat.turns.count == 3)
         }
     }
@@ -291,10 +293,10 @@ struct SyncInboundTests {
             let window = windowShowing(stored, inBackgroundTab: inBackgroundTab)
             let scope = try #require(store.scope(forSession: stored.id))
 
-            ChatWindowManager.shared.withRegisteredWindowStateForTesting(window) {
+            await ChatWindowManager.shared.withRegisteredWindowStateForTesting(window) {
                 try? core.leaveConversation(scope: scope)
                 SyncInboundApplier.shared._receiveForTesting([.removed(scope: scope)])
-                SyncInboundApplier.shared._flushForTesting()
+                await SyncInboundApplier.shared._flushForTesting()
                 #expect(!window.tabs.contains { $0.session.sessionId == stored.id })
                 window.cleanup()
             }
@@ -313,13 +315,13 @@ struct SyncInboundTests {
             tab.isDirty = true
             SyncConversationStore.shared._resetForTesting()
 
-            try ChatWindowManager.shared.withRegisteredWindowStateForTesting(window) {
+            try await ChatWindowManager.shared.withRegisteredWindowStateForTesting(window) {
                 try core.setArchived(scope: scope, archived: true)
                 try core.setPinned(scope: scope, pinned: true)
                 try core.renameConversation(scope: scope, title: "Lisbon trip")
                 let conversation = try #require(try core.conversation(scope: scope))
                 SyncInboundApplier.shared._receiveForTesting([.changed(conversation: conversation)])
-                SyncInboundApplier.shared._flushForTesting()
+                await SyncInboundApplier.shared._flushForTesting()
                 #expect(tab.archived && tab.pinned && tab.title == "Lisbon trip")
 
                 tab.isDirty = false

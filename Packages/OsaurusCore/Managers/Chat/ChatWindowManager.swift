@@ -695,6 +695,15 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             defer { windowStates[state.windowId] = previous }
             return try body()
         }
+
+        func withRegisteredWindowStateForTesting<T>(
+            _ state: ChatWindowState, _ body: () async throws -> T
+        ) async rethrows -> T {
+            let previous = windowStates[state.windowId]
+            windowStates[state.windowId] = state
+            defer { windowStates[state.windowId] = previous }
+            return try await body()
+        }
     #endif
 
     /// The live `ChatSession` currently showing the given persisted session

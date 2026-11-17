@@ -34,6 +34,8 @@ final class SyncInboundApplier {
     /// Open chats, counted per session: two surfaces can show one chat.
     private var watchers: [UUID: Int] = [:]
     private var scopeWatches: [UUID: ScopeWatch] = [:]
+    /// Chats whose subscription is being made off the main thread (`subscribeScope`).
+    private var subscribing: Set<UUID> = []
 
     private var changedScopes: Set<String> = []
     private var removedScopes: Set<String> = []
@@ -95,7 +97,7 @@ final class SyncInboundApplier {
         }
         for watch in scopeWatches.values { watch.subscription.cancel() }
         scopeWatches.removeAll()
-        for id in watchers.keys { subscribeScope(for: id, core: core) }
+        for id in watchers.keys { startSubscribing(id, core: core) }
     }
 
     private func detach() {
@@ -121,7 +123,7 @@ final class SyncInboundApplier {
     func watch(_ sessionId: UUID) {
         watchers[sessionId, default: 0] += 1
         guard watchers[sessionId] == 1, let core = SyncService.shared.core else { return }
-        subscribeScope(for: sessionId, core: core)
+        startSubscribing(sessionId, core: core)
     }
 
     func unwatch(_ sessionId: UUID) {
@@ -142,19 +144,41 @@ final class SyncInboundApplier {
 
     /// A chat that's still a draft has no conversation yet; it's subscribed
     /// once its first save creates one.
-    private func subscribeScope(for sessionId: UUID, core: SyncCore) {
-        guard scopeWatches[sessionId] == nil,
-            let scope = SyncConversationStore.shared.scope(forSession: sessionId)
-        else { return }
-        do {
-            let subscription = try core.subscribe(scope: scope) { changes in
-                Task { @MainActor in SyncInboundApplier.shared.receive(changes, sessionId: sessionId) }
+    ///
+    /// The scope lookup and the subscription run off the main thread (KEEP): both wait on the core's lock,
+    /// which it holds for seconds while it takes in a device's catch-up (2026-11-17, a Mac hang).
+    private func subscribeScope(for sessionId: UUID, core: SyncCore) async {
+        guard scopeWatches[sessionId] == nil, subscribing.insert(sessionId).inserted else { return }
+        defer { subscribing.remove(sessionId) }
+        let made = await Task.detached(priority: .userInitiated) { () -> Result<(String, Subscription), Error>? in
+            guard let scope = SyncConversationStore.shared.scope(forSession: sessionId) else { return nil }
+            do {
+                let subscription = try core.subscribe(scope: scope) { changes in
+                    Task { @MainActor in SyncInboundApplier.shared.receive(changes, sessionId: sessionId) }
+                }
+                return .success((scope, subscription))
+            } catch {
+                return .failure(error)
+            }
+        }.value
+        switch made {
+        case .success(let (scope, subscription)):
+            // Unwatched, or the core replaced, while it was being made.
+            guard watchers[sessionId] != nil, scopeWatches[sessionId] == nil, SyncService.shared.core === core else {
+                subscription.cancel()
+                return
             }
             scopeWatches[sessionId] = ScopeWatch(scope: scope, subscription: subscription)
             refreshPendingDelivery(sessionId)
-        } catch {
+        case .failure(let error):
             Self.log.error("subscribe failed: \(error.syncLogDetail, privacy: .public)")
+        case nil:
+            break
         }
+    }
+
+    private func startSubscribing(_ sessionId: UUID, core: SyncCore) {
+        Task { @MainActor [weak self] in await self?.subscribeScope(for: sessionId, core: core) }
     }
 
     // MARK: - Changes
@@ -288,7 +312,9 @@ final class SyncInboundApplier {
             try? await Task.sleep(for: Self.committedMessageWait)
             guard let self, self.remoteStreams[sessionId]?.messageId == messageId else { return }
             let waited = waited + Self.committedMessageWait
-            if waited < Self.committedMessageMaxWait, Self.isConnected(host) {
+            let connected = await Task.detached(priority: .utility) { Self.isConnected(host) }.value
+            guard self.remoteStreams[sessionId]?.messageId == messageId else { return }
+            if waited < Self.committedMessageMaxWait, connected {
                 self.scheduleAbandonCheck(sessionId, messageId: messageId, host: host, waited: waited)
                 return
             }
@@ -297,7 +323,8 @@ final class SyncInboundApplier {
         }
     }
 
-    private static func isConnected(_ device: String) -> Bool {
+    /// Off the main thread only: `diagnostics` waits on the core's lock.
+    nonisolated private static func isConnected(_ device: String) -> Bool {
         SyncService.shared.core?.diagnostics().peers.contains { $0.device == device && $0.connected } ?? false
     }
 
@@ -318,60 +345,86 @@ final class SyncInboundApplier {
         flushTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: Self.debounce)
             guard let self else { return }
+            await self.flush()
             self.flushTask = nil
-            self.flush()
+            // Changes that came in while it ran.
+            if !self.changedScopes.isEmpty || !self.removedScopes.isEmpty { self.scheduleFlush() }
         }
     }
 
-    private func flush() {
+    /// What `flush` reads off the main thread.
+    private struct Flushed: Sendable {
+        var changedIds: [UUID] = []
+        var metadata: [ChatSessionData] = []
+        var removedIds: [UUID] = []
+        var removedUnknown = false
+    }
+
+    /// KEEP the reads off the main thread: the scope lookups and `loadMetadata` wait on the store's queue and
+    /// the core's lock, which the core holds for seconds while it takes in another device's catch-up. Read on
+    /// main, they hung the Mac (2026-11-17, bt in osaurus/tmp/bt-all.txt).
+    private func flush() async {
         let store = SyncConversationStore.shared
         let changed = changedScopes
         let removed = removedScopes
         changedScopes.removeAll()
         removedScopes.removeAll()
 
-        var changedIds: [UUID] = []
-        for scope in changed where !store.wroteLocally(scope: scope, within: Self.echoWindow) {
-            guard let id = store.sessionId(forScope: scope) else { continue }
-            changedIds.append(id)
-            store.invalidate(sessionId: id)
-            if watchers[id] != nil { staleSessions.insert(id) }
-        }
-        if !changedIds.isEmpty {
-            let metadata = store.loadMetadata(ids: changedIds)
-            for session in metadata {
+        let echoWindow = Self.echoWindow
+        let found = await Task.detached(priority: .userInitiated) { () -> Flushed in
+            var found = Flushed()
+            for scope in changed where !store.wroteLocally(scope: scope, within: echoWindow) {
+                guard let id = store.sessionId(forScope: scope) else { continue }
+                found.changedIds.append(id)
+                store.invalidate(sessionId: id)
+            }
+            if !found.changedIds.isEmpty { found.metadata = store.loadMetadata(ids: found.changedIds) }
+            found.removedIds = removed.compactMap { store.forget(scope: $0) }
+            found.removedUnknown = found.removedIds.count < removed.count
+            return found
+        }.value
+
+        for id in found.changedIds where watchers[id] != nil { staleSessions.insert(id) }
+        if !found.metadata.isEmpty {
+            for session in found.metadata {
                 for live in Self.liveSessions(for: session.id) { live.applyRemoteMetadata(from: session) }
             }
-            ChatSessionsManager.shared.applyRemote(metadata)
+            ChatSessionsManager.shared.applyRemote(found.metadata)
         }
-        let removedIds = removed.compactMap { store.forget(scope: $0) }
         // Like a delete from the phone: open tabs move off the chat, or
         // their next save would bring it back.
-        for id in removedIds { ChatWindowManager.shared.deleteSession(id: id) }
-        if removedIds.count < removed.count {
-            // A conversation this launch never looked up: only a full read finds its row.
-            ChatSessionsManager.shared.refresh()
+        for id in found.removedIds { ChatWindowManager.shared.deleteSession(id: id) }
+        if found.removedUnknown {
+            // A conversation this launch never looked up: only a full read finds its row (off main).
+            ChatSessionsManager.shared.refreshInBackground()
         }
 
         // Chats that just got their conversation start following it.
         if let core = SyncService.shared.core {
-            for id in watchers.keys where scopeWatches[id] == nil { subscribeScope(for: id, core: core) }
+            for id in watchers.keys where scopeWatches[id] == nil { await subscribeScope(for: id, core: core) }
         }
-        applyStaleSessions()
+        await applyStaleSessions()
     }
 
     /// Reloads each changed open chat that's idle. Busy ones are retried: a
     /// load now would count turns as seen that the busy copy doesn't have.
-    private func applyStaleSessions() {
+    /// Each chat is read off the main thread (`loadAsync`, KEEP), then checked again: it may have got busy since.
+    private func applyStaleSessions() async {
         var busy: Set<UUID> = []
-        for id in staleSessions {
+        let stale = staleSessions
+        staleSessions.subtract(stale)
+        for id in stale {
+            guard !Self.liveSessions(for: id).isEmpty else { continue }
+            guard Self.liveSessions(for: id).allSatisfy(\.canApplyRemoteChanges) else {
+                busy.insert(id)
+                continue
+            }
+            guard let data = await ChatSessionStore.loadAsync(id: id) else { continue }
             let live = Self.liveSessions(for: id)
-            guard !live.isEmpty else { continue }
             guard live.allSatisfy(\.canApplyRemoteChanges) else {
                 busy.insert(id)
                 continue
             }
-            guard let data = ChatSessionStore.load(id: id) else { continue }
             if committedReplies.remove(id) != nil {
                 remoteStreams[id] = nil
                 renderTasks.removeValue(forKey: id)?.cancel()
@@ -382,14 +435,14 @@ final class SyncInboundApplier {
             metadata.turns = []
             ChatSessionsManager.shared.applyRemote([metadata])
         }
-        staleSessions = busy
+        staleSessions.formUnion(busy)
         retryTask?.cancel()
         retryTask = nil
         guard !busy.isEmpty else { return }
         retryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: Self.retryInterval)
             guard !Task.isCancelled else { return }
-            self?.applyStaleSessions()
+            await self?.applyStaleSessions()
         }
     }
 
@@ -405,10 +458,10 @@ final class SyncInboundApplier {
 
     #if DEBUG
         /// Runs the debounced work now.
-        func _flushForTesting() {
+        func _flushForTesting() async {
             flushTask?.cancel()
             flushTask = nil
-            flush()
+            await flush()
         }
 
         func _receiveForTesting(_ changes: [ScopeChange], sessionId: UUID) {
