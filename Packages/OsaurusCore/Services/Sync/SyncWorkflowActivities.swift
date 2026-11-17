@@ -170,7 +170,8 @@ final class SyncWorkflowActivities {
                 guard let core = SyncService.shared.core else { return }
                 let outcome = await Self.deliver(state, event: isEnd ? .end : .update, to: target, core: core)
                 await MainActor.run {
-                    SyncWorkflowActivities.shared.handle(outcome, target: target, signature: state.signature)
+                    SyncWorkflowActivities.shared.handle(
+                        outcome, target: target, signature: state.signature, isEnd: isEnd)
                 }
             }
         }
@@ -178,9 +179,10 @@ final class SyncWorkflowActivities {
 
     /// Runs whose activity update waits to be sent again, and when.
     private var resends: [String: Task<Void, Never>] = [:]
-    /// Runs already sent again once for their current state: a second failure isn't retried, as
-    /// alerts aren't.
-    private var resent: [String: String] = [:]
+    /// Times each run's current state was sent again. An update gets one try more, as alerts do;
+    /// the final one gets `endRetries`, as without it the Lock Screen shows the run as still going.
+    private var resent: [String: (signature: String, count: Int)] = [:]
+    static let endRetries = 6
 
     /// Sends the run's current state again after `afterMs`: a failed update, the final one above
     /// all, would otherwise leave the Lock Screen showing the run as still going.
@@ -220,7 +222,9 @@ final class SyncWorkflowActivities {
         }
     }
 
-    private func handle(_ outcome: SyncWorkflowPush.Outcome, target: Target, signature: String? = nil) {
+    private func handle(
+        _ outcome: SyncWorkflowPush.Outcome, target: Target, signature: String? = nil, isEnd: Bool = false
+    ) {
         switch outcome {
         case .sent:
             if !target.runId.isEmpty { resent[target.runId] = nil }
@@ -235,28 +239,31 @@ final class SyncWorkflowActivities {
         case .wait(let seconds):
             SyncWorkflowPush.shared.noteWait(device: target.device, seconds: seconds)
             Self.trace("activity update not sent: waiting \(seconds) s")
-            retry(target, signature: signature, afterMs: Int64(seconds) * 1000)
+            retry(target, signature: signature, isEnd: isEnd, afterMs: Int64(seconds) * 1000)
         case .retry:
             Self.trace("activity update not sent: retrying")
-            retry(target, signature: signature, afterMs: 30_000)
+            retry(target, signature: signature, isEnd: isEnd, afterMs: 30_000)
         case .failed(let why):
             Self.log.error("activity update not sent: \(why, privacy: .public)")
             Self.trace("activity update not sent: \(why)")
+            retry(target, signature: signature, isEnd: isEnd, afterMs: 30_000)
         }
     }
 
-    /// One more try for an update the service couldn't take now; push-to-start isn't retried
-    /// (the run's notifications carry on without an activity).
-    private func retry(_ target: Target, signature: String?, afterMs: Int64) {
+    /// Another try for an update that wasn't sent, each waiting twice as long; push-to-start isn't
+    /// retried (the run's notifications carry on without an activity), nor a state a newer one replaced.
+    private func retry(_ target: Target, signature: String?, isEnd: Bool, afterMs: Int64) {
         let runId = target.runId
-        guard !runId.isEmpty, let signature, resent[runId] != signature, sent[runId] == signature else {
-            if !target.runId.isEmpty { Self.log.error("activity update not sent after a retry") }
+        guard !runId.isEmpty, let signature, sent[runId] == signature else { return }
+        let count = resent[runId].flatMap { $0.signature == signature ? $0.count : nil } ?? 0
+        guard count < (isEnd ? Self.endRetries : 1) else {
+            Self.log.error("activity update not sent after \(count) retries")
             return
         }
-        resent[runId] = signature
+        resent[runId] = (signature, count + 1)
         sent[runId] = nil
         ended.remove(runId)
-        scheduleResend(runId, afterMs: afterMs)
+        scheduleResend(runId, afterMs: afterMs << count)
     }
 
     // MARK: State

@@ -123,6 +123,9 @@ final class SyncAgentCalls {
     /// read; 0 with none. A time rather than a flag, so the tools go when the grants do.
     private nonisolated static let availableUntilMs = OSAllocatedUnfairLock<Int64>(initialState: 0)
     private var expiryTask: Task<Void, Never>?
+    /// `ringAvailable` as the tools list was last told: read again when the grants run out, the
+    /// time has already passed, so the old value can't come from it.
+    private var listedAvailable = false
 
     /// `canRing` as of the last registrations read, for the prompt composer off the main actor.
     nonisolated static var ringAvailable: Bool {
@@ -131,11 +134,11 @@ final class SyncAgentCalls {
 
     /// The registrations were read again (`SyncWorkflowPush.refresh`).
     func registrationsChanged() {
-        let was = Self.ringAvailable
         let until = targets.map { $0.push.registration.voipExpiresMs ?? 0 }.max() ?? 0
         Self.availableUntilMs.withLock { $0 = until }
         let now = Self.ringAvailable
-        if was != now {
+        if listedAvailable != now {
+            listedAvailable = now
             Self.trace(now ? "a device rings for agent calls" : "no device rings for agent calls")
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
         }

@@ -420,10 +420,11 @@ enum SyncDeviceFeedContract {
         // Tags are ordinary conversation data, so a conversation another user shared with this one
         // could carry the same two and be taken for this Mac's own, and the requests in it run as this
         // user. So: the one used before, once found; else one no other user is in (agents may be);
-        // else, as before, the first. The last is for a conversation that still lists this user's
-        // identity from before a change of phrase, and is never remembered: a conversation chosen only
-        // because no other was found mustn't keep its place once the real one is. Remembered per account,
-        // so another account's, or the one before a change of phrase, is never taken for this one's.
+        // else one holding app data `device` signed, which no other user's device can. The last is
+        // for a conversation that still lists this user's identity from before a change of phrase, and
+        // is never remembered: a conversation chosen only because no other was found mustn't keep its
+        // place once the real one is. Remembered per account, so another account's, or the one before a
+        // change of phrase, is never taken for this one's.
         let found = try core.conversationsFiltered(filter: filter)
         let me = "u:" + user
         if let own = found.first(where: { conversation in
@@ -432,7 +433,9 @@ enum SyncDeviceFeedContract {
             UserDefaults.standard.set(own.scope, forKey: pinKey)
             return own
         }
-        return found.first
+        return found.first { conversation in
+            conversation.appData.contains { $0.authorDevice?.lowercased() == device.lowercased() }
+        }
     }
 
     /// This device's conversation of `kind`, made when missing.

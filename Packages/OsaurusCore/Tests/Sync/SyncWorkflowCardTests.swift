@@ -258,6 +258,26 @@ struct SyncWorkflowCardTests {
         #expect(SyncWorkflowOutput.payload(for: run, staging: staging).digest == payload.digest)
     }
 
+    @Test func manyFilesWithLongDescriptionsStayUnderTheMessageLimit() throws {
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("output-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+
+        var run = Self.run()
+        run.status = .completed
+        run.artifacts = (0 ..< SyncWorkflowOutput.fileCountLimit).map { index in
+            WorkflowArtifact(
+                source: .shared, filename: "report-\(index).md", path: staging.appendingPathComponent("gone").path,
+                description: String(repeating: "d", count: SyncWorkflowOutput.lineLimit))
+        }
+        let payload = SyncWorkflowOutput.payload(for: run, staging: staging)
+        #expect(SyncWorkflowOutput.encodedSize(payload.object) <= SyncWorkflowOutput.messageLimit)
+        // Every file is still listed, without its description.
+        let files = try #require(payload.object["files"]?.arrayValue)
+        #expect(files.count == SyncWorkflowOutput.fileCountLimit)
+        #expect(files.allSatisfy { $0.objectValue?["description"] == nil })
+    }
+
     @Test
     func eachRunIsItsOwnEntryWrittenOnlyWhenItChanges() async throws {
         try await ChatHistoryTestStorage.run {

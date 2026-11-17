@@ -34,6 +34,8 @@ struct DevicesView: View {
     @State private var restoreText = ""
     @State private var isRestoring = false
     @State private var isSigningOut = false
+    /// A removal (and its change of phrase) is running: a second can't start until it ends.
+    @State private var isRemoving = false
     @State private var actionError: String?
 
     private static let qrSide: CGFloat = 136
@@ -373,6 +375,7 @@ struct DevicesView: View {
                 if !device.isSelf, !device.revoked {
                     SettingsOverflowMenu(help: "Device actions") {
                         Button(L("Remove Device…")) { confirmRemove(device) }
+                            .disabled(isRemoving)
                     }
                 }
             }
@@ -681,6 +684,7 @@ struct DevicesView: View {
     /// One flow for every removal. Changing the phrase is the default: a
     /// removed device that wasn't wiped still holds the account secret.
     private func confirmRemove(_ device: Device) {
+        guard !isRemoving else { return }
         let alert = NSAlert()
         alert.messageText = String(format: L("Remove %@?"), device.name)
         let phraseNote =
@@ -702,7 +706,10 @@ struct DevicesView: View {
         default: return
         }
         asOwner(L("remove a device from your sync account")) {
+            guard !isRemoving else { return }
+            isRemoving = true
             Task { @MainActor in
+                defer { isRemoving = false }
                 do {
                     if rotate {
                         phrase = nil

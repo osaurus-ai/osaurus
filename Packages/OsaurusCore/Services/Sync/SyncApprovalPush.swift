@@ -118,7 +118,7 @@ final class SyncApprovalPush {
             Self.trace("approval call in \(sessionId.uuidString.prefix(8)): \(outcome.rawValue)")
             SyncApprovalPush.shared.calling[sessionId] = nil
             // Unanswered approval calls count against the chat and the agent, as its own calls do.
-            policy.endedApprovalCall(outcome, sessionId: sessionId)
+            policy.endedApprovalCall(outcome, sessionId: sessionId, rangMs: nowMs)
             policy.ended(outcome, decision: .onItsOwn, agentId: agentId, rangMs: nowMs, taken: nil)
         }
     }

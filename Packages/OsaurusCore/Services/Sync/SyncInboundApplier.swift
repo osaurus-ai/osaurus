@@ -56,9 +56,11 @@ final class SyncInboundApplier {
     private var pendingDeliveryTasks: [UUID: Task<Void, Never>] = [:]
     /// Sessions whose sync status changed while a lookup was in flight.
     private var pendingDeliveryRerun: Set<UUID> = []
-    /// Chats whose streamed reply's message has arrived: the next reload
-    /// swaps the bubble for it.
-    private var committedReplies: Set<UUID> = []
+    /// Chats whose streamed reply's message has arrived, with its id: the next
+    /// reload swaps the bubble for it, if the bubble is still that reply's.
+    private var committedReplies: [UUID: String] = [:]
+    /// `applyStaleSessions` is running: a second call leaves the chats to it.
+    private var applying = false
 
     private init() {}
 
@@ -135,7 +137,7 @@ final class SyncInboundApplier {
         watchers[sessionId] = nil
         scopeWatches.removeValue(forKey: sessionId)?.subscription.cancel()
         staleSessions.remove(sessionId)
-        committedReplies.remove(sessionId)
+        committedReplies[sessionId] = nil
         remoteStreams[sessionId] = nil
         renderTasks.removeValue(forKey: sessionId)?.cancel()
         pendingDeliveryTasks.removeValue(forKey: sessionId)?.cancel()
@@ -201,7 +203,7 @@ final class SyncInboundApplier {
         for change in changes {
             switch change {
             case .messageAdded(let message), .messageChanged(let message):
-                if message.id == remoteStreams[sessionId]?.messageId { committedReplies.insert(sessionId) }
+                if message.id == remoteStreams[sessionId]?.messageId { committedReplies[sessionId] = message.id }
                 if message.authorDevice != me { markStale(sessionId) }
             case .messageRemoved:
                 // Removals carry no author; reloading an unchanged chat is a no-op.
@@ -409,31 +411,38 @@ final class SyncInboundApplier {
     /// Reloads each changed open chat that's idle. Busy ones are retried: a
     /// load now would count turns as seen that the busy copy doesn't have.
     /// Each chat is read off the main thread (`loadAsync`, KEEP), then checked again: it may have got busy since.
+    /// One run at a time; chats marked stale while it awaits a load are applied before it ends.
     private func applyStaleSessions() async {
+        guard !applying else { return }
+        applying = true
+        defer { applying = false }
         var busy: Set<UUID> = []
-        let stale = staleSessions
-        staleSessions.subtract(stale)
-        for id in stale {
-            guard !Self.liveSessions(for: id).isEmpty else { continue }
-            guard Self.liveSessions(for: id).allSatisfy(\.canApplyRemoteChanges) else {
-                busy.insert(id)
-                continue
+        while !staleSessions.isEmpty {
+            let stale = staleSessions
+            staleSessions.removeAll()
+            for id in stale {
+                guard !Self.liveSessions(for: id).isEmpty else { continue }
+                guard Self.liveSessions(for: id).allSatisfy(\.canApplyRemoteChanges) else {
+                    busy.insert(id)
+                    continue
+                }
+                guard let data = await ChatSessionStore.loadAsync(id: id) else { continue }
+                let live = Self.liveSessions(for: id)
+                guard live.allSatisfy(\.canApplyRemoteChanges) else {
+                    busy.insert(id)
+                    continue
+                }
+                if let committed = committedReplies.removeValue(forKey: id), remoteStreams[id]?.messageId == committed {
+                    remoteStreams[id] = nil
+                    renderTasks.removeValue(forKey: id)?.cancel()
+                    for session in live { session.endRemoteReply() }
+                }
+                busy.remove(id)
+                for session in live { session.applyRemoteChanges(from: data) }
+                var metadata = data
+                metadata.turns = []
+                ChatSessionsManager.shared.applyRemote([metadata])
             }
-            guard let data = await ChatSessionStore.loadAsync(id: id) else { continue }
-            let live = Self.liveSessions(for: id)
-            guard live.allSatisfy(\.canApplyRemoteChanges) else {
-                busy.insert(id)
-                continue
-            }
-            if committedReplies.remove(id) != nil {
-                remoteStreams[id] = nil
-                renderTasks.removeValue(forKey: id)?.cancel()
-                for session in live { session.endRemoteReply() }
-            }
-            for session in live { session.applyRemoteChanges(from: data) }
-            var metadata = data
-            metadata.turns = []
-            ChatSessionsManager.shared.applyRemote([metadata])
         }
         staleSessions.formUnion(busy)
         retryTask?.cancel()

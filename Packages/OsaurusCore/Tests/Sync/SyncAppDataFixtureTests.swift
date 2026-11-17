@@ -427,16 +427,16 @@ struct SyncAppDataFixtureTests {
             let conversation = try #require(try core.conversation(scope: scope))
 
             // The iPhone's answer: `submit` with the form's values. The fixture is
-            // imported unsigned, and only a set its own device signed may carry a
-            // form's answer.
+            // imported by this Mac, so the iPhone's set is signed by the Mac, and
+            // only a set its own device signed is read.
             let answers = SyncAttentionFeed.answers(
                 in: conversation, deviceNames: [phone: "Sam's iPhone"], legacyLabel: "Your iPhone")
-            #expect(answers.isEmpty, "an unsigned submit is never read")
+            #expect(answers.isEmpty, "a set another device signed is never read")
             let sets = SyncDeviceFeedContract.perDevice(
                 SyncDeviceFeedContract.AttentionAnswers.self,
                 prefix: SyncDeviceFeedContract.attentionAnswerNamespacePrefix,
                 in: conversation,
-                writtenByThatDevice: true
+                writtenByThatDevice: false
             )
             let submit = try #require(sets[phone]?.answers.first?.value)
             #expect(submit.action == SyncDeviceFeedContract.submitAction)

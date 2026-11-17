@@ -140,7 +140,7 @@ enum SyncWorkflowOutput {
         // phone never gets the output. Each fallback runs until the message fits under `messageLimit`:
         // the steps without their logs and tool calls; then every step input and output as a blob; then the
         // oldest steps without their details (id and status only, as the card has); then the run's own
-        // input and output as blobs too.
+        // input and output as blobs too; last, the files without their descriptions.
         let shown = run.nodes.filter { $0.status != .skipped }
         let base = blobs.count
         func steps(stepLimit: Int, lean: Bool, bare: Int) -> (steps: [JSONValue], blobs: [AttachmentFile]) {
@@ -174,6 +174,14 @@ enum SyncWorkflowOutput {
                 else { continue }
                 object[key] = blob(key, bytes, into: &built.blobs, base: base)
             }
+        }
+        if !fits(built.steps), let listed = object["files"]?.arrayValue {
+            object["files"] = .array(
+                listed.map { file in
+                    guard var entry = file.objectValue else { return file }
+                    entry["description"] = nil
+                    return .object(entry)
+                })
         }
         // Whatever no longer referred to (a fallback replaced it) is removed now; the rest after the write.
         let kept = Set(built.blobs.map(\.path))

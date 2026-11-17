@@ -251,17 +251,26 @@ final class AgentCallPolicy {
             return false
         }
         var calls = (state.approvalCalls ?? [:]).filter { $0.value.lastMs > nowMs - Self.dayMs }
+        approvalCallsBefore[sessionId] = calls[sessionId]
         calls[sessionId] = ApprovalCalls(lastMs: nowMs, missed: calls[sessionId]?.missed ?? 0)
         state.approvalCalls = calls
         save()
         return true
     }
 
-    func endedApprovalCall(_ outcome: SyncAgentCalls.Outcome, sessionId: UUID) {
+    /// Each ringing approval call's chat as it was before: a call that never rang gives the chat back
+    /// its spacing.
+    private var approvalCallsBefore: [UUID: ApprovalCalls] = [:]
+
+    func endedApprovalCall(_ outcome: SyncAgentCalls.Outcome, sessionId: UUID, rangMs: Int64) {
+        let before = approvalCallsBefore.removeValue(forKey: sessionId)
         switch outcome {
         case .answered: state.approvalCalls?[sessionId]?.missed = 0
         case .missed, .declined: state.approvalCalls?[sessionId]?.missed += 1
-        case .busy, .unavailable, .cancelled, .notSent: return
+        case .cancelled: return
+        case .busy, .unavailable, .notSent:
+            guard state.approvalCalls?[sessionId]?.lastMs == rangMs else { return }
+            state.approvalCalls?[sessionId] = before
         }
         save()
     }
