@@ -261,6 +261,63 @@ public actor ImageGenerationService {
         MLXStudioModelStore(root: Self.imageModelsRoot())
     }
 
+    // MARK: - Scan cache
+
+    /// A bundle scan walks every bundle's tree and parses its shard indexes,
+    /// so the Local Models Image tab and the model picker reuse the last one
+    /// until a bundle is downloaded or deleted (`.localModelsChanged`) or the
+    /// root's own listing changes (a bundle added or removed in Finder).
+    private struct ScanKey: Equatable {
+        let root: String
+        let rootModifiedSeconds: Int
+        let rootModifiedNanoseconds: Int
+        let generation: UInt64
+    }
+
+    private struct Scan {
+        let key: ScanKey
+        let locals: [LocalFluxModel]
+        var infos: [ImageModelInfo]?
+    }
+
+    private var scan: Scan?
+
+    private static let scanGenerationLock = NSLock()
+    nonisolated(unsafe) private static var scanGeneration: UInt64 = 0
+    nonisolated(unsafe) private static var scanObserver: NSObjectProtocol?
+
+    /// Drops the cached scan; the next listing walks the root again.
+    nonisolated static func invalidateScanCache() {
+        scanGenerationLock.withLock { scanGeneration &+= 1 }
+    }
+
+    private nonisolated static func currentScanGeneration() -> UInt64 {
+        scanGenerationLock.withLock {
+            if scanObserver == nil {
+                scanObserver = NotificationCenter.default.addObserver(
+                    forName: .localModelsChanged, object: nil, queue: nil
+                ) { _ in ImageGenerationService.invalidateScanCache() }
+            }
+            return scanGeneration
+        }
+    }
+
+    private func cachedScan(root: URL) throws -> Scan {
+        ensureRegistered()
+        var info = stat()
+        let statted = stat(root.path, &info) == 0
+        let key = ScanKey(
+            root: root.path,
+            rootModifiedSeconds: statted ? info.st_mtimespec.tv_sec : -1,
+            rootModifiedNanoseconds: statted ? info.st_mtimespec.tv_nsec : -1,
+            generation: Self.currentScanGeneration()
+        )
+        if let scan, scan.key == key { return scan }
+        let fresh = Scan(key: key, locals: try MLXStudioModelStore(root: root).scan(), infos: nil)
+        scan = fresh
+        return fresh
+    }
+
     private func ensureRegistered() {
         guard !registered else { return }
         VMLXFluxModels.registerAll()
@@ -281,14 +338,19 @@ public actor ImageGenerationService {
     /// on-disk facts; manifest-driven exposure (hiding unproven variants) is
     /// applied by the catalog layer on top of this.
     public func availableModels() throws -> [ImageModelInfo] {
-        ensureRegistered()
-        let locals = try store().scan()
-        return locals.map { Self.info(for: $0) }
+        try availableModels(in: Self.imageModelsRoot())
+    }
+
+    func availableModels(in root: URL) throws -> [ImageModelInfo] {
+        let scan = try cachedScan(root: root)
+        if let infos = scan.infos { return infos }
+        let infos = scan.locals.map { Self.info(for: $0) }
+        self.scan?.infos = infos
+        return infos
     }
 
     func availableVideoModels() throws -> [MediaModelInfo] {
-        ensureRegistered()
-        return try store().scan().compactMap { local in
+        return try cachedScan(root: Self.imageModelsRoot()).locals.compactMap { local in
             guard local.canEnterNativeLoadPath, local.canonicalName == "wan-2.1",
                 let data = try? Data(contentsOf: local.directory.appendingPathComponent("config.json")),
                 let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -398,8 +460,9 @@ public actor ImageGenerationService {
     static func info(for local: LocalFluxModel) -> ImageModelInfo {
         let kind = local.kind ?? .imageGen
         let entry = local.canonicalName.flatMap { ModelRegistry.lookup(name: $0) }
-        let limits = try? entry?.limits?(local.directory)
         let flux3 = local.canonicalName == "flux3-image-klein" ? try? Flux3Bundle(modelPath: local.directory) : nil
+        // FLUX 3's registered limits closure parses the same bundle again.
+        let limits = flux3?.limits ?? (try? entry?.limits?(local.directory))
         return ImageModelInfo(
             id: local.directoryName,
             canonicalName: local.canonicalName,

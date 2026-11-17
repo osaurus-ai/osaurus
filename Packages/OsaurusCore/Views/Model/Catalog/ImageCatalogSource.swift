@@ -63,7 +63,15 @@ final class ImageCatalogSource: LocalModelCatalogSource {
 
     private func scanInstalled() async {
         let models = (try? await ImageGenerationService.shared.availableModels()) ?? []
-        installed = models.map { Installed(info: $0, repoId: downloads.sourceRepoId(for: $0.id)) }
+        let ids = models.map(\.id)
+        let marked = await Task.detached(priority: .userInitiated) {
+            ids.reduce(into: [String: String]()) { result, id in
+                result[id] = ImageModelDownloadService.markedSourceRepoId(for: id)
+            }
+        }.value
+        installed = models.map {
+            Installed(info: $0, repoId: downloads.sourceRepoId(for: $0.id, marked: marked[$0.id]))
+        }
         didScanInstalled = true
         rebuild()
     }
@@ -72,25 +80,28 @@ final class ImageCatalogSource: LocalModelCatalogSource {
         let installedIds = Set(installed.map(\.info.id))
         let available = downloads.fetchedCatalog.filter { !installedIds.contains($0.id) }
         items = installed.map(item(for:)) + available.map(item(for:))
-        isLoading = items.isEmpty && (downloads.isLoadingCatalog || !didScanInstalled)
+        // Installed bundles come from a disk scan; until it lands, the
+        // curated rows alone would read as the whole list.
+        isLoading = !didScanInstalled || (items.isEmpty && downloads.isLoadingCatalog)
         resolveSizes(for: available)
     }
 
+    /// One rebuild once every size is in: a cache hit returns without
+    /// suspending, so a rebuild per repo ran back to back on the main thread.
     private func resolveSizes(for entries: [ImageModelDownload]) {
         let missing = entries.filter { sizes[$0.repoId] == nil }
         guard !missing.isEmpty, sizeTask == nil else { return }
         sizeTask = Task { [weak self] in
+            var resolved: [String: Int64] = [:]
             for entry in missing {
                 guard let self, !Task.isCancelled else { return }
-                if let bytes = await self.downloads.estimateDownloadSize(repoId: entry.repoId), bytes > 0 {
-                    self.sizes[entry.repoId] = bytes
-                    self.rebuild()
-                } else {
-                    self.sizes[entry.repoId] = 0
-                }
+                let bytes = await self.downloads.estimateDownloadSize(repoId: entry.repoId) ?? 0
+                resolved[entry.repoId] = max(bytes, 0)
             }
-            self?.sizeTask = nil
-            self?.rebuild()
+            guard let self else { return }
+            self.sizes.merge(resolved) { _, new in new }
+            self.sizeTask = nil
+            self.rebuild()
         }
     }
 
