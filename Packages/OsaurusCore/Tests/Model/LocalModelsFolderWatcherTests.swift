@@ -48,6 +48,28 @@ struct LocalModelsFolderWatcherTests {
             path: "/Users/me/MLXModels", flags: created, roots: roots))
     }
 
+    /// FSEvents reports `/private/var/...` for a root under the `/var`
+    /// symlink; the watched root has to be spelled the same way or no
+    /// event matches it.
+    @Test func rootsAreSpelledTheWayFSEventsReportsThem() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let link = root.appendingPathComponent("linked-models")
+        let target = root.appendingPathComponent("models")
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: link, withDestinationURL: target)
+
+        let canonical = try #require(LocalModelsFolderWatcher.canonicalDirectoryPath(link))
+        #expect(canonical.hasPrefix("/private/"))
+        #expect(canonical.hasSuffix("/models"))
+        let created = flags(kFSEventStreamEventFlagItemIsDir, kFSEventStreamEventFlagItemCreated)
+        #expect(LocalModelsFolderWatcher.isInventoryChange(
+            path: canonical + "/OsaurusAI/Model-4bit", flags: created, roots: [canonical]))
+        #expect(LocalModelsFolderWatcher.canonicalDirectoryPath(root.appendingPathComponent("missing")) == nil)
+    }
+
     @Test func droppedEventsAndRootChangesForceARescan() {
         #expect(LocalModelsFolderWatcher.isInventoryChange(
             path: "/Users/me/MLXModels", flags: flags(kFSEventStreamEventFlagRootChanged), roots: roots))

@@ -74,23 +74,29 @@ final class LocalModelsFolderWatcher {
         }
     }
 
-    /// Existing, symlink-resolved roots; a root inside another is dropped
-    /// because the outer stream already covers it.
+    /// Existing, canonical roots; a root inside another is dropped because
+    /// the outer stream already covers it.
     nonisolated static func currentRoots() -> [String] {
         let candidates = [
             DirectoryPickerService.effectiveModelsDirectory(),
             ImageGenerationService.imageModelsRoot(),
         ]
-        let paths = Set(
-            candidates
-                .map { $0.resolvingSymlinksInPath().standardizedFileURL.path }
-                .filter { path in
-                    var isDir: ObjCBool = false
-                    return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
-                })
+        let paths = Set(candidates.compactMap(canonicalDirectoryPath))
         return paths.filter { path in
             !paths.contains { $0 != path && path.hasPrefix($0 + "/") }
         }.sorted()
+    }
+
+    /// The path FSEvents reports events under, or nil when `url` isn't an
+    /// existing directory. `resolvingSymlinksInPath()` won't do: it strips
+    /// `/private` from `/tmp` and `/var` paths, which FSEvents keeps.
+    nonisolated static func canonicalDirectoryPath(_ url: URL) -> String? {
+        guard let resolved = realpath(url.path, nil) else { return nil }
+        defer { free(resolved) }
+        let path = String(cString: resolved)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
+        return path
     }
 
     /// Must run on `streamQueue`.
