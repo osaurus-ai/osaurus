@@ -40,7 +40,11 @@ private actor ScriptedConfiguratorModel {
 
 private actor PositionLimits {
     private(set) var values: [Int?] = []
-    func append(_ value: Int?) { values.append(value) }
+    private(set) var outputLimits: [Int?] = []
+    func append(_ value: Int?, output: Int? = nil) {
+        values.append(value)
+        outputLimits.append(output)
+    }
 }
 
 @Suite(.serialized)
@@ -136,7 +140,8 @@ struct ConfiguratorHandoffTests {
             await Self.makeKind(
                 #"{"brief":"a"}"#, turnText: "what port does the server use",
                 stream: { request in
-                    await limits.append(request.context.admissionPositionLimit)
+                    await limits.append(
+                        request.context.admissionPositionLimit, output: request.generation.maxOutputTokens)
                     return ResponsesGenerationStream.compatibility(
                         AsyncThrowingStream { continuation in
                             continuation.yield("Settings → Server.")
@@ -168,6 +173,9 @@ struct ConfiguratorHandoffTests {
         let seen = await limits.values
         #expect(!seen.isEmpty)
         #expect(seen.allSatisfy { $0 == enforced })
+        // Each step's output is capped at the response tokens the contract priced.
+        #expect(contract.responseTokens > 0)
+        #expect(await limits.outputLimits.allSatisfy { $0 == contract.responseTokens })
     }
 
     /// The pool permission is skipped; nothing else is.
@@ -187,7 +195,7 @@ struct ConfiguratorHandoffTests {
         ConfigurationDomainBootstrap.registerBuiltIns()
         let before = ConfiguratorConfigurationStore.load()
         defer { ConfiguratorConfigurationStore.save(before) }
-        let target: Double = before.temperature.map { Double($0) } == 1.7 ? 1.6 : 1.7
+        let target: Double = before.temperature == 1.7 ? 1.6 : 1.7
 
         let model = ScriptedConfiguratorModel(
             toolArguments: #"{"action":"apply","yaml":"configurator:\n  temperature: \#(target)\n"}"#)
@@ -234,7 +242,7 @@ struct ConfiguratorHandoffTests {
         ConfigurationDomainBootstrap.registerBuiltIns()
         let before = ConfiguratorConfigurationStore.load()
         defer { ConfiguratorConfigurationStore.save(before) }
-        let target: Double = before.temperature.map { Double($0) } == 1.7 ? 1.6 : 1.7
+        let target: Double = before.temperature == 1.7 ? 1.6 : 1.7
 
         let model = ScriptedConfiguratorModel(
             toolArguments: #"{"action":"apply","yaml":"configurator:\n  temperature: \#(target)\n"}"#)

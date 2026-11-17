@@ -162,6 +162,10 @@ enum WorkflowFailure {
             return make(
                 "no_media_model", .setup,
                 L("Install or connect a model that can do this, or change the step's model to one that is here."))
+        case is ModelRuntime.MemorySafetyLoadRefusal:
+            return make(
+                "memory_load_refused", .settings,
+                L("The model needs more memory than Memory Safety allows. Use a smaller model, or change Server → Memory Safety."))
         case let handoff as ChatResidencyHandoff.HandoffError:
             switch handoff {
             case .chatBusy:

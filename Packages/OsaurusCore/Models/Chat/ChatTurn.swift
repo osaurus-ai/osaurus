@@ -542,6 +542,20 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// The agent loop uses it to avoid treating a reasoning-only `length`
     /// completion as a successful final response.
     var terminalStopReason: String?
+    /// How the run ended when it did not end on an answer. The kind persists
+    /// as `terminalStopReason`; the live details do not.
+    var runOutcome: ChatRunOutcome? {
+        get {
+            guard let persisted = ChatRunOutcome(stopReason: terminalStopReason) else { return nil }
+            if let live = liveRunOutcome, live.kind == persisted.kind { return live }
+            return persisted
+        }
+        set {
+            liveRunOutcome = newValue
+            if let newValue { terminalStopReason = newValue.stopReason }
+        }
+    }
+    private var liveRunOutcome: ChatRunOutcome?
     /// Osaurus Router billing snapshot captured from the in-stream summary
     /// frame (cost, token counts, status). Persisted so a reloaded chat still
     /// shows a billed-but-empty turn (and its "you were charged" notice)

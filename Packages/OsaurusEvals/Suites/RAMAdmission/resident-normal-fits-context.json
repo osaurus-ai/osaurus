@@ -1,0 +1,76 @@
+{
+  "id": "ram_admission.resident-normal-fits-context",
+  "domain": "subagent",
+  "label": "Normal pressure fits a resident helper with the allocator allowance in place of the reserve",
+  "query": "Replay explicit host facts through production planner, recovery, context fitting and one persistent reservation actor.",
+  "notes": "Same facts at normal pressure: incremental resident admission charges the allocator allowance instead of the cold-load reserve, so the window fitted is larger than under warning. Injected facts.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "ram_admission",
+      "ramAdmission": {
+        "scenario": {
+          "localJobs": 1,
+          "remoteJobs": 0,
+          "agentLimit": 1,
+          "engineLimit": 1,
+          "batching": true,
+          "ramSafety": true,
+          "contextFit": {
+            "requestedPositions": 299770,
+            "minimumPositions": 17146,
+            "bytesPerPosition": 46080,
+            "fixedBytes": 70778880
+          },
+          "steps": [
+            {
+              "before": {
+                "model": "resident-raptor-regression",
+                "resident": true,
+                "loadBytes": 3662928280,
+                "childCapBytes": 48389160960,
+                "childBytes": 13884180480,
+                "availableBytes": 14395670528,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 36077725286,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1073741824
+              },
+              "after": {
+                "model": "resident-raptor-regression",
+                "resident": true,
+                "loadBytes": 3662928280,
+                "childCapBytes": 48389160960,
+                "childBytes": 13884180480,
+                "availableBytes": 14395670528,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 36077725286,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1073741824
+              },
+              "reclaimSucceeds": true
+            }
+          ]
+        },
+        "expected": [
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 2,
+            "reclaims": 1,
+            "subwaves": [
+              1
+            ],
+            "remainingReservations": 0,
+            "reservationError": false,
+            "fittedPositions": 287568
+          }
+        ]
+      }
+    }
+  }
+}

@@ -77,6 +77,49 @@ struct FeatureTelemetryEventTests {
         }
     }
 
+    // MARK: - run_outcome shapes
+
+    @Test func runOutcome_carriesOnlyClosedTokensAndBuckets() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+        var outcome = ChatRunOutcome(kind: .memoryRefused, tool: "configurator_handoff")
+        outcome.facts = [.init(label: "Model", value: "private-model")]
+        outcome.memoryPressure = "warning"
+        outcome.limitedBy = ["memoryCapacity", "engineCapacity"]
+        FeatureTelemetry.runOutcome(outcome, local: true, service: service)
+
+        #expect(rec.events.count == 1)
+        #expect(rec.events[0].name == "run_outcome")
+        let props = business(rec.events[0].props)
+        #expect(props["kind"] as? String == "memory_refused")
+        #expect(props["cause"] as? String == "memory")
+        #expect(props["local"] as? Bool == true)
+        #expect(props["pressure"] as? String == "warning")
+        #expect(props["limited_by"] as? String == "engineCapacity,memoryCapacity")
+        #expect(Set(props.keys) == ["kind", "cause", "local", "pressure", "limited_by"])
+    }
+
+    @Test func runOutcome_interruptedCarriesPhase() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+        FeatureTelemetry.runOutcome(
+            ChatRunOutcome(kind: .interruptedByExit), local: true, phase: "load", service: service)
+        let props = business(rec.events[0].props)
+        #expect(props["kind"] as? String == "interrupted_by_exit")
+        #expect(props["cause"] as? String == "stopped")
+        #expect(props["phase"] as? String == "load")
+    }
+
+    @Test func runOutcomeRemedy_shape() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+        FeatureTelemetry.runOutcomeRemedy(kind: "output_limit", remedy: "continue", service: service)
+        #expect(rec.events.map(\.name) == ["run_outcome_remedy"])
+        let props = business(rec.events[0].props)
+        #expect(props["kind"] as? String == "output_limit")
+        #expect(props["remedy"] as? String == "continue")
+    }
+
     // MARK: - message_sent shapes
 
     @Test func messageSent_local_includes_model_and_omits_hash() {

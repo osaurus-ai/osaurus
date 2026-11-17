@@ -256,6 +256,21 @@ public actor ModelRuntime {
         var errorDescription: String? { message }
     }
 
+    /// The selected Memory Safety mode resolved a load budget this model's
+    /// estimated working set does not fit, so the load stopped before any
+    /// MLX allocation.
+    struct MemorySafetyLoadRefusal: Error, LocalizedError, Sendable, Equatable {
+        let modelName: String
+        let estimatedWorkingSetBytes: UInt64?
+        let loadBudgetBytes: UInt64?
+        let issues: [String]
+
+        var errorDescription: String? {
+            "Memory Safety refused to load \(modelName). \(issues.joined(separator: "; ")) "
+                + "Increase the selected budget or choose Safe Auto / No Automatic Limits in Server Settings, then retry."
+        }
+    }
+
     struct ModelCacheSummary: Sendable {
         let name: String
         let bytes: Int64
@@ -552,6 +567,9 @@ public actor ModelRuntime {
     // MARK: - State
 
     private var modelCache: [String: SessionHolder] = [:]
+    /// Reading MLX's allocator initializes Metal, which aborts the process
+    /// where no metallib is bundled; its cache is empty until a model loads.
+    private var hasLoadedModel = false
     /// Serializes graph preparation, not generation. Same-model batching resumes after lease acquisition.
     private var preparationGates: [String: MLXBatchAdapter.SoloGenerationGate] = [:]
     private struct LoadingTaskRecord {
@@ -1420,6 +1438,71 @@ public actor ModelRuntime {
     /// retain their nonblocking behavior while generations are active.
     func reclaimMemoryForSubagentAdmission() async -> Bool {
         await trimFreedBufferCache(reason: "subagent-admission", waitForGenerationDrain: true)
+    }
+
+    struct MemoryReclaimResult: Sendable, Equatable {
+        var unloadedModels: [String]
+        /// Host available memory gained, from samples taken before and after.
+        var freedBytes: Int64?
+
+        var summary: String {
+            let freed = freedBytes.flatMap { $0 > 0 ? $0 : nil }.map {
+                ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory)
+            }
+            switch (unloadedModels.isEmpty, freed) {
+            case (false, let freed?):
+                return String(
+                    format: L("Unloaded %@ and freed %@. Trying again…"), unloadedModels.joined(separator: ", "), freed)
+            case (false, nil):
+                return String(format: L("Unloaded %@. Trying again…"), unloadedModels.joined(separator: ", "))
+            case (true, let freed?):
+                return String(format: L("Freed %@ of cached memory. Trying again…"), freed)
+            case (true, nil):
+                return L("Released cached memory. Trying again…")
+            }
+        }
+    }
+
+    /// Resident models no running conversation or lease is using: what Free
+    /// Up Memory would unload, keeping the resident copy of `keeping`.
+    func unusedResidentModelNames(keeping requested: String? = nil) async -> [String] {
+        let kept = requested.flatMap(residentKey(matching:))
+        var names: [String] = []
+        for name in modelCache.keys.sorted() where name != kept {
+            guard !conversationHolds.holds(name), await ModelLease.shared.count(for: name) == 0 else { continue }
+            names.append(name)
+        }
+        return names
+    }
+
+    /// The bytes the allocator holds for reuse that a trim would return.
+    func reclaimableCacheBytes() -> Int {
+        hasLoadedModel ? Memory.cacheMemory : 0
+    }
+
+    /// The person's Free Up Memory action: unload each candidate that is still
+    /// unused, then release cached buffers. Candidates that picked up a lease
+    /// or a conversation since they were offered stay loaded.
+    func freeUpMemory(unloading candidates: [String]) async -> MemoryReclaimResult {
+        let before = ChatResidencyHandoff.sampledAvailableMemoryBytes()
+        let stillUnused = Set(await unusedResidentModelNames())
+        var unloaded: [String] = []
+        for name in candidates where stillUnused.contains(name) {
+            if await unload(name: name, reason: .explicit, leaseDrainTimeoutSeconds: 2) {
+                unloaded.append(name)
+            }
+        }
+        _ = await reclaimMemoryForSubagentAdmission()
+        // host_statistics64 serves third-party callers from a 1 s cache;
+        // an earlier second sample can repeat the pre-unload counters.
+        try? await Task.sleep(for: .milliseconds(1_100))
+        let after = ChatResidencyHandoff.sampledAvailableMemoryBytes()
+        genLog.info(
+            "freeUpMemory: unloaded=\(unloaded.joined(separator: ","), privacy: .public) before=\(before ?? -1) after=\(after ?? -1)"
+        )
+        return MemoryReclaimResult(
+            unloadedModels: unloaded,
+            freedBytes: before.flatMap { b in after.map { $0 - b } })
     }
 
     /// Admission can run out of headroom before macOS sends a pressure
@@ -2319,6 +2402,7 @@ public actor ModelRuntime {
         }
 
         modelCache[name] = holder
+        hasLoadedModel = true
         residentMetadata[name] = ResidentMetadata(
             identity: ModelResidencyIdentity(modelName: name, generation: UUID()),
             childOwnershipToken: loadingRecord.childOwnershipToken
@@ -4424,8 +4508,8 @@ public actor ModelRuntime {
 
     /// Price a memory-fitted history window from the SAME recovered sample.
     /// The caller must install the returned ceiling on the child contract
-    /// before using these facts for admission. Unknown/cold/pressured models
-    /// retain the existing refusal policy.
+    /// before using these facts for admission. Unknown, cold and critically
+    /// pressured models retain the existing refusal policy.
     func affordableSubagentContext(
         for modelName: String,
         requested: Int,
@@ -5280,13 +5364,11 @@ public actor ModelRuntime {
             genLog.error(
                 "loadContainer: memory safety refused \(name, privacy: .public): \(issueSummary, privacy: .public)"
             )
-            throw NSError(
-                domain: "ModelRuntime",
-                code: 507,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "Memory Safety refused to load \(name). \(issueSummary) Increase the selected budget or choose Safe Auto / No Automatic Limits in Server Settings, then retry."
-                ]
+            throw MemorySafetyLoadRefusal(
+                modelName: name,
+                estimatedWorkingSetBytes: estimatedWorkingSetBytes,
+                loadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
+                issues: blockingIssueMessages
             )
         }
 
@@ -5299,6 +5381,10 @@ public actor ModelRuntime {
         // momentarily under-count.
         inflightLoadWeights[name] = loadFootprintBytes
         defer { inflightLoadWeights.removeValue(forKey: name) }
+        let inFlightMarker = InFlightRunMarker.shared.begin(
+            .load, model: name, sessionId: ChatExecutionContext.currentSessionId,
+            footprintBytes: estimatedWorkingSetBytes ?? UInt64(max(0, loadFootprintBytes)))
+        defer { InFlightRunMarker.shared.end(inFlightMarker) }
 
         try Task.checkCancellation()
 

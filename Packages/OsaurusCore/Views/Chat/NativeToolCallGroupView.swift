@@ -1207,9 +1207,10 @@ final class NativeToolCallRowView: NSView {
             // A completed call that returned an error keeps its red node but must
             // not claim success in the title — reflect the failure verdict here.
             let failed = item.result.map { isErrorResult($0, callId: item.call.id) } ?? false
+            let outcome = failed ? item.result.flatMap(ChatRunOutcome.classify(envelope:)) : nil
             let past = item.unobservedResult != nil
                 ? "\(item.call.function.name) · \(L("Result not received"))"
-                : ToolDisplayName.friendly(
+                : outcome?.toolLabel ?? ToolDisplayName.friendly(
                     for: item.call.function.name,
                     running: false,
                     arguments: item.call.function.arguments,

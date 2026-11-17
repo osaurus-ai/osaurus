@@ -174,6 +174,30 @@ Emitted once when an agent run is initiated.
 |----------|------|------------------|
 | `source` | string | `http_api` (the `/agents/{id}/run` endpoint) or `dispatch` (background / scheduled / plugin dispatch) |
 
+### `run_outcome`
+
+Emitted once when a chat run ends on a notice instead of an answer (not
+enough memory, output limit, empty reply, and so on). Only closed tokens are
+attached; the model, tool, prompt, reply, and byte counts are never sent.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `kind` | string | `memory_refused`, `memory_load_refused`, `memory_exhausted`, `model_busy`, `model_residency`, `output_limit`, `reasoning_only`, `empty_response`, `context_too_long`, `step_limit`, or `interrupted_by_exit` |
+| `cause` | string | `memory`, `model_busy`, `output_limit`, `context_too_long`, `incomplete`, or `stopped` |
+| `local` | bool | The run used a model installed on this Mac |
+| `pressure` | string | Only for memory refusals: kernel memory pressure at the decision, `normal`, `warning`, `critical`, or `unknown` |
+| `limited_by` | string | Only for memory refusals: the admission's limiting terms, comma-separated, from `agentPolicy`, `continuousBatchingDisabled`, `engineCapacity`, `memoryCapacity`, `memoryEstimateUnavailable` |
+| `phase` | string | Only for `interrupted_by_exit`: what was in flight, `load`, `generation`, or `handoff` |
+
+### `run_outcome_remedy`
+
+Emitted when a person uses an action on a run notice.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `kind` | string | The notice's `run_outcome` kind |
+| `remedy` | string | `try_again`, `continue`, `free_up_memory`, or `open_setting` |
+
 ### `attention_resolved`
 
 Emitted when something that needed a person settles: a tool approval, an

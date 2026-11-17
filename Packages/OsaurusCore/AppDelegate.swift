@@ -200,7 +200,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // The verdict lands in `last-exit-verdict.json` + a breadcrumb, so
         // the next "app restarts silently with no crash report" report is
         // attributable instead of unfalsifiable.
-        TerminationForensics.evaluateAtLaunch()
+        let exitVerdict = TerminationForensics.evaluateAtLaunch()
+        let interruptedRun = InFlightRunMarker.shared.evaluateAtLaunch(verdict: exitVerdict)
 
         // sequoia fallback. Tahoe already ran this in
         // `applicationWillFinishLaunching`.
@@ -319,6 +320,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Once-per-local-day retention signal (the cohort-retention
         // numerator/denominator). Consent-gated like every other event.
         FeatureTelemetry.dailyActive()
+        if let interruptedRun {
+            FeatureTelemetry.runOutcome(
+                ChatRunOutcome(interrupted: interruptedRun), local: true, phase: interruptedRun.phase.rawValue)
+        }
 
         // Attribute the `brain_source` dimension for installs that completed
         // onboarding before the choice existed: stamp `pre_choice` once so

@@ -639,7 +639,10 @@
       "ram_admission.reporter-resident-normal-pressure",
       "ram_admission.reporter-three-then-refusal",
       "ram_admission.resident-bounded-one-byte-short",
+      "ram_admission.resident-critical-does-not-fit",
+      "ram_admission.resident-normal-fits-context",
       "ram_admission.resident-normal-pressure-two-slots",
+      "ram_admission.resident-warning-fits-context",
       "ram_admission.same-model-memory-serializes",
       "ram_admission.same-model-two-slots"
     ],

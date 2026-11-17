@@ -2388,6 +2388,22 @@ final class NativeMessageCellView: NSTableCellView {
                 sameKind: sameKind
             )
 
+        case let .runNotice(turnId, outcome):
+            let onRegenerate = context.onRegenerate
+            let onFollowUp = context.onFollowUpTap
+            configureAsOnboardingHost(
+                block: block,
+                rootView: AnyView(
+                    RunNoticeView(
+                        outcome: outcome,
+                        onTryAgain: { onRegenerate?(turnId) },
+                        onContinue: onFollowUp.map { send in { send(L("Continue")) } }
+                    )
+                    // Same row identity across turns would carry a stale
+                    // details/freeing state into a reused host.
+                    .id(block.id)),
+                topInset: 4, context: context, sameKind: sameKind)
+
         case let .followUpSuggestions(_, suggestions):
             configureAsFollowUpSuggestions(
                 block: block,
@@ -4229,7 +4245,7 @@ enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, activityGroup, userMessage, pendingToolCall
     case generationStats, typingIndicator, groupSpacer, sharedArtifact, chart
     case assistantActions, emptyResponseNotice, fileDiff, compactionMarker, followUpSuggestions, conversationEvent
-    case runLocation, onboardingPanel
+    case runLocation, onboardingPanel, runNotice
     case other
 }
 
@@ -4251,6 +4267,7 @@ extension ContentBlockKind {
         case .fileDiff: return .fileDiff
         case .assistantActions: return .assistantActions
         case .emptyResponseNotice: return .emptyResponseNotice
+        case .runNotice: return .runNotice
         case .compactionMarker: return .compactionMarker
         case .followUpSuggestions: return .followUpSuggestions
         case .conversationEvent: return .conversationEvent
@@ -4505,6 +4522,12 @@ enum NativeCellHeightEstimator {
         case .runLocation:
             // One caption line plus the 8pt bottom inset.
             return MessageHeaderInspectionStyle.captionHeight(theme) + 8
+
+        case .runNotice:
+            // Title, explanation and the action row inside the card, plus
+            // the 4pt top / 8pt bottom insets. Corrected by the measured
+            // height report, including when details are open.
+            return 96
 
         case let .onboardingPanel(_, panel):
             // Corrected by the measured-height report.

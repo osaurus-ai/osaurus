@@ -1201,17 +1201,14 @@ public enum SubagentSession {
                     // (observed as repeated rejections / iteration-budget
                     // exhaustion on 16 GB Macs). Queue TIMEOUTS elsewhere
                     // remain retryable; this is the post-wait verdict.
+                    // The opt-out and its crash risk travel as `setting_id`
+                    // for the person's notice, not as advice to the model.
                     let message =
-                        "\(prepared.tool) was rejected by RAM-safety admission: the "
-                        + "local model has no free capacity for a child run under the "
-                        + "current memory and batching limits after the fresh memory "
-                        + "check. Do not retry this turn — tell the user the "
-                        + "delegation could not run; it may succeed after memory or "
-                        + "settings change. The user can disable Check memory before "
-                        + "delegating in Settings → Agents → Delegation → Local Models & Memory "
-                        + "to bypass the delegation RAM check, accepting possible allocation "
-                        + "failure or a crash. Separate Server Memory Safety load budgets "
-                        + "and explicit concurrency limits still apply."
+                        "\(prepared.tool) did not run: there is not enough free memory for "
+                        + "another local model run under the current memory and batching "
+                        + "limits, after a fresh memory check. Nothing was changed. Do not "
+                        + "retry this turn; tell the user it could not run for lack of "
+                        + "memory. It may work after memory or settings change."
                     if presentation.finishFeed {
                         feed.finish(success: false, summary: message)
                     }
@@ -1224,6 +1221,7 @@ public enum SubagentSession {
                             "admission": "stable_memory_refusal",
                             "refreshed_capacity": refreshedCapacity,
                             "memory_decision": memoryDiagnostics,
+                            "setting_id": ChatRunOutcome.delegationMemoryCheckSettingId,
                         ]
                     )
                 }
@@ -1240,6 +1238,11 @@ public enum SubagentSession {
                 requiresCleanupAdmission: effectiveHandoff.requiresAdmissionForCleanup
             ) : nil
         let started = Date()
+        let inFlightMarker = prepared.resolved.isLocal
+            ? InFlightRunMarker.shared.begin(
+                .handoff, model: prepared.resolved.name, sessionId: prepared.scope.sessionId)
+            : nil
+        defer { InFlightRunMarker.shared.end(inFlightMarker) }
 
         // Run under the recursion guard, wrapped by the optional handoff. Bind
         // the prepared child scope explicitly: batch children have distinct
@@ -1574,6 +1577,11 @@ public enum SubagentSession {
     /// `ToolEnvelope.fromError`.
     static func envelope(for error: Error, tool: String) -> String {
         if let se = error as? SubagentError { return se.envelope(tool: tool) }
+        if let metadata = ChatRunOutcome.envelopeMetadata(for: error) {
+            return ToolEnvelope.failure(
+                kind: .executionError, message: WorkflowFailure.message(error), tool: tool,
+                retryable: WorkflowFailure.classify(error).retryable, metadata: metadata)
+        }
         return ToolEnvelope.fromError(error, tool: tool)
     }
 

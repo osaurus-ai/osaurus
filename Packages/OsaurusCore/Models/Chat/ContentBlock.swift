@@ -138,6 +138,9 @@ enum ContentBlockKind: Equatable {
     /// affordance instead of silently dropping the turn. `costMicro` is the raw
     /// micro-USD string; `status` is the router's terminal status.
     case emptyResponseNotice(turnId: UUID, outputTokens: Int, costMicro: String, status: String)
+    /// A run that ended without an answer (not enough memory, model busy,
+    /// output limit, …): what happened, Try Again, one remedy, and details.
+    case runNotice(turnId: UUID, outcome: ChatRunOutcome)
     /// Divider marker at the LLM context-compaction boundary: everything above
     /// it is covered by the session's ConversationSummary in the OUTBOUND
     /// context (the visible turns are untouched). Expandable to read the
@@ -236,6 +239,9 @@ enum ContentBlockKind: Equatable {
         ):
             return lId == rId && lTokens == rTokens && lCost == rCost && lStatus == rStatus
 
+        case let (.runNotice(lId, lOutcome), .runNotice(rId, rOutcome)):
+            return lId == rId && lOutcome == rOutcome
+
         case let (
             .compactionMarker(lSaved, lModel, lText),
             .compactionMarker(rSaved, rModel, rText)
@@ -279,8 +285,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .activityGroup, .sharedArtifact, .pendingToolCall,
             .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions,
-            .emptyResponseNotice, .fileDiff, .compactionMarker, .followUpSuggestions, .conversationEvent,
-            .runLocation, .onboardingPanel:
+            .emptyResponseNotice, .runNotice, .fileDiff, .compactionMarker, .followUpSuggestions,
+            .conversationEvent, .runLocation, .onboardingPanel:
             return .assistant
         case .userMessage: return .user
         }
@@ -642,6 +648,15 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             position: position
         )
     }
+
+    static func runNotice(turnId: UUID, outcome: ChatRunOutcome, position: BlockPosition) -> ContentBlock {
+        ContentBlock(
+            id: "run-notice-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .runNotice(turnId: turnId, outcome: outcome),
+            position: position
+        )
+    }
 }
 
 // MARK: - Block Generation
@@ -772,8 +787,12 @@ extension ContentBlock {
                 )
             }
 
+            // A finished turn that ended on an outcome shows the notice in
+            // place of the outcome sentence its content carries for the model.
+            let runOutcome = isActive || turn.role != .assistant ? nil : turn.runOutcome
+            let noticeFreeContent = runOutcome?.contentRemovingTitle(turn.visibleContent)
             let hasVisibleContent =
-                !turn.visibleContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                !(noticeFreeContent ?? turn.visibleContent).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let hasRenderableThinking = turn.hasRenderableThinking
             let hasSharedArtifacts = !turn.sharedArtifacts.isEmpty
 
@@ -818,7 +837,7 @@ extension ContentBlock {
             if hasVisibleContent {
                 // during streaming, skip the regex-based metadata strip (O(n) on every sync).
                 // visibleContent is used for the final render once streaming ends.
-                let text = isStreaming ? turn.content : turn.visibleContent
+                let text = isStreaming ? turn.content : (noticeFreeContent ?? turn.visibleContent)
                 let chartBlocks = Self.extractChartBlocks(
                     from: text,
                     turnId: turn.id,
@@ -880,7 +899,9 @@ extension ContentBlock {
             // The empty-turn notices below describe a FINISHED turn, so they
             // wait for the run to close (`!isActive`), not just for output to
             // complete — the finishing row above owns the in-between.
-            if !isActive && !hasVisibleContent && !hasRenderableThinking
+            if runOutcome != nil {
+                // The run notice below says what happened.
+            } else if !isActive && !hasVisibleContent && !hasRenderableThinking
                 && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
                 && !turn.hasRemoteToolActivity,
                 let billing = turn.routerBilling
@@ -1113,6 +1134,10 @@ extension ContentBlock {
                         )
                     )
                 }
+            }
+
+            if let runOutcome {
+                turnBlocks.append(.runNotice(turnId: turn.id, outcome: runOutcome, position: .middle))
             }
 
             // A turn whose run is still open with a tool call pending IS an

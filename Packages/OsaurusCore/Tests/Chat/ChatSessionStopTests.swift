@@ -480,10 +480,9 @@ struct ChatSessionStopTests {
             #expect(await engine.regularRequestCount == 4)
             #expect(await engine.exposedToolNames.allSatisfy { $0.contains("todo") })
             #expect(session.lastStreamError == AgentToolLoop.emptyToolTaskFallback)
-            #expect(
-                session.turns.last(where: { $0.role == .assistant })?.content
-                    == AgentToolLoop.emptyToolTaskFallback
-            )
+            let closing = session.turns.last(where: { $0.role == .assistant })
+            #expect(closing?.runOutcome?.kind == .emptyResponse)
+            #expect(closing?.content == ChatRunOutcome(kind: .emptyResponse).title)
             // This is the ChatSession completion/indexing marker. Failed runs
             // must never publish one for auto-speak or downstream completion
             // consumers, and the queued completed-transcript warm-up must not run.
