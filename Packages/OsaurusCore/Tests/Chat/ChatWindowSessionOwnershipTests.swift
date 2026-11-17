@@ -64,35 +64,6 @@ struct ChatWindowSessionOwnershipTests {
         }
     }
 
-    /// History's Delete in one window moves every window off the chat, so
-    /// the window still showing it can't save the row back.
-    @Test func historyDeleteDetachesEveryWindow() async throws {
-        try await ChatHistoryTestStorage.run {
-            let stored = ChatSessionData(
-                id: UUID(), title: "Delete me everywhere",
-                turns: [
-                    ChatTurnData(role: .user, content: "Question"),
-                    ChatTurnData(role: .assistant, content: "Answer"),
-                ], agentId: Agent.defaultId
-            )
-            ChatSessionStore.save(stored)
-            let owner = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId, sessionData: stored)
-            let other = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
-            defer {
-                owner.cleanup()
-                other.cleanup()
-            }
-
-            ChatWindowManager.shared.withRegisteredWindowStateForTesting(owner) {
-                ChatHistoryWindowActions(windowState: other, scope: .unspecified).delete(stored.id)
-                #expect(owner.session.sessionId != stored.id)
-                owner.session.save()
-            }
-            #expect(ConversationStores.current.loadSession(id: stored.id) == nil)
-            #expect(!ChatSessionsManager.shared.sessions.contains { $0.id == stored.id })
-        }
-    }
-
     /// "Open in New Window" on a chat this window already shows must hand it
     /// over, not just refocus the tab here.
     @Test(arguments: [false, true])

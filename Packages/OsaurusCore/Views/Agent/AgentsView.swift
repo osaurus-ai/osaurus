@@ -1614,7 +1614,7 @@ struct AgentDetailView: View {
     /// Recompute the per-agent caches consumed by the tab strip and
     /// sub-sections. Called from `.onAppear`, `.onChange(of: agent.id)`,
     /// `loadedPluginsRefreshNonce` flips, and the `.eventsChanged`
-    /// notification.
+    /// notification; `chatSessions` also follows `$sessions`.
     private func refreshDetailCaches() {
         linkedEvents = eventManager.events(targeting: agent.id)
         chatSessions = ChatSessionsManager.shared.sessions(for: agent.id)
@@ -1835,6 +1835,11 @@ struct AgentDetailView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .eventsChanged)) { _ in
             refreshDetailCaches()
+        }
+        // `$sessions` fires in willSet; one main-actor hop reads the new list,
+        // so a chat deleted anywhere leaves History here too.
+        .onReceive(ChatSessionsManager.shared.$sessions.dropFirst()) { _ in
+            Task { @MainActor in chatSessions = ChatSessionsManager.shared.sessions(for: agent.id) }
         }
         // The subagent editor reads "Swap local models for subagents" from the shared
         // global store. Keep an already-open custom agent in sync when the

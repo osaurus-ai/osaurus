@@ -836,8 +836,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
     }
 
-    /// Deletes a chat everywhere: the sidebar, History, the tab strip, and
-    /// the paired phone all come through here. Cancels a registry-owned run,
+    /// Deletes a chat everywhere: the sidebar, the tab strip, and the paired
+    /// phone all come through here. Cancels a registry-owned run,
     /// moves every window off the chat (a save from one would resurrect the
     /// row), deletes, refreshes every sidebar.
     func deleteSession(id: UUID) {
