@@ -62,6 +62,7 @@ struct ClassicThemeMigratorTests {
         #expect(document.preferences.tone == .cool)
         #expect(document.preferences.accent == .swatch(.violet))
         #expect(document.preferences.corners == .subtle)
+        #expect(document.preferences.transparency == .frosted)
         #expect(document.preferences.readability.uiFont == "Atkinson Hyperlegible")
         #expect(document.preferences.readability.codeFont == ThemeReadability.systemFont)
         #expect(document.codeHighlightTheme == "github-dark")
@@ -73,6 +74,14 @@ struct ClassicThemeMigratorTests {
         // Unchanged Classic defaults don't become overrides.
         #expect(tokens["type.caption"] == nil)
         #expect(tokens["stroke.default"] == nil)
+    }
+
+    @Test func classicGlassBecomesGlassTransparency() throws {
+        let json = Self.userTheme().replacingOccurrences(
+            of: #""borders":"#, with: #""glass": { "enabled": false, "sidebarEnabled": true }, "borders":"#)
+        let classic = try #require(ClassicThemeMigrator.decode(Data(json.utf8)))
+        let document = try #require(ClassicThemeMigrator.convert(classic))
+        #expect(document.preferences.transparency == .glass)
     }
 
     @Test func convertedThemesCompileWithoutContrastFindings() throws {

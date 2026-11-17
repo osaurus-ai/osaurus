@@ -427,6 +427,19 @@ public enum SettingsSearchIndex {
             subTab: GeneralSubPage.themes.rawValue
         ),
         .init(
+            id: "settings.general.themes.transparency",
+            tab: .settings,
+            section: "Themes",
+            title: "Transparency",
+            keywords: [
+                "glass", "frosted", "translucent", "translucency", "blur", "vibrancy", "see-through", "opaque",
+                "solid", "window material", "icon rail", "title bar",
+            ],
+            subTab: GeneralSubPage.themes.rawValue,
+            disambiguation:
+                "In the theme editor: Solid, Frosted or Glass for the icon rail and title bar. macOS Reduce Transparency and Increase Contrast make it solid."
+        ),
+        .init(
             id: "settings.general.themes.readingSize",
             tab: .settings,
             section: "Readability",

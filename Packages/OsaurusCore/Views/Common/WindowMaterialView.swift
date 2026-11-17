@@ -6,8 +6,10 @@
 //  itself carries one `NSVisualEffectView` (`behindWindow` blending, the
 //  theme's native material, default `.underWindowBackground`) with the
 //  theme's canvas color laid over it at `windowMaterial.tintOpacity`
-//  (default 0.75). Every component above this layer is opaque and painted
-//  with semantic surface roles; there is no per-component glass.
+//  (Frosted by default; a theme's Transparency sets Solid, Frosted or
+//  Glass). It shows in the icon rail and title band. Every component above
+//  this layer is opaque and painted with semantic surface roles; there is no
+//  per-component glass.
 //
 //  Accessibility: when "Reduce transparency" is on, the blur is dropped and
 //  the view paints the theme's opaque `windowMaterial.fallback` color.

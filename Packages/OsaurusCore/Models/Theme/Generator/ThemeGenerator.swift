@@ -273,8 +273,11 @@ enum ThemeGenerator {
             tokens["stroke.default"] = .both(.number(1.5))
             tokens["stroke.focus"] = .both(.number(3))
         }
-        if highContrast {
+        // Frosted is the bundled library's own tint opacity.
+        if highContrast || preferences.transparency == .solid {
             tokens["material.window.tintOpacity"] = .both(.number(1))
+        } else if preferences.transparency == .glass {
+            tokens["material.window.tintOpacity"] = ThemeTokenOverride(light: .number(0.45), dark: .number(0.3))
         }
         if readability.largerControls {
             tokens["size.control.defaultHeight"] = .both(.number(38))
