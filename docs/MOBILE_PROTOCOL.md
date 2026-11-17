@@ -1080,7 +1080,7 @@ The picker's sort and filters read `context_length` (tokens), `input_price` /
 oldest first.
 `privacy` is set on a cloud model the Privacy Filter runs for: `review` when
 fresh detections are reviewed before sending (§19), `auto` when the Mac
-redacts them unasked (Always Approve). It is absent when the filter does
+redacts them unasked (When New Items Are Found → Redact automatically). It is absent when the filter does
 not run for the model, local ones included. A voice call reads it (§6.5).
 
 ### 12.2 `PUT /agents/{id}/model`

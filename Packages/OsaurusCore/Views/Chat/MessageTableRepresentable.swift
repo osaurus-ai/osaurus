@@ -1164,6 +1164,7 @@ extension MessageTableRepresentable {
             let previousSearchHighlightQuery = ctx.searchHighlightQuery
             let previousSearchCurrentTurnId = ctx.searchCurrentTurnId
             let previousSearchCurrentOccurrence = ctx.searchCurrentOccurrence
+            let previousSessionRedactions = ctx.sessionRedactions
             let previousStreaming = ctx.isStreaming
             let previousLastAssistantTurnId = ctx.lastAssistantTurnId
             // NSView backed cells snapshot the theme
@@ -1215,6 +1216,13 @@ extension MessageTableRepresentable {
                 if context.searchCurrentTurnId != previousSearchCurrentTurnId {
                     reconfigureCellsForTurn(context.searchCurrentTurnId)
                 }
+            }
+
+            // Redaction highlights live in the context too. Forget and Stop
+            // redacting shrink them with no block change, so repaint the
+            // materialized cells or their underlines outlive the redactions.
+            if context.sessionRedactions != previousSessionRedactions {
+                reconfigureAllCellsFromLookup(blockLookup, invalidatingHeights: false)
             }
 
             let newIds = blocks.map(\.id)

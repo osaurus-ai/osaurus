@@ -1380,7 +1380,10 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 | `enabled` | false | Master toggle (regex layer; no model required; synchronous persistence; survives Cmd-Q) |
 | `aiDetectionEnabled` | false | Opt into the on-device AI classifier; on → load model + fail closed if missing, off → regex-only. Legacy files missing the key decode to `true` (preserve existing model users) |
 | `skipCodeBlocks` | true | Skip fenced + inline code spans |
-| `alwaysApproveByDefault` | false | Skip the review sheet per-session |
+| `defaultReviewPolicy` | `ask` | `ask` shows the review sheet for new items in your messages; `autoRedact` redacts without asking. Each conversation can override it (Review / Auto / Off) from the composer's privacy chip. Replaces the legacy `alwaysApproveByDefault` Bool (`true` migrates to `autoRedact`) |
+| `toolResultPolicy` | `ask` | Same choice for tool results sent back to the model during a turn |
+| `modelOutputPolicy` | `autoRedact` | Same choice for the model's own earlier replies and tool arguments |
+| `neverRedact` | `[]` | Values (case-insensitive) and domains (host and subdomains) always sent as written; skipped by detection and the leak check |
 | `builtinPatternEnabled` | all on | Per-category regex toggle (controls detection + leak check) |
 | `presetRules` | `{}` | Opt-in preset rule map |
 | `customRules` | `[]` | User-defined `PrivacyRule` array (`kind`, `caseSensitive`, optional `builder` + `placeholderLabel`) |

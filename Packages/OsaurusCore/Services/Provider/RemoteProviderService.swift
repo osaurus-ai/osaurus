@@ -525,7 +525,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         parameters: GenerationParameters
     ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
         do {
-            let scrubbed = try await PrivacyFilterPipeline.applyOutbound(
+            let scrubbed = try await PrivacyFilterPipeline.applyOutboundDetailed(
                 messages: messages,
                 sessionId: parameters.sessionId,
                 providerId: provider.id,
@@ -543,7 +543,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             // the activity row can say "privacy filter: N redacted" next
             // to the bytes that left the Mac.
             if let probe = WireTransportProbe.current {
-                if let map = scrubbed.map {
+                if scrubbed.filterApplied, let map = scrubbed.map {
                     let redacted = await map.snapshot().count
                     probe.recordPrivacyFilter(applied: true, redactedCount: redacted)
                 } else {

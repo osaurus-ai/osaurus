@@ -242,7 +242,9 @@ final class NativeMarkdownView: NSView {
         theme: any ThemeProtocol
     ) {
         let changed = highlights != redactionHighlights
+        let dropped = redactionHighlights.contains { highlights[$0.key] != $0.value }
         redactionHighlights = highlights
+        if dropped { rebuildTextWithoutHighlights() }
         if changed || !highlights.isEmpty {
             applyRedactionHighlightsIfNeeded(theme: theme)
         }
@@ -427,6 +429,18 @@ final class NativeMarkdownView: NSView {
     /// `.redactionPlaceholder` attribute runs, so a partial scan
     /// can't double-paint a range.
     private var redactionInspectionFingerprint: Int?
+    /// The highlighter only adds attributes, recoloring each match, so a
+    /// highlight that goes away (Forget, Stop redacting) leaves its color
+    /// and underline behind unless the text is rebuilt from its blocks.
+    private func rebuildTextWithoutHighlights() {
+        guard let tv = textView, !lastBlocks.isEmpty, let theme = lastThemeForLayout else { return }
+        let stv = SelectableTextView(blocks: lastBlocks, baseWidth: lastWidth, theme: theme)
+        tv.textStorage?.setAttributedString(stv.buildAttributedString(coordinator: coordinator))
+        resetIncrementalHighlightCursor()
+        tv.needsDisplay = true
+        applySearchHighlightsIfNeeded(theme: theme)
+    }
+
     private func applyRedactionHighlightsIfNeeded(theme: any ThemeProtocol) {
         guard let tv = textView, let storage = tv.textStorage else {
             appliedHighlightRanges = []

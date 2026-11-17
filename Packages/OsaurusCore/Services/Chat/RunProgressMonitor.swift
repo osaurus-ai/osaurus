@@ -138,6 +138,12 @@ final class RunProgressMonitor: ObservableObject {
                 .removeDuplicates(),
             throttleSeconds: 1)
 
+        // A privacy review for this chat opened or was answered.
+        observeDiscrete(
+            PrivacyReviewService.shared.awaitingScopes
+                .map { scopes in sessionId().map(scopes.contains) ?? false }
+                .removeDuplicates())
+
         syncLiveExec(LiveExecRegistry.shared.currentEntries())
     }
 
