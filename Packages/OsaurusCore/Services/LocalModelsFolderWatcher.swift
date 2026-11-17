@@ -15,7 +15,10 @@ import Foundation
 
 @MainActor
 final class LocalModelsFolderWatcher {
-    static let shared = LocalModelsFolderWatcher()
+    static let shared = LocalModelsFolderWatcher(roots: currentRoots) {
+        ModelManager.invalidateLocalModelsCache()
+        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+    }
 
     /// Coalesces a Finder move of several bundles, or a bundle's
     /// create-then-rename, into one rescan.
@@ -29,8 +32,13 @@ final class LocalModelsFolderWatcher {
     private var debounceTask: Task<Void, Never>?
     private var observer: NSObjectProtocol?
     private var started = false
+    private let resolveRoots: @Sendable () -> [String]
+    private let onChange: @MainActor () -> Void
 
-    private init() {}
+    init(roots: @escaping @Sendable () -> [String], onChange: @escaping @MainActor () -> Void) {
+        resolveRoots = roots
+        self.onChange = onChange
+    }
 
     /// Idempotent. Re-arms whenever the models directory changes.
     func start() {
@@ -65,7 +73,7 @@ final class LocalModelsFolderWatcher {
 
     private func rebuildEventStream() {
         Self.streamQueue.async { [self] in
-            let roots = Self.currentRoots()
+            let roots = resolveRoots()
             Task { @MainActor in
                 guard started, roots != watchedRoots else { return }
                 watchedRoots = roots
@@ -106,8 +114,15 @@ final class LocalModelsFolderWatcher {
         var context = FSEventStreamContext(
             version: 0,
             info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil,
-            release: nil,
+            retain: { info in
+                guard let info else { return nil }
+                _ = Unmanaged<LocalModelsFolderWatcher>.fromOpaque(info).retain()
+                return info
+            },
+            release: { info in
+                guard let info else { return }
+                Unmanaged<LocalModelsFolderWatcher>.fromOpaque(info).release()
+            },
             copyDescription: nil
         )
         let flags = FSEventStreamCreateFlags(
@@ -145,11 +160,10 @@ final class LocalModelsFolderWatcher {
         guard events.contains(where: { Self.isInventoryChange(path: $0.path, flags: $0.flags, roots: roots) })
         else { return }
         debounceTask?.cancel()
-        debounceTask = Task { @MainActor in
+        debounceTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: Self.debounce)
-            guard !Task.isCancelled else { return }
-            ModelManager.invalidateLocalModelsCache()
-            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            guard !Task.isCancelled, let self else { return }
+            self.onChange()
         }
     }
 

@@ -74,33 +74,30 @@ struct LocalModelsFolderWatcherTests {
         #expect(LocalModelsFolderWatcher.canonicalDirectoryPath(root.appendingPathComponent("missing")) == nil)
     }
 
-    /// End to end against the real models directory (`OSU_MODELS_DIR`):
-    /// removing a bundle folder on disk posts `.localModelsChanged`.
+    /// End to end through FSEvents on a private folder, so the shared models
+    /// directory and the app-wide `.localModelsChanged` stay untouched for
+    /// suites running alongside.
     @MainActor
-    @Test func removingABundleOnDiskPostsLocalModelsChanged() async throws {
+    @Test func removingABundleOnDiskReportsAChange() async throws {
         let fm = FileManager.default
-        let root = DirectoryPickerService.effectiveModelsDirectory()
-        let bundle = root.appendingPathComponent("watcher-probe-\(UUID().uuidString.prefix(8))/Model-4bit")
+        let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let bundle = temp.appendingPathComponent("OsaurusAI/Model-4bit")
         try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: bundle.appendingPathComponent("config.json"))
-        defer { try? fm.removeItem(at: bundle.deletingLastPathComponent()) }
+        defer { try? fm.removeItem(at: temp) }
+        let root = try #require(LocalModelsFolderWatcher.canonicalDirectoryPath(temp))
 
-        let watcher = LocalModelsFolderWatcher.shared
+        let changed = PostedFlag()
+        let watcher = LocalModelsFolderWatcher(roots: { [root] }) { changed.value = true }
         watcher.start()
         defer { watcher.stop() }
         try await Task.sleep(for: .seconds(1))
 
-        let posted = PostedFlag()
-        let token = NotificationCenter.default.addObserver(
-            forName: .localModelsChanged, object: nil, queue: .main
-        ) { _ in posted.value = true }
-        defer { NotificationCenter.default.removeObserver(token) }
         try fm.removeItem(at: bundle)
-
-        for _ in 0 ..< 60 where !posted.value {
+        for _ in 0 ..< 60 where !changed.value {
             try await Task.sleep(for: .milliseconds(100))
         }
-        #expect(posted.value, "watching \(LocalModelsFolderWatcher.currentRoots())")
+        #expect(changed.value, "watching \(root)")
     }
 
     @Test func droppedEventsAndRootChangesForceARescan() {
