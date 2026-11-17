@@ -88,7 +88,7 @@ Both toggles are sticky: they persist synchronously to `~/.osaurus/config/privac
 Two side channels run alongside the main path:
 
 - **`WireTransportProbe`** captures the *post-scrub* HTTP body actually written to the network and the *pre-unscrub* inbound bytes, so the Insights view can show "this is verbatim what the cloud saw / sent back" — not the local pre-scrub copy. Without this, the Insights logs would lie by omission.
-- **`SessionRedactionStore`** is a process-wide actor that holds one `RedactionMap` per chat session (keyed by `sessionId` string). It also tracks which sessions the user flipped "Always approve in this conversation" on. Both the maps and the auto-approve set are wiped via `invalidate(_:)` on chat close / reset / switch — used by the inline-highlight renderer (chat UI) and by the streaming unscrubber on multi-turn conversations so `[PERSON_1]` from turn 2 still resolves on turn 6.
+- **`SessionRedactionStore`** is a process-wide actor that holds one `RedactionMap` per privacy scope: the root chat session id, shared by that chat's subagents and delegated workers through the task-local `ChatExecutionContext.privacyScopeId`, so a value approved in the parent keeps its placeholder in every child and the same value never opens a second sheet. Next to each map it keeps the conversation policy (`ask` / `autoRedact` / `off`), per-category answers ("always" or "never redact emails in this conversation"), and a per-scope review lock that runs one detect → review pass at a time, so parallel subagents queue instead of racing. `invalidate(_:)` wipes all of it on chat close / reset / switch; `forget(_:)` (the composer chip's "Forget Redactions in This Conversation") drops the map and category answers but keeps the policy. The map is used by the inline-highlight renderer (chat UI) and by the streaming unscrubber on multi-turn conversations so `[PERSON_1]` from turn 2 still resolves on turn 6.
 
 ---
 
@@ -202,11 +202,30 @@ The post-scrub invariant only re-scans categories whose built-in regex is enable
 
 ## The Review Sheet
 
-The first turn that detects anything pops the redaction review sheet (per-conversation; once the user approves a session, subsequent turns of the same conversation can short-circuit via **Always Approve by Default** if enabled). The sheet has three regions:
+### When it asks
 
-1. **Detected entities list** — one row per `(category, original, placeholder)` triple. Toggle per-row to drop a false positive; the `.approved` flag flows into the scrub.
-2. **Outgoing preview** — a scrubbed reconstruction of the message that would actually be sent. Highlighted placeholders reveal the original value on hover via `RedactionHoverController`. Uses the same `NSTextView` + `RedactionHighlighter` stack as the chat bubbles, so the preview's hover UX matches the inline highlights below.
-3. **Send / Cancel** — Send is the default action (Return). Cancel aborts the request; the chat surface doesn't move and no HTTP fires.
+Each detection is tagged with where it came from (`PrivacySegmentOrigin`): your message, a tool result, or the model's own text (earlier replies and tool-call arguments). Whether a fresh detection needs review is decided in this order:
+
+1. **Never Redact** — values (case-insensitive) and domains (host and subdomains) in `neverRedact` are dropped from detection and from the leak check.
+2. **Category answers** for this conversation — "never redact" drops the item; "always redact" redacts it without asking.
+3. **Conversation policy** — `off` sends the conversation as written (the map is kept so earlier placeholders in replies still resolve); `autoRedact` redacts everything without asking; `ask` continues.
+4. **Origin** — your message always asks; tool results follow `toolResultPolicy` (default ask); the model's own text follows `modelOutputPolicy` (default redact automatically), since it only repeats text the model already received.
+
+A conversation without its own policy follows `defaultReviewPolicy`. Items redacted without asking are still interned and highlighted like reviewed ones.
+
+### The sheet
+
+The sheet is titled **Review Before Sending** and names the destination (Osaurus Cloud for the managed router, else the provider name). It opens compact:
+
+1. **Grouped list** — rows grouped by origin ("From your message", "From the web_fetch tool", "From the model's own text"), with **Redact all** above. Each row's switch drops a false positive; its ⋯ menu adds the value or its domain to **Never Redact** (saved to Settings on Send) or answers for the whole category in this conversation. The selected row shows the outgoing text inline; **Show full message** opens the side-by-side outgoing preview, which uses the same `NSTextView` + `RedactionHighlighter` stack as the chat bubbles so the hover UX matches the inline highlights below.
+2. **For the rest of this conversation** — Ask about new items / Redact automatically / Turn filter off. This replaces the old "Always approve in this conversation" checkbox; the same choice is on the composer chip.
+3. **Send / Cancel** — Send is the default action (Return), Esc cancels, ↑/↓ move the selection and Space toggles it. Cancel aborts the request and discards every choice staged in the sheet; the chat surface doesn't move and no HTTP fires.
+
+Reviews are routed to the window that owns the conversation and queued there, so two subagents that need review at once show two sheets one after the other instead of the second cancelling the first.
+
+### The composer chip
+
+When the filter applies to the selected cloud provider, the composer shows a privacy chip: **Review**, **Auto** or **Off**, plus the number of values redacted so far. Its menu switches the conversation policy (also before the first send), resets it to the default, lists the conversation's redactions with **Stop redacting** per value (`RedactionMap.stopRedacting`: later sends carry the value as written while its placeholder keeps resolving in replies), forgets the conversation's redactions, and opens Privacy Filter settings.
 
 Cancel is a *typed* cancel: `PrivacyReviewService.review` returns `.canceled`, the pipeline throws `PrivacyFilterPipelineError.reviewCanceled`, and the request layer aborts. Earlier versions returned a sentinel `([], map)` empty-message tuple, which silently produced malformed cloud requests when callers forgot to check.
 
@@ -251,12 +270,18 @@ Settings → Privacy & Security  ← drill-in pages always render; no model requ
 │   │   │   └── (no model)      disabled + link → Local Models → Privacy Detection
 │   │   ├── (no-detector note)  shown when enabled but nothing can detect
 │   │   │                       (AI off + all built-ins off + no presets/customs)
-│   │   ├── Skip Code Blocks (fenced + inline)
-│   │   └── Always Approve by Default (skip the sheet per-session)
-│   ├── Per-Provider (override toggles keyed by RemoteProvider.id)
-│   ├── Conversation Privacy → Forget Redactions in Every Conversation
-│   ├── Advanced → Require Review for Background Requests
-│   └── Activity Log (Keep Activity History, Store Prompts and Responses, Review Activity in Insights)
+│   │   ├── Detection Model (link → Local Models → Privacy Detection)
+│   │   └── Skip Code Blocks (fenced + inline)
+│   ├── Review  (hidden while the master toggle is off)
+│   │   ├── When New Items Are Found (Ask me / Redact automatically)
+│   │   ├── Tool Results (Ask me / Redact automatically)
+│   │   ├── Model's Own Output (Ask me / Redact automatically)
+│   │   └── Require Review for Background Requests
+│   ├── Never Redact (values and domains; add here or from a review row's menu)
+│   ├── Per-Provider (override toggles keyed by RemoteProvider.id; Osaurus Cloud labelled)
+│   └── Conversation Privacy → Forget Redactions in Every Conversation
+│
+├── Activity Log (Keep Activity History, Store Prompts and Responses, Review Activity in Insights)
 │
 ├── Detection Rules  (PrivacyTab.rules)
 │   ├── Detection Patterns (built-in toggles)
@@ -281,7 +306,10 @@ The pages render immediately — the deterministic regex layer needs no model, s
 | `enabled`                | `false` | Master toggle. When false the pipeline never invokes detection. Does **not** require the model — the regex layer runs on its own. |
 | `aiDetectionEnabled`     | `false`* | Opt into the on-device AI classifier. When on, the pipeline loads the model and **fails closed** if it's missing; when off, detection is regex-only and never blocks on the model. *Fresh installs default `false` (regex-only, no download). A legacy config file missing this key decodes to `true` so users who already had the model keep AI detection on. |
 | `skipCodeBlocks`         | `true`  | Skip fenced (` ``` `) + inline (` ` `) code spans.                                                |
-| `alwaysApproveByDefault` | `false` | Skip the review sheet — still redact, just don't ask each turn.                                   |
+| `defaultReviewPolicy`    | `ask`   | Personal data in your messages: `ask` (review sheet) or `autoRedact` (redact without asking). Each conversation can override it, including `off`. Legacy `alwaysApproveByDefault: true` migrates to `autoRedact`. |
+| `toolResultPolicy`       | `ask`   | Same choice for tool results sent back to the model during a turn.                                 |
+| `modelOutputPolicy`      | `autoRedact` | Same choice for the model's own earlier replies and tool-call arguments.                      |
+| `neverRedact`            | `[]`    | `{kind: value|domain, text}` entries always sent as written; skipped by detection and the leak check. |
 | `builtinPatternEnabled`  | all on  | Per-category toggle (`phone` / `email` / `url` / `accountNumber`). Controls detection + leak check together. |
 | `presetRules`            | `{}`    | Opt-in preset toggles by preset id. Missing keys → disabled.                                       |
 | `customRules`            | `[]`    | User-defined `PrivacyRule` array (name, category, `kind` + raw `pattern` or `builder` spec, `caseSensitive`, optional `placeholderLabel`, enabled). |
@@ -302,6 +330,8 @@ Stored at `~/.osaurus/config/privacy-filter.json`. The `Codable` decoder is hand
 The manifest is synthesized from Hugging Face's `/api/models/.../tree/main` payload at download time (LFS files expose `lfs.oid` which is a real SHA-256). The upstream repo doesn't ship one, so this is Osaurus's own integrity record. Re-verify re-hashes every required file and reports mismatches without re-downloading.
 
 `SessionRedactionStore` is in-memory only — placeholder maps don't persist across app restarts, and each chat session has its own entry keyed by `sessionId`. **Forget Redactions in Every Conversation** in the Overview tab clears the live actor state; the next outbound send mints fresh placeholders.
+
+Each map also records SHA-256 digests of the message segments it scanned on sends that shipped. Detection always covers the latest user turn, plus any earlier segment the map has not scanned. A chat reopened after a restart, or one whose map was forgotten or evicted, therefore has its history detected and reviewed again with the next message rather than resent as written.
 
 ---
 
@@ -328,7 +358,7 @@ Overrides are keyed by `RemoteProvider.id` (UUID) so renaming or re-creating a p
 ## Limitations
 
 - The classifier is **English-leaning**. Non-English names and addresses get lower confidence and are easier to miss. The regex layer is locale-agnostic for shape-based categories (email, URL, IBAN, AWS keys) but can't help with names.
-- **No semantic redaction.** "My medical history" passes through unchanged because the model classifies tokens, not topics. Combine with `alwaysApproveByDefault: false` so the review sheet shows you what was caught.
+- **No semantic redaction.** "My medical history" passes through unchanged because the model classifies tokens, not topics. Keep **When New Items Are Found** on **Ask me** so the review sheet shows you what was caught.
 - **No cross-conversation memory of redactions.** Each session has its own `RedactionMap` keyed by `sessionId`; the same email in two different chats gets `[EMAIL_1]` in both, indexed independently. Replies referring to entities from another conversation arrive as raw `[EMAIL_1]` tokens the local map doesn't know how to resolve — the unscrubber logs and leaves them in place.
 - **Local inference paths bypass the filter** by design — Apple Foundation Models route through `FoundationModelService`, local MLX models route through `MLXService`, and neither leaves your Mac. The pipeline only attaches to `RemoteProviderService`, so anything that doesn't go to a remote provider is never scrubbed (and doesn't need to be).
 - **Multimodal / image content is NOT scanned.** `MessageScrubbing.appendScrubbableTexts` walks `content`, the text-typed entries of `contentParts`, every tool-call's argument JSON, and `reasoning_content`. Image URLs, inline base64 image data, and audio attachments are passed through untouched. PII captured in a screenshot or scan that the cloud model can OCR is therefore visible to the provider. Disable the filter or strip the attachment before sending if this matters.

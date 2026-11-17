@@ -4,8 +4,8 @@
 //
 //  The "Privacy & Security" management tab. The overview lists what
 //  Osaurus collects, then drill-ins: Privacy Filter (the redaction filter,
-//  per-provider overrides, and the non-interactive review policy under
-//  Advanced), Detection Rules (what the matcher looks for), Data & Storage
+//  when the review sheet appears, the Never Redact list, and
+//  per-provider overrides), Detection Rules (what the matcher looks for), Data & Storage
 //  (at-rest encryption, backup and file history, `StorageSettingsView`),
 //  and the Permissions child tab.
 //
@@ -282,7 +282,7 @@ struct PrivacyView: View {
     ///
     /// Use this for fields where the user's perceived state MUST
     /// match the on-disk state immediately (master toggle,
-    /// requireReview, master alwaysApprove). Slider-shaped or
+    /// review policies, Never Redact). Slider-shaped or
     /// preset-toggle-shaped fields go through `saveDebounced()` so
     /// dragging a slider doesn't issue 60 atomic writes per second.
     private func save() {
@@ -367,10 +367,9 @@ enum PrivacyTab: String, CaseIterable, SettingsDrillInItem {
 
 /// The "Filter" tab: data-collection consent, the master scrub toggle,
 /// the AI-detection layer toggle (with one link to Models), review
-/// behaviour, per-provider overrides, the conversation-level Forget
-/// Redactions verb, and — under Advanced — the non-interactive review
-/// policy. These are the most-touched controls so they live one tap
-/// away from the header.
+/// policies, the Never Redact list, per-provider overrides, and the
+/// Forget Redactions verb. These are the most-touched controls so they
+/// live one tap away from the header.
 private struct PrivacyOverviewTab: View {
     /// `.collection` = data-collection consent + activity log (the
     /// Privacy & Security overview); `.filter` = the Privacy Filter page.
@@ -401,7 +400,7 @@ private struct PrivacyOverviewTab: View {
     let forgetActionMessage: String?
     let forgetAllRedactions: () -> Void
 
-    private static let advancedAnchorIds: Set<String> = ["privacy.filter.nonInteractive"]
+    @State private var showsNeverRedactEditor = false
 
     /// Usage-analytics consent. Mirrors `TelemetryService.shared.isEnabled`
     /// (opt-in: true only once granted). Applied immediately on change.
@@ -435,7 +434,7 @@ private struct PrivacyOverviewTab: View {
                 SettingsToggle(
                     title: "Scrub Personal Data Before Sending to Cloud Providers",
                     description: L(
-                        "Detects PII in your messages and asks you to review before any cloud-bound request. Local models (MLX, Foundation) and on-device tools bypass the filter."
+                        "Replaces names, emails, links, and other personal data with placeholders before a request reaches a cloud provider. Local models (MLX, Foundation) and on-device tools bypass the filter."
                     ),
                     anchorId: "privacy.filter.enabled",
                     isOn: Binding(
@@ -479,7 +478,8 @@ private struct PrivacyOverviewTab: View {
                             ? "Choose or update the on-device model that powers AI detection."
                             : "No model installed. Pattern rules still work without one.",
                         icon: "arrow.right",
-                        actionTitle: isModelReady ? "Manage" : "Install"
+                        actionTitle: isModelReady ? "Manage" : "Install",
+                        anchorId: "privacy.filter.detectionModel"
                     ) {
                         onOpenModels()
                     }
@@ -502,21 +502,11 @@ private struct PrivacyOverviewTab: View {
                     )
                 )
 
-                SettingsToggle(
-                    title: "Always Approve by Default",
-                    description: "Skip the review sheet — still redact, just don't ask each turn.",
-                    anchorId: "privacy.filter.alwaysApprove",
-                    isOn: Binding(
-                        get: { configuration.alwaysApproveByDefault },
-                        set: { newValue in
-                            configuration.alwaysApproveByDefault = newValue
-                            save()
-                        }
-                    )
-                )
             }
 
             if configuration.enabled {
+                reviewSection
+                neverRedactSection
                 SettingsSection(title: "Per-Provider", anchorId: "privacy.filter.providers") {
                     providerOverrides
                 }
@@ -527,22 +517,128 @@ private struct PrivacyOverviewTab: View {
             ) {
                 forgetCard
             }
+    }
 
-            SettingsAdvancedDisclosure(anchorIds: Self.advancedAnchorIds) {
-                SettingsToggle(
-                    title: "Require Review for Background Requests",
-                    description:
-                        "Also hold cloud-bound requests from the HTTP API, schedules, and other non-interactive callers until you review them. Turn off to let those requests auto-approve silently after redaction.",
-                    anchorId: "privacy.filter.nonInteractive",
-                    isOn: Binding(
-                        get: { configuration.requireReviewForNonInteractive },
-                        set: { newValue in
-                            configuration.requireReviewForNonInteractive = newValue
-                            save()
-                        }
-                    )
+    // MARK: - Review
+
+    private static func reviewOptions() -> [SettingsPickerRow<PrivacyReviewPolicy>.Option] {
+        [
+            .init(.ask, L("Ask me")),
+            .init(.autoRedact, L("Redact automatically")),
+        ]
+    }
+
+    /// When the review sheet appears. Each conversation can override the
+    /// first row from the composer's privacy menu.
+    private var reviewSection: some View {
+        SettingsSection(title: "Review") {
+            SettingsPickerRow(
+                title: "When New Items Are Found",
+                description: L(
+                    "Personal data in your own messages. Ask me shows the review sheet once per new item; Redact automatically replaces it without asking. Each conversation can change this from the privacy menu in the composer."
+                ),
+                anchorId: "privacy.filter.reviewPolicy",
+                style: .menu,
+                selection: Binding(
+                    get: { configuration.defaultReviewPolicy },
+                    set: { newValue in
+                        configuration.defaultReviewPolicy = newValue
+                        save()
+                    }
+                ),
+                options: Self.reviewOptions()
+            )
+
+            SettingsPickerRow(
+                title: "Tool Results",
+                description: L(
+                    "Web pages, files, and other tool output the agent sends back to the model during a turn."
+                ),
+                anchorId: "privacy.filter.toolResults",
+                style: .menu,
+                selection: Binding(
+                    get: { configuration.toolResultPolicy },
+                    set: { newValue in
+                        configuration.toolResultPolicy = newValue
+                        save()
+                    }
+                ),
+                options: Self.reviewOptions()
+            )
+
+            SettingsPickerRow(
+                title: "Model's Own Output",
+                description: L(
+                    "The model's earlier replies and tool arguments. They only repeat text the model already received, so they're redacted without asking by default."
+                ),
+                anchorId: "privacy.filter.modelOutput",
+                style: .menu,
+                selection: Binding(
+                    get: { configuration.modelOutputPolicy },
+                    set: { newValue in
+                        configuration.modelOutputPolicy = newValue
+                        save()
+                    }
+                ),
+                options: Self.reviewOptions()
+            )
+
+            SettingsToggle(
+                title: "Require Review for Background Requests",
+                description:
+                    "Also hold cloud-bound requests from the HTTP API, schedules, and other non-interactive callers until you review them. Turn off to let those requests auto-approve silently after redaction.",
+                anchorId: "privacy.filter.nonInteractive",
+                isOn: Binding(
+                    get: { configuration.requireReviewForNonInteractive },
+                    set: { newValue in
+                        configuration.requireReviewForNonInteractive = newValue
+                        save()
+                    }
                 )
+            )
+        }
+    }
+
+    // MARK: - Never Redact
+
+    private var neverRedactSection: some View {
+        SettingsSection(title: "Never Redact", anchorId: "privacy.filter.neverRedact") {
+            SettingsRow(
+                title: "Values and Domains",
+                description: L(
+                    "Always sent as written, in every conversation. Add your own name, your company's domain, or public feeds here, or from a row's menu in the review sheet."
+                )
+            ) {
+                SettingsButton(.secondary, "Add", icon: "plus", size: .compact) {
+                    showsNeverRedactEditor = true
+                }
             }
+
+            ForEach(configuration.neverRedact) { entry in
+                SettingsRow(
+                    title: entry.text,
+                    description: entry.kind == .domain
+                        ? L("Domain, including subdomains") : L("Exact value, any capitalization"),
+                    verbatimTitle: true
+                ) {
+                    SettingsIconButton("trash", help: "Remove", size: .compact, isDestructive: true) {
+                        configuration.neverRedact.removeAll { $0.id == entry.id }
+                        save()
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showsNeverRedactEditor) {
+            NeverRedactEditorSheet(
+                onAdd: { entry in
+                    configuration.addNeverRedact(entry)
+                    save()
+                    showsNeverRedactEditor = false
+                },
+                onCancel: { showsNeverRedactEditor = false }
+            )
+            .environment(\.theme, theme)
+        }
     }
 
     // MARK: - Data collection
@@ -695,6 +791,9 @@ private struct PrivacyOverviewTab: View {
     }
 
     private func providerDescription(_ provider: RemoteProvider) -> String {
+        if provider.providerType == .osaurusRouter {
+            return L("Osaurus Cloud — the managed models behind Architect and other built-in agents.")
+        }
         let host = provider.host.isEmpty ? provider.providerType.rawValue : provider.host
         return String(format: L("privacy.providers.row.subtitle %@"), host)
     }
@@ -1069,6 +1168,50 @@ struct PrivacyCategoryBadge: View {
             String(localized: String.LocalizationValue(category.localizationKey), bundle: .module),
             tone: .accent
         )
+    }
+}
+
+/// Adds one Never Redact entry: an exact value or a domain.
+private struct NeverRedactEditorSheet: View {
+    let onAdd: (NeverRedactEntry) -> Void
+    let onCancel: () -> Void
+
+    @State private var kind: NeverRedactEntry.Kind = .value
+    @State private var text = ""
+
+    private var entry: NeverRedactEntry? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let candidate = NeverRedactEntry(kind: kind, text: trimmed)
+        return candidate.text.isEmpty ? nil : candidate
+    }
+
+    var body: some View {
+        SettingsSheet(
+            icon: "checkmark.shield",
+            title: "Never Redact",
+            subtitle: "Sent as written in every conversation.",
+            primary: .init(label: "Add", isEnabled: entry != nil) {
+                if let entry { onAdd(entry) }
+            },
+            secondary: .init(label: "Cancel", handler: onCancel),
+            onClose: onCancel
+        ) {
+            SettingsPickerRow(
+                title: "Match",
+                selection: $kind,
+                options: [
+                    .init(.value, L("Exact value")),
+                    .init(.domain, L("Domain")),
+                ]
+            )
+            SettingsTextField(
+                placeholder: kind == .domain ? L("example.com") : L("Jane Appleseed"),
+                text: $text,
+                autofocus: true,
+                onSubmit: { if let entry { onAdd(entry) } }
+            )
+        }
     }
 }
 

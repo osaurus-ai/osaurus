@@ -272,7 +272,7 @@ public enum TeamSeeder {
         var config = PrivacyFilterConfiguration.freshInstall()
         config.enabled = true
         config.aiDetectionEnabled = false
-        config.alwaysApproveByDefault = false
+        config.defaultReviewPolicy = .ask
         PrivacyFilterStore.save(config)
     }
 

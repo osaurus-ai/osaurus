@@ -344,6 +344,16 @@
         }
       }
     },
+    "%lld redacted in this conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld redacted in this conversation"
+          }
+        }
+      }
+    },
     "-1001234567890 — one per line" : {
       "localizations" : {
         "de" : {
@@ -408,6 +418,549 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "-1001234567890 或 @channelname — 每行一個"
+          }
+        }
+      }
+    },
+    "Always in this chat" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Always in this chat"
+          }
+        }
+      }
+    },
+    "Always redact %@ in this conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Always redact %@ in this conversation"
+          }
+        }
+      }
+    },
+    "Always sent as written, in every conversation. Add your own name, your company's domain, or public feeds here, or from a row's menu in the review sheet." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Always sent as written, in every conversation. Add your own name, your company's domain, or public feeds here, or from a row's menu in the review sheet."
+          }
+        }
+      }
+    },
+    "Ask about %@ again" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask about %@ again"
+          }
+        }
+      }
+    },
+    "Ask about new items" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask about new items"
+          }
+        }
+      }
+    },
+    "Ask me" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask me"
+          }
+        }
+      }
+    },
+    "Domain" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Domain"
+          }
+        }
+      }
+    },
+    "Domain, including subdomains" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Domain, including subdomains"
+          }
+        }
+      }
+    },
+    "Exact value" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exact value"
+          }
+        }
+      }
+    },
+    "Exact value, any capitalization" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exact value, any capitalization"
+          }
+        }
+      }
+    },
+    "Redact %@" : {
+
+    },
+    "example.com" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "example.com"
+          }
+        }
+      }
+    },
+    "For the rest of this conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "For the rest of this conversation"
+          }
+        }
+      }
+    },
+    "Forget Redactions in This Conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forget Redactions in This Conversation"
+          }
+        }
+      }
+    },
+    "From the %@ tool" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From the %@ tool"
+          }
+        }
+      }
+    },
+    "From the model's own text" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From the model's own text"
+          }
+        }
+      }
+    },
+    "From tool results" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From tool results"
+          }
+        }
+      }
+    },
+    "From your message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From your message"
+          }
+        }
+      }
+    },
+    "Hide full message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide full message"
+          }
+        }
+      }
+    },
+    "Jane Appleseed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jane Appleseed"
+          }
+        }
+      }
+    },
+    "Match" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Match"
+          }
+        }
+      }
+    },
+    "Model's Own Output" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model's Own Output"
+          }
+        }
+      }
+    },
+    "Never in this chat" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never in this chat"
+          }
+        }
+      }
+    },
+    "Never redact" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never redact"
+          }
+        }
+      }
+    },
+    "Never Redact" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never Redact"
+          }
+        }
+      }
+    },
+    "Never redact %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never redact %@"
+          }
+        }
+      }
+    },
+    "Never redact %@ in this conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never redact %@ in this conversation"
+          }
+        }
+      }
+    },
+    "Never redact this value" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never redact this value"
+          }
+        }
+      }
+    },
+    "Osaurus Cloud — the managed models behind Architect and other built-in agents." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus Cloud — the managed models behind Architect and other built-in agents."
+          }
+        }
+      }
+    },
+    "Personal data in your own messages. Ask me shows the review sheet once per new item; Redact automatically replaces it without asking. Each conversation can change this from the privacy menu in the composer." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personal data in your own messages. Ask me shows the review sheet once per new item; Redact automatically replaces it without asking. Each conversation can change this from the privacy menu in the composer."
+          }
+        }
+      }
+    },
+    "Privacy Filter Settings…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacy Filter Settings…"
+          }
+        }
+      }
+    },
+    "Privacy Filter: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacy Filter: %@"
+          }
+        }
+      }
+    },
+    "Redact" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redact"
+          }
+        }
+      }
+    },
+    "Redact all" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redact all"
+          }
+        }
+      }
+    },
+    "Redact automatically" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redact automatically"
+          }
+        }
+      }
+    },
+    "Redactions in This Conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redactions in This Conversation"
+          }
+        }
+      }
+    },
+    "Redactions in This Conversation (%lld)…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redactions in This Conversation (%lld)…"
+          }
+        }
+      }
+    },
+    "Replaces names, emails, links, and other personal data with placeholders before a request reaches a cloud provider. Local models (MLX, Foundation) and on-device tools bypass the filter." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Replaces names, emails, links, and other personal data with placeholders before a request reaches a cloud provider. Local models (MLX, Foundation) and on-device tools bypass the filter."
+          }
+        }
+      }
+    },
+    "Review Before Sending" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review Before Sending"
+          }
+        }
+      }
+    },
+    "Sent as written" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent as written"
+          }
+        }
+      }
+    },
+    "Sent as written in every conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent as written in every conversation."
+          }
+        }
+      }
+    },
+    "Show full message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show full message"
+          }
+        }
+      }
+    },
+    "Stop redacting" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop redacting"
+          }
+        }
+      }
+    },
+    "Stopped values are sent as written from your next message on." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stopped values are sent as written from your next message on."
+          }
+        }
+      }
+    },
+    "The model's earlier replies and tool arguments. They only repeat text the model already received, so they're redacted without asking by default." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model's earlier replies and tool arguments. They only repeat text the model already received, so they're redacted without asking by default."
+          }
+        }
+      }
+    },
+    "These items will be replaced with placeholders before your message goes to %@. Your choices apply to the rest of this conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "These items will be replaced with placeholders before your message goes to %@. Your choices apply to the rest of this conversation."
+          }
+        }
+      }
+    },
+    "These items will be replaced with placeholders before your message leaves your Mac. Your choices apply to the rest of this conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "These items will be replaced with placeholders before your message leaves your Mac. Your choices apply to the rest of this conversation."
+          }
+        }
+      }
+    },
+    "This Conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Conversation"
+          }
+        }
+      }
+    },
+    "Tool Results" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tool Results"
+          }
+        }
+      }
+    },
+    "Turn filter off" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn filter off"
+          }
+        }
+      }
+    },
+    "Undo never redact" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undo never redact"
+          }
+        }
+      }
+    },
+    "Use Default (%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use Default (%@)"
+          }
+        }
+      }
+    },
+    "Values and Domains" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Values and Domains"
+          }
+        }
+      }
+    },
+    "Web pages, files, and other tool output the agent sends back to the model during a turn." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Web pages, files, and other tool output the agent sends back to the model during a turn."
+          }
+        }
+      }
+    },
+    "When New Items Are Found" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When New Items Are Found"
           }
         }
       }

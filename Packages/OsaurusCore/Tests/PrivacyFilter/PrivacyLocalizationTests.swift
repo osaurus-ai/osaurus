@@ -139,8 +139,8 @@ struct PrivacyLocalizationTests {
     @Test func masterToggleCopy_mentionsCloud() throws {
         let title = "Scrub Personal Data Before Sending to Cloud Providers"
         let description =
-            "Detects PII in your messages and asks you to review before any cloud-bound request. "
-            + "Local models (MLX, Foundation) and on-device tools bypass the filter."
+            "Replaces names, emails, links, and other personal data with placeholders before a request "
+            + "reaches a cloud provider. Local models (MLX, Foundation) and on-device tools bypass the filter."
 
         guard let url = Self.catalogURL() else {
             Issue.record("Localizable.xcstrings not found via #filePath walk")

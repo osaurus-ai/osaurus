@@ -4147,8 +4147,8 @@ public struct SystemPromptComposer: Sendable {
     /// reasons that mirror `injectMemoryPrefix`:
     ///   1. the system prefix stays byte-stable so the paged KV cache reuses
     ///      the conversation prefix, and
-    ///   2. the Privacy Filter only scans the latest user turn
-    ///      (`latestUserTurnSegments()`) and skips `system`, so riding on the
+    ///   2. the Privacy Filter always scans the latest user turn
+    ///      (`latestUserTurnStart`) and skips `system`, so riding on the
     ///      user message is what actually routes the snapshot through PII
     ///      scrubbing before a cloud send.
     /// No-op when the block is nil/blank, no user message exists, or the

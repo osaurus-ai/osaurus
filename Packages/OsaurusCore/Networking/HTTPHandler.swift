@@ -5543,7 +5543,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let cloud = PickerCloudImageDTO(item)
             var privacy: String?
             if case .remote(_, let providerId) = item.source, privacyConfig.isEnabled(forProviderId: providerId) {
-                privacy = privacyConfig.alwaysApproveByDefault ? "auto" : "review"
+                privacy = privacyConfig.defaultReviewPolicy == .autoRedact ? "auto" : "review"
             }
             return PickerModelDTO(
                 id: item.id,

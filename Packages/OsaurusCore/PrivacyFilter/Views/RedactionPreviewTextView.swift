@@ -33,6 +33,11 @@ struct RedactionPreviewTextView: NSViewRepresentable {
     /// per `updateNSView` so a theme change in Settings re-paints
     /// the preview without rebuilding the SwiftUI hierarchy.
     let theme: any ThemeProtocol
+    /// Text to scroll into view (the selected item's placeholder, or its
+    /// original when it is sent as written). Injected context such as the
+    /// current time often precedes the user's words, so the top of the
+    /// preview rarely shows the item under review.
+    var focusText: String? = nil
 
     /// Owns the hover controller so it survives `updateNSView`
     /// calls. SwiftUI tears `NSViewRepresentable` instances down
@@ -60,12 +65,15 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         /// can hand the hover controller the same set without
         /// re-running the highlighter.
         var lastAppliedRanges: [AppliedRedactionRange] = []
+        /// Last (text, focus) pair scrolled to, so re-renders don't fight
+        /// the user's own scrolling.
+        var lastFocusFingerprint: String = ""
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+        let scrollView = FocusingScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
@@ -187,6 +195,20 @@ struct RedactionPreviewTextView: NSViewRepresentable {
                 ranges: applied
             )
         }
+
+        if let focusingView = scrollView as? FocusingScrollView {
+            scrollToFocus(focusingView, coordinator: context.coordinator)
+        }
+    }
+
+    private func scrollToFocus(_ scrollView: FocusingScrollView, coordinator: Coordinator) {
+        guard let focusText, !focusText.isEmpty else { return }
+        let fingerprint = "\(scrubbedText.hashValue)|\(focusText)"
+        guard coordinator.lastFocusFingerprint != fingerprint else { return }
+        coordinator.lastFocusFingerprint = fingerprint
+        let range = (scrubbedText as NSString).range(of: focusText)
+        guard range.location != NSNotFound else { return }
+        scrollView.focus(on: range, margin: theme.lineHeight(.body))
     }
 
     /// Remove every attribute `RedactionHighlighter` paints and restore
@@ -265,5 +287,49 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         }
         hasher.combine(theme.renderFingerprint)
         return String(hasher.finalize())
+    }
+}
+
+/// Scrolls a character range into view once the text has a width to lay
+/// out in. SwiftUI sizes the view after the first update, so a scroll
+/// requested then has nothing to scroll and must wait for `layout()`.
+final class FocusingScrollView: NSScrollView {
+    private var pendingFocus: (range: NSRange, margin: CGFloat)?
+
+    func focus(on range: NSRange, margin: CGFloat) {
+        pendingFocus = (range, margin)
+        needsLayout = true
+        applyPendingFocus()
+    }
+
+    override func layout() {
+        super.layout()
+        applyPendingFocus()
+    }
+
+    private func applyPendingFocus() {
+        guard let pending = pendingFocus,
+            contentView.bounds.width > 0, contentView.bounds.height > 0,
+            let textView = documentView as? NSTextView, textView.frame.width > 0,
+            let container = textView.textContainer,
+            let layoutManager = textView.layoutManager
+        else { return }
+        layoutManager.ensureLayout(for: container)
+        textView.sizeToFit()
+        let glyphs = layoutManager.glyphRange(forCharacterRange: pending.range, actualCharacterRange: nil)
+        let rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+        guard !rect.isEmpty else { return }
+        pendingFocus = nil
+        // `scrollToVisible` is a no-op when called from inside `layout()`,
+        // so move the clip view directly.
+        let item = textView.convert(rect, to: contentView)
+        let clip = contentView.bounds
+        let maxY = max(textView.frame.maxY - clip.height, textView.frame.minY)
+        var y = item.midY - clip.height / 2
+        if item.height + 2 * pending.margin > clip.height { y = item.minY - pending.margin }
+        y = min(max(y, textView.frame.minY), maxY)
+        guard abs(y - clip.origin.y) > 0.5 else { return }
+        contentView.scroll(to: NSPoint(x: clip.origin.x, y: y))
+        reflectScrolledClipView(contentView)
     }
 }

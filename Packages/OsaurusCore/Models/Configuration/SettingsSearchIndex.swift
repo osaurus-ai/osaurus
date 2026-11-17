@@ -2567,11 +2567,57 @@ public enum SettingsSearchIndex {
             subTab: "overview"
         ),
         .init(
-            id: "privacy.filter.alwaysApprove",
+            id: "privacy.filter.detectionModel",
             tab: .privacy,
             section: "Filter",
-            title: "Always Approve by Default",
-            keywords: ["always approve", "review sheet", "skip review", "auto approve redaction"],
+            title: "Detection Model",
+            keywords: ["detection model", "install privacy model", "manage model", "privacy detection model"],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.reviewPolicy",
+            tab: .privacy,
+            section: "Review",
+            title: "When New Items Are Found",
+            keywords: [
+                "always approve", "always approve by default", "review sheet", "skip review",
+                "auto approve redaction", "redact automatically", "ask me", "stop asking", "privacy prompt",
+            ],
+            subTab: "overview",
+            disambiguation:
+                "Privacy & Security → Privacy Filter → Review. Global default for personal data in your own messages: ask in the review sheet, or redact automatically. Each conversation can override it from the composer's privacy chip (Review / Auto / Off). Not Tool Results or Model's Own Output."
+        ),
+        .init(
+            id: "privacy.filter.toolResults",
+            tab: .privacy,
+            section: "Review",
+            title: "Tool Results",
+            keywords: [
+                "tool results", "web fetch privacy", "tool output redaction", "review tool results",
+                "agent loop privacy",
+            ],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.modelOutput",
+            tab: .privacy,
+            section: "Review",
+            title: "Model's Own Output",
+            keywords: [
+                "model output", "tool arguments", "assistant replies", "review model output",
+                "tool call arguments redaction",
+            ],
+            subTab: "overview"
+        ),
+        .init(
+            id: "privacy.filter.neverRedact",
+            tab: .privacy,
+            section: "Never Redact",
+            title: "Never Redact",
+            keywords: [
+                "never redact", "allowlist", "allow list", "exceptions", "always send", "trusted domain",
+                "don't redact", "whitelist",
+            ],
             subTab: "overview"
         ),
         .init(
@@ -2593,7 +2639,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "privacy.filter.nonInteractive",
             tab: .privacy,
-            section: "Advanced",
+            section: "Review",
             title: "Require Review for Background Requests",
             keywords: [
                 "non-interactive", "background requests", "http api review", "schedules review",
@@ -2611,7 +2657,6 @@ public enum SettingsSearchIndex {
                 "how long", "insights retention", "delete old activity", "7 days", "30 days", "keep forever",
                 "prune",
             ],
-            subTab: "overview",
             disambiguation:
                 "Privacy & Security → Activity Log. How many days of Insights activity (model requests, web searches, URL fetches, MCP calls, channel deliveries, Router calls) stay on disk before automatic pruning. Not Memory retention (Memory → Settings) and not File History (General → Advanced)."
         ),
@@ -2624,7 +2669,6 @@ public enum SettingsSearchIndex {
                 "activity log", "audit log", "store content", "store prompts", "log bodies", "metadata only",
                 "prompt logging", "response logging", "wire payload", "insights content",
             ],
-            subTab: "overview",
             disambiguation:
                 "Privacy & Security → Activity Log. When off, new Insights records keep metadata (destination, bytes, tokens, timing) but replace prompt/response/tool bodies with a withheld marker. Not the Privacy Filter redaction switch."
         ),
@@ -2633,8 +2677,7 @@ public enum SettingsSearchIndex {
             tab: .privacy,
             section: "Activity Log",
             title: "Review Activity in Insights",
-            keywords: ["open insights", "review activity", "audit", "export log", "verify chain"],
-            subTab: "overview"
+            keywords: ["open insights", "review activity", "audit", "export log", "verify chain"]
         ),
         .init(
             id: "privacy.rules.detectionPatterns",

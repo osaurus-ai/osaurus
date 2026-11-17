@@ -37,6 +37,9 @@ enum RunProgressLoadingPhase: Equatable, Sendable {
     /// That workflow run is waiting on a person (a form, folder card, or
     /// approval). However long they take, the run is not stuck.
     case workflowAwaitingPerson
+    /// A send in this conversation (or one of its subagents) is held at the
+    /// Privacy Filter review until a person answers it.
+    case privacyReview
 
     var hidesSlowChip: Bool { self != .none }
 
@@ -44,7 +47,7 @@ enum RunProgressLoadingPhase: Equatable, Sendable {
         switch self {
         case .modelLoad: return RunProgressEvaluator.opaqueModelLoadStalledThreshold
         case .workflowRun(let stepTimeout): return stepTimeout + RunProgressEvaluator.stalledThreshold
-        case .workflowAwaitingPerson: return .infinity
+        case .workflowAwaitingPerson, .privacyReview: return .infinity
         case .none, .sandbox, .prefill: return RunProgressEvaluator.stalledThreshold
         }
     }
@@ -68,6 +71,9 @@ enum RunProgressLoadingPhase: Equatable, Sendable {
         if warmup.contains(.loadingModel) { return .modelLoad }
         if warmup.contains(where: { if case .prefilling = $0 { return true }; return false }) {
             return .prefill
+        }
+        if let sessionId, PrivacyReviewService.shared.isAwaitingReview(scopeId: sessionId) {
+            return .privacyReview
         }
         if let sessionId, WorkflowRunService.shared.isAwaitingPerson(sessionID: sessionId) {
             return .workflowAwaitingPerson

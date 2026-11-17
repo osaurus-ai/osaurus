@@ -6172,6 +6172,7 @@ extension FloatingInputCard {
                 if !pickerItems.isEmpty || isModelPinned || isHarnessAgent || !pickerHarnessRuntimes.isEmpty {
                     modelSelectorChip
                 }
+                PrivacyComposerChip()
             }.catalogLayoutTarget("component.library.22.elements.layout.floatingInputCard.buttonBar.horizontalGap2")
 
             Spacer()

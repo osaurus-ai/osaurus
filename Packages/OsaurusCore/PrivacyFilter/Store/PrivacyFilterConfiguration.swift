@@ -35,6 +35,82 @@ public enum PrivacyAIBackend: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// What happens to a fresh detection nobody has decided on yet.
+/// - `ask`: show the review sheet.
+/// - `autoRedact`: replace it with a placeholder without asking.
+public enum PrivacyReviewPolicy: String, Codable, Sendable, CaseIterable {
+    case ask
+    case autoRedact
+}
+
+/// A value the user never wants redacted, kept across conversations.
+/// `value` matches one exact string (case-insensitive); `domain`
+/// matches URLs, email addresses and bare host names on that domain
+/// or any of its subdomains.
+public struct NeverRedactEntry: Codable, Equatable, Hashable, Sendable, Identifiable {
+    public enum Kind: String, Codable, Sendable, CaseIterable {
+        case value
+        case domain
+    }
+
+    public var id: UUID
+    public var kind: Kind
+    public var text: String
+
+    public init(id: UUID = UUID(), kind: Kind, text: String) {
+        self.id = id
+        self.kind = kind
+        self.text = kind == .domain ? Self.normalizedDomain(text) : text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public func matches(_ original: String) -> Bool {
+        let candidate = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty, !text.isEmpty else { return false }
+        switch kind {
+        case .value:
+            return candidate.caseInsensitiveCompare(text) == .orderedSame
+        case .domain:
+            guard let host = Self.host(of: candidate) else { return false }
+            return host == text || host.hasSuffix("." + text)
+        }
+    }
+
+    /// The host a domain entry would match for `original`: a URL's host,
+    /// an email address's domain, or the text itself when it reads as a
+    /// bare host name. `nil` when there is no host to match.
+    public static func host(of original: String) -> String? {
+        let trimmed = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.contains("://") {
+            return URLComponents(string: trimmed)?.host?.lowercased()
+        }
+        if let at = trimmed.lastIndex(of: "@") {
+            let domain = trimmed[trimmed.index(after: at)...]
+            return domain.isEmpty ? nil : domain.lowercased()
+        }
+        let lowered = trimmed.lowercased()
+        let isHostShaped =
+            lowered.contains(".")
+            && lowered.allSatisfy { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" }
+        return isHostShaped ? lowered : nil
+    }
+
+    /// `https://www.Example.com/path` → `www.example.com`; `*.example.com`
+    /// and `@example.com` → `example.com`.
+    public static func normalizedDomain(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if text.contains("://"), let host = URLComponents(string: text)?.host {
+            text = host
+        }
+        if let slash = text.firstIndex(of: "/") {
+            text = String(text[..<slash])
+        }
+        while text.hasPrefix("*.") || text.hasPrefix("@") || text.hasPrefix(".") {
+            text = String(text.drop(while: { $0 == "*" || $0 == "@" || $0 == "." }))
+        }
+        return text
+    }
+}
+
 /// Top-level privacy-filter preference shape. `Codable` so it
 /// round-trips through `JSONEncoder` / `JSONDecoder` directly.
 /// Decoder is hand-rolled (rather than synthesised) so new fields
@@ -61,7 +137,11 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     ///   `us.ssn` preset; `homeRegions` added. Migration keeps SSN
     ///   detection on for files that had account numbers enabled and
     ///   seeds `homeRegions` from the Mac locale.
-    public static let currentSchemaVersion: Int = 2
+    /// - 3: `alwaysApproveByDefault` (Bool) replaced by
+    ///   `defaultReviewPolicy`; `toolResultPolicy`, `modelOutputPolicy`
+    ///   and `neverRedact` added. A legacy `true` decodes as
+    ///   `.autoRedact`.
+    public static let currentSchemaVersion: Int = 3
 
     /// Schema version that produced this in-memory value. Defaults
     /// to `currentSchemaVersion` for freshly-constructed objects
@@ -111,11 +191,26 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     /// Default on — avoids flagging identifiers as people-names.
     public var skipCodeBlocks: Bool
 
-    /// When true the review sheet auto-confirms detected entities
-    /// after the first turn of each conversation (per-conversation
-    /// state still lives in `SessionRedactionStore`). This is the
-    /// global default — sessions can flip back on their own.
-    public var alwaysApproveByDefault: Bool
+    /// How a new conversation treats fresh detections from what the user
+    /// typed. A conversation can override it (`SessionRedactionStore`
+    /// policy, set from the composer chip or the review sheet).
+    public var defaultReviewPolicy: PrivacyReviewPolicy
+
+    /// How fresh detections inside tool results are treated while the
+    /// conversation policy is `ask`.
+    public var toolResultPolicy: PrivacyReviewPolicy
+
+    /// How fresh detections inside the model's own text (its replies,
+    /// reasoning and tool-call arguments in the current turn) are
+    /// treated while the conversation policy is `ask`. Default
+    /// `autoRedact`: the provider wrote that text, so asking whether to
+    /// hide it from the provider is noise.
+    public var modelOutputPolicy: PrivacyReviewPolicy
+
+    /// Values and domains that are never redacted, in any conversation.
+    /// Matching detections are dropped before review and are exempt
+    /// from the post-scrub leak scan.
+    public var neverRedact: [NeverRedactEntry]
 
     /// When true, non-interactive callers (HTTP API on
     /// `/chat/completions` and `/agents/{id}/run`, plugin chat
@@ -166,7 +261,10 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         aiDetectionBackend: PrivacyAIBackend = .openai,
         providerOverrides: [String: Bool] = [:],
         skipCodeBlocks: Bool = true,
-        alwaysApproveByDefault: Bool = false,
+        defaultReviewPolicy: PrivacyReviewPolicy = .ask,
+        toolResultPolicy: PrivacyReviewPolicy = .ask,
+        modelOutputPolicy: PrivacyReviewPolicy = .autoRedact,
+        neverRedact: [NeverRedactEntry] = [],
         requireReviewForNonInteractive: Bool = true,
         builtinPatternEnabled: [EntityCategory: Bool] = Self.defaultBuiltinPatternEnabled,
         presetRules: [String: Bool] = [:],
@@ -179,7 +277,10 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         self.aiDetectionBackend = aiDetectionBackend
         self.providerOverrides = providerOverrides
         self.skipCodeBlocks = skipCodeBlocks
-        self.alwaysApproveByDefault = alwaysApproveByDefault
+        self.defaultReviewPolicy = defaultReviewPolicy
+        self.toolResultPolicy = toolResultPolicy
+        self.modelOutputPolicy = modelOutputPolicy
+        self.neverRedact = neverRedact
         self.requireReviewForNonInteractive = requireReviewForNonInteractive
         self.builtinPatternEnabled = builtinPatternEnabled
         self.presetRules = presetRules
@@ -269,6 +370,20 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         presetRules[presetId] ?? false
     }
 
+    /// Whether `original` is on the Never Redact list.
+    public func isNeverRedacted(_ original: String) -> Bool {
+        neverRedact.contains { $0.matches(original) }
+    }
+
+    /// Add an entry unless an equal one (same kind and text) exists.
+    public mutating func addNeverRedact(_ entry: NeverRedactEntry) {
+        guard !entry.text.isEmpty else { return }
+        let exists = neverRedact.contains {
+            $0.kind == entry.kind && $0.text.caseInsensitiveCompare(entry.text) == .orderedSame
+        }
+        if !exists { neverRedact.append(entry) }
+    }
+
     public static let `default` = PrivacyFilterConfiguration()
 
     // MARK: - Codable
@@ -281,6 +396,10 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         case providerOverrides
         case skipCodeBlocks
         case alwaysApproveByDefault
+        case defaultReviewPolicy
+        case toolResultPolicy
+        case modelOutputPolicy
+        case neverRedact
         case requireReviewForNonInteractive
         case builtinPatternEnabled
         case presetRules
@@ -318,8 +437,21 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         // it was removed rather than shipped as a dead slider). An
         // unknown key in the JSON decodes fine; we simply don't read
         // it, and `encode` no longer writes it.
-        self.alwaysApproveByDefault =
-            try c.decodeIfPresent(Bool.self, forKey: .alwaysApproveByDefault) ?? false
+        // Schema < 3 stored the review default as the Bool
+        // `alwaysApproveByDefault`; it is read only when the new key is
+        // absent and never written back.
+        if let policy = try c.decodeIfPresent(PrivacyReviewPolicy.self, forKey: .defaultReviewPolicy) {
+            self.defaultReviewPolicy = policy
+        } else {
+            let legacyAlwaysApprove = try c.decodeIfPresent(Bool.self, forKey: .alwaysApproveByDefault) ?? false
+            self.defaultReviewPolicy = legacyAlwaysApprove ? .autoRedact : .ask
+        }
+        self.toolResultPolicy =
+            try c.decodeIfPresent(PrivacyReviewPolicy.self, forKey: .toolResultPolicy) ?? .ask
+        self.modelOutputPolicy =
+            try c.decodeIfPresent(PrivacyReviewPolicy.self, forKey: .modelOutputPolicy) ?? .autoRedact
+        self.neverRedact =
+            try c.decodeIfPresent([NeverRedactEntry].self, forKey: .neverRedact) ?? []
         self.requireReviewForNonInteractive =
             try c.decodeIfPresent(Bool.self, forKey: .requireReviewForNonInteractive) ?? true
 
@@ -385,7 +517,10 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         try c.encode(aiDetectionBackend, forKey: .aiDetectionBackend)
         try c.encode(providerOverrides, forKey: .providerOverrides)
         try c.encode(skipCodeBlocks, forKey: .skipCodeBlocks)
-        try c.encode(alwaysApproveByDefault, forKey: .alwaysApproveByDefault)
+        try c.encode(defaultReviewPolicy, forKey: .defaultReviewPolicy)
+        try c.encode(toolResultPolicy, forKey: .toolResultPolicy)
+        try c.encode(modelOutputPolicy, forKey: .modelOutputPolicy)
+        try c.encode(neverRedact, forKey: .neverRedact)
         try c.encode(requireReviewForNonInteractive, forKey: .requireReviewForNonInteractive)
         // Encode as raw-string-keyed dict so the on-disk JSON is
         // `{"phone": true, …}` rather than the default

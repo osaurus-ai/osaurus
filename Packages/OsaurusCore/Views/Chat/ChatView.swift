@@ -3600,16 +3600,42 @@ final class ChatSession: ObservableObject {
     /// chat — the next outbound send will mint fresh placeholders
     /// for any PII it detects.
     ///
-    /// Surfacing this in the UI is a future UX task; the method is
-    /// public so a menu item, command-palette action, or settings
-    /// shortcut can wire it up without touching the privacy
-    /// internals.
+    /// Wired to the composer privacy chip's "Forget Redactions in This
+    /// Conversation". The conversation's privacy policy stays.
     func forgetRedactionsInThisConversation() {
         sessionRedactions.removeAll()
         sessionRedactionOrder.removeAll()
+        rebuildVisibleBlocks()
         if let sid = sessionId {
-            Task { await SessionRedactionStore.shared.invalidate(sid.uuidString) }
+            Task { await SessionRedactionStore.shared.forget(sid.uuidString) }
         }
+    }
+
+    /// Remote provider of the selected model, `nil` for local models.
+    var selectedRemoteProviderId: UUID? {
+        if case .remote(_, let providerId)? = selectedPickerItem?.source { return providerId }
+        return nil
+    }
+
+    /// The conversation's privacy scope, minting the session id when the
+    /// chat has none yet so a privacy policy can be set before the first
+    /// send. Nothing is persisted until the first turn saves.
+    func ensurePrivacyScopeId() -> String? {
+        if sessionId == nil {
+            sessionId = UUID()
+            createdAt = Date()
+            isDirty = true
+        }
+        return sessionId?.uuidString
+    }
+
+    var privacyComposerContext: PrivacyComposerContext {
+        PrivacyComposerContext(
+            scopeId: sessionId?.uuidString,
+            providerId: selectedRemoteProviderId,
+            ensureScopeId: { [weak self] in self?.ensurePrivacyScopeId() },
+            forget: { [weak self] in self?.forgetRedactionsInThisConversation() }
+        )
     }
 
     func reset() {
@@ -10225,6 +10251,9 @@ final class ChatSession: ObservableObject {
             // `background: true` spawn dispatch can deliver its report-back
             // digest to the exact launching conversation later.
             await ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(self)) { [self] () async -> Void in
+            await ChatExecutionContext.$privacyScopeId.withValue(
+                ChatExecutionContext.privacyScopeId ?? self.sessionId?.uuidString
+            ) { [self] () async -> Void in
             await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] () async -> Void in
             await ChatExecutionContext.$currentProjectId.withValue(self.projectId) { [self] () async -> Void in
             await ChatExecutionContext.$currentUserRequest.withValue(
@@ -10252,6 +10281,7 @@ final class ChatSession: ObservableObject {
             }  // ChatExecutionContext.$currentUserRequest.withValue
             }  // ChatExecutionContext.$currentProjectId.withValue
             }  // ChatExecutionContext.$currentAgentId.withValue
+            }  // ChatExecutionContext.$privacyScopeId.withValue
             }  // ChatExecutionContext.$currentChatSessionBox.withValue
             }  // ChatExecutionContext.$currentSessionSource.withValue
             }  // ChatExecutionContext.$hostFolderIsDispatchTarget.withValue
@@ -10507,6 +10537,10 @@ struct ChatView: View {
     /// re-presents the sheet on subsequent reviews in the same
     /// window without us having to manually clear it first.
     @State private var pendingRedactionReview: RedactionReviewState? = nil
+    /// Reviews waiting for the one on screen to close, oldest first.
+    /// Presenting a second review by replacing the first dismissed the
+    /// first sheet, and its dismissal cancelled that send.
+    @State private var queuedRedactionReviews: [RedactionReviewState] = []
     /// Opaque handle for this window's presenter registration with
     /// `PrivacyReviewService`. Kept in `@State` because the service is
     /// global and we must hand the same token back at teardown to
@@ -12024,6 +12058,7 @@ struct ChatView: View {
                                 // the type-checker's limit already.
                                 .environment(\.composerGeneration, observedSession.composerGeneration)
                                 .environment(\.composerAllowsWorkflowSelection, windowState.mainSurface != .workflows)
+                                .environment(\.privacyComposerContext, observedSession.privacyComposerContext)
                                 .modifier(WorkflowCreationComposerFrame(isActive: isCreationLayout))
                                 .frame(maxWidth: layout.composerFrameWidth)
                                 .frame(maxWidth: .infinity)
@@ -12401,7 +12436,7 @@ struct ChatView: View {
             // review can present.
             RedactionReviewSheet(state: state)
                 .environment(\.theme, windowState.theme)
-                .onDisappear { pendingRedactionReview = nil }
+                .onDisappear { redactionReviewClosed(state) }
         }
         .task {
             // Register this window as the presenter for redaction
@@ -12413,9 +12448,12 @@ struct ChatView: View {
             // Settings' embedded chat must not take these from the
             // chat windows.
             guard !isEmbedded else { return }
-            let token = PrivacyReviewService.shared.registerPresenter { state in
-                pendingRedactionReview = state
-            }
+            let token = PrivacyReviewService.shared.registerPresenter(
+                owns: { [weak ws = windowState] scopeId in
+                    ws?.tabs.contains { $0.session.sessionId?.uuidString == scopeId } ?? false
+                },
+                { state in enqueueRedactionReview(state) }
+            )
             privacyPresenterToken = token
 
             // Presenter for the redaction tools' PII-model download gate,
@@ -12436,6 +12474,34 @@ struct ChatView: View {
             if let token = privacyPresenterToken {
                 PrivacyReviewService.shared.unregisterPresenter(token)
                 privacyPresenterToken = nil
+            }
+        }
+    }
+
+    /// Show `state` now, or queue it behind the review on screen.
+    private func enqueueRedactionReview(_ state: RedactionReviewState) {
+        if pendingRedactionReview == nil {
+            pendingRedactionReview = state
+        } else {
+            queuedRedactionReviews.append(state)
+        }
+    }
+
+    /// The sheet for `state` closed: clear it (only if it is still the
+    /// one on screen) and present the next unresolved review.
+    private func redactionReviewClosed(_ state: RedactionReviewState) {
+        guard pendingRedactionReview == nil || pendingRedactionReview?.id == state.id else { return }
+        pendingRedactionReview = nil
+        queuedRedactionReviews.removeAll { $0.resolved }
+        guard !queuedRedactionReviews.isEmpty else { return }
+        let next = queuedRedactionReviews.removeFirst()
+        // One runloop hop so SwiftUI finishes dismissing before the next
+        // sheet presents.
+        DispatchQueue.main.async {
+            if pendingRedactionReview == nil, !next.resolved {
+                pendingRedactionReview = next
+            } else if !next.resolved {
+                queuedRedactionReviews.insert(next, at: 0)
             }
         }
     }
