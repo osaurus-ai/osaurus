@@ -177,9 +177,11 @@ final class SyncTurnStreamer {
             Self.queue.async { stream.abort() }
             return
         }
-        // After the pushes queued ahead of it.
+        // Queued with the chat's saves now, not behind the pushes: a push waiting on the core's lock left
+        // the save that follows to run first, writing the reply as a message the finish then replaced.
+        // The finish waits for the pushes queued ahead of it instead.
         let data = ChatTurnData(from: turn)
-        Self.queue.async { SyncConversationStore.shared.finishStream(stream, sessionId: sessionId, turn: data) }
+        SyncConversationStore.shared.finishStream(stream, sessionId: sessionId, turn: data, after: Self.queue)
         committed = turn
     }
 

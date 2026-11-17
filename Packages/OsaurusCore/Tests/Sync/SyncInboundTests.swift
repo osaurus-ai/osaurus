@@ -157,6 +157,47 @@ struct SyncInboundTests {
         }
     }
 
+    /// The streamer's pushes held up on the core's lock: the save made after the finish still runs after it,
+    /// and finds the reply already written rather than writing it as a message of its own.
+    @Test
+    func aSaveAfterAFinishRunsAfterItWhileThePushesAreHeldUp() async throws {
+        try await withStore { store, core in
+            var current = session(["Where to?"])
+            try store.saveSession(current)
+            let scope = try #require(store.scope(forSession: current.id))
+
+            let stream = try core.openStream(scope: scope, role: .assistant, asAgent: nil)
+            let pushes = DispatchQueue(label: "test.turn-stream")
+            let release = DispatchSemaphore(value: 0)
+            pushes.async {
+                release.wait()
+                try? stream.push(delta: "Lisbon.")
+            }
+            let reply = ChatTurnData(role: .assistant, content: "Lisbon.", createdAt: Date())
+            store.finishStream(stream, sessionId: current.id, turn: reply, after: pushes)
+            current.turns.append(reply)
+            let seen = Box<[String]>()
+            store.saveSessionAsync(current, onSaved: {
+                let messages = (try? core.messages(scope: scope, before: nil, limit: 10).messages) ?? []
+                seen.set(messages.map { $0.id == stream.messageId() ? "stream" : $0.content })
+            })
+            release.signal()
+            store.drain(timeout: 10)
+
+            #expect(seen.value == ["Where to?", "stream"])
+            let messages = try core.messages(scope: scope, before: nil, limit: 10).messages
+            #expect(messages.map(\.content) == ["Where to?", "Lisbon."])
+            #expect(store.loadSession(id: current.id)?.turns.map(\.id) == current.turns.map(\.id))
+        }
+    }
+
+    private final class Box<T>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: T?
+        func set(_ new: T) { lock.withLock { stored = new } }
+        var value: T? { lock.withLock { stored } }
+    }
+
     @Test
     func aReplySavedBeforeItsStreamOpenedIsReplacedByTheStream() async throws {
         try await withStore { store, core in

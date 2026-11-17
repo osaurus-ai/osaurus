@@ -756,9 +756,12 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
 
     /// Commits a streamed turn as its message, in order with the session's
     /// saves: the save that follows finds it already written. A copy a save
-    /// wrote before the stream opened is removed.
-    func finishStream(_ stream: OutgoingStream, sessionId: UUID, turn: ChatTurnData) {
+    /// wrote before the stream opened is removed. Called where the saves are
+    /// made, so it's queued ahead of the next one; `pending`, the queue the
+    /// stream's pushes went on, is drained first, so every push is in.
+    func finishStream(_ stream: OutgoingStream, sessionId: UUID, turn: ChatTurnData, after pending: DispatchQueue? = nil) {
         queue.async { [self] in
+            pending?.sync {}
             do {
                 let encoded = try SyncConversationMapper.encode(turn: turn, toolName: nil)
                 let files = TemporaryFiles()
