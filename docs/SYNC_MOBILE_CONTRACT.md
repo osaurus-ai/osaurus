@@ -851,14 +851,19 @@ device pinned it, and removed when it's unpinned.
   4 KiB move to blobs the same way. A tool call's `arguments` (secrets scrubbed) and `result` are the Mac's
   previews, at most 4,000 characters each.
   `logs` is the newest 200 lines, each at most 500 characters; `error` at most 2,000. The message is app data,
-  which the sync core caps at 64 KiB a write (past it the write fails and the output never arrives): past
-  48 KiB the steps are sent without `logs` and `toolCalls`.
+  which the sync core caps at 64 KiB a write (past it the write fails and the output never arrives). Past
+  48 KiB, in turn until it fits: the steps go without `logs` and `toolCalls`; every step `input` and
+  `output` moves to a blob; the oldest steps go with only `{ "id", "trimmed": true }`; and the run's own
+  `input` and `output` move to blobs. The run's `error` is at most 2,000 characters, and at most 100
+  files are listed.
   Sent on every message by a Mac with `workflow_step_details`, an empty list when no step ran. A message
   without it was written before: the iPhone asks again, and the Mac rewrites it.
 - A file over 10 MiB, or past 32 MiB for the run, is listed with `skipped: "tooLarge"`. A file that
   is gone is listed with `skipped: "missing"`.
-- The same run's message is replaced only when its digest changes. The Mac keeps the last 10 of
-  these messages.
+- The same run's message is replaced only when its digest changes, the old one removed only once the new
+  one is written. The Mac keeps the last 10 of these messages.
+- Each file is copied for its blob from the descriptor its checks were made on: a plain file, never a
+  link, at its size then.
 - Errors: `run_not_found`, and `running` (the run hasn't ended).
 
 ### 5.6 Workflow notifications (`workflow_push`)

@@ -61,7 +61,7 @@ enum SyncWorkflowOutput {
     }
 
     /// `run`'s input, output and files. JSON over the inline limit is staged
-    /// as a file under `staging` and sent as a blob.
+    /// as a file under `staging` and sent as a blob, and so is a copy of each file.
     static func payload(for run: WorkflowRun, staging: URL) -> Payload {
         var object: [String: JSONValue] = [
             "v": .number(1),
@@ -70,70 +70,125 @@ enum SyncWorkflowOutput {
         ]
         var blobs: [AttachmentFile] = []
         var hasher = SHA256()
+        // Per payload: two requests for one run stage apart, and neither removes the other's files.
+        let tag = UUID().uuidString.prefix(8)
+        func stagedFile(_ key: String) -> URL {
+            staging.appendingPathComponent("\(stagedPrefix)\(run.id.uuidString)-\(tag)-\(key)")
+        }
 
-        /// `value` inline, or over `limit` staged as a blob and referred to by its index.
-        func placed(_ key: String, _ value: JSONValue, limit: Int = inlineLimit) -> JSONValue? {
+        /// `value` as JSON bytes, hashed into the digest.
+        func encoded(_ value: JSONValue) -> Data? {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             guard let bytes = try? encoder.encode(value) else { return nil }
             hasher.update(data: bytes)
-            guard bytes.count > limit else { return value }
-            let file = staging.appendingPathComponent("\(stagedPrefix)\(run.id.uuidString)-\(key).json")
+            return bytes
+        }
+        /// `bytes` staged as a blob, referred to by its index in `into`, numbered from `base`.
+        func blob(_ key: String, _ bytes: Data, into list: inout [AttachmentFile], base: Int) -> JSONValue? {
+            let file = stagedFile("\(key).json")
             guard (try? bytes.write(to: file)) != nil else { return nil }
-            blobs.append(AttachmentFile(path: file.path, mediaType: "application/json", name: "\(key).json"))
-            return .object(["$blob": .number(Double(blobs.count - 1)), "size": .number(Double(bytes.count))])
+            list.append(AttachmentFile(path: file.path, mediaType: "application/json", name: "\(key).json"))
+            return .object(["$blob": .number(Double(base + list.count - 1)), "size": .number(Double(bytes.count))])
+        }
+        /// `value` inline, or over `limit` staged as a blob.
+        func placed(_ key: String, _ value: JSONValue, limit: Int = inlineLimit) -> JSONValue? {
+            guard let bytes = encoded(value) else { return nil }
+            guard bytes.count > limit else { return value }
+            return blob(key, bytes, into: &blobs, base: 0)
         }
         object["input"] = placed("input", run.input)
         if let output = run.output { object["output"] = placed("output", output) }
-        if let error = run.error?.reason { object["error"] = .string(error) }
+        if let error = run.error?.reason { object["error"] = .string(String(error.prefix(lineLimit * 4))) }
 
         var total = 0
         var files: [JSONValue] = []
-        for artifact in run.artifacts where !artifact.isDirectory {
+        for (index, artifact) in run.artifacts.filter({ !$0.isDirectory }).prefix(fileCountLimit).enumerated() {
             var entry: [String: JSONValue] = [
-                "id": .string(artifact.id),
-                "filename": .string(artifact.filename),
-                "mimeType": .string(artifact.mimeType),
+                "id": .string(String(artifact.id.prefix(200))),
+                "filename": .string(String(artifact.filename.prefix(255))),
+                "mimeType": .string(String(artifact.mimeType.prefix(200))),
                 "fileSize": .number(Double(artifact.fileSize)),
             ]
             if let description = artifact.description, !description.isEmpty {
-                entry["description"] = .string(description)
+                entry["description"] = .string(String(description.prefix(lineLimit)))
             }
-            // The file as it is now, not as the run recorded it: a plain file (not a link, which could point
-            // anywhere on this Mac, `~/.ssh` say) at its size now, which the caps are checked against.
-            let attributes = try? FileManager.default.attributesOfItem(atPath: artifact.path)
-            let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
-            let readable =
-                artifact.problem == nil && attributes?[.type] as? FileAttributeType == .typeRegular
-                && FileManager.default.isReadableFile(atPath: artifact.path)
-            if !readable {
+            // The file as it is now, not as the run recorded it, and copied from what was opened and
+            // checked: a plain file (not a link, which could point anywhere on this Mac, `~/.ssh` say)
+            // at its size now, which the caps are checked against. The core reads only the copy, so
+            // the file swapped for a link after the check is never what's sent.
+            let limit = min(fileLimit, totalLimit - total)
+            let copy: Copy =
+                artifact.problem == nil
+                ? copyRegularFile(artifact.path, to: stagedFile("file\(index)"), limit: limit) : .missing
+            switch copy {
+            case .missing:
                 entry["skipped"] = .string("missing")
-            } else if size > fileLimit || total + size > totalLimit {
+            case .tooLarge:
                 entry["skipped"] = .string("tooLarge")
-            } else {
+            case .copied(let file, let size):
                 total += size
-                blobs.append(AttachmentFile(path: artifact.path, mediaType: artifact.mimeType, name: artifact.filename))
+                blobs.append(AttachmentFile(path: file.path, mediaType: artifact.mimeType, name: artifact.filename))
                 entry["blob"] = .number(Double(blobs.count - 1))
             }
             hasher.update(data: Data("\(artifact.id)|\(artifact.fileSize)|\(entry["skipped"] == nil)".utf8))
             files.append(.object(entry))
         }
         if !files.isEmpty { object["files"] = .array(files) }
-        var steps = run.nodes.enumerated().compactMap { index, node in
-            step(node, placed: { name, value in placed("step\(index)-\(name)", value, limit: stepInlineLimit) })
-        }
+
         // The message is app data, which the sync core caps at 64 KB a write: past it the write fails and the
-        // phone never gets the output. Logs and tool calls are what can still grow past the caps: over
-        // `messageLimit`, the steps go without them.
-        if encodedSize(object.merging(["steps": .array(steps)]) { _, new in new }) > messageLimit {
-            steps = steps.map(Self.withoutLogsOrCalls)
+        // phone never gets the output. Each fallback runs until the message fits under `messageLimit`:
+        // the steps without their logs and tool calls; then every step input and output as a blob; then the
+        // oldest steps without their details (id and status only, as the card has); then the run's own
+        // input and output as blobs too.
+        let shown = run.nodes.filter { $0.status != .skipped }
+        let base = blobs.count
+        func steps(stepLimit: Int, lean: Bool, bare: Int) -> (steps: [JSONValue], blobs: [AttachmentFile]) {
+            var stepBlobs: [AttachmentFile] = []
+            let steps = shown.enumerated().compactMap { index, node -> JSONValue? in
+                if index < bare { return .object(["id": .string(node.nodeID), "trimmed": .bool(true)]) }
+                let entry = step(node) { name, value in
+                    guard let bytes = encoded(value) else { return nil }
+                    guard bytes.count > stepLimit else { return value }
+                    return blob("step\(index)-\(name)", bytes, into: &stepBlobs, base: base)
+                }
+                return lean ? entry.map(Self.withoutLogsOrCalls) : entry
+            }
+            return (steps, stepBlobs)
         }
+        func fits(_ steps: [JSONValue]) -> Bool {
+            encodedSize(object.merging(["steps": .array(steps)]) { _, new in new }) <= messageLimit
+        }
+        var built = steps(stepLimit: stepInlineLimit, lean: false, bare: 0)
+        if !fits(built.steps) { built = steps(stepLimit: stepInlineLimit, lean: true, bare: 0) }
+        if !fits(built.steps) { built = steps(stepLimit: 0, lean: true, bare: 0) }
+        var bare = 0
+        while !fits(built.steps), bare < shown.count {
+            bare = min(shown.count, max(bare * 2, 1))
+            built = steps(stepLimit: 0, lean: true, bare: bare)
+        }
+        if !fits(built.steps) {
+            // Only the run's own input and output left: they go as blobs too, after the steps' ones.
+            for key in ["input", "output"] {
+                guard let value = object[key], value.objectValue?["$blob"] == nil, let bytes = encoded(value)
+                else { continue }
+                object[key] = blob(key, bytes, into: &built.blobs, base: base)
+            }
+        }
+        // Whatever no longer referred to (a fallback replaced it) is removed now; the rest after the write.
+        let kept = Set(built.blobs.map(\.path))
+        let staged = (try? FileManager.default.contentsOfDirectory(atPath: staging.path)) ?? []
+        for name in staged where name.hasPrefix("\(stagedPrefix)\(run.id.uuidString)-\(tag)-step") {
+            let path = staging.appendingPathComponent(name).path
+            if !kept.contains(path) { try? FileManager.default.removeItem(atPath: path) }
+        }
+        blobs += built.blobs
         // Always, an empty list too: a message without it was written before steps were sent (`workflow_step_details`).
-        object["steps"] = .array(steps)
+        object["steps"] = .array(built.steps)
         // The steps in the digest too, with a mark for this shape: a message written before steps were sent
         // would otherwise match and be kept, leaving the phone without them.
         hasher.update(data: Data("steps/1".utf8))
-        if let encoded = try? JSONEncoder().encode(JSONValue.array(steps)) { hasher.update(data: encoded) }
+        if let encoded = try? JSONEncoder().encode(JSONValue.array(built.steps)) { hasher.update(data: encoded) }
         hasher.update(data: Data(run.status.rawValue.utf8))
         let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
         object["digest"] = .string(digest)
@@ -145,11 +200,13 @@ enum SyncWorkflowOutput {
     /// A step's log lines sent, the newest; each line's length; an error's is four lines'.
     static let logLimit = 200
     static let lineLimit = 500
-    /// Over this, the steps go without their logs and tool calls: under the sync core's 64 KB of app data a write.
+    /// The message's JSON at most, under the sync core's 64 KB of app data a write.
     static let messageLimit = 48 * 1024
+    /// Files listed at most: each is an entry in the message.
+    static let fileCountLimit = 100
 
     /// `object` as JSON, in bytes.
-    private static func encodedSize(_ object: [String: JSONValue]) -> Int {
+    static func encodedSize(_ object: [String: JSONValue]) -> Int {
         (try? JSONEncoder().encode(JSONValue.object(object)))?.count ?? 0
     }
 
@@ -159,6 +216,38 @@ enum SyncWorkflowOutput {
         entry["logs"] = nil
         entry["toolCalls"] = nil
         return .object(entry)
+    }
+
+    enum Copy: Equatable {
+        case copied(URL, size: Int)
+        case missing
+        case tooLarge
+    }
+
+    /// Opens `path` without following a link, checks that what was opened is a plain readable file
+    /// of at most `limit` bytes, and copies it to `destination` from that same descriptor.
+    nonisolated static func copyRegularFile(_ path: String, to destination: URL, limit: Int) -> Copy {
+        let fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { return .missing }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return .missing }
+        let size = Int(info.st_size)
+        guard size <= limit else { return .tooLarge }
+        guard FileManager.default.createFile(atPath: destination.path, contents: nil),
+            let out = try? FileHandle(forWritingTo: destination)
+        else { return .missing }
+        defer { try? out.close() }
+        var copied = 0
+        while copied <= limit {
+            guard let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty else { break }
+            copied += chunk.count
+            guard copied <= limit, (try? out.write(contentsOf: chunk)) != nil else {
+                try? FileManager.default.removeItem(at: destination)
+                return copied > limit ? .tooLarge : .missing
+            }
+        }
+        return .copied(destination, size: copied)
     }
 
     /// What the Mac's run view shows on opening a step (`WorkflowRunView.details`): its model, retries,
@@ -232,9 +321,6 @@ enum SyncWorkflowOutput {
 
         let mine = outputs.filter { $0.runId == payload.runId }
         if mine.count == 1, mine[0].digest == payload.digest { return }
-        for stale in mine { try? core.deleteMessage(id: stale.id) }
-        let others = outputs.filter { $0.runId != payload.runId }
-        for old in others.dropFirst(keep - 1) { try? core.deleteMessage(id: old.id) }
 
         let bytes = try SyncHostedRunContract.encode(JSONValue.object(payload.object))
         let write = AppDataWrite(
@@ -242,7 +328,11 @@ enum SyncWorkflowOutput {
         let message = OutgoingMessage(
             role: .system, content: SyncDeviceFeedContract.workflowOutputMessageContent,
             attachments: [], replyTo: nil, asAgent: nil, toolCallId: nil, toolName: nil, appData: [write])
+        // Written first: a write that fails leaves the phone the output it had.
         _ = try core.sendMessage(scope: scope, message: message)
+        for stale in mine { try? core.deleteMessage(id: stale.id) }
+        let others = outputs.filter { $0.runId != payload.runId }
+        for old in others.dropFirst(keep - 1) { try? core.deleteMessage(id: old.id) }
         core.syncNow()
         log.notice(
             "wrote output of run \(payload.runId, privacy: .public): \(bytes.count) bytes, \(payload.blobs.count) blobs"

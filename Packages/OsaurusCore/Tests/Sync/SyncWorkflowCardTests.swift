@@ -117,7 +117,10 @@ struct SyncWorkflowCardTests {
         #expect(SyncWorkflowOutput.isStaged(payload.blobs[0].path))
         let files = try #require(payload.object["files"]?.arrayValue)
         #expect(files[0].objectValue?["blob"] == .number(1))
-        #expect(payload.blobs[1].path == report.path)
+        // A copy of the file, made from what was opened and checked, is what the core reads.
+        #expect(payload.blobs[1].path != report.path)
+        #expect(SyncWorkflowOutput.isStaged(payload.blobs[1].path))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: payload.blobs[1].path)) == Data("# Q3".utf8))
         #expect(!SyncWorkflowOutput.isStaged(report.path))
         #expect(files[1].objectValue?["skipped"] == .string("missing"))
 
@@ -196,6 +199,62 @@ struct SyncWorkflowCardTests {
         #expect(steps.allSatisfy { $0.objectValue?["logs"] == nil })
         let size = try JSONEncoder().encode(JSONValue.object(payload.object)).count
         #expect(size < SyncWorkflowOutput.messageLimit)
+    }
+
+    @Test func aLinkInPlaceOfAFileIsNeverSent() throws {
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("output-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let secret = staging.appendingPathComponent("secret")
+        try Data("key".utf8).write(to: secret)
+        let link = staging.appendingPathComponent("report.md")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: secret)
+
+        let copy = SyncWorkflowOutput.copyRegularFile(
+            link.path, to: staging.appendingPathComponent("copy"), limit: 1_000)
+        #expect(copy == .missing)
+        let big = staging.appendingPathComponent("big")
+        try Data(count: 2_000).write(to: big)
+        #expect(
+            SyncWorkflowOutput.copyRegularFile(big.path, to: staging.appendingPathComponent("copy"), limit: 1_000)
+                == .tooLarge)
+    }
+
+    @Test func anOutputWithManyLargeStepsStaysUnderTheMessageLimit() throws {
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("output-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+
+        var run = Self.run()
+        run.status = .failed
+        // The run's own input and output just under their inline limit, and a long error.
+        let nearly = String(repeating: "r", count: SyncWorkflowOutput.inlineLimit - 100)
+        run.input = .object(["text": .string(nearly)])
+        run.output = .object(["text": .string(nearly)])
+        run.error = WorkflowRunError(nodeID: "step0", reason: String(repeating: "e", count: 10_000))
+        // Many steps, each with input and output just under the steps' limit and a long error.
+        let step = String(repeating: "s", count: SyncWorkflowOutput.stepInlineLimit - 100)
+        run.nodes = (0 ..< 200).map { index in
+            var node = NodeRun(nodeID: "step\(index)", status: .done)
+            node.input = .object(["text": .string(step)])
+            node.output = .object(["text": .string(step)])
+            node.error = String(repeating: "x", count: 5_000)
+            node.logs = ["one"]
+            return node
+        }
+        let payload = SyncWorkflowOutput.payload(for: run, staging: staging)
+        #expect(SyncWorkflowOutput.encodedSize(payload.object) <= SyncWorkflowOutput.messageLimit)
+        // Every step is still listed, the oldest without their details.
+        let steps = try #require(payload.object["steps"]?.arrayValue)
+        #expect(steps.count == 200)
+        #expect(steps.first?.objectValue?["trimmed"] == .bool(true))
+        // Every blob referred to is one of the payload's, and staged files no longer referred to are gone.
+        let kept = Set(payload.blobs.map(\.path))
+        let staged = try FileManager.default.contentsOfDirectory(atPath: staging.path)
+            .map { staging.appendingPathComponent($0).path }
+        #expect(Set(staged) == kept)
+        // The same run gives the same digest.
+        #expect(SyncWorkflowOutput.payload(for: run, staging: staging).digest == payload.digest)
     }
 
     @Test
