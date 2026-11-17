@@ -125,6 +125,24 @@ public enum ThemeCorners: String, Codable, Sendable, CaseIterable, Identifiable 
     }
 }
 
+/// How much of the desktop shows through the window's rail, title band and
+/// sidebar. Content surfaces stay opaque at every level.
+public enum ThemeTransparency: String, Codable, Sendable, CaseIterable, Identifiable {
+    case solid
+    case frosted
+    case glass
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .solid: return L("Solid")
+        case .frosted: return L("Frosted")
+        case .glass: return L("Glass")
+        }
+    }
+}
+
 /// Which modes the theme supports. A single-mode theme overrides the
 /// app's Appearance setting while it is active.
 public enum ThemeAppearance: String, Codable, Sendable, CaseIterable, Identifiable {
@@ -226,6 +244,7 @@ public struct ThemePreferences: Codable, Equatable, Hashable, Sendable {
     public var tone: ThemeTone
     public var contrast: ThemeContrastLevel
     public var corners: ThemeCorners
+    public var transparency: ThemeTransparency
     public var readability: ThemeReadability
 
     public init(
@@ -233,16 +252,18 @@ public struct ThemePreferences: Codable, Equatable, Hashable, Sendable {
         tone: ThemeTone = .warm,
         contrast: ThemeContrastLevel = .standard,
         corners: ThemeCorners = .rounded,
+        transparency: ThemeTransparency = .frosted,
         readability: ThemeReadability = .default
     ) {
         self.accent = accent
         self.tone = tone
         self.contrast = contrast
         self.corners = corners
+        self.transparency = transparency
         self.readability = readability
     }
 
-    private enum CodingKeys: String, CodingKey { case accent, tone, contrast, corners, readability }
+    private enum CodingKeys: String, CodingKey { case accent, tone, contrast, corners, transparency, readability }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -250,6 +271,7 @@ public struct ThemePreferences: Codable, Equatable, Hashable, Sendable {
         tone = try c.decodeIfPresent(ThemeTone.self, forKey: .tone) ?? .warm
         contrast = try c.decodeIfPresent(ThemeContrastLevel.self, forKey: .contrast) ?? .standard
         corners = try c.decodeIfPresent(ThemeCorners.self, forKey: .corners) ?? .rounded
+        transparency = try c.decodeIfPresent(ThemeTransparency.self, forKey: .transparency) ?? .frosted
         readability = try c.decodeIfPresent(ThemeReadability.self, forKey: .readability) ?? .default
     }
 

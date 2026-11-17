@@ -37,7 +37,7 @@ public enum ThemePresets {
 
     public static let paper = preset(
         paperID, "Paper", appearance: .light,
-        preferences: ThemePreferences(accent: .swatch(.amber), tone: .warm, corners: .subtle)
+        preferences: ThemePreferences(accent: .swatch(.amber), tone: .warm, corners: .subtle, transparency: .solid)
     )
 
     public static let terminal = preset(

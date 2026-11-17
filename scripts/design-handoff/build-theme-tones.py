@@ -236,7 +236,15 @@ ALIASES = {
     "color.action.brand.default.border": ("highlight/border", "literal/color.action.brand.default.border"),
     "color.action.brand.hover.border": ("highlight/borderHover", "literal/color.action.brand.hover.border"),
     "color.action.brand.pressed.border": ("highlight/borderPressed", "literal/color.action.brand.pressed.border"),
+    # Three tones in both modes: content, the opaque sidebar, and the frosted
+    # icon rail and title band. Dark's pale native material already lifts the
+    # rail above the sidebar; light tints it a step darker than the sidebar.
+    "material.window.tint": ("neutral/300", "neutral/50"),
+    "material.window.fallback": ("neutral/300", "neutral/300"),
 }
+
+# Frosted, the default Transparency.
+WINDOW_TINT_OPACITY = {"light": 0.7, "dark": 0.55}
 
 
 def report():
@@ -356,6 +364,8 @@ def write_library():
         prims[f"highlight/{name}"] = {"light": full(light), "dark": full(dark)}
     for token, (light, dark) in ALIASES.items():
         library["colorAliases"][token] = {"light": light, "dark": dark}
+    library["scalarPrimitives"]["values/material/window/tintOpacity"].update(WINDOW_TINT_OPACITY)
+    library["tokens"]["material.window.tintOpacity"].update(WINDOW_TINT_OPACITY)
     resolve_color_tokens(library)
     LIBRARY.write_text(json.dumps(library, separators=(",", ":"), sort_keys=True, ensure_ascii=False) + "\n")
 

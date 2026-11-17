@@ -186,8 +186,9 @@ private struct SettingsThemePreviewBody: View {
                 .padding(.vertical, theme.space.s8)
                 .background(theme.chat.assistantBackground, in: RoundedRectangle(cornerRadius: theme.radius.bubble, style: .continuous))
             SettingsTextField(placeholder: L("Message"), text: $text)
-            SettingsToggle(title: "Notifications", isOn: $isOn)
-                .settingsChrome(.surface)
+            SettingsGroup {
+                SettingsToggle(title: "Notifications", isOn: $isOn)
+            }
             HStack(spacing: theme.settingsControlGap) {
                 SettingsButton(.secondary, "Cancel") {}
                 SettingsButton(.primary, "Save") {}

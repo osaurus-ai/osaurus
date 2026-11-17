@@ -192,6 +192,9 @@ struct WorkflowInputBindingEditor: View {
         } label: {
             Text(menuTitle(current))
         }
+        .menuStyle(.button)
+        .assignedSettingsButtonStyle(.secondary, size: .compact)
+        .menuIndicator(.hidden)
         .fixedSize()
     }
 

@@ -95,6 +95,10 @@ enum ClassicThemeMigrator {
             var defaultWidth: Double?
             var cardCornerRadius: Double?
         }
+        struct Glass: Decodable {
+            var enabled: Bool?
+            var sidebarEnabled: Bool?
+        }
 
         var metadata: Metadata
         var colors: Colors?
@@ -102,6 +106,7 @@ enum ClassicThemeMigrator {
         var animationConfig: Animation?
         var messages: Messages?
         var borders: Borders?
+        var glass: Glass?
         var codeHighlightTheme: String?
         var isBuiltIn: Bool?
         var isDark: Bool?
@@ -130,6 +135,7 @@ enum ClassicThemeMigrator {
             tone: tone
         )
         if let card = classic.borders?.cardCornerRadius, card <= 8 { preferences.corners = .subtle }
+        if classic.glass?.enabled == true || classic.glass?.sidebarEnabled == true { preferences.transparency = .glass }
         if let font = classic.typography?.primaryFont, !isSystemFont(font, system: "sf pro") {
             preferences.readability.uiFont = font
         }

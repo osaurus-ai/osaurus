@@ -4,7 +4,7 @@ A theme paints every Osaurus window: colors, fonts and readability. Pick one in
 **Settings → General → Appearance → Theme** or **View → Theme**.
 
 Themes are generated, not hand-painted. A theme stores a few choices (accent,
-tone, contrast, corners, readability) plus optional token overrides. Osaurus
+tone, contrast, corners, transparency, readability) plus optional token overrides. Osaurus
 layers them onto the bundled design library (`design-library.json`) and checks
 the result for contrast. Every theme therefore keeps the same components,
 spacing and states, and the default **Osaurus** theme is the bundled design
@@ -17,7 +17,7 @@ itself.
 | Osaurus  | Warm    | Teal     | The default: cream neutrals, teal actions and lime highlights in light; near-black with lime actions and teal links in dark (osaurus.ai brand) |
 | Graphite | Neutral | Graphite | Monochrome, the pre-brand 1.0 look                |
 | Nord     | Cool    | Blue     |                                                   |
-| Paper    | Warm    | Amber    | Light only, subtle corners                        |
+| Paper    | Warm    | Amber    | Light only, subtle corners, solid window          |
 | Terminal | Neutral | Green    | Dark only, SF Mono interface font                 |
 
 Built-in themes are read-only. **Duplicate** one to make it your own.
@@ -37,6 +37,11 @@ across Osaurus while it is open; **Cancel** puts the saved theme back.
 - **Contrast**: Standard, or High (7:1 text, 4.5:1 control borders). macOS
   **Increase Contrast** turns High on for every theme.
 - **Corners**: Rounded, or Subtle for tighter radii.
+- **Transparency**: how much of the desktop shows through the icon rail and
+  title bar. **Frosted** (the default) tints the blur heavily, **Glass** lets
+  more through, and **Solid** makes them opaque. The window keeps three tones
+  at every level: content, the opaque sidebar, and the rail. macOS **Reduce
+  Transparency** and **Increase Contrast** make every theme solid.
 - **Readability**: **Reading Size** (Default, Large, Larger; stacks with
   Text Size), **Line Spacing** (Default, Relaxed), **Interface Font** and
   **Code Font**, **Stronger Outlines** and **Larger Controls**.
@@ -78,7 +83,8 @@ theme whose id is already taken gets a new one.
       "strongerOutlines": false,
       "uiFont": "Atkinson Hyperlegible"
     },
-    "tone": "cool"
+    "tone": "cool",
+    "transparency": "frosted"
   },
   "schemaVersion": 1,
   "updatedAt": "2026-11-16T12:00:00Z"
