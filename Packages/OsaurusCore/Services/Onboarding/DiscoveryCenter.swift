@@ -673,7 +673,11 @@ final class DiscoveryCenter {
             }
         }
         s.importPromptSeen = ImportHistoryPromptGate.shared.hasSeen
-        s.fullDiskAccess = SystemPermissionService.shared.isGranted(.disk)
+        // Cached, never live: this snapshot is built from the chat empty-state
+        // view update on the main thread, and the live Full Disk Access probe
+        // opens TCC.db / chat.db synchronously, which can block for seconds.
+        // The cache is refreshed off the main actor by SystemPermissionService.
+        s.fullDiskAccess = SystemPermissionService.shared.cachedIsGranted(.disk)
         s.privacyAIOn = PrivacyFilterStore.load()?.aiDetectionEnabled ?? false
         s.providerConnected = RemoteProviderManager.shared.providerStates.values.contains { $0.isConnected }
         s.searchProviderSet = SearchProviderManager.shared.hasConfiguredAPIProvider
