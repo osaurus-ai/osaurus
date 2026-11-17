@@ -22,12 +22,10 @@ struct ChatHistoryWindowActions {
 
     @MainActor
     func delete(_ id: UUID) {
-        // Cancel a registry-owned run, detach this window, then delete.
-        if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
-            BackgroundTaskManager.shared.cancelTask(liveTask.id)
-        }
+        // Every window lets go of the chat, not just this one: another
+        // window's copy would save the deleted row back.
         windowState.prepareForSessionDeletion(id: id)
-        ChatSessionsManager.shared.delete(id: id)
+        ChatWindowManager.shared.deleteSession(id: id)
         windowState.refreshSessions()
     }
 

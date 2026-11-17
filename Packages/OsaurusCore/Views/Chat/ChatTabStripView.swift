@@ -1062,18 +1062,15 @@ private struct ChatTabContextMenu {
     // MARK: - Delete
 
     /// Same confirmation (with the session-wide "don't ask again" toggle)
-    /// and the same teardown order as the sidebar: cancel a registry-owned
-    /// run, detach this window's tab, then delete the row.
+    /// and the same teardown as the sidebar: `ChatWindowManager.deleteSession`
+    /// cancels a registry-owned run and detaches every window first.
     private func requestDelete() {
         guard let id = session.sessionId else { return }
         let scope = alertScope
         let windowState = self.windowState
         let perform = {
-            if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
-                BackgroundTaskManager.shared.cancelTask(liveTask.id)
-            }
             windowState.prepareForSessionDeletion(id: id)
-            ChatSessionsManager.shared.delete(id: id)
+            ChatWindowManager.shared.deleteSession(id: id)
             windowState.refreshSessions()
         }
         if DeleteConfirmationPreference.shared.skipForSession {

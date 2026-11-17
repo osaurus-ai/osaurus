@@ -132,6 +132,33 @@ struct SyncLegacyImporterTests {
         }
     }
 
+    /// The store's delete records the chat in the ledger, so a later pass
+    /// skips it even when its old row survived (the old database was closed
+    /// at delete time) and the ledger no longer lists it as imported.
+    @Test
+    func aDeletedChatStaysDeletedWhenItsOldRowSurvives() async throws {
+        try await withLegacy { legacy, store in
+            let chat = session("Deleted in 1.x", daysAgo: 1)
+            try legacy.seedForTesting(chat)
+            _ = await SyncLegacyImporter.importAll(legacy: legacy, store: store, memory: MemoryDatabase())
+            #expect(store.loadSession(id: chat.id) != nil)
+
+            try store.deleteSession(id: chat.id)
+            #expect(legacy.loadSession(id: chat.id) != nil, "the old row outlived the delete")
+            let recorded = SyncLegacyImporter.Ledger.load().deleted
+            #expect(recorded.contains(chat.id))
+
+            var unfinished = SyncLegacyImporter.Ledger()
+            unfinished.version = 1
+            unfinished.deleted = recorded
+            try JSONEncoder().encode(unfinished).write(to: SyncLegacyImporter.Ledger.url)
+
+            let outcome = await SyncLegacyImporter.importAll(legacy: legacy, store: store, memory: MemoryDatabase())
+            #expect(outcome == .init(imported: 0, failed: 0))
+            #expect(store.loadSession(id: chat.id) == nil)
+        }
+    }
+
     @Test
     func anImportInterruptedBeforeItsLedgerWriteDoesNotDuplicate() async throws {
         try await withLegacy { legacy, store in

@@ -119,6 +119,7 @@ final class SyncLegacyImporter: ObservableObject {
         // Earlier ledgers skipped empty chats without asking Memory.
         let recheck = ledger.version < Ledger.currentVersion ? legacy.emptySessionIds() : []
         let pending = legacy.loadAllMetadata()
+            .filter { !ledger.deleted.contains($0.id) }
             .filter { !ledger.imported.contains($0.id) || recheck.contains($0.id) }
             .sorted { $0.updatedAt > $1.updatedAt }
         var outcome = Outcome(imported: 0, failed: 0)
@@ -127,8 +128,11 @@ final class SyncLegacyImporter: ObservableObject {
         var done = 0
         for batch in stride(from: 0, to: pending.count, by: batchSize).map({ pending[$0..<min($0 + batchSize, pending.count)] }) {
             if Task.isCancelled { break }
+            // A chat deleted while this pass runs stays deleted.
+            let deleted = Ledger.load().deleted
             for metadata in batch {
                 done += 1
+                if deleted.contains(metadata.id) { continue }
                 // Already there: an import that stopped before its ledger write.
                 if store.scope(forSession: metadata.id) != nil {
                     ledger.imported.insert(metadata.id)
@@ -251,10 +255,18 @@ final class SyncLegacyImporter: ObservableObject {
         var version = Ledger.currentVersion
         var done = false
         var imported: Set<UUID> = []
+        /// Chats the user deleted. Never imported again, even when their old
+        /// row outlives the delete (the old database was closed then) or a
+        /// version bump rechecks rows already imported.
+        var deleted: Set<UUID> = []
 
         var isFinished: Bool { done && version >= Self.currentVersion }
 
         static var url: URL { OsaurusPaths.syncLocalState().appendingPathComponent("legacy-import.json") }
+
+        /// The importer and the store's delete path both write the ledger,
+        /// from different threads.
+        private static let fileLock = NSLock()
 
         init() {}
 
@@ -263,11 +275,25 @@ final class SyncLegacyImporter: ObservableObject {
             version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
             done = try container.decode(Bool.self, forKey: .done)
             imported = try container.decode(Set<UUID>.self, forKey: .imported)
+            deleted = try container.decodeIfPresent(Set<UUID>.self, forKey: .deleted) ?? []
         }
 
         static func load() -> Ledger {
+            fileLock.withLock { loadUnlocked() }
+        }
+
+        private static func loadUnlocked() -> Ledger {
             guard let data = try? Data(contentsOf: url) else { return Ledger() }
             return (try? JSONDecoder().decode(Ledger.self, from: data)) ?? Ledger()
+        }
+
+        /// Records a chat the user deleted so no import pass brings it back.
+        static func markDeleted(_ id: UUID) {
+            fileLock.withLock {
+                var ledger = loadUnlocked()
+                guard ledger.deleted.insert(id).inserted else { return }
+                ledger.writeUnlocked()
+            }
         }
 
         mutating func finish() {
@@ -276,7 +302,19 @@ final class SyncLegacyImporter: ObservableObject {
             save()
         }
 
+        /// Merges with the file, so an importer's copy loaded before a delete
+        /// doesn't drop that delete's record.
         func save() {
+            Self.fileLock.withLock {
+                var merged = self
+                let onDisk = Self.loadUnlocked()
+                merged.imported.formUnion(onDisk.imported)
+                merged.deleted.formUnion(onDisk.deleted)
+                merged.writeUnlocked()
+            }
+        }
+
+        private func writeUnlocked() {
             do {
                 try FileManager.default.createDirectory(
                     at: OsaurusPaths.syncLocalState(), withIntermediateDirectories: true)

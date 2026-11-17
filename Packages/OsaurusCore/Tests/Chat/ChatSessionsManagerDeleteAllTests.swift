@@ -4,10 +4,10 @@
 //
 //  Pins the ownership contract of `ChatSessionsManager.deleteAll(for:)`,
 //  the bulk wipe behind the agent detail "Delete All Data" flow and agent
-//  deletion. Unlike `sessions(for:)` — where the Default agent means "show
-//  everything" — the wipe must match strictly: a per-agent wipe removes
-//  only that agent's sessions, and a Default-agent wipe removes only
-//  unowned (nil-agent) sessions, never another agent's history.
+//  deletion. The wipe matches strictly, the same rule as `sessions(for:)`:
+//  a per-agent wipe removes only that agent's sessions, and a Default-agent
+//  wipe removes only unowned (nil-agent) sessions, never another agent's
+//  history.
 //
 
 import Foundation
@@ -62,8 +62,6 @@ struct ChatSessionsManagerDeleteAllTests {
             let b1 = manager.createNew(agentId: agentB)
             let unownedSession = manager.createNew(agentId: nil)
 
-            // `sessions(for:)` returns EVERYTHING for the Default agent;
-            // the wipe must not inherit that meaning.
             await manager.deleteAll(for: Agent.defaultId)
 
             let remaining = Set(manager.sessions.map(\.id))
@@ -72,6 +70,30 @@ struct ChatSessionsManagerDeleteAllTests {
 
             manager.refresh()
             #expect(Set(manager.sessions.map(\.id)) == Set([b1]))
+        }
+    }
+
+    /// The window's History list and the sidebar agree on what the
+    /// Orchestrator owns: its own and untagged chats, not other agents'.
+    @Test
+    func sessionsForDefaultAgentMatchTheSidebar() async throws {
+        try await ChatHistoryTestStorage.run {
+            let manager = ChatSessionsManager.shared
+            manager.refresh()
+
+            let agentB = UUID()
+            let b1 = manager.createNew(agentId: agentB)
+            let tagged = manager.createNew(agentId: Agent.defaultId)
+            let unowned = manager.createNew(agentId: nil)
+
+            for agentId in [nil, Agent.defaultId] {
+                #expect(Set(manager.sessions(for: agentId).map(\.id)) == Set([tagged, unowned]))
+            }
+            #expect(manager.sessions(for: agentB).map(\.id) == [b1])
+            #expect(
+                Set(manager.sessions(for: Agent.defaultId).map(\.id))
+                    == Set(ChatSessionSidebar.agentHistorySessions(manager.sessions, agentId: Agent.defaultId).map(\.id))
+            )
         }
     }
 }
