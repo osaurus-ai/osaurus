@@ -137,14 +137,14 @@ final class AppleScriptCatalogSource: LocalModelCatalogSource {
             }
             item.onCancel = { manager.cancelDownload(model.id) }
         case .installed:
-            if isCurated {
+            if isCurated || !model.isExternallyOwned {
                 item.menuActions.append(.init(
                     title: "Delete Model", icon: "trash", role: .destructive,
                     confirmation: L("This removes \(model.name) from this Mac. You can download it again later.")
                 ) { Task { await manager.deleteModel(model) } })
             } else {
-                // A discovered bundle belongs to another source folder, so
-                // it is revealed rather than deleted from here.
+                // A bundle found in another app's or a custom folder is
+                // revealed rather than deleted from here.
                 item.menuActions.append(.init(title: "Reveal in Finder", icon: "folder") {
                     NSWorkspace.shared.activateFileViewerSelecting([model.localDirectory])
                 })

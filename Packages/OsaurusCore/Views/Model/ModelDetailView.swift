@@ -1322,9 +1322,7 @@ struct ModelDetailView: View, Identifiable {
     /// True for models discovered outside Osaurus (Hugging Face cache, LM
     /// Studio). Their files live in another app's directory, so Osaurus
     /// offers "Reveal in Finder" rather than an in-app delete.
-    private var isExternalModel: Bool {
-        model.externalSource != nil || model.bundleDirectory != nil
-    }
+    private var isExternalModel: Bool { model.isExternallyOwned }
 
     /// Selects the model's on-disk bundle in Finder so the user can inspect
     /// or delete it manually.

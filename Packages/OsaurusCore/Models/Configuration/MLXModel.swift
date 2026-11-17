@@ -144,6 +144,13 @@ struct MLXModel: Identifiable, Codable {
         bundleDirectory != nil || rootDirectory != nil || externalSource != nil
     }
 
+    /// True when the files belong to another app or a user folder Osaurus
+    /// only reads (Hugging Face cache, LM Studio, a custom model folder).
+    /// Those get Reveal in Finder, never an unlink. `bundleDirectory` alone
+    /// is not evidence: the managed-folder scan sets it on Osaurus's own
+    /// downloads too.
+    var isExternallyOwned: Bool { externalSource != nil }
+
     /// Preserve catalog/editorial metadata while folding in authoritative
     /// facts from a bundle that is actually present on disk. This keeps a
     /// curated card's name, description, release data, and use-case badge,

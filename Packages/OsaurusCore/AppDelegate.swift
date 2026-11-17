@@ -720,6 +720,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             KnowledgeFolderWatcher.shared.start()
         }
 
+        // Bundles added or removed in Finder refresh the Local Models lists.
+        LocalModelsFolderWatcher.shared.start()
+
         // Setup global hotkey for Chat overlay (configured)
         applyChatHotkey()
 
@@ -1736,6 +1739,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             EventManager.shared.stop()
             TaskStore.shared.flush()
             KnowledgeFolderWatcher.shared.stop()
+            LocalModelsFolderWatcher.shared.stop()
             // Detach the sandbox registrar from the container status stream
             // BEFORE phase 2 stops the VM. Otherwise the `.running -> .stopped`
             // edge from `stopContainer` re-enters `registerTools`, which

@@ -106,7 +106,7 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
                 model: model,
                 entry: nil,
                 directory: model.localDirectory,
-                isManaged: model.bundleDirectory == nil && model.externalSource == nil,
+                isManaged: !model.isExternallyOwned,
                 selectedId: selectedId
             )
         }

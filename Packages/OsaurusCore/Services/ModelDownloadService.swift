@@ -316,7 +316,7 @@ final class ModelDownloadService: ObservableObject {
 
     func repair(_ model: MLXModel) {
         guard !isActiveDownload(model.id) else { return }
-        guard model.bundleDirectory == nil, model.externalSource == nil else {
+        guard !model.isExternallyOwned else {
             repairMessages[model.id] = L("External models are managed by their original application.")
             return
         }
@@ -1119,7 +1119,7 @@ final class ModelDownloadService: ObservableObject {
 
         let modelID = model.id
         let modelName = model.name
-        let isExternal = model.bundleDirectory != nil || model.externalSource != nil
+        let isExternal = model.isExternallyOwned
         let localPath = model.localDirectory.path
         let cacheDirName = "models--\(model.id.replacingOccurrences(of: "/", with: "--"))"
         let cacheRoots = Self.hfCacheRoots()

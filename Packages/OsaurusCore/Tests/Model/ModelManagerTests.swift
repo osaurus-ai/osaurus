@@ -824,4 +824,47 @@ struct ModelManagerTests {
 
         try? FileManager.default.removeItem(at: tempDir)
     }
+
+    /// The managed-folder scan stamps `bundleDirectory` on Osaurus's own
+    /// downloads; that must not make them read-only.
+    @Test func scannedManagedBundleIsOwnedAndDeletable() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let dir = root.appendingPathComponent("OsaurusAI/Owned-Model-4bit")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: dir.appendingPathComponent("tokenizer.json"))
+        try Data().write(to: dir.appendingPathComponent("model.safetensors"))
+
+        let scanned = try #require(ModelManager.scanLocalModels(at: root).first)
+        #expect(scanned.bundleDirectory != nil)
+        #expect(scanned.isExternallyOwned == false)
+
+        let manager = await MainActor.run { ModelManager() }
+        await manager.deleteModel(scanned)
+        #expect(fm.fileExists(atPath: dir.path) == false)
+    }
+
+    @Test func externalBundleIsRevealedAndNeverUnlinked() async throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let external = MLXModel(
+            id: "lmstudio/External-Model",
+            name: "External Model",
+            description: "",
+            downloadURL: "",
+            bundleDirectory: dir,
+            externalSource: "LM Studio"
+        )
+        #expect(external.isExternallyOwned)
+
+        let manager = await MainActor.run { ModelManager() }
+        await manager.deleteModel(external)
+        #expect(fm.fileExists(atPath: dir.appendingPathComponent("config.json").path))
+    }
 }
