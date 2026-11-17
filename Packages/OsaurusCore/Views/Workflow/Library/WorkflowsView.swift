@@ -465,7 +465,7 @@ struct WorkflowsView: View {
     private func newWorkflowPage(onBack: (() -> Void)?) -> some View {
         WorkflowCreationLanding(
             windowState: windowState, draft: windowState.workflowCreationSession,
-            title: onBack == nil ? L("Create your first workflow") : L("New Workflow"),
+            title: L("What would you like to automate?"),
             starters: notSetUp, starterCard: { templateCard($0) },
             onBack: onBack, onImport: chooseFile)
             .settingsLandingAnchor("workflows.new")

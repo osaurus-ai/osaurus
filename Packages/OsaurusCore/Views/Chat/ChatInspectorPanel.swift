@@ -61,6 +61,7 @@ struct ChatInspectorPanel: View {
         case .draft:
             ArchitectSidebarPanel(
                 sessionId: sessionId,
+                isGenerating: windowState.session.isStreaming,
                 onAsk: { windowState.session.input = $0 },
                 onSend: { windowState.session.send($0) },
                 onBrowse: { windowState.showInspector(.workflows) })

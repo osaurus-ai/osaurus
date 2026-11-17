@@ -188,7 +188,7 @@ enum SettingsKitLintBaseline {
             "Views/Voice/VoiceComponents.swift": 16,
             "Views/Voice/VoiceInputOverlay.swift": 4,
             "Views/Voice/VoiceSetupTab.swift": 7,
-            "Views/Workflow/Architect/ArchitectSidebarPanel.swift": 5,
+            "Views/Workflow/Architect/ArchitectSidebarPanel.swift": 1,
             "Views/Workflow/Architect/WorkflowRequirementsPanel.swift": 1,
             "Views/Workflow/Library/WorkflowBundleSetupView.swift": 1,
             "Views/Workflow/Library/WorkflowCards.swift": 1,

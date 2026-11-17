@@ -3237,7 +3237,7 @@ public enum SettingsSearchIndex {
                 "agent template link", "agent page", "save as file", "live badge", "copy link", "open page",
                 "publish version",
             ],
-            disambiguation: "Agents → Templates → a template card's Share button → Publish to store.osaurus.ai (also Publish… in its … menu). Needs an Osaurus ID, which signs the template; bundled workflows go with it. Afterward the button reads Live with who can see it and installs, and Manage Published…, Copy Link, Open Page, Publish Version N… and Take Down… are in the … menu. Built-in templates show Export instead; Save to Library first to publish your copy. Workflows publish from Workflows."
+            disambiguation: "Agents → Templates → a template card's Share button → Publish to store.osaurus.ai (also Publish… in its … menu). Needs an Osaurus ID, which signs the template; bundled workflows go with it. Afterward the button reads Live with who can see it and installs, and Manage Published…, Copy Link, Open Page, Publish Version N… and Take Down… are in the … menu. Built-in templates show Export instead; Save to Library first to publish your copy. Workflows publish from Workflows, or from Share… in the Architect chat once added."
         ),
         .init(
             id: "agents.templates.share",
@@ -4808,10 +4808,11 @@ public enum SettingsSearchIndex {
             keywords: [
                 "describe a task", "new workflow", "start something new", "create a workflow", "ready-made workflows",
                 "or add a ready-made workflow", "add a workflow", "starter workflows", "templates to add",
-                "create your first workflow", "ready to add",
+                "create your first workflow", "ready to add", "what would you like to automate",
+                "or start from a ready-made one",
             ],
             subTab: "new",
-            disambiguation: "The New Workflow page, opened from New Workflow in the Workflows header, the + beside All Workflows in the sidebar, or ⌘N: the Architect's composer (sending starts a new draft with your words as its first message), then Or add a ready-made workflow, the templates not set up yet, each opening a preview with Add, and Import a workflow. With no workflows and no drafts it is the whole Workflows page, titled Create your first workflow."
+            disambiguation: "The New Workflow page, titled What would you like to automate?, opened from New Workflow in the Workflows header, the + beside All Workflows in the sidebar, or ⌘N (with no workflows and no drafts it is the whole Workflows page): the Architect's composer (sending starts a new draft with your words as its first message), then Or start from a ready-made one, the templates not set up yet, each opening a preview with Add, and Import a Workflow."
         ),
         .init(
             id: "workflows.drafts",
@@ -4975,7 +4976,7 @@ public enum SettingsSearchIndex {
                 "replaces files", "folder access", "your mac", "sandbox", "access summary", "least access",
                 "write scope", "read only folder",
             ],
-            disambiguation: "A section in the Architect's Design tab: what the draft reads, writes, deletes, and replaces on your Mac, read from its steps, and whether it works in the sandbox. Runs enforce it: file steps save only where it says, read-only folders stay read-only, and replacing an existing file asks first. The same rows show in the import review, and as one line under What It Does on a saved workflow's page, in the save card, starter previews, and the publish review. Not a setting. Folders always allowed for a saved workflow are on its page under More Options → Before It Runs."
+            disambiguation: "A row at the foot of the Architect's preview card (click it to open): what the draft reads, writes, deletes, and replaces on your Mac, read from its steps, and whether it works in the sandbox. Runs enforce it: file steps save only where it says, read-only folders stay read-only, and replacing an existing file asks first. The same rows show in the import review, and as one line under What It Does on a saved workflow's page, in the save card, starter previews, and the publish review. Not a setting. Folders always allowed for a saved workflow are on its page under More Options → Before It Runs."
         ),
         .init(
             id: "workflows.draftChanges",
@@ -4986,7 +4987,7 @@ public enum SettingsSearchIndex {
                 "change summary", "what changed", "why it changed", "architect edits", "edit history", "undo",
                 "review changes", "patch summary", "draft history", "diff",
             ],
-            disambiguation: "A section in the Architect's Design tab: every edit to the draft, newest first, with who made it (the Architect or you), why in the Architect's words, and each change in plain language. Undo is on the newest. Version history of saved workflows is in Workflow Details."
+            disambiguation: "A row at the foot of the Architect's preview card (click it to open): every edit to the draft, newest first, with who made it (the Architect or you), why in the Architect's words, and each change in plain language. Undo is on the newest. Version history of saved workflows is in Workflow Details."
         ),
         .init(
             id: "workflows.saveEvidence",
@@ -5008,7 +5009,7 @@ public enum SettingsSearchIndex {
                 "fix with the architect", "fix failed run", "repair workflow", "workflow failed", "step failed", "fix workflow", "architect fix",
                 "retry from failed step", "failed step", "why did it fail", "error hint",
             ],
-            disambiguation: "On a failed run (its run page, the Architect's Test tab, and the Runs list's … menu): opens an Architect chat that reads the run's error, failed step, logs, and where the fix belongs (the step, setup, an app setting, a retry, or you), fixes it, re-tests from the failed step, and proposes the next version. The line under the error says what to change. Retry from Failed Step re-runs from that step without changing anything. Saving stays your click."
+            disambiguation: "On a failed run (its run page, Fix It on the Architect's preview when a try didn't work, and the Runs list's … menu): opens an Architect chat that reads the run's error, failed step, logs, and where the fix belongs (the step, setup, an app setting, a retry, or you), fixes it, re-tests from the failed step, and proposes the next version. The line under the error says what to change. Retry from Failed Step re-runs from that step without changing anything. Saving stays your click."
         ),
         .init(
             id: "workflows.share",
@@ -5163,9 +5164,23 @@ public enum SettingsSearchIndex {
             title: "Share…",
             keywords: [
                 "share after save", "saved card share", "share from architect", "publish after save", "saved workflow share",
-                "resubmit for review", "resubmit after changes requested",
+                "resubmit for review", "resubmit after changes requested", "add to my workflows", "share it",
+                "publish from the architect", "copy link", "live",
             ],
-            disambiguation: "On the Architect's Saved card, next to Try It: opens Workflows with Share up for the workflow just saved. Try It opens its run form in Workflows, filled with its first example. When the Osaurus team asked for changes on its published listing, the button reads Resubmit for Review… and opens Share on the publish step for the new version."
+            disambiguation: "Once a draft is in My Workflows (Add to My Workflows on the Architect's preview, or Add on its card in the chat), Share… opens Share right there in the Architect chat, beside Run… in the preview's footer. After it is published the preview's chip reads Live, Its page shows the link and installs, and the footer has Manage… and Copy Link. The saved card in the chat has the same Share…. When the Osaurus team asked for changes on its published listing, the button reads Resubmit for Review… and opens Share on the publish step for the new version."
+        ),
+        .init(
+            id: "workflows.architectSteps",
+            tab: .workflows,
+            section: "Architect Draft",
+            title: "How it works",
+            keywords: [
+                "show details", "architect details", "draft details", "steps editor", "edit steps", "step settings",
+                "edit step", "model for a step", "instructions", "workflow editor", "architect preview", "living preview",
+                "advanced", "technical view", "open full view", "flow graph", "test from this step", "bypass step",
+                "delete step",
+            ],
+            disambiguation: "The steps on the Architect's preview card. Click a step to open it in place: what it does, the model it runs on (change it there), its instructions, its badges, Edit Step…, and in its … menu Ask the Architect, Test From This Step, Bypass This Step and Delete Step. The open step is the one the Architect hears you have selected. Open Full View beside the heading shows the flow as a graph. While the Architect is building, the card can't be clicked."
         ),
         .init(
             id: "workflows.orchestratorVisible",

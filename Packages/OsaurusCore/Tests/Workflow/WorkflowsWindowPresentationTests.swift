@@ -62,9 +62,9 @@ struct WorkflowsWindowPresentationTests {
     }
 
     @Test
-    func makingAWorkflow_readsDesignTestSavePublish_inOrder() {
-        #expect(WorkflowMakeStage.allCases.map(\.title) == ["Design", "Test", "Save", "Publish"])
-        #expect(WorkflowMakeStage.design < .test && .save < .publish)
+    func makingAWorkflow_readsMakeTryShare_inOrder() {
+        #expect(WorkflowMakeStage.allCases.map(\.title) == ["Build", "Run", "Share"])
+        #expect(WorkflowMakeStage.make < .tryIt && .tryIt < .share)
     }
 
     @Test
