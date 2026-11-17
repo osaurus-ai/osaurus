@@ -93,7 +93,8 @@ struct SyncAgentCallsTests {
 
     private static func open(_ payload: Data, key: Data) throws -> [String: Any] {
         let outer = try #require(try JSONSerialization.jsonObject(with: payload) as? [String: Any])
-        let sealed = try #require(Data(base64Encoded: try #require(outer["o"] as? String)))
+        let encoded = try #require(outer["o"] as? String)
+        let sealed = try #require(Data(base64Encoded: encoded))
         let plain = try ChaChaPoly.open(ChaChaPoly.SealedBox(combined: sealed), using: SymmetricKey(data: key))
         return try #require(try JSONSerialization.jsonObject(with: plain) as? [String: Any])
     }

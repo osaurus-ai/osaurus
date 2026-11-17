@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import OsaurusSync
 import Testing
 
 @testable import OsaurusCore
