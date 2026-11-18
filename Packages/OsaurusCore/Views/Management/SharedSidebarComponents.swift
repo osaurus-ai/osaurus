@@ -272,8 +272,13 @@ struct SidebarLensBar<Value: Hashable>: View {
             spacing: theme.space.s4,
             wholeIndex: compact ? segments.firstIndex { $0.value == selection } : nil
         ) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                segmentButton(segment, compact: compact)
+            // Iterate indices with `\.self` (a non-generic `\Int.self` key path
+            // the runtime caches once) instead of `enumerated()` + `\.offset`:
+            // inside this generic view the tuple key path depends on `Value`
+            // and was re-instantiated by the Swift runtime on every body
+            // evaluation, stalling the main thread under frequent redraws.
+            ForEach(segments.indices, id: \.self) { index in
+                segmentButton(segments[index], compact: compact)
             }
         }
     }
