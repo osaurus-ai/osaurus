@@ -6,8 +6,9 @@
 //  takes a path from the phone: a path in a run's input is granted to its steps
 //  (`WorkflowRunner.grantedPaths`), so every path here is one this Mac makes. A `file` field is either a
 //  file the phone attached to a message on the manage conversation, saved here under the workflow's
-//  `phone-inputs`, or the newest value an earlier run used that still exists. A `folder` field only the
-//  latter. A secret field is never filled from the phone.
+//  `phone-inputs`, or, for a required field, what the workflow's last run used, if it still exists. A
+//  `folder` field only the latter. A secret field is never filled from the phone, and a value from a run the
+//  phone started is reused only if this Mac made it (one of its saved files).
 //
 
 import Foundation
@@ -35,26 +36,42 @@ enum SyncWorkflowInputs {
 
     // MARK: Last used
 
-    /// The newest absolute path an earlier run gave `field`, by name only, for the phone to show
-    /// ("Same as last time: headshot.jpg"). Not checked to still exist: `paths` checks that at the start.
-    static func lastUsedName(_ field: DialogField, lastInput: [String: JSONValue]?) -> String? {
-        guard field.type == .file || field.type == .folder,
-            let path = lastInput?[field.key]?.stringValue, path.hasPrefix("/")
+    /// The path the workflow's last run gave required file or folder `field`, which a phone start that sends
+    /// nothing for it reuses. Only the last run's, so the phone shows the same one the run gets (`lastUsedName`);
+    /// optional fields are left empty, as the phone left them. From a run the phone started, only a file this
+    /// Mac saved for it: anything else there was the phone's value. Not checked to exist (`paths` does).
+    nonisolated static func lastPath(_ field: DialogField, lastRun: WorkflowRun?) -> String? {
+        guard field.required, field.type == .file || field.type == .folder, let lastRun,
+            let path = lastRun.input.objectValue?[field.key]?.stringValue, path.hasPrefix("/")
         else { return nil }
+        if lastRun.caller.fromPhone {
+            let root = phoneInputs(lastRun.workflowID).standardizedFileURL.path + "/"
+            guard URL(fileURLWithPath: path).standardizedFileURL.path.hasPrefix(root) else { return nil }
+        }
+        return path
+    }
+
+    /// `lastPath` by name only, for the phone to show ("Same as last time: headshot.jpg").
+    nonisolated static func lastUsedName(_ field: DialogField, lastRun: WorkflowRun?) -> String? {
+        guard let path = lastPath(field, lastRun: lastRun) else { return nil }
         let name = (path as NSString).lastPathComponent
         return name.isEmpty ? nil : name
     }
 
-    /// Earlier runs' inputs for `workflowId`, newest first, from the runs already in memory.
-    static func earlierInputs(workflowId: UUID) -> [JSONValue] {
-        WorkflowRunStore.shared.recentRuns().filter { $0.workflowID == workflowId }.map(\.input)
+    /// The workflow's last run, from the runs already in memory.
+    static func lastRun(workflowId: UUID) -> WorkflowRun? {
+        WorkflowRunStore.shared.recentRuns().first { $0.workflowID == workflowId }
+    }
+
+    /// Where a workflow's files from the phone are saved, a folder each.
+    nonisolated static func phoneInputs(_ workflowId: UUID) -> URL {
+        OsaurusPaths.workflowDirectory(workflowId).appendingPathComponent("phone-inputs", isDirectory: true)
     }
 
     // MARK: Paths for a start
 
-    /// The paths this Mac gives `fields` for a phone's start: each attached file saved here, else the newest
-    /// earlier value that still exists. Fields left out have none to give. Files are checked and read off the
-    /// main actor.
+    /// The paths this Mac gives `fields` for a phone's start: each attached file saved here, else `lastPath` if it
+    /// still exists. Fields left out have none to give. Files are checked and read off the main actor.
     static func paths(
         workflowId: UUID,
         fields: [DialogField],
@@ -73,17 +90,30 @@ enum SyncWorkflowInputs {
         if !files.isEmpty, device == nil {
             return .failure(.invalidInput("A file can only come from a device of yours."))
         }
-        let earlier = earlierInputs(workflowId: workflowId)
-        let picks = await Task.detached(priority: .userInitiated) { () -> [String: String] in
+        let last = lastRun(workflowId: workflowId)
+        let inUse = foldersInUse(workflowId: workflowId)
+        let picked = await Task.detached(priority: .userInitiated) { () -> Result<[String: String], Failure> in
             var out: [String: String] = [:]
             for field in wanted where files[field.key] == nil {
-                if let path = WorkflowDraftTester.reusablePick(field, previousInputs: earlier) { out[field.key] = path }
+                guard let path = lastPath(field, lastRun: last) else { continue }
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+                    isDirectory.boolValue == (field.type == .folder)
+                else {
+                    let name = (path as NSString).lastPathComponent
+                    return .failure(.invalidInput("\(name), last used for \(field.label), isn't on your Mac any more."))
+                }
+                out[field.key] = path
             }
-            return out
+            return .success(out)
         }.value
-        var out = picks
+        var out: [String: String]
+        switch picked {
+        case .success(let picks): out = picks
+        case .failure(let failure): return .failure(failure)
+        }
         for (key, ref) in files.sorted(by: { $0.key < $1.key }) {
-            switch await receive(ref, workflowId: workflowId, device: device ?? "") {
+            switch await receive(ref, workflowId: workflowId, device: device ?? "", inUse: inUse) {
             case .success(let path): out[key] = path
             case .failure(let failure): return .failure(failure)
             }
@@ -96,7 +126,12 @@ enum SyncWorkflowInputs {
     /// Saves the attachment `ref` names into a new folder under the workflow's `phone-inputs`, once it has
     /// arrived, and returns the saved file's path. It must be on a message of this Mac's manage conversation
     /// that `device` wrote, and no larger than `maxBytes`.
-    private static func receive(_ ref: FileRef, workflowId: UUID, device: String) async -> Result<String, Failure> {
+    private static func receive(
+        _ ref: FileRef,
+        workflowId: UUID,
+        device: String,
+        inUse: Set<String>
+    ) async -> Result<String, Failure> {
         guard let core = SyncService.shared.core else {
             return .failure(.invalidInput("Sync isn't running on this Mac."))
         }
@@ -119,8 +154,7 @@ enum SyncWorkflowInputs {
         guard UInt64(data.count) <= maxBytes else { return .failure(.invalidInput(tooLarge)) }
         let name = safeName(blob.name)
         return await Task.detached(priority: .userInitiated) { () -> Result<String, Failure> in
-            let root = OsaurusPaths.workflowDirectory(workflowId)
-                .appendingPathComponent("phone-inputs", isDirectory: true)
+            let root = phoneInputs(workflowId)
             let folder = root.appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
             let file = folder.appendingPathComponent(name)
             do {
@@ -129,7 +163,7 @@ enum SyncWorkflowInputs {
             } catch {
                 return .failure(.invalidInput("The file from your iPhone couldn't be saved on this Mac."))
             }
-            prune(root, keeping: folder)
+            prune(root, keeping: inUse.union([folder.standardizedFileURL.path]))
             return .success(file.path)
         }.value
     }
@@ -197,8 +231,21 @@ enum SyncWorkflowInputs {
         return cleaned.isEmpty ? "input" : cleaned
     }
 
-    /// Removes the oldest folders under `root` past `keptPerWorkflow`, never `keeping`.
-    nonisolated private static func prune(_ root: URL, keeping: URL) {
+    /// The phone-input folders a run of `workflowId` that hasn't ended still reads: never pruned.
+    static func foldersInUse(workflowId: UUID) -> Set<String> {
+        let root = phoneInputs(workflowId).standardizedFileURL.path + "/"
+        var out: Set<String> = []
+        for run in WorkflowRunStore.shared.recentRuns() where run.workflowID == workflowId && !run.status.isTerminal {
+            for value in run.input.objectValue?.values.compactMap(\.stringValue) ?? [] {
+                let path = URL(fileURLWithPath: value).standardizedFileURL
+                if path.path.hasPrefix(root) { out.insert(path.deletingLastPathComponent().path) }
+            }
+        }
+        return out
+    }
+
+    /// Removes the oldest folders under `root` past `keptPerWorkflow`, never one in `keeping` (standardised paths).
+    nonisolated private static func prune(_ root: URL, keeping: Set<String>) {
         let fm = FileManager.default
         guard
             let folders = try? fm.contentsOfDirectory(
@@ -208,25 +255,34 @@ enum SyncWorkflowInputs {
             (url, (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
         }
         .sorted { $0.1 > $1.1 }
-        for (url, _) in dated.dropFirst(keptPerWorkflow) where url.standardizedFileURL != keeping.standardizedFileURL {
+        for (url, _) in dated.dropFirst(keptPerWorkflow) where !keeping.contains(url.standardizedFileURL.path) {
             try? fm.removeItem(at: url)
         }
     }
 
-    /// `body`'s result, or a timeout error once `limit` has passed.
+    /// `body`'s result, or a timeout error once `limit` has passed, whether or not `body` heeds being cancelled:
+    /// a task group would wait for it (a read through the core may not stop when asked).
     nonisolated private static func withTimeout<T: Sendable>(
         _ limit: Duration,
         _ body: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await body() }
-            group.addTask {
-                try await Task.sleep(for: limit)
-                throw CancellationError()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+            let resumed = OSAllocatedUnfairLock(initialState: false)
+            let finish: @Sendable (Result<T, Error>) -> Void = { result in
+                let first = resumed.withLock { done -> Bool in
+                    defer { done = true }
+                    return !done
+                }
+                if first { continuation.resume(with: result) }
             }
-            defer { group.cancelAll() }
-            guard let first = try await group.next() else { throw CancellationError() }
-            return first
+            let work = Task {
+                do { finish(.success(try await body())) } catch { finish(.failure(error)) }
+            }
+            Task {
+                try? await Task.sleep(for: limit)
+                work.cancel()
+                finish(.failure(CancellationError()))
+            }
         }
     }
 }

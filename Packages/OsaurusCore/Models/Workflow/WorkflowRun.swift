@@ -308,6 +308,9 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
     /// The workspace `onBehalfOf` reached the shared agent through. nil for
     /// guests and when `onBehalfOf` is nil.
     public var workspaceId: String?
+    /// Started from the owner's paired iPhone over Sync. Its input's values came from the phone, so a
+    /// later phone start never reuses one as a path (`SyncWorkflowInputs`).
+    public var fromPhone: Bool = false
 
     public init(
         kind: Kind, agentID: UUID? = nil, agentName: String? = nil, sessionID: String? = nil,
@@ -375,6 +378,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         case taskId = "task_id"
         case onBehalfOf = "on_behalf_of"
         case workspaceId = "workspace_id"
+        case fromPhone = "from_phone"
     }
 
     public init(from decoder: Decoder) throws {
@@ -397,6 +401,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         taskId = try c.decodeIfPresent(UUID.self, forKey: .taskId)
         onBehalfOf = try c.decodeIfPresent(Participant.self, forKey: .onBehalfOf)
         workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+        fromPhone = try c.decodeIfPresent(Bool.self, forKey: .fromPhone) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -419,6 +424,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         try c.encodeIfPresent(taskId, forKey: .taskId)
         try c.encodeIfPresent(onBehalfOf, forKey: .onBehalfOf)
         try c.encodeIfPresent(workspaceId, forKey: .workspaceId)
+        if fromPhone { try c.encode(fromPhone, forKey: .fromPhone) }
     }
 }
 

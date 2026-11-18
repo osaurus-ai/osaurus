@@ -89,22 +89,63 @@ struct SyncWorkflowInputsTests {
 
     // MARK: Last used
 
-    @Test("the last run's file or folder is offered by name only, and only for those fields")
+    private static func run(_ input: [String: JSONValue], workflowId: UUID = UUID(), fromPhone: Bool = false)
+        -> WorkflowRun
+    {
+        var caller = WorkflowCaller(kind: .user, background: fromPhone)
+        caller.fromPhone = fromPhone
+        return WorkflowRun(
+            workflowID: workflowId,
+            workflowName: "Headshots",
+            templateID: UUID(),
+            templateVersion: 1,
+            caller: caller,
+            input: .object(input),
+            nodeIDs: [],
+            startedAt: Date()
+        )
+    }
+
+    @Test("the last run's file or folder is offered by name only, for required file and folder fields only")
     func lastUsedName() {
-        let last: [String: JSONValue] = [
+        let last = Self.run([
             "photo": .string("/Users/me/Pictures/me.jpg"),
             "folder": .string("/Users/me/Projects"),
             "topic": .string("/not/a/path/field"),
             "relative": .string("me.jpg"),
-        ]
+            "optional": .string("/Users/me/Pictures/ref.jpg"),
+        ])
         let photo = DialogField(key: "photo", label: "Photo", type: .file)
         let folder = DialogField(key: "folder", label: "Folder", type: .folder)
         let topic = DialogField(key: "topic", label: "Topic")
         let relative = DialogField(key: "relative", label: "Relative", type: .file)
-        #expect(SyncWorkflowInputs.lastUsedName(photo, lastInput: last) == "me.jpg")
-        #expect(SyncWorkflowInputs.lastUsedName(folder, lastInput: last) == "Projects")
-        #expect(SyncWorkflowInputs.lastUsedName(topic, lastInput: last) == nil)
-        #expect(SyncWorkflowInputs.lastUsedName(relative, lastInput: last) == nil)
-        #expect(SyncWorkflowInputs.lastUsedName(photo, lastInput: nil) == nil)
+        let optional = DialogField(key: "optional", label: "Reference", type: .file, required: false)
+        #expect(SyncWorkflowInputs.lastUsedName(photo, lastRun: last) == "me.jpg")
+        #expect(SyncWorkflowInputs.lastUsedName(folder, lastRun: last) == "Projects")
+        #expect(SyncWorkflowInputs.lastUsedName(topic, lastRun: last) == nil)
+        #expect(SyncWorkflowInputs.lastUsedName(relative, lastRun: last) == nil)
+        #expect(SyncWorkflowInputs.lastUsedName(optional, lastRun: last) == nil)
+        #expect(SyncWorkflowInputs.lastUsedName(photo, lastRun: nil) == nil)
+    }
+
+    @Test("from a run the phone started, only a file this Mac saved for it is reused, never the phone's own value")
+    func phoneRunsReuseOnlyWhatTheMacMade() {
+        let id = UUID()
+        let saved = SyncWorkflowInputs.phoneInputs(id).appendingPathComponent("abc/me.jpg").path
+        let folder = DialogField(key: "folder", label: "Folder", type: .folder)
+        let photo = DialogField(key: "photo", label: "Photo", type: .file)
+        let phoneRun = Self.run(
+            ["folder": .string("/Users/me/.ssh"), "photo": .string(saved)],
+            workflowId: id,
+            fromPhone: true
+        )
+        #expect(SyncWorkflowInputs.lastPath(folder, lastRun: phoneRun) == nil)
+        #expect(SyncWorkflowInputs.lastPath(photo, lastRun: phoneRun) == saved)
+        let escaping = Self.run(
+            ["photo": .string(SyncWorkflowInputs.phoneInputs(id).path + "/../../secret")],
+            workflowId: id,
+            fromPhone: true
+        )
+        #expect(SyncWorkflowInputs.lastPath(photo, lastRun: escaping) == nil)
     }
 }

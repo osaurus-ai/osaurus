@@ -155,10 +155,11 @@ enum SyncWorkflowOutput {
         func steps(stepLimit: Int, lean: Bool, bare: Int) -> (steps: [JSONValue], blobs: [AttachmentFile]) {
             var stepBlobs: [AttachmentFile] = []
             let steps = shown.enumerated().compactMap { index, node -> JSONValue? in
-                if index < bare { return .object(["id": .string(node.nodeID), "trimmed": .bool(true)]) }
+                // Pending before trimmed: the phone must tell a step not finished from one whose details were cut.
                 if finishedOnly, !finished(node) {
                     return .object(["id": .string(node.nodeID), "pending": .bool(true)])
                 }
+                if index < bare { return .object(["id": .string(node.nodeID), "trimmed": .bool(true)]) }
                 let entry = step(node) { name, value in
                     guard let bytes = encoded(value) else { return nil }
                     guard bytes.count > stepLimit else { return value }

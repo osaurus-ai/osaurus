@@ -733,6 +733,15 @@ final class SyncManageFeed {
             guard written else { return failed("failed", "The run's output couldn't be sent.") }
             return answered(["runId": payload.runId])
         case .runWorkflow:
+            // Checked before any attached file is fetched and saved: a start that would fail costs nothing.
+            let attached = Set((request.files ?? [:]).keys)
+            switch SyncWorkflowLibrary.precheck(workflowId: request.workflowId, attached: attached) {
+            case nil: break
+            case .notFound: return failed("workflow_not_found", "That workflow isn't on this Mac.")
+            case .blocked(let reason):
+                return failed("needs_setup", "Finish setting it up on your Mac first. \(reason)")
+            case .invalidInput(let reason): return failed("invalid_input", reason)
+            }
             var paths: [String: String] = [:]
             if let raw = request.workflowId, let id = UUID(uuidString: raw),
                 let workflow = InstalledWorkflowStore.shared.workflow(id: id)

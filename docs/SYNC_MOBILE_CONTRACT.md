@@ -748,10 +748,12 @@ app data `ai.osaurus.manage-workflows/1`, `{ "v": 1, "workflows": [ … ], "dige
 - `fields` is the input form the Mac's Run page shows, built from the input schema. Field
   `type`s are the dialog field types of §4 (`text`, `long_text`, `number`, `bool`, `choice`,
   `date`, `file`, `folder`).
-- `prefill` is the last run's input.
-- `lastUsed` (`workflow_file_inputs`), on a `file` or `folder` field, is the name of what the last
-  run used: the name only, never the path. A start from the phone that sends nothing for the field
-  reuses it, if it still exists on the Mac.
+- `prefill` is the last run's input, without its `file` and `folder` fields: a path stays on the Mac.
+- `lastUsed` (`workflow_file_inputs`), on a required `file` or `folder` field, is the name of what
+  the last run used: the name only, never the path. A start from the phone that sends nothing for the
+  field reuses that same path, if it still exists on the Mac; otherwise the start fails with
+  `invalid_input`. An optional field the phone sends nothing for is left empty. From a run the phone
+  started, only a file the Mac saved for it is reused.
 - `phoneStartable` is false when a required field is a `secret`, or a `file` or `folder` with no
   `lastUsed`. Those workflows are started on the Mac: `runWorkflow` for one is refused
   (`invalid_input`). A phone that sees `workflow_file_inputs` can still start one whose only such
