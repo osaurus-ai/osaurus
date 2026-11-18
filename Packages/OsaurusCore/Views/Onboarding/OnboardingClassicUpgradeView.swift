@@ -100,19 +100,14 @@ final class ClassicUpgradeState: ObservableObject {
         return true
     }
 
-    var rosterNames: String {
-        roster.map { $0.rawValue.capitalized }.formatted(.list(type: .and))
-    }
+    /// "3.68 GB" and how well it fits this Mac, as separate pieces so the
+    /// fit can take its own colour.
+    var raptorSize: String? { raptor?.formattedDownloadSize }
+    var raptorFit: String? { raptorCompatibility.flatMap(ConfigureAIState.fitLabel) }
+}
 
-    var raptorCaption: String {
-        var parts: [String] = []
-        if let size = raptor?.formattedDownloadSize { parts.append(L("A \(size) download.")) }
-        if let compatibility = raptorCompatibility, let fit = ConfigureAIState.fitLabel(compatibility) {
-            parts.append(fit + ".")
-        }
-        parts.append(L("Agents on an older Raptor switch to it once it's here."))
-        return parts.joined(separator: " ")
-    }
+private extension Teammate {
+    var displayName: String { rawValue.capitalized }
 }
 
 // MARK: - Chapter view
@@ -131,26 +126,42 @@ struct ClassicUpgradeChapterView: View {
 
     private var card: some View {
         VStack(alignment: .leading, spacing: theme.space.s0) {
+            carriedOver
+
+            Divider()
+                .overlay(OnboardingPalette.fill10)
+                .padding(.vertical, theme.space.s12)
+
+            Text("New in 1.0", bundle: .module)
+                .font(OnboardingTypography.badge)
+                .foregroundColor(OnboardingPalette.dinoGreenText)
+                .textCase(.uppercase)
+            Spacer().frame(height: theme.space.s4)
+            Text("Meet your starter team", bundle: .module)
+                .font(OnboardingTypography.cardTitle)
+                .foregroundColor(OnboardingPalette.labelPrimary)
+            Spacer().frame(height: theme.space.s6)
             Text(
-                "Your chats, agents, models, and settings are all here. Osaurus 1.0 adds a starter team and ready-made workflows.",
+                "Each teammate handles one part of your Mac, like your calendar, Mail, or files. Ask Osaurus anything and it passes the job to the right one.",
                 bundle: .module
             )
             .font(OnboardingTypography.subtitle)
-            .foregroundColor(OnboardingPalette.labelPrimary)
+            .foregroundColor(OnboardingPalette.labelSecondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            Spacer().frame(height: theme.space.s12)
-
             if !state.roster.isEmpty {
-                Text(verbatim: L("The team: \(state.rosterNames)."))
-                    .font(OnboardingTypography.cardCaption)
-                    .foregroundColor(OnboardingPalette.labelSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Spacer().frame(height: theme.space.s16)
+                teamStrip
             }
-            Text("Default workflows like Morning Brief and Mail Triage install with no schedule.", bundle: .module)
-                .font(OnboardingTypography.cardCaption)
-                .foregroundColor(OnboardingPalette.labelSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer().frame(height: theme.space.s16)
+            Text(
+                "Ready-made workflows come too, like Morning Brief and Mail Triage. They run only when you start them.",
+                bundle: .module
+            )
+            .font(OnboardingTypography.cardCaption)
+            .foregroundColor(OnboardingPalette.labelSecondary)
+            .fixedSize(horizontal: false, vertical: true)
 
             if state.raptor != nil {
                 Divider()
@@ -177,10 +188,18 @@ struct ClassicUpgradeChapterView: View {
                 )
             }
 
+            if !state.asksUsageConsent {
+                Spacer().frame(height: theme.space.s10)
+                Text("Keep my setup changes nothing. You can add the team later in Settings.", bundle: .module)
+                    .font(OnboardingTypography.footnote)
+                    .foregroundColor(OnboardingPalette.labelSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if state.asksUsageConsent {
                 Divider()
                     .overlay(OnboardingPalette.fill10)
-                    .padding(.vertical, theme.space.s16)
+                    .padding(.vertical, theme.space.s12)
 
                 OnboardingSwitchRow(
                     isOn: $state.shareUsageData,
@@ -195,23 +214,62 @@ struct ClassicUpgradeChapterView: View {
         .onboardingEntrance(1)
     }
 
+    /// What Classic left behind: all of it.
+    private var carriedOver: some View {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(OnboardingPalette.dinoGreenText)
+            Text("Your chats, agents, and settings came with you.", bundle: .module)
+                .font(OnboardingTypography.subtitle)
+                .foregroundColor(OnboardingPalette.labelPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The teammates as the sidebar will show them, each badged with its job.
+    private var teamStrip: some View {
+        HStack(alignment: .top, spacing: theme.space.s4) {
+            ForEach(state.roster, id: \.self) { teammate in
+                VStack(spacing: theme.space.s6) {
+                    OnboardingTeammateAvatar(
+                        mascotId: teammate.avatar.rawValue, name: teammate.displayName,
+                        roleSymbol: teammate.symbol, size: 36)
+                    Text(verbatim: teammate.displayName)
+                        .font(OnboardingTypography.cardCaption)
+                        .foregroundColor(OnboardingPalette.labelPrimary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity)
+                .help(teammate.role)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: "\(teammate.displayName), \(teammate.role)"))
+            }
+        }
+    }
+
     private var raptorRow: some View {
         VStack(alignment: .leading, spacing: theme.space.s6) {
             HStack(alignment: .center, spacing: theme.space.s12) {
                 VStack(alignment: .leading, spacing: theme.space.s2) {
-                    Text("Download Raptor 0.7", bundle: .module)
+                    Text("Get Raptor 0.7", bundle: .module)
                         .font(OnboardingTypography.optionTitle)
                         .foregroundColor(OnboardingPalette.labelPrimary)
-                    Text(verbatim: state.raptorCaption)
-                        .font(OnboardingTypography.cardCaption)
-                        .foregroundColor(OnboardingPalette.labelSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    raptorFacts
                 }
                 Spacer(minLength: 0)
-                Toggle(isOn: $state.downloadRaptor) { Text("Download Raptor 0.7", bundle: .module) }
+                Toggle(isOn: $state.downloadRaptor) { Text("Get Raptor 0.7", bundle: .module) }
                     .settingsSwitch()
             }
             .accessibilityElement(children: .combine)
+
+            Text(
+                "The newest local model built for Osaurus agents. Agents on an older Raptor move to it once it's downloaded.",
+                bundle: .module
+            )
+            .font(OnboardingTypography.cardCaption)
+            .foregroundColor(OnboardingPalette.labelSecondary)
+            .fixedSize(horizontal: false, vertical: true)
 
             if let warning = state.diskWarning {
                 Text(verbatim: warning)
@@ -220,5 +278,25 @@ struct ClassicUpgradeChapterView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// "3.68 GB · Runs smoothly here", the fit tinted when it is tight.
+    @ViewBuilder
+    private var raptorFacts: some View {
+        HStack(spacing: theme.space.s4) {
+            if let size = state.raptorSize {
+                Text(verbatim: size)
+                    .foregroundColor(OnboardingPalette.labelSecondary)
+            }
+            if state.raptorSize != nil, state.raptorFit != nil {
+                Text(verbatim: "·").foregroundColor(OnboardingPalette.labelSecondary).accessibilityHidden(true)
+            }
+            if let fit = state.raptorFit {
+                Text(verbatim: fit)
+                    .foregroundColor(
+                        state.raptorCompatibility == .tight ? OnboardingPalette.fitTight : OnboardingPalette.dinoGreenText)
+            }
+        }
+        .font(OnboardingTypography.cardCaption)
     }
 }

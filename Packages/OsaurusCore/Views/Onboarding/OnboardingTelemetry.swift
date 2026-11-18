@@ -118,7 +118,7 @@ enum OnboardingTelemetry {
     /// `finishOnboarding` finalizes the decline.
     ///
     /// The Classic upgrade screen adds `raptor_download`: whether its
-    /// Download Raptor 0.7 switch started a download.
+    /// Get Raptor 0.7 switch started a download.
     static func completed(
         lastStep: OnboardingStep,
         via: Completion,

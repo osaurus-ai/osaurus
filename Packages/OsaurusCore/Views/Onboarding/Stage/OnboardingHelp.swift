@@ -23,7 +23,7 @@ enum OnboardingHelp {
         /// Connecting an AI account or key.
         case ownAccount
         /// The upgrade screen after updating from Classic, with or without
-        /// its Download Raptor 0.7 switch.
+        /// its Get Raptor 0.7 switch.
         case classicUpgrade(offersRaptor: Bool)
     }
 
@@ -75,14 +75,14 @@ enum OnboardingHelp {
             ]
         case .classicUpgrade(let offersRaptor):
             var pages = [
-                L("Welcome back! Your chats, agents, models, and settings all came with you to Osaurus 1.0."),
-                L("New in 1.0: a starter team. Each teammate works with one app or folder, like Calendar, Mail, or the web."),
-                L("Add starter team creates them and some ready-made workflows, with no schedules. Keep my setup leaves everything just as it is."),
-                L("Changed your mind later? Create starter agents in Settings, under Agents and Delegation, makes the same team."),
+                L("Welcome back! Everything you had came with you: your chats, agents, models, and settings. Nothing was reset."),
+                L("The big new thing in 1.0 is a team. Each teammate handles one part of your Mac, like your calendar, Mail, files, or the web. Ask me anything and I'll pass the job to the right one."),
+                L("Workflows are ready-made routines, like a Morning Brief or Mail Triage. They run only when you start them, until you give them a schedule."),
+                L("Not sure yet? Keep my setup leaves everything exactly as it is. You can add the same team later with Create starter agents in Settings, under Agents and Delegation."),
             ]
             if offersRaptor {
                 pages.append(
-                    L("Raptor 0.7 is the new Osaurus model for this Mac. Agents still on an older Raptor switch to it once it finishes downloading."))
+                    L("Raptor 0.7 is the newest local model built for Osaurus agents. It downloads in the background, and agents still on an older Raptor switch to it when it's done."))
             }
             return pages
         }

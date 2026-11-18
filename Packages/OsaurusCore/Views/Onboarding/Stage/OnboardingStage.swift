@@ -41,7 +41,7 @@ final class OnboardingStage: ObservableObject {
         self.scene = scene
         greetingLines =
             classicUpgrade
-            ? [L("Welcome to Osaurus 1.0."), L("Everything came with you.")]
+            ? [L("Welcome back."), L("Meet Osaurus 1.0.")]
             : [scene.greeting, L("Meet Osaurus.")]
     }
 

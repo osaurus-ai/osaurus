@@ -94,7 +94,7 @@ struct OnboardingStageTests {
     /// The upgrade screen greets someone who has met Osaurus, and its help
     /// names Raptor 0.7 only when the card offers it.
     @Test func theClassicUpgradeScreen_welcomesBack_andMentionsRaptorOnlyWhenOffered() {
-        #expect(OnboardingStage(scene: .day, classicUpgrade: true).greetingLines.first == "Welcome to Osaurus 1.0.")
+        #expect(OnboardingStage(scene: .day, classicUpgrade: true).greetingLines == ["Welcome back.", "Meet Osaurus 1.0."])
         #expect(OnboardingStage(scene: .day).greetingLines.last == "Meet Osaurus.")
         let without = OnboardingHelp.pages(.classicUpgrade(offersRaptor: false), pick: nil)
         let with = OnboardingHelp.pages(.classicUpgrade(offersRaptor: true), pick: nil)

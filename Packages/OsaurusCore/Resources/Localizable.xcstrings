@@ -422,34 +422,6 @@
         }
       }
     },
-    "A %@ download." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ein Download von %@."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ 다운로드."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Загрузка %@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需下载 %@。"
-          }
-        }
-      }
-    },
     "Add starter team" : {
       "localizations" : {
         "de" : {
@@ -474,62 +446,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加入门团队"
-          }
-        }
-      }
-    },
-    "Add starter team creates them and some ready-made workflows, with no schedules. Keep my setup leaves everything just as it is." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "„Starter-Team hinzufügen“ erstellt sie und einige fertige Workflows, ohne Zeitpläne. „Meine Einrichtung behalten“ lässt alles, wie es ist."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "스타터 팀 추가를 누르면 팀원과 바로 쓸 수 있는 워크플로가 일정 없이 만들어져요. 기존 설정 유지를 누르면 모든 것이 그대로 남아요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "«Добавить стартовую команду» создаёт её и несколько готовых рабочих процессов без расписаний. «Оставить как есть» ничего не меняет."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "“添加入门团队”会创建队友和一些现成的工作流，不设计划。“保留我的设置”则一切保持原样。"
-          }
-        }
-      }
-    },
-    "Agents on an older Raptor switch to it once it's here." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Agenten mit einem älteren Raptor wechseln dazu, sobald er da ist."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이전 Raptor를 쓰는 에이전트는 다운로드가 끝나면 이 모델로 바뀌어요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Агенты на старом Raptor перейдут на него, как только он загрузится."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用旧版 Raptor 的智能体会在下载完成后切换到它。"
           }
         }
       }
@@ -603,34 +519,6 @@
     "Available now" : {
 
     },
-    "Changed your mind later? Create starter agents in Settings, under Agents and Delegation, makes the same team." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Später umentschieden? „Starter-Agenten erstellen“ in den Einstellungen unter Agenten und Delegation erstellt dasselbe Team."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "나중에 마음이 바뀌었나요? 설정의 에이전트 > 위임에서 스타터 에이전트 만들기를 누르면 같은 팀이 만들어져요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Передумали? Кнопка «Создать стартовых агентов» в настройках, в разделе «Агенты» → «Делегирование», создаёт ту же команду."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "之后改变主意了？在设置的“智能体”>“委派”中点按“创建入门智能体”，就能创建同样的团队。"
-          }
-        }
-      }
-    },
     "Close other apps or unload models, then try again." : {
 
     },
@@ -642,34 +530,6 @@
     },
     "Critical" : {
 
-    },
-    "Default workflows like Morning Brief and Mail Triage install with no schedule." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Standard-Workflows wie Morning Brief und Mail Triage werden ohne Zeitplan installiert."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Morning Brief, Mail Triage 같은 기본 워크플로는 일정 없이 설치돼요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Стандартные рабочие процессы, например Morning Brief и Mail Triage, устанавливаются без расписания."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Morning Brief、Mail Triage 等默认工作流安装后不会按计划运行。"
-          }
-        }
-      }
     },
     "Domain" : {
       "localizations" : {
@@ -691,64 +551,36 @@
         }
       }
     },
-    "Download Raptor 0.7" : {
+    "Each teammate handles one part of your Mac, like your calendar, Mail, or files. Ask Osaurus anything and it passes the job to the right one." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Raptor 0.7 laden"
+            "value" : "Jedes Teammitglied kümmert sich um einen Teil deines Macs, etwa Kalender, Mail oder Dateien. Frag Osaurus einfach, und es gibt die Aufgabe an das richtige weiter."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Raptor 0.7 다운로드"
+            "value" : "팀원마다 캘린더, 메일, 파일처럼 Mac의 한 부분을 맡아요. Osaurus에게 무엇이든 물어보면 알맞은 팀원에게 일을 넘겨요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Скачать Raptor 0.7"
+            "value" : "Каждый участник отвечает за свою часть Mac: календарь, Почту или файлы. Спросите Osaurus о чём угодно, и он передаст задачу нужному участнику."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "下载 Raptor 0.7"
+            "value" : "每位队友负责 Mac 的一部分，比如日历、邮件或文件。向 Osaurus 提出任何请求，它都会把任务交给合适的队友。"
           }
         }
       }
     },
     "Elevated" : {
 
-    },
-    "Everything came with you." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Alles ist mitgekommen."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "모든 것이 그대로 옮겨졌어요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Всё осталось на месте."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "你的一切都还在。"
-          }
-        }
-      }
     },
     "Exact value" : {
       "localizations" : {
@@ -782,6 +614,34 @@
     "Freed %@ of cached memory. Trying again…" : {
 
     },
+    "Get Raptor 0.7" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Raptor 0.7 laden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Raptor 0.7 받기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скачать Raptor 0.7"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "获取 Raptor 0.7"
+          }
+        }
+      }
+    },
     "Keep my setup" : {
       "localizations" : {
         "de" : {
@@ -810,6 +670,34 @@
         }
       }
     },
+    "Keep my setup changes nothing. You can add the team later in Settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„Meine Einrichtung behalten“ ändert nichts. Du kannst das Team später in den Einstellungen hinzufügen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기존 설정 유지를 누르면 아무것도 바뀌지 않아요. 팀은 나중에 설정에서 추가할 수 있어요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«Оставить как есть» ничего не меняет. Команду можно добавить позже в настройках."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“保留我的设置”不会做任何更改。你之后可以在设置中添加团队。"
+          }
+        }
+      }
+    },
     "Kept free for macOS" : {
 
     },
@@ -821,6 +709,62 @@
     },
     "Max Tool Attempts sets how many steps one run may take." : {
 
+    },
+    "Meet Osaurus 1.0." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das ist Osaurus 1.0."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 1.0을 만나보세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Знакомьтесь, Osaurus 1.0."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "认识一下 Osaurus 1.0。"
+          }
+        }
+      }
+    },
+    "Meet your starter team" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lerne dein Starter-Team kennen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스타터 팀을 만나보세요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Знакомьтесь со стартовой командой"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "认识你的入门团队"
+          }
+        }
+      }
     },
     "Memory estimate unavailable" : {
 
@@ -849,30 +793,30 @@
     "Needed for this run" : {
 
     },
-    "New in 1.0: a starter team. Each teammate works with one app or folder, like Calendar, Mail, or the web." : {
+    "New in 1.0" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Neu in 1.0: ein Starter-Team. Jedes Teammitglied arbeitet mit einer App oder einem Ordner, etwa Kalender, Mail oder dem Web."
+            "value" : "Neu in 1.0"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "1.0의 새 기능: 스타터 팀. 팀원마다 캘린더, 메일, 웹처럼 앱이나 폴더 하나를 맡아요."
+            "value" : "1.0의 새 기능"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Новое в 1.0: стартовая команда. Каждый участник работает с одним приложением или папкой — Календарём, Почтой или вебом."
+            "value" : "Новое в 1.0"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "1.0 新功能：入门团队。每位队友负责一个应用或文件夹，比如日历、邮件或网页。"
+            "value" : "1.0 新功能"
           }
         }
       }
@@ -882,6 +826,34 @@
     },
     "Not enough memory" : {
 
+    },
+    "Not sure yet? Keep my setup leaves everything exactly as it is. You can add the same team later with Create starter agents in Settings, under Agents and Delegation." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch unsicher? „Meine Einrichtung behalten“ lässt alles genau so, wie es ist. Dasselbe Team kannst du später mit „Starter-Agenten erstellen“ in den Einstellungen unter Agenten und Delegation hinzufügen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 고민 중이세요? 기존 설정 유지를 누르면 모든 것이 지금 그대로 남아요. 같은 팀은 나중에 설정의 에이전트 > 위임에서 스타터 에이전트 만들기로 추가할 수 있어요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ещё не решили? «Оставить как есть» ничего не меняет. Ту же команду можно добавить позже кнопкой «Создать стартовых агентов» в настройках, в разделе «Агенты» → «Делегирование»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没想好？“保留我的设置”会让一切保持原样。之后你可以在设置的“智能体”>“委派”中点按“创建入门智能体”，添加同样的团队。"
+          }
+        }
+      }
     },
     "Nothing was changed. Free up memory, then try again." : {
 
@@ -895,30 +867,58 @@
     "Parallel helper limit" : {
 
     },
-    "Raptor 0.7 is the new Osaurus model for this Mac. Agents still on an older Raptor switch to it once it finishes downloading." : {
+    "Raptor 0.7 is the newest local model built for Osaurus agents. It downloads in the background, and agents still on an older Raptor switch to it when it's done." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Raptor 0.7 ist das neue Osaurus-Modell für diesen Mac. Agenten mit einem älteren Raptor wechseln dazu, sobald der Download fertig ist."
+            "value" : "Raptor 0.7 ist das neueste lokale Modell für Osaurus-Agenten. Es lädt im Hintergrund, und Agenten mit einem älteren Raptor wechseln dazu, sobald es fertig ist."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Raptor 0.7은 이 Mac을 위한 새 Osaurus 모델이에요. 이전 Raptor를 쓰는 에이전트는 다운로드가 끝나면 이 모델로 바뀌어요."
+            "value" : "Raptor 0.7은 Osaurus 에이전트를 위해 만든 최신 로컬 모델이에요. 백그라운드에서 다운로드되고, 끝나면 이전 Raptor를 쓰는 에이전트가 이 모델로 바뀌어요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Raptor 0.7 — новая модель Osaurus для этого Mac. Агенты на старом Raptor перейдут на неё, когда загрузка завершится."
+            "value" : "Raptor 0.7 — новейшая локальная модель для агентов Osaurus. Она загружается в фоне, и агенты на старом Raptor перейдут на неё, когда загрузка завершится."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Raptor 0.7 是适用于这台 Mac 的全新 Osaurus 模型。仍在使用旧版 Raptor 的智能体会在下载完成后切换到它。"
+            "value" : "Raptor 0.7 是专为 Osaurus 智能体打造的最新本地模型。它会在后台下载，完成后仍在使用旧版 Raptor 的智能体会切换到它。"
+          }
+        }
+      }
+    },
+    "Ready-made workflows come too, like Morning Brief and Mail Triage. They run only when you start them." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dazu kommen fertige Workflows wie Morning Brief und Mail Triage. Sie laufen nur, wenn du sie startest."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Morning Brief, Mail Triage 같은 바로 쓸 수 있는 워크플로도 함께 추가돼요. 직접 시작할 때만 실행돼요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Также добавятся готовые рабочие процессы, например Morning Brief и Mail Triage. Они запускаются только по вашей команде."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还会附带现成的工作流，比如 Morning Brief 和 Mail Triage。只有你启动时它们才会运行。"
           }
         }
       }
@@ -926,114 +926,170 @@
     "Redact %@" : {
 
     },
-    "The team: %@." : {
+    "The big new thing in 1.0 is a team. Each teammate handles one part of your Mac, like your calendar, Mail, files, or the web. Ask me anything and I'll pass the job to the right one." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Das Team: %@."
+            "value" : "Das große Neue in 1.0 ist ein Team. Jedes Teammitglied kümmert sich um einen Teil deines Macs, etwa Kalender, Mail, Dateien oder das Web. Frag mich einfach, und ich gebe die Aufgabe an das richtige weiter."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "팀: %@."
+            "value" : "1.0에서 가장 크게 달라진 건 팀이에요. 팀원마다 캘린더, 메일, 파일, 웹처럼 Mac의 한 부분을 맡아요. 저에게 무엇이든 물어보면 알맞은 팀원에게 일을 넘길게요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Команда: %@."
+            "value" : "Главное новое в 1.0 — команда. Каждый участник отвечает за свою часть Mac: календарь, Почту, файлы или веб. Спросите меня о чём угодно, и я передам задачу нужному участнику."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "团队：%@。"
+            "value" : "1.0 最大的新变化是团队。每位队友负责 Mac 的一部分，比如日历、邮件、文件或网页。有什么尽管问我，我会把任务交给合适的队友。"
           }
         }
       }
     },
-    "Welcome back! Your chats, agents, models, and settings all came with you to Osaurus 1.0." : {
+    "The newest local model built for Osaurus agents. Agents on an older Raptor move to it once it's downloaded." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Willkommen zurück! Deine Chats, Agenten, Modelle und Einstellungen sind alle mit zu Osaurus 1.0 gekommen."
+            "value" : "Das neueste lokale Modell für Osaurus-Agenten. Agenten mit einem älteren Raptor wechseln dazu, sobald es geladen ist."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "다시 오신 걸 환영해요! 채팅, 에이전트, 모델, 설정이 모두 Osaurus 1.0으로 함께 옮겨졌어요."
+            "value" : "Osaurus 에이전트를 위해 만든 최신 로컬 모델이에요. 이전 Raptor를 쓰는 에이전트는 다운로드가 끝나면 이 모델로 바뀌어요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "С возвращением! Ваши чаты, агенты, модели и настройки перешли в Osaurus 1.0 вместе с вами."
+            "value" : "Новейшая локальная модель для агентов Osaurus. Агенты на старом Raptor перейдут на неё после загрузки."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "欢迎回来！你的聊天、智能体、模型和设置都已随你来到 Osaurus 1.0。"
+            "value" : "专为 Osaurus 智能体打造的最新本地模型。使用旧版 Raptor 的智能体会在下载完成后切换到它。"
           }
         }
       }
     },
-    "Welcome to Osaurus 1.0." : {
+    "Welcome back! Everything you had came with you: your chats, agents, models, and settings. Nothing was reset." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Willkommen bei Osaurus 1.0."
+            "value" : "Willkommen zurück! Alles ist mitgekommen: deine Chats, Agenten, Modelle und Einstellungen. Nichts wurde zurückgesetzt."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 1.0에 오신 것을 환영해요."
+            "value" : "다시 오신 걸 환영해요! 채팅, 에이전트, 모델, 설정까지 모두 그대로 옮겨졌어요. 초기화된 건 없어요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Добро пожаловать в Osaurus 1.0."
+            "value" : "С возвращением! Всё перенесено: ваши чаты, агенты, модели и настройки. Ничего не сброшено."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "欢迎使用 Osaurus 1.0。"
+            "value" : "欢迎回来！你的一切都已保留：聊天、智能体、模型和设置。没有任何内容被重置。"
           }
         }
       }
     },
-    "Your chats, agents, models, and settings are all here. Osaurus 1.0 adds a starter team and ready-made workflows." : {
+    "Welcome back." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Deine Chats, Agenten, Modelle und Einstellungen sind alle da. Osaurus 1.0 bringt ein Starter-Team und fertige Workflows mit."
+            "value" : "Willkommen zurück."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "채팅, 에이전트, 모델, 설정이 모두 그대로 있어요. Osaurus 1.0에는 스타터 팀과 바로 쓸 수 있는 워크플로가 추가됐어요."
+            "value" : "다시 오신 걸 환영해요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ваши чаты, агенты, модели и настройки на месте. В Osaurus 1.0 появились стартовая команда и готовые рабочие процессы."
+            "value" : "С возвращением."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你的聊天、智能体、模型和设置都还在。Osaurus 1.0 新增了入门团队和现成的工作流。"
+            "value" : "欢迎回来。"
+          }
+        }
+      }
+    },
+    "Workflows are ready-made routines, like a Morning Brief or Mail Triage. They run only when you start them, until you give them a schedule." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Workflows sind fertige Abläufe, etwa ein Morning Brief oder Mail Triage. Sie laufen nur, wenn du sie startest, bis du ihnen einen Zeitplan gibst."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "워크플로는 Morning Brief나 Mail Triage 같은 미리 만들어진 루틴이에요. 일정을 정해 주기 전까지는 직접 시작할 때만 실행돼요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рабочие процессы — это готовые сценарии, например Morning Brief или Mail Triage. Пока вы не зададите расписание, они запускаются только по вашей команде."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作流是现成的例行任务，比如 Morning Brief 或 Mail Triage。在你为它们设定计划之前，只有你启动时才会运行。"
+          }
+        }
+      }
+    },
+    "Your chats, agents, and settings came with you." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Chats, Agenten und Einstellungen sind mitgekommen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅, 에이전트, 설정이 모두 그대로 옮겨졌어요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваши чаты, агенты и настройки перенесены."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的聊天、智能体和设置都已保留。"
           }
         }
       }

@@ -45,7 +45,7 @@ Classic until Classic support ends.
 ## The upgrade screen
 
 The first launch of 1.0 opens the onboarding window once, on an upgrade
-screen (**Welcome to Osaurus 1.0.**), when onboarding was finished before, the
+screen (**Welcome back. Meet Osaurus 1.0.**), when onboarding was finished before, the
 install was never given the starter team, and no teammate agent exists. It
 also reaches beta users who updated earlier and still have no team.
 
@@ -56,7 +56,7 @@ also reaches beta users who updated earlier and still have no team.
 - **Keep my setup**, or **Skip setup**, creates nothing and changes no model,
   agent, or credit. **Create starter agents** in Agents → Delegation adds the
   team later.
-- **Download Raptor 0.7.** Sparkle installs the light app, so Raptor 0.7 is
+- **Get Raptor 0.7.** Sparkle installs the light app, so Raptor 0.7 is
   not on disk. When it fits the Mac, the card has a switch (on when it runs
   smoothly, off when it would be tight) that downloads it with either button.
   Nothing is pointed at it while it downloads. Once it lands, the
