@@ -1398,7 +1398,7 @@ extension ModelManager {
     /// them as plain non-curated rows, defeating the removal — so the merge in
     /// `applyOsaurusOrgFetch` drops any auto-fetched entry whose id is in this
     /// set. Lowercased for matching.
-    nonisolated static let retiredOsaurusOrgIds: Set<String> = [
+    nonisolated static let retiredOsaurusOrgIds: Set<String> = Set([
         "osaurusai/qwen3.5-122b-a10b-jang_4k",
         "osaurusai/qwen3.5-122b-a10b-jang_2s",
         "osaurusai/qwen3.5-35b-a3b-jang_4k",
@@ -1414,9 +1414,15 @@ extension ModelManager {
         // a re-upload or stale org listing cannot re-surface a dead download.
         "osaurusai/ornith-1.0-9b-mxfp8",
         "osaurusai/ornith-1.0-35b-mxfp8",
+    ]).union(retiredRaptorIds)
+
+    /// Raptor versions earlier builds (Classic) offered, superseded by
+    /// Raptor 0.7. Hidden from the catalog; installed copies still load from
+    /// the local scan, and `RaptorUpgrade` moves agents on them to 0.7.
+    /// Lowercased for matching.
+    nonisolated static let retiredRaptorIds: Set<String> = [
         // Raptor v0.5 8B-A1B is superseded by Raptor 0.6 4B (smaller, faster,
-        // better quality). Hidden from the catalog; installed copies still
-        // load from the local scan.
+        // better quality).
         "osaurusai/raptor-v0.5-8b-a1b-jang_6m",
         // Raptor 0.6 4B is superseded by Raptor 0.7 4B, the onboarding model
         // and the one bundled in the full DMG.

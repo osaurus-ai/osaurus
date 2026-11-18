@@ -35,9 +35,14 @@ final class OnboardingStage: ObservableObject {
     static let helloX: CGFloat = 230
     static let brainX: CGFloat = 170
 
-    init(scene: OnboardingScene = .current()) {
+    /// `classicUpgrade` greets someone who updated from Classic: they have
+    /// met Osaurus already.
+    init(scene: OnboardingScene = .current(), classicUpgrade: Bool = false) {
         self.scene = scene
-        greetingLines = [scene.greeting, L("Meet Osaurus.")]
+        greetingLines =
+            classicUpgrade
+            ? [L("Welcome to Osaurus 1.0."), L("Everything came with you.")]
+            : [scene.greeting, L("Meet Osaurus.")]
     }
 
     var greetingText: String { greetingLines.joined(separator: " ") }

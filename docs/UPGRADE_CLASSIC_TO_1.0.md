@@ -30,10 +30,9 @@ Classic until Classic support ends.
   Classic opens a newer stamp. Memory and Knowledge schemas are unchanged.
 - Schedules, watchers, and channel inbound routes. `EventMigration` copies
   them into `events/` once, as automations, and leaves the originals.
-- Onboarding. Someone who finished it on any build since 0.9.7 does not see
-  it again, and no starter teammates or default workflows are added to
-  their library (**Create starter agents** in Agents → Delegation adds the
-  team on request). What's New is gone.
+- Onboarding. Someone who finished it on any earlier build does not see the
+  full onboarding again; see [The upgrade screen](#the-upgrade-screen).
+  What's New is gone.
 - Custom themes. `ClassicThemeMigrator` converts each Classic theme once into
   the 1.0 theme library (`~/.osaurus/themes/library`), keeping its id: the
   tone and accent are matched from its colors, and fonts, text sizes, corner
@@ -42,6 +41,30 @@ Classic until Classic support ends.
   default Osaurus theme in that appearance, Neon to Osaurus Dark, and Nord,
   Paper and Terminal to the 1.0 presets of the same name. The Classic files
   are left in place. See [THEMES.md](THEMES.md).
+
+## The upgrade screen
+
+The first launch of 1.0 opens the onboarding window once, on an upgrade
+screen (**Welcome to Osaurus 1.0.**), when onboarding was finished before, the
+install was never given the starter team, and no teammate agent exists. It
+also reaches beta users who updated earlier and still have no team.
+
+- **Add starter team** creates Planner, Courier, Keeper and Scout (Builder
+  too on a developer Mac) and the default workflows, with no schedules, then
+  starts the first-run walkthrough in a new chat. The Privacy Filter is left
+  as it was. If the Orchestrator has no model, the Model step runs first.
+- **Keep my setup**, or **Skip setup**, creates nothing and changes no model,
+  agent, or credit. **Create starter agents** in Agents → Delegation adds the
+  team later.
+- **Download Raptor 0.7.** Sparkle installs the light app, so Raptor 0.7 is
+  not on disk. When it fits the Mac, the card has a switch (on when it runs
+  smoothly, off when it would be tight) that downloads it with either button.
+  Nothing is pointed at it while it downloads. Once it lands, the
+  Orchestrator, custom agents (not ones with Lock Model on), and the model new
+  agents start with move to Raptor 0.7 only if they were on Raptor v0.5 or 0.6
+  (`raptorUpgradePending` stays set until then).
+- The choice is stored in UserDefaults as `classicUpgradeChoice`
+  (`installed` or `kept`), so the screen opens once.
 
 ## Changes on first use
 

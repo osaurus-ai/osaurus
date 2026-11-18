@@ -489,7 +489,8 @@ name/index and a completion reason. They are defined in
 
 **Note on `step_index` (1.0).** The 1.0 onboarding window has two steps,
 `welcome` (index 0) and `configure_ai` (index 1); the rest of setup moved to
-the first-run chat below. Earlier versions had more steps, so the same index
+the first-run chat below. An install updated from Classic opens on
+`classic_upgrade` (index 2) instead of `welcome`. Earlier versions had more steps, so the same index
 named a different step. Key funnels on `step`, which is stable across
 versions, not on `step_index`.
 
@@ -504,10 +505,19 @@ sheet over the first-run chat, for people who left the window without a
 model). No key, model id, or URL is ever attached.
 
 `team_seeded` fires when the day-one team is created: `source` is
-`fresh_install` (end of onboarding) or `starter_agents` (Settings' Create
-Starter Agents); `teammates` and `workflows` count what was created;
+`fresh_install` (end of onboarding), `classic_upgrade` (Add starter team on
+the upgrade screen after updating from Classic), or `starter_agents`
+(Settings' Create Starter Agents); a seed that made nobody adds `_failed`
+to the first two. `teammates` and `workflows` count what was created;
 `developer_mac` is whether this Mac got Builder and Repo Digest. The
 teammates themselves arrive as `agent_created` with `origin=team_seed`.
+
+The Classic upgrade screen reports through the same funnel: its step is
+`classic_upgrade`, and `onboarding_completed` has `via` `classic_install`
+(Add starter team) or `classic_keep` (Keep my setup or Skip setup), plus
+boolean `raptor_download` — whether its Download Raptor 0.7 switch started
+a download. `raptor_upgrade_applied` fires once that download has landed,
+with `agents`: how many agents on a retired Raptor moved to Raptor 0.7.
 
 #### First run in chat and discovery
 

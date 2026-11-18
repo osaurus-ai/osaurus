@@ -81,11 +81,25 @@ struct OnboardingStageTests {
         reason: "It runs smoothly with your Mac's 32 GB of memory and leaves room for your other apps.")
 
     @Test func everyStepHasSeveralPagesOfHelp() {
-        for topic: OnboardingHelp.Topic in [.welcome, .paths, .localModel, .ownAccount] {
+        for topic: OnboardingHelp.Topic in [
+            .welcome, .paths, .localModel, .ownAccount, .classicUpgrade(offersRaptor: false),
+            .classicUpgrade(offersRaptor: true),
+        ] {
             let pages = OnboardingHelp.pages(topic, pick: Self.pick)
             #expect(pages.count >= 3, "\(topic)")
             #expect(pages.allSatisfy { !$0.isEmpty }, "\(topic)")
         }
+    }
+
+    /// The upgrade screen greets someone who has met Osaurus, and its help
+    /// names Raptor 0.7 only when the card offers it.
+    @Test func theClassicUpgradeScreen_welcomesBack_andMentionsRaptorOnlyWhenOffered() {
+        #expect(OnboardingStage(scene: .day, classicUpgrade: true).greetingLines.first == "Welcome to Osaurus 1.0.")
+        #expect(OnboardingStage(scene: .day).greetingLines.last == "Meet Osaurus.")
+        let without = OnboardingHelp.pages(.classicUpgrade(offersRaptor: false), pick: nil)
+        let with = OnboardingHelp.pages(.classicUpgrade(offersRaptor: true), pick: nil)
+        #expect(!without.contains { $0.contains("Raptor") })
+        #expect(with.last?.contains("Raptor 0.7") == true)
     }
 
     /// The model step explains what a model is before anything else, and

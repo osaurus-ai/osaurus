@@ -348,6 +348,33 @@ struct TeamSeedingTests {
         }
     }
 
+    /// Add Starter Team on the Classic upgrade screen: the same team and
+    /// workflows, but an existing setup keeps its Privacy Filter as it was.
+    @Test
+    func seedClassicUpgrade_makesTheTeamAndWorkflows_marksSeeded_andLeavesThePrivacyFilterAlone() async throws {
+        try await withIsolatedTeam { folder in
+            let defaults = try #require(UserDefaults(suiteName: "team-seed-\(UUID().uuidString)"))
+            PrivacyFilterStore.setOverrideDirectory(folder)
+            defer { PrivacyFilterStore.setOverrideDirectory(nil) }
+            let before = Set(InstalledWorkflowStore.shared.workflows.map(\.id))
+
+            let created = await TeamSeeder.seedClassicUpgrade(
+                .init(developerMac: false, brainIsLocal: false), defaults: defaults)
+            #expect(created.compactMap(\.teammate) == [.planner, .courier, .keeper, .scout])
+            #expect(TeamSeeder.hasSeeded(defaults))
+
+            let installed = InstalledWorkflowStore.shared.workflows.filter { !before.contains($0.id) }
+            #expect(installed.count == 6)
+            #expect(installed.allSatisfy { $0.orchestratorVisible })
+            #expect(PrivacyFilterStore.load() == nil, "no Privacy Filter file is written for an upgrade")
+
+            #expect(
+                await TeamSeeder.seedClassicUpgrade(.init(developerMac: false, brainIsLocal: false), defaults: defaults)
+                    .isEmpty, "it runs once")
+            for workflow in installed { InstalledWorkflowStore.shared.delete(id: workflow.id) }
+        }
+    }
+
     /// A seed that made nobody leaves the install unseeded, so the Create
     /// Your Team card can still offer the team; an empty roster by choice,
     /// or any teammate it asked for, counts.
