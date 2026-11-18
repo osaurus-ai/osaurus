@@ -75,6 +75,8 @@ app: cli
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-js-host"
 	@echo "Bundling sandbox kernel (Resources/SandboxRuntime)…"
 	./scripts/build/fetch_sandbox_kernel.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Resources/SandboxRuntime"
+	@echo "Stripping unused GPL LuxTTS G2P data…"
+	./scripts/build/strip_luxtts_g2p.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app"
 
 install-cli: cli
 	@echo "Installing CLI symlink…"
