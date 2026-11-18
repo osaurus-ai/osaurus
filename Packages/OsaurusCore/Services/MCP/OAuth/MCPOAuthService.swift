@@ -41,6 +41,9 @@ public enum MCPOAuthError: LocalizedError, Sendable {
     case canonicalResourceFailed
     case invalidTokenResponse
     case tokenRequestFailed(Int, String?)
+    /// The token endpoint answered with an OAuth error in the body, which
+    /// Slack and GitHub do with HTTP 200.
+    case tokenError(error: String, description: String?)
     case discovery(MCPOAuthDiscoveryError)
     case registration(MCPOAuthRegistrationError)
     case loopback(OAuthLoopbackError)
@@ -68,6 +71,11 @@ public enum MCPOAuthError: LocalizedError, Sendable {
                 return "OAuth token request failed with HTTP \(code): \(body)"
             }
             return "OAuth token request failed with HTTP \(code)"
+        case .tokenError(let error, let description):
+            if let description, !description.isEmpty {
+                return "The service refused the token request: \(error) (\(description))"
+            }
+            return "The service refused the token request: \(error)"
         case .discovery(let inner): return inner.errorDescription
         case .registration(let inner): return inner.errorDescription
         case .loopback(let inner): return inner.errorDescription
@@ -314,12 +322,14 @@ public enum MCPOAuthService {
     public static func refresh(
         provider: MCPProvider,
         tokens: MCPOAuthTokens,
-        persist: Bool = true
+        persist: Bool = true,
+        session: UUID? = nil
     ) async throws -> MCPOAuthTokens {
         try await MCPOAuthRefreshGate.shared.refresh(
             provider: provider,
             tokens: tokens,
-            persist: persist
+            persist: persist,
+            session: session
         )
     }
 
@@ -327,7 +337,8 @@ public enum MCPOAuthService {
     static func performRefresh(
         provider: MCPProvider,
         tokens: MCPOAuthTokens,
-        persist: Bool
+        persist: Bool,
+        session: UUID? = nil
     ) async throws -> MCPOAuthTokens {
         guard let oauth = provider.oauth else {
             throw MCPOAuthError.missingClientId
@@ -375,7 +386,7 @@ public enum MCPOAuthService {
             expiresAt: raw.expiresAt,
             scope: raw.scope ?? tokens.scope
         )
-        if persist, !MCPProviderKeychain.saveOAuthTokens(refreshed, for: provider.id),
+        if persist, !MCPProviderKeychain.saveOAuthTokens(refreshed, for: provider.id, session: session),
             !KeychainQueryHelpers.disablesKeychainForProcess {
             // The refreshed tokens still serve this request; what failed is
             // relaunch durability (and rotated refresh tokens may be lost).
@@ -387,6 +398,9 @@ public enum MCPOAuthService {
     /// True when a token-endpoint failure means cached credentials are permanently
     /// invalid and the user must sign in again (`invalid_grant`, `invalid_token`).
     public static func isPermanentAuthFailure(_ error: Error) -> Bool {
+        if case MCPOAuthError.tokenError(let code, _) = error {
+            return code == "invalid_grant" || code == "invalid_token"
+        }
         guard case MCPOAuthError.tokenRequestFailed(let code, let body) = error else { return false }
         guard code == 400 || code == 401 else { return false }
         let lowered = body?.lowercased() ?? ""
@@ -546,8 +560,11 @@ public enum MCPOAuthService {
     public struct ParsedTokenResponse: Sendable, Equatable {
         public let accessToken: String
         public let refreshToken: String?
+        /// `expires_in` from now, or one hour when the response had none.
         public let expiresAt: Date
         public let scope: String?
+        /// `expires_in` as sent; nil when the token has no stated expiry.
+        public var expiresIn: TimeInterval? = nil
     }
 
     /// True when the token endpoint only accepts `client_secret_basic`.
@@ -567,15 +584,11 @@ public enum MCPOAuthService {
         return "Basic " + Data(pair.utf8).base64EncodedString()
     }
 
-    static func postTokenRequest(
-        url: URL,
-        form: [String: String],
-        basicCredentials: (String, String)? = nil
-    ) async throws -> ParsedTokenResponse {
-        if let override = tokenRequestOverride {
-            return try await override(url, form)
-        }
-
+    /// The token endpoint POST: the form (or a JSON object when `json`),
+    /// with the client secret as HTTP Basic when `basicCredentials` is set.
+    static func tokenURLRequest(
+        url: URL, form: [String: String], basicCredentials: (String, String)? = nil, json: Bool = false
+    ) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         if let (clientId, clientSecret) = basicCredentials {
@@ -584,11 +597,29 @@ public enum MCPOAuthService {
                 forHTTPHeaderField: "Authorization"
             )
         }
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        if json {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: form, options: [.sortedKeys])
+        } else {
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.httpBody = OAuthFormEncoding.encode(form).data(using: .utf8)
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = OAuthFormEncoding.encode(form).data(using: .utf8)
         request.timeoutInterval = 20
+        return request
+    }
 
+    static func postTokenRequest(
+        url: URL,
+        form: [String: String],
+        basicCredentials: (String, String)? = nil,
+        json: Bool = false
+    ) async throws -> ParsedTokenResponse {
+        if let override = tokenRequestOverride {
+            return try await override(url, form)
+        }
+
+        let request = tokenURLRequest(url: url, form: form, basicCredentials: basicCredentials, json: json)
         let data: Data
         let response: URLResponse
         do {
@@ -616,19 +647,27 @@ public enum MCPOAuthService {
         guard let dict = json as? [String: Any] else {
             throw MCPOAuthError.invalidTokenResponse
         }
+        // Slack (`ok: false`) and GitHub report failures inside a 2xx body.
+        if let error = dict["error"] as? String, !error.isEmpty {
+            throw MCPOAuthError.tokenError(error: error, description: dict["error_description"] as? String)
+        }
+        if dict["ok"] as? Bool == false {
+            throw MCPOAuthError.tokenError(error: "unknown_error", description: nil)
+        }
         guard let accessToken = dict["access_token"] as? String, !accessToken.isEmpty else {
             throw MCPOAuthError.invalidTokenResponse
         }
         // `expires_in` is RECOMMENDED but not REQUIRED by RFC 6749. Default to 1h
         // when absent so we still refresh proactively rather than waiting for 401.
-        let expiresIn: TimeInterval = (dict["expires_in"] as? TimeInterval) ?? 3600
+        let statedExpiry = dict["expires_in"] as? TimeInterval
         let refreshToken = dict["refresh_token"] as? String
         let scope = dict["scope"] as? String
         return ParsedTokenResponse(
             accessToken: accessToken,
             refreshToken: refreshToken,
-            expiresAt: Date().addingTimeInterval(expiresIn),
-            scope: scope
+            expiresAt: Date().addingTimeInterval(statedExpiry ?? 3600),
+            scope: scope,
+            expiresIn: statedExpiry
         )
     }
 }

@@ -65,8 +65,8 @@ enum ConfigProviderPresets {
     }
 
     /// The provider slice the declarative document manages. Ephemeral
-    /// providers (Bonjour-discovered peer agents and the eval harness's
-    /// in-memory run/judge providers) are memory-only runtime state, not
+    /// providers (the eval harness's in-memory run/judge providers) are
+    /// memory-only runtime state, not
     /// user configuration: they must never be exported, matched for
     /// update, or pruned by a declarative apply.
     @MainActor

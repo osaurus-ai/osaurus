@@ -316,8 +316,8 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
     /// delegated worker session, so `continue` can omit `agent`.
     @MainActor
     static func resumeTarget(for sessionId: UUID) -> String? {
-        let db = ChatHistoryDatabase.shared
-        if !db.isOpen { try? db.open() }
+        let db = ConversationStores.current
+        if !db.isOpenNonBlocking { try? db.open() }
         guard let session = db.loadSession(id: sessionId), session.source == .delegation else {
             return nil
         }

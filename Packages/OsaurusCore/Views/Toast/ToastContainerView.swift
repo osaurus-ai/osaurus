@@ -53,13 +53,13 @@ public struct ToastContainerView: View {
 
     @ViewBuilder
     private var toastStack: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: theme.space.s10) {
             // Regular toasts ordered based on position
             ForEach(orderedToasts) { toast in
                 ToastView(
                     toast: toast,
                     onDismiss: {
-                        toastManager.dismiss(id: toast.id)
+                        toastManager.dismiss(id: toast.id, reason: .user)
                     },
                     onAction: {
                         toastManager.triggerAction(for: toast)
@@ -69,7 +69,7 @@ public struct ToastContainerView: View {
                 .id(toast.id)
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: allToastIds)
+        .animation(theme.motion.springAnimation, value: allToastIds)
     }
 
     /// Toast IDs for animation tracking
@@ -327,7 +327,7 @@ struct ToastOverlayWindowContent: View {
     struct ToastContainerView_Previews: PreviewProvider {
         static var previews: some View {
             ZStack {
-                Color.black.opacity(0.8)
+                CustomizableTheme.dark().surface.canvas
                     .ignoresSafeArea()
 
                 ToastContainerView()

@@ -230,7 +230,7 @@ private final class ResourceSampler: @unchecked Sendable {
         )
 
         let vmResult = withUnsafeMutablePointer(to: &vmInfo) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(vmCount)) {
                 host_statistics64(hostPort, HOST_VM_INFO64, $0, &vmCount)
             }
         }
@@ -238,7 +238,9 @@ private final class ResourceSampler: @unchecked Sendable {
         guard vmResult == KERN_SUCCESS else { return (0.0, 0.0, 0.0) }
 
         var rawPage: vm_size_t = 0
-        host_page_size(hostPort, &rawPage)
+        guard host_page_size(hostPort, &rawPage) == KERN_SUCCESS, rawPage > 0 else {
+            return (0.0, 0.0, 0.0)
+        }
         let pageSize = rawPage
         let totalMemory = Double(ProcessInfo.processInfo.physicalMemory)
         // Use the same reclaimable-capacity definition as normal loads and
@@ -251,10 +253,10 @@ private final class ResourceSampler: @unchecked Sendable {
         let availableMemory = Double(ChatResidencyHandoff.reclaimableMemoryBytes(
             physicalBytes: Int64(ProcessInfo.processInfo.physicalMemory),
             pageSize: Int64(pageSize),
-            wiredPages: Int64(vmInfo.wire_count),
-            compressorPages: Int64(vmInfo.compressor_page_count),
-            internalPages: Int64(vmInfo.internal_page_count),
-            purgeablePages: Int64(vmInfo.purgeable_count)
+            freePages: Int64(vmInfo.free_count),
+            fileBackedPages: Int64(vmInfo.external_page_count),
+            purgeablePages: Int64(vmInfo.purgeable_count),
+            speculativePages: Int64(vmInfo.speculative_count)
         ))
 
         let usedMemory = max(0.0, totalMemory - availableMemory)

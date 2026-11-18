@@ -365,7 +365,7 @@ struct SharedAgentIdentityTests {
             #expect(status.tint == tint)
             #expect(!status.shortLabel.isEmpty)
         }
-        #expect(SharedAgentStatus.ready.shortLabel == L("End-to-end encrypted"))
+        #expect(SharedAgentStatus.ready.shortLabel == L("Online"))
         #expect(SharedAgentStatus.connecting.shortLabel == L("Connecting…"))
         #expect(SharedAgentStatus.notConnected(reason: nil, hasAttempted: true).shortLabel == L("Not connected"))
         #expect(SharedAgentStatus.unavailable(reason: "x", fix: .none).shortLabel == L("Unavailable"))

@@ -92,8 +92,13 @@ struct RemoteRunArtifactsTests {
             Data(base64Encoded: rows[0].bytes_base64!).flatMap { String(data: $0, encoding: .utf8) })
         #expect(decoded.hasPrefix("small one"))
 
-        // The count cap trims the tail; a directory never carries bytes.
-        #expect(RemoteRunArtifactRelay.payload(for: artifacts, maxCount: 2).count == 2)
+        // The count cap lists the tail without bytes so the requester can
+        // say what stayed behind; a directory never carries bytes.
+        let counted = RemoteRunArtifactRelay.payload(for: artifacts, maxCount: 2)
+        #expect(counted.map(\.name) == ["a.txt", "b.txt", "c.txt"])
+        #expect(counted[0].bytes_base64 != nil)
+        #expect(counted[2].omitted_reason == "too_many")
+        #expect(counted[2].isOmitted)
         let directory = SharedArtifact(
             contextId: contextId, contextType: .chat, filename: "site", mimeType: "inode/directory",
             fileSize: 10, hostPath: artifacts[0].hostPath, isDirectory: true
@@ -155,6 +160,36 @@ struct RemoteRunArtifactsTests {
         #expect(adopted.map { FileManager.default.fileExists(atPath: $0.hostPath) } == true)
     }
 
+    @Test("client import enforces the transfer caps whatever the host sends")
+    func clientImportEnforcesCaps() {
+        let sessionId = "remote-run-import-caps-\(UUID().uuidString)"
+        defer { removeContextDir(sessionId) }
+        func row(_ name: String, bytes: Int) -> RemoteRunArtifact {
+            RemoteRunArtifact(
+                name: name, mime: "text/plain", size_bytes: bytes,
+                bytes_base64: Data(repeating: 0x61, count: bytes).base64EncodedString()
+            )
+        }
+
+        // A row larger than the whole budget is never written.
+        let oversized = SharedArtifact.importRemoteArtifacts(
+            [row("huge.txt", bytes: 200), row("ok.txt", bytes: 10)],
+            contextId: sessionId, maxTotalBytes: 100, maxCount: 16)
+        #expect(oversized.map(\.filename) == ["ok.txt"])
+
+        // The budget is shared across rows.
+        let shared = SharedArtifact.importRemoteArtifacts(
+            [row("one.txt", bytes: 60), row("two.txt", bytes: 60), row("three.txt", bytes: 30)],
+            contextId: sessionId, maxTotalBytes: 100, maxCount: 16)
+        #expect(shared.map(\.filename) == ["one.txt", "three.txt"])
+
+        // Rows past the count cap are ignored.
+        let counted = SharedArtifact.importRemoteArtifacts(
+            (0..<5).map { row("f\($0).txt", bytes: 1) },
+            contextId: sessionId, maxTotalBytes: 100, maxCount: 3)
+        #expect(counted.count == 3)
+    }
+
     /// `spawn_agent(continue:)` resolves Mode 2 sessions too: the persisted
     /// row must be a delegated session stamped with the SAME shared agent;
     /// another teammate's agent, a local agent, or a non-delegated row is
@@ -163,7 +198,7 @@ struct RemoteRunArtifactsTests {
     @MainActor
     func continueValidatesWorkspaceSessions() async throws {
         try await ChatHistoryTestStorage.run {
-            let db = ChatHistoryDatabase.shared
+            let db = ConversationStores.current
             try db.open()
             let ref = WorkspaceAgentRef(
                 workspaceId: "ws-1", agentAddress: "0x" + String(repeating: "a", count: 40))

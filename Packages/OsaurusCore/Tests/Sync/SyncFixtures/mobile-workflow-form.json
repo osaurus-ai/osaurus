@@ -1,0 +1,81 @@
+{
+  "description": "A workflow form in a Mac's attention feed: the form's fields in `detail` (`workflow_forms`), and the `submit` answer an iPhone wrote with its values (SYNC_MOBILE_CONTRACT.md v2 §4, §4.1). The second form needs a file, so it is answered on the Mac.",
+  "conversation": {
+    "title": "Needs You on Studio Mac",
+    "created_ms": 1767572000000,
+    "pinned": false,
+    "archived": false,
+    "tags": {
+      "ai.osaurus.kind": "attention",
+      "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
+    },
+    "app_data": {
+      "ai.osaurus.attention/1": {
+        "v": 1,
+        "items": [
+          {
+            "id": "C1000000-0000-4000-8000-000000000001",
+            "kind": "workflow_dialog",
+            "title": "Client Intake needs your input",
+            "body": "About the client",
+            "actions": ["open", "dismiss"],
+            "priority": 2,
+            "blocking": true,
+            "created_at": "2026-01-05T00:30:00Z",
+            "session_id": "8B9C0D1E-2F3A-4B4C-8D5E-6F7A8B9C0D1E",
+            "detail": {
+              "workflow": "Client Intake",
+              "run_id": "d1000000-0000-4000-8000-000000000001",
+              "node_id": "ask_client",
+              "title": "About the client",
+              "message": "Tell me who this is for.",
+              "fields": [
+                { "key": "name", "label": "Client name", "type": "text", "required": true },
+                { "key": "budget", "label": "Budget (USD)", "type": "number", "required": false, "help": "Leave empty if unknown." },
+                { "key": "tier", "label": "Tier", "type": "choice", "required": true, "options": ["Basic", "Pro"], "default": "Basic" },
+                { "key": "rush", "label": "Rush job", "type": "bool", "required": true },
+                { "key": "start", "label": "Start date", "type": "date", "required": true }
+              ],
+              "prefill": { "name": "Acme" },
+              "phone_answerable": true
+            },
+            "state": "pending"
+          },
+          {
+            "id": "C1000000-0000-4000-8000-000000000002",
+            "kind": "workflow_dialog",
+            "title": "Invoice Filer needs your input",
+            "body": "Which invoice?",
+            "actions": ["open", "dismiss"],
+            "priority": 2,
+            "blocking": true,
+            "created_at": "2026-01-05T00:31:00Z",
+            "detail": {
+              "workflow": "Invoice Filer",
+              "run_id": "d1000000-0000-4000-8000-000000000002",
+              "node_id": "pick_invoice",
+              "title": "Which invoice?",
+              "message": "",
+              "fields": [
+                { "key": "invoice", "label": "Invoice PDF", "type": "file", "required": true }
+              ],
+              "phone_answerable": false
+            },
+            "state": "pending"
+          }
+        ],
+        "recent": []
+      },
+      "ai.osaurus.attention-answer/1/3b9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f": {
+        "v": 1,
+        "answers": {
+          "C1000000-0000-4000-8000-000000000001": {
+            "action": "submit",
+            "values": { "name": "Acme Corp", "tier": "Pro", "rush": true, "start": "2026-01-12" },
+            "answeredMs": 1767573000000
+          }
+        }
+      }
+    }
+  }
+}

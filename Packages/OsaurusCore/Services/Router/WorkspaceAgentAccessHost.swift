@@ -24,6 +24,9 @@ enum WorkspaceRedeemRejection: Error, Equatable {
     case badWalletSignature
     case agentNotFound
     case notShared
+    /// The workspace's plan lapsed: its shared agents are paused until the
+    /// owner renews.
+    case workspaceSuspended
     case rosterUnavailable
     case mintFailed
 
@@ -33,7 +36,7 @@ enum WorkspaceRedeemRejection: Error, Equatable {
         case .attestationInvalid, .badWalletSignature, .unknownChallenge: return 401
         case .attestationExpired: return 410
         case .agentNotFound: return 404
-        case .notShared: return 403
+        case .notShared, .workspaceSuspended: return 403
         case .rosterUnavailable: return 503
         case .mintFailed: return 500
         }
@@ -48,6 +51,8 @@ enum WorkspaceRedeemRejection: Error, Equatable {
         case .badWalletSignature: return "Wallet signature does not match the attestation"
         case .agentNotFound: return "Agent address not found on this server"
         case .notShared: return "Agent is not shared with this workspace"
+        case .workspaceSuspended:
+            return "This workspace is suspended, so its shared agents are paused until the owner renews it"
         case .rosterUnavailable: return "Could not verify the workspace share right now"
         case .mintFailed: return "Failed to mint access key"
         }
@@ -293,6 +298,11 @@ actor WorkspaceAgentAccessHost {
         } catch {
             return .rejected(.attestationInvalid(error.localizedDescription))
         }
+        if attestation.payload.workspaceSuspended {
+            await WorkspaceAuditLog.shared.recordAttestationDenied(
+                attestation: attestation, agentAddress: payload.agentAddress, rejection: .workspaceSuspended)
+            return .rejected(.workspaceSuspended)
+        }
 
         guard let nonce = payload.nonce, let signature = payload.walletSignature else {
             return issueChallenge(
@@ -318,8 +328,7 @@ actor WorkspaceAgentAccessHost {
 
     // MARK: - Step one: challenge
 
-    /// Upper bound on outstanding challenges (mirrors
-    /// `PairingChallengeStore.maxOutstanding`). Past the cap the OLDEST
+    /// Upper bound on outstanding challenges. Past the cap the OLDEST
     /// challenge is evicted so a flood of step-one requests cannot grow this
     /// table unbounded; a legitimate redeemer simply re-requests a challenge.
     static let maxPendingChallenges = 256
@@ -425,7 +434,7 @@ actor WorkspaceAgentAccessHost {
                 return .rejected(.notShared)
             }
         } catch {
-            return .rejected(.rosterUnavailable)
+            return .rejected(Self.isSuspension(error) ? .workspaceSuspended : .rosterUnavailable)
         }
 
         // Mint an agent-scoped key that dies exactly when the attestation
@@ -634,7 +643,21 @@ actor WorkspaceAgentAccessHost {
 
     func validateCurrentAccess(_ record: WorkspaceKeyRecord) async throws {
         guard record.attestationExpiresAt > now() else { throw WorkspaceRedeemRejection.attestationExpired }
-        try await verifyCurrentAccess(record.workspaceId, record.agentAddressLower, record.attestationToken)
+        if WorkspaceMembershipAttestation.unverifiedPayload(token: record.attestationToken)?.workspaceSuspended == true {
+            throw WorkspaceRedeemRejection.workspaceSuspended
+        }
+        do {
+            try await verifyCurrentAccess(record.workspaceId, record.agentAddressLower, record.attestationToken)
+        } catch where Self.isSuspension(error) {
+            throw WorkspaceRedeemRejection.workspaceSuspended
+        }
+    }
+
+    /// The router's access check refuses a suspended workspace with
+    /// `SUBSCRIPTION_INACTIVE`.
+    static func isSuspension(_ error: Error) -> Bool {
+        guard let error = error as? OsaurusRouterAPIError else { return false }
+        return OsaurusRouterWorkspaceErrorCode.match(error) == .subscriptionInactive
     }
 
     func reconcile(snapshot: WorkspaceSyncSnapshot) async {

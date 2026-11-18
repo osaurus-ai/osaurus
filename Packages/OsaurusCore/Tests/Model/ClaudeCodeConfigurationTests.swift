@@ -22,6 +22,43 @@ struct ClaudeCodeConfigurationTests {
         #expect(ClaudeCodeModel.fromPickerId("claude-code/haiku") == .haiku)
     }
 
+    // MARK: - Picker effort
+
+    private func effortSnapshot(effort: String?) throws -> ChatPickerOptionsSnapshot {
+        let id = ClaudeCodeEffort.pickerOptionID
+        let control = ModelPickerOptionsControl(
+            capabilities: nil,
+            options: [ClaudeCodeEffort.pickerOption],
+            values: effort.map { [id: .string($0)] } ?? [:],
+            defaults: [id: .string(ModelOptionSegment.defaultID)],
+            onChange: { _, _ in }
+        )
+        return try #require(ChatPickerOptionsSnapshot.make(modelID: "harness:claude", control: control))
+    }
+
+    @Test func pickerEffortOffersDefaultAndEveryCLILevel() throws {
+        let snapshot = try effortSnapshot(effort: nil)
+        let section = try #require(snapshot.sections.first)
+        #expect(snapshot.sections.count == 1)
+        #expect(section.rows.map(\.label) == [L("Default")] + ClaudeCodeEffort.allCases.map(\.displayName))
+        #expect(section.rows.first?.selected == true, "no --effort shows as Default, never as Low")
+        #expect(section.reset == nil)
+    }
+
+    /// The Default row already clears the choice, so no second reset link.
+    @Test func pickerEffortMarksTheExplicitLevelWithoutAResetLink() throws {
+        let section = try #require(try effortSnapshot(effort: "xhigh").sections.first)
+        #expect(section.rows.filter(\.selected).map(\.label) == [ClaudeCodeEffort.xhigh.displayName])
+        #expect(section.reset == nil)
+    }
+
+    @Test func pickerEffortSegmentsMapToTheStoredFlagValue() {
+        #expect(ClaudeCodeEffort.storedValue(forSegment: "max") == "max")
+        #expect(ClaudeCodeEffort.storedValue(forSegment: ModelOptionSegment.defaultID) == nil)
+        #expect(ClaudeCodeEffort.storedValue(forSegment: nil) == nil)
+        #expect(ClaudeCodeEffort.storedValue(forSegment: "turbo") == nil)
+    }
+
     @Test func foreignModelIdsAreRejected() {
         #expect(ClaudeCodeModel.fromPickerId("sonnet") == nil)
         #expect(ClaudeCodeModel.fromPickerId("claude-code/") == nil)

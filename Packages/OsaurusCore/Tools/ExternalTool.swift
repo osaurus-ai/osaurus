@@ -53,13 +53,16 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
         let agentId = ChatExecutionContext.currentAgentId
         let payloadWithSecrets = injectSecrets(into: argumentsJSON, agentId: agentId)
         let payloadWithContext = injectFolderContext(into: payloadWithSecrets)
-        return try await plugin.invoke(
+        let result = try await plugin.invoke(
             type: "tool",
             id: toolId,
             payload: payloadWithContext,
             agentId: agentId,
             isolation: invocationIsolation
         )
+        // A plugin that echoes its config would hand its keys to the model.
+        guard let agentId else { return result }
+        return SecretScrubber.scrub(result, secrets: plugin.declaredSecretValues(agentId: agentId))
     }
 
     /// Native plugins that touch macOS automation APIs hold Accessibility
@@ -83,12 +86,10 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     /// - Parameter payload: Original JSON payload
     /// - Returns: Payload with secrets injected, or original payload if no secrets or parsing fails
     private func injectSecrets(into payload: String, agentId: UUID? = nil) -> String {
-        // No agent context (or Default-agent context) means the tool is being
-        // invoked anonymously. Return the payload unchanged rather than
-        // injecting the Default agent's secrets — the previous
-        // `?? Agent.defaultId` fallback leaked the built-in agent's secret
-        // namespace to anonymous tool paths.
-        guard let agentId = agentId, agentId != Agent.defaultId else { return payload }
+        // No agent context means the tool is being invoked anonymously:
+        // return the payload unchanged rather than guessing an agent. The
+        // Orchestrator is an ordinary agent and gets its resolved values.
+        guard let agentId else { return payload }
         let secrets = plugin.resolvedSecrets(agentId: agentId)
         guard !secrets.isEmpty else { return payload }
 

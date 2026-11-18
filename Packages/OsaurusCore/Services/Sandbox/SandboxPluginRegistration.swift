@@ -211,9 +211,11 @@ public enum SandboxPluginRegistration {
         agentId: UUID
     ) -> [String] {
         guard let names = plugin.secrets, !names.isEmpty else { return [] }
-        let env = AgentSecretsKeychain.mergedSecretsEnvironment(
+        let env = CredentialResolver.sandboxPluginEnvironment(
             agentId: agentId,
-            pluginId: plugin.id
+            pluginId: plugin.id,
+            pluginName: plugin.name,
+            declared: names
         )
         return names.filter { (env[$0] ?? "").isEmpty }
     }

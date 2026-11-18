@@ -285,12 +285,22 @@ struct SpawnToolsetTests {
 
     @Test("auto surface: everything off leaves only the worker baseline")
     func autoSurfaceBaseline() {
-        // Time + `calculate` + `share_artifact`: the declarative spawned-worker baseline
-        // (`ToolRegistry.spawnedWorkerBaselineToolNames`).
+        // Time + `share_artifact`: the spawned-worker baseline
+        // (`ToolRegistry.spawnedWorkerBaselineToolNames`) less `calculate`,
+        // which follows the agent's Calculator switch.
         #expect(
             TextSubagentKind.autoChildToolNames(capabilities: capabilities())
+                == ["get_current_time", "share_artifact"]
+        )
+        var withCalculator = capabilities()
+        withCalculator.calculatorEnabled = true
+        #expect(
+            TextSubagentKind.autoChildToolNames(capabilities: withCalculator)
                 == ["calculate", "get_current_time", "share_artifact"]
         )
+        var noArtifacts = capabilities()
+        noArtifacts.artifactsEnabled = false
+        #expect(TextSubagentKind.autoChildToolNames(capabilities: noArtifacts) == ["get_current_time"])
     }
 
     @Test("auto surface: capability gates map to the direct-chat tool names")
@@ -298,7 +308,7 @@ struct SpawnToolsetTests {
         #expect(
             TextSubagentKind.autoChildToolNames(
                 capabilities: capabilities(webSearch: true)
-            ) == ["calculate", "get_current_time", "search_and_extract", "share_artifact", "web_search"]
+            ) == ["get_current_time", "search_and_extract", "share_artifact", "web_search"]
         )
 
         let db = Set(TextSubagentKind.autoChildToolNames(capabilities: capabilities(db: true)))

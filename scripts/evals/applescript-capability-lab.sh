@@ -16,7 +16,7 @@ set -uo pipefail
 # read-back, desktop context) and layers them over each case. Unset env keeps
 # shipped behavior, so `make evals` / CI are unaffected.
 #
-# Judge: Grok by default (JUDGE_MODEL=xai/grok-4.3). The xAI key is read ONLY
+# Judge: Grok by default (JUDGE_MODEL=xai/grok-4.7). The xAI key is read ONLY
 # from the XAI_API_KEY environment variable at run time (consumed by the CLI's
 # EvalRemoteProviderBootstrap); it is never written to disk, the report, or this
 # script. Rotate any key shared in plaintext after use.
@@ -42,7 +42,7 @@ set -uo pipefail
 #                  overriding the default sweep. Use "-" to leave a field at the
 #                  case/shipped default. prompt ∈ {standard,concise}; literal ∈
 #                  {namePreview,nameOnly,minimal}; verify/desktop ∈ {0,1,-}.
-#   JUDGE_MODEL    judge slug. Default "xai/grok-4.3". Needs XAI_API_KEY.
+#   JUDGE_MODEL    judge slug. Default "xai/grok-4.7". Needs XAI_API_KEY.
 #   BASELINE       a previous lab run dir; each variant is diffed against the
 #                  same-named report in it.
 #   LAB_OUT_ROOT   parent dir for timestamped runs. Default
@@ -65,7 +65,7 @@ BASELINE="${BASELINE:-}"
 RECORD="${RECORD:-0}"
 LABEL="${LABEL:-}"
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-${REPO_ROOT}/reports/applescript-capability}"
-JUDGE_MODEL="${JUDGE_MODEL:-xai/grok-4.3}"
+JUDGE_MODEL="${JUDGE_MODEL:-xai/grok-4.7}"
 SUITE_TIMEOUT_SEC="${SUITE_TIMEOUT_SEC:-2700}"
 export JUDGE_MODEL
 

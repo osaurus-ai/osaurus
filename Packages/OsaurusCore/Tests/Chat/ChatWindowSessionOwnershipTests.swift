@@ -57,10 +57,52 @@ struct ChatWindowSessionOwnershipTests {
                 canonical.save()
                 owner.cleanup()
                 other.cleanup()
-                let persisted = ChatHistoryDatabase.shared.loadSession(id: stored.id)
+                let persisted = ConversationStores.current.loadSession(id: stored.id)
                 #expect(persisted?.turns.map(\.id) == [stored.turns[0].id])
                 #expect(persisted?.turns.map(\.content) == ["Question"])
             }
+        }
+    }
+
+    /// "Open in New Window" on a chat this window already shows must hand it
+    /// over, not just refocus the tab here.
+    @Test(arguments: [false, true])
+    func releaseTabHandsTheConversationOver(hasSibling: Bool) async throws {
+        try await ChatHistoryTestStorage.run {
+            let stored = ChatSessionData(
+                id: UUID(), title: "Move me",
+                turns: [
+                    ChatTurnData(role: .user, content: "Question"),
+                    ChatTurnData(role: .assistant, content: "Answer"),
+                ], agentId: Agent.defaultId
+            )
+            ChatSessionStore.save(stored)
+            let owner = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId, sessionData: stored)
+            if hasSibling {
+                owner.newTab()
+                owner.focusTab(forSessionId: stored.id)
+            }
+
+            ChatWindowManager.shared.withRegisteredWindowStateForTesting(owner) {
+                #expect(owner.releaseTab(forSessionId: stored.id))
+                #expect(!owner.tabSessions.contains { $0.sessionId == stored.id })
+                #expect(owner.tabs.count == 1, "the last tab is replaced by a blank chat, a sibling takes over")
+                #expect(ChatWindowManager.shared.revealOpenSession(stored.id, showImmediately: false) == nil)
+                let persisted = ConversationStores.current.loadSession(id: stored.id)
+                #expect(persisted?.turns.map(\.content) == ["Question", "Answer"])
+                owner.cleanup()
+            }
+        }
+    }
+
+    @Test func releaseTabKeepsABlankChat() async throws {
+        try await ChatHistoryTestStorage.run {
+            let owner = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            let id = UUID()
+            owner.session.sessionId = id
+            #expect(!owner.releaseTab(forSessionId: id))
+            #expect(owner.session.sessionId == id)
+            owner.cleanup()
         }
     }
 }

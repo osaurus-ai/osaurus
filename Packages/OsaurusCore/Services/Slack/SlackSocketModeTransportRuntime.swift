@@ -113,7 +113,6 @@ actor SlackSocketModeTransportRuntime {
     private let activityCenter: AgentChannelInboundActivityCenter
     private let backoffPolicy: AgentChannelTransportBackoffPolicy
     private let sleeper: any AgentChannelTransportSleeping
-    private let teamId: String?
     private let healthTransportId: String
     private var worker: Task<Void, Never>?
     private var currentSocket: (any SlackSocketModeWebSocket)?
@@ -127,8 +126,7 @@ actor SlackSocketModeTransportRuntime {
         healthCenter: AgentChannelTransportHealthCenter = .shared,
         activityCenter: AgentChannelInboundActivityCenter = .shared,
         backoffPolicy: AgentChannelTransportBackoffPolicy = AgentChannelTransportBackoffPolicy(),
-        sleeper: any AgentChannelTransportSleeping = AgentChannelTransportTaskSleeper(),
-        teamId: String? = nil
+        sleeper: any AgentChannelTransportSleeping = AgentChannelTransportTaskSleeper()
     ) {
         self.service = service
         self.client = client
@@ -137,10 +135,9 @@ actor SlackSocketModeTransportRuntime {
         self.activityCenter = activityCenter
         self.backoffPolicy = backoffPolicy
         self.sleeper = sleeper
-        self.teamId = teamId
-        self.healthTransportId = teamId.map { "\(Self.transportId).\($0)" } ?? Self.transportId
+        self.healthTransportId = Self.transportId
         self.lastHealth = AgentChannelTransportHealthState(
-            connectionId: AgentChannelConnection.nativeSlackConnectionId,
+            connectionId: service.connectionId,
             transportId: healthTransportId,
             provider: .slack,
             status: .idle,
@@ -172,15 +169,14 @@ actor SlackSocketModeTransportRuntime {
         consecutiveFailures = 0
         await publish(
             AgentChannelTransportHealthState(
-                connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                connectionId: service.connectionId,
                 transportId: healthTransportId,
                 provider: .slack,
                 status: .idle,
                 severity: .info,
                 summary: "Slack Socket Mode is idle.",
                 isRunning: false,
-                receiveEnabled: teamId.map { service.socketModeAppToken(teamId: $0) != nil }
-                    ?? service.hasAppToken(),
+                receiveEnabled: service.hasAppToken(),
                 updatedAt: now
             )
         )
@@ -192,18 +188,13 @@ actor SlackSocketModeTransportRuntime {
         jitter: Double = Double.random(in: 0 ... 1)
     ) async -> AgentChannelTransportStepResult {
         let configuration = service.configuration()
-        let account = teamId.flatMap { id in
-            configuration.workspaceAccounts.first { $0.teamId == id }
-        }
-        let readableChannelIds = account?.readableChannelIds ?? configuration.readableChannelIds
-        let senderAllowlist = account?.senderAllowlist ?? configuration.senderAllowlist
-        let appToken = teamId.flatMap { service.socketModeAppToken(teamId: $0) }
-            ?? (teamId == nil ? service.socketModeAppToken() : nil)
-        guard let appToken else {
+        let readableChannelIds = configuration.readableChannelIds
+        let senderAllowlist = configuration.senderAllowlist
+        guard let appToken = service.socketModeAppToken() else {
             consecutiveFailures = 0
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    connectionId: service.connectionId,
                     transportId: healthTransportId,
                     provider: .slack,
                     status: .disabled,
@@ -222,7 +213,7 @@ actor SlackSocketModeTransportRuntime {
             consecutiveFailures = 0
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    connectionId: service.connectionId,
                     transportId: healthTransportId,
                     provider: .slack,
                     status: .disabled,
@@ -244,7 +235,7 @@ actor SlackSocketModeTransportRuntime {
             consecutiveFailures = 0
             _ = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    connectionId: service.connectionId,
                     transportId: healthTransportId,
                     provider: .slack,
                     status: .healthy,
@@ -278,7 +269,7 @@ actor SlackSocketModeTransportRuntime {
                 if result.received > 0 {
                     _ = await publish(
                         AgentChannelTransportHealthState(
-                            connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                            connectionId: service.connectionId,
                             transportId: healthTransportId,
                             provider: .slack,
                             status: .healthy,
@@ -299,7 +290,7 @@ actor SlackSocketModeTransportRuntime {
             currentSocket = nil
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    connectionId: service.connectionId,
                     transportId: healthTransportId,
                     provider: .slack,
                     status: .healthy,
@@ -337,7 +328,7 @@ actor SlackSocketModeTransportRuntime {
             consecutiveFailures = 0
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    connectionId: service.connectionId,
                     transportId: healthTransportId,
                     provider: .slack,
                     status: .healthy,
@@ -364,7 +355,7 @@ actor SlackSocketModeTransportRuntime {
             let delay = min(max(backoffDelay, retryAfter ?? 0), 3_600)
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    connectionId: service.connectionId,
                     transportId: healthTransportId,
                     provider: .slack,
                     status: .degraded,
@@ -391,7 +382,7 @@ actor SlackSocketModeTransportRuntime {
             let delay = backoffPolicy.delay(consecutiveFailures: consecutiveFailures, jitter: jitter)
             let health = await publish(
                 AgentChannelTransportHealthState(
-                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    connectionId: service.connectionId,
                     transportId: healthTransportId,
                     provider: .slack,
                     status: .failed,
@@ -440,7 +431,7 @@ actor SlackSocketModeTransportRuntime {
 
         guard let slackEnvelope = try? JSONDecoder().decode(SlackEventEnvelope.self, from: payloadData) else {
             await activityCenter.record(
-                connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                connectionId: service.connectionId,
                 providerEventId: envelopeId ?? "unknown",
                 stage: .rejected,
                 reason: "undecodable_envelope"
@@ -451,7 +442,7 @@ actor SlackSocketModeTransportRuntime {
 
         let providerEventId = slackEnvelope.eventId ?? envelopeId ?? "unknown"
         await activityCenter.record(
-            connectionId: AgentChannelConnection.nativeSlackConnectionId,
+            connectionId: service.connectionId,
             providerEventId: providerEventId,
             stage: .received
         )
@@ -466,7 +457,7 @@ actor SlackSocketModeTransportRuntime {
         case .accepted(let normalized):
             stored = 1
             await activityCenter.record(
-                connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                connectionId: service.connectionId,
                 providerEventId: providerEventId,
                 stage: .stored
             )
@@ -474,7 +465,7 @@ actor SlackSocketModeTransportRuntime {
             switch submission {
             case .dispatched(let target, let rule):
                 await activityCenter.record(
-                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    connectionId: service.connectionId,
                     providerEventId: providerEventId,
                     stage: .dispatched,
                     reason: AgentChannelInboundActivityPresentation.dispatchReason(
@@ -482,9 +473,16 @@ actor SlackSocketModeTransportRuntime {
                         rule: rule
                     )
                 )
+            case .fired(let eventNames, _):
+                await activityCenter.record(
+                    connectionId: service.connectionId,
+                    providerEventId: providerEventId,
+                    stage: .dispatched,
+                    reason: AgentChannelInboundActivityPresentation.firedReason(eventNames: eventNames)
+                )
             case .suppressed(let reason):
                 await activityCenter.record(
-                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    connectionId: service.connectionId,
                     providerEventId: providerEventId,
                     stage: .dispatchSuppressed,
                     reason: reason
@@ -494,7 +492,7 @@ actor SlackSocketModeTransportRuntime {
             stored = 0
             submission = .suppressed(reason)
             await activityCenter.record(
-                connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                connectionId: service.connectionId,
                 providerEventId: providerEventId,
                 stage: .rejected,
                 reason: reason

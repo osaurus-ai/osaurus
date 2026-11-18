@@ -70,6 +70,33 @@ struct MemoryDistillQualityTests {
         }
     }
 
+    @Test func injectedOverridesKeepTheLatestFactPerSlotAndDropAbsence() {
+        let stored = [
+            "User works at Dino",
+            "User's name is not specified",
+            "User prefers metric units",
+            "User works at Osaurus",
+            "User’s name is Terence",
+        ]
+        #expect(
+            MemoryDistillateScreen.resolvedIdentityOverrides(stored) == [
+                "User prefers metric units",
+                "User works at Osaurus",
+                "User’s name is Terence",
+            ]
+        )
+    }
+
+    @Test func identitySlotsCoverSynonymsButNotOtherFacts() {
+        #expect(MemoryDistillateScreen.identitySlot("User works for Acme") == "employer")
+        #expect(MemoryDistillateScreen.identitySlot("The user's employer is Acme.") == "employer")
+        #expect(MemoryDistillateScreen.identitySlot("User lives in Seattle") == "location")
+        #expect(MemoryDistillateScreen.identitySlot("User is based in Berlin") == "location")
+        #expect(MemoryDistillateScreen.identitySlot("User's name is Eric") == "name")
+        #expect(MemoryDistillateScreen.identitySlot("User has two cats") == nil)
+        #expect(MemoryDistillateScreen.identitySlot("User works at night on weekends") == nil)
+    }
+
     @Test func failedDelegatedMarkerWriteDoesNotEnqueueUserAttributedSignal() async throws {
         try await ChatHistoryTestStorage.run {
             MemoryConfigurationStore.invalidateCache()

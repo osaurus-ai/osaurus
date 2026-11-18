@@ -71,4 +71,34 @@ struct AgentTemplateBuiltInTests {
         let cloud = try #require(store.template(named: "Cloud Agent"))
         #expect(store.isBuiltIn(cloud) || store.templates.contains { $0.id == cloud.id })
     }
+
+    /// The starters in the Workflows pane: each reads as a form a new user
+    /// can fill in without knowing JSON, and its example runs as is.
+    @Test
+    func workflowStarters_haveTitledOrderedFieldsAndAValidExample() throws {
+        let starters = TemplateStore.shared.builtIn.filter { $0.kind == .workflow }
+        #expect(Set(starters.map(\.name)) == ["Social Post Writer", "Meeting Action Items", "Email Reply"])
+        for template in starters {
+            let def = try #require(template.workflow)
+            #expect(WorkflowValidator.validate(def, allowPlaceholders: false).isEmpty, "\(template.name)")
+            #expect(def.nodes.count >= 2, "\(template.name) shows more than one step")
+            let inputs = try #require(def.inputSchema.objectValue)
+            let props = try #require(inputs["properties"]?.objectValue)
+            #expect(Set(inputs["x-order"]?.arrayStrings ?? []) == Set(props.keys), "\(template.name) orders every field")
+            for (key, prop) in props {
+                #expect(prop.objectValue?["title"]?.stringValue != nil, "\(template.name).\(key) has a title")
+            }
+            let outputs = def.outputSchema.objectValue?["properties"]?.objectValue ?? [:]
+            #expect(!outputs.isEmpty)
+            for (key, prop) in outputs {
+                #expect(prop.objectValue?["title"]?.stringValue != nil, "\(template.name) output \(key) has a title")
+            }
+            let example = try #require(def.examples.first)
+            #expect(JSONSchemaValidator.validate(example.input, against: def.inputSchema).isEmpty, "\(template.name)")
+            #expect(
+                template.requirements.models.map(\.preferred) == ["foundation"]
+                    && template.requirements.models.allSatisfy { $0.strictness == .preferred })
+            #expect(template.requirements.secrets.isEmpty)
+        }
+    }
 }

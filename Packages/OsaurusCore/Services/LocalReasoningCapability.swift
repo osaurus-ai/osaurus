@@ -262,17 +262,28 @@ enum LocalReasoningCapability {
         let hasOpen = lower.contains("<think>") || lower.contains("<|think|>")
         let hasClose = lower.contains("</think>")
         let hasKwarg = lower.contains("enable_thinking")
+        // 3. MiniMax-M3 / M3.1: a `<mm:think>` … `</mm:think>` rail (vmlx's
+        //    `minimax_m3` parser) and a three-state `thinking_mode` kwarg:
+        //    omitted = adaptive (the model's first token decides), `enabled`
+        //    prefills `<mm:think>`, `disabled` prefills `</mm:think>`. vmlx-swift
+        //    maps enable_thinking true / false onto enabled / disabled
+        //    (`MiniMaxM3ThinkingTemplateContext`), so the boolean toggle drives
+        //    it, and omission is a native third mode (Default = Adaptive).
+        //    A template with the rail but no `thinking_mode` (M3.1 as first
+        //    shipped) is adaptive-only: a reasoning channel, no toggle.
+        let hasMiniMaxRail = lower.contains("<mm:think>")
+        let miniMaxThinkingMode = hasMiniMaxRail && lower.contains("thinking_mode")
         let injects =
             template.range(
                 of: #"\{\{-?\s*['\"]<\|?think\|?>"#,
                 options: .regularExpression
             ) != nil
         return Capability(
-            supportsThinking: hasOpen || hasClose,
-            hasEnableThinkingKwarg: hasKwarg,
+            supportsThinking: hasOpen || hasClose || hasMiniMaxRail,
+            hasEnableThinkingKwarg: hasKwarg || miniMaxThinkingMode,
             templateInjectsThinkTag: injects,
             defaultThinkingOn: detectDefaultThinkingOn(lower),
-            preservesOmittedThinking: hasExplicitOnlyThinkingTail(lower)
+            preservesOmittedThinking: hasExplicitOnlyThinkingTail(lower) || miniMaxThinkingMode
         )
     }
 

@@ -12,58 +12,23 @@ import AppKit
 import SwiftUI
 
 struct CommandLineToolSection: View {
-    @Environment(\.theme) private var theme
-
     @State private var installMessage: String? = nil
     @State private var installSucceeded: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label {
-                Text("Command Line Tool", bundle: .module)
-            } icon: {
-                Image(systemName: "apple.terminal")
-            }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-
-            Text(
+        SettingsSection(
+            title: "Command Line Tool",
+            subtitle:
                 "Install the `osaurus` CLI into your PATH for terminal access. If installed to ~/.local/bin, make sure that folder is in your PATH.",
-                bundle: .module
-            )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 12) {
-                Button(action: installCLI) {
-                    Text("Install CLI", bundle: .module)
-                }
-                .buttonStyle(SettingsButtonStyle())
-                .localizedHelp("Create a symlink to the embedded CLI")
-
-                if let message = installMessage {
-                    HStack(spacing: 6) {
-                        Image(
-                            systemName: installSucceeded
-                                ? "checkmark.circle.fill"
-                                : "exclamationmark.triangle.fill"
-                        )
-                        .font(.system(size: 12))
-                        Text(message)
-                            .font(.system(size: 11))
-                            .lineLimit(2)
-                    }
-                    .foregroundColor(installSucceeded ? theme.successColor : theme.warningColor)
-                }
+            anchorId: "server.cli",
+            layout: .plain
+        ) {
+            SettingsButton(.secondary, "Install CLI", size: .compact, help: "Create a symlink to the embedded CLI", action: installCLI)
+        } content: {
+            if let message = installMessage {
+                InlineBanner(kind: installSucceeded ? .success : .warning, title: message)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-        )
-        .settingsLandingAnchor("server.cli")
     }
 }
 

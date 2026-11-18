@@ -16,7 +16,7 @@ enum OnboardingTelemetry {
     // tests inject a recording service to assert the exact event name and
     // properties each funnel moment produces.
 
-    /// Which DMG the user installed from. `full` ships Raptor 0.6 inside the
+    /// Which DMG the user installed from. `full` ships Raptor 0.7 inside the
     /// app (see `BundledModelSeeder`) and skips the Configure AI step, so
     /// every funnel event carries this so the two flows can be compared.
     enum Distribution: String {
@@ -69,15 +69,18 @@ enum OnboardingTelemetry {
     /// bring-your-own-key path also carries the closed-enum `provider` type,
     /// and the local path carries `download_started` — whether committing
     /// kicked off a background model download (vs. an already-downloaded
-    /// model). No key, model id, or URL is ever attached. Selection is
-    /// payment-free — this fires at the proceed moment, not on any checkout.
+    /// model). `surface` is `onboarding` or `chat_sheet` (Choose a Brain over
+    /// the first-run chat). No key, model id, or URL is ever attached.
+    /// Selection is payment-free — this fires at the proceed moment, not on
+    /// any checkout.
     static func brainSourceSelected(
         _ source: BrainSource,
         downloadStarted: Bool? = nil,
+        surface: String = "onboarding",
         distribution: Distribution = .current,
         service: TelemetryService = .shared
     ) {
-        var props: [String: Value] = ["source": source.telemetryValue]
+        var props: [String: Value] = ["source": source.telemetryValue, "surface": surface]
         if let provider = source.providerTelemetryValue {
             props["provider"] = provider
         }
@@ -103,12 +106,12 @@ enum OnboardingTelemetry {
     }
 
     /// Onboarding closed. `via` separates a genuine finish (Configure AI's
-    /// download / connect / set-up-later paths) from an early close (X
-    /// button); `lastStep` is the step they were on when they left — the
-    /// early-close drop-off point.
+    /// download / connect / set-up-later paths) from an early skip (Skip
+    /// setup); `lastStep` is the step they were on when they left — the
+    /// skip drop-off point.
     ///
     /// Note: usage consent is now decided on the *first* (Welcome) step. If
-    /// the user opted in there, this event — including a `closeButton`
+    /// the user opted in there, this event — including a `skipButton`
     /// drop-off at any later step — is sent live, which is the whole point of
     /// moving the opt-in up front. If they never opted in, consent stays
     /// undecided and the event is buffered, then dropped when
@@ -129,8 +132,114 @@ enum OnboardingTelemetry {
         /// Finished the flow through Configure AI (download, provider
         /// connect, or "Set up later").
         case finishButton = "finish_button"
-        /// Closed early via the header X button.
-        case closeButton = "close_button"
+        /// Left early via Skip setup: no walkthrough in chat follows.
+        case skipButton = "skip_button"
+        /// Finished Configure AI after an installed bundle skipped the
+        /// welcome step; no walkthrough in chat follows.
+        case bundleSkip = "bundle_skip"
+    }
+
+    // MARK: - First run in chat
+
+    // Every property below is a closed token (a brain state, a path, a step,
+    // a discovery item) or a count. No message text, file or folder name,
+    // workflow output, or model id is attached.
+
+    /// The authored opening appeared in the first chat. `brain` is where
+    /// the chat runs: `local`, `bridged`, `downloading`, `provider`, `none`.
+    static func agentOpeningShown(
+        brain: OnboardingBrainState,
+        distribution: Distribution = .current,
+        service: TelemetryService = .shared
+    ) {
+        service.track("onboarding_agent_opening_shown", withDistribution(["brain": brain.telemetryName], distribution))
+    }
+
+    /// A teammate card was chosen. `path` is the path id.
+    static func agentPathSelected(
+        _ pathId: String,
+        distribution: Distribution = .current,
+        service: TelemetryService = .shared
+    ) {
+        service.track("onboarding_agent_path_selected", withDistribution(["path": pathId], distribution))
+    }
+
+    /// The first run ended. `reason` is `first_task` or `dismissed`; `step`
+    /// is the step it ended on; `ask` is whether an authored ask ran.
+    static func agentFinished(
+        reason: OnboardingPlan.FinishReason,
+        step: String?,
+        ask: Bool,
+        distribution: Distribution = .current,
+        service: TelemetryService = .shared
+    ) {
+        var props: [String: Value] = ["reason": reason.rawValue, "ask": ask]
+        if let step { props["step"] = step }
+        service.track("onboarding_agent_finished", withDistribution(props, distribution))
+    }
+
+    /// An offer to keep a default workflow running settled. `offer` is
+    /// `turn_on`; `outcome` is `taken`, `declined`, or `failed`.
+    static func keepResolved(
+        offer: String,
+        outcome: OnboardingKeep.Outcome,
+        distribution: Distribution = .current,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "onboarding_keep_resolved",
+            withDistribution(["offer": offer, "outcome": outcome.telemetryName], distribution)
+        )
+    }
+
+    /// The Choose a Brain sheet opened over the first-run chat.
+    static func brainChooserOpened(
+        distribution: Distribution = .current,
+        service: TelemetryService = .shared
+    ) {
+        service.track("onboarding_brain_chooser_opened", withDistribution([:], distribution))
+    }
+
+    // MARK: - Discovery
+
+    /// A discovery card showed in a new chat. `new` is false when the card
+    /// was shown before.
+    static func discoveryShown(_ item: DiscoveryItem, new: Bool, service: TelemetryService = .shared) {
+        service.track("discovery_card_shown", ["item": item.rawValue, "new": new])
+    }
+
+    /// A discovery was opened from its card or from Set Up Osaurus.
+    static func discoveryOpened(_ item: DiscoveryItem, from source: String, service: TelemetryService = .shared) {
+        service.track("discovery_opened", ["item": item.rawValue, "source": source])
+    }
+
+    /// A discovery's primary action was taken.
+    static func discoveryTaken(_ item: DiscoveryItem, service: TelemetryService = .shared) {
+        service.track("discovery_taken", ["item": item.rawValue])
+    }
+
+    /// A card was dismissed (retired for good) or Not Now was chosen in its
+    /// walkthrough. `via` is `dismiss` or `not_now`.
+    static func discoveryDeclined(_ item: DiscoveryItem, via: String, service: TelemetryService = .shared) {
+        service.track("discovery_declined", ["item": item.rawValue, "via": via])
+    }
+
+    /// An item that had shown as a card became done in app state.
+    static func discoveryCompleted(_ item: DiscoveryItem, service: TelemetryService = .shared) {
+        service.track("discovery_completed", ["item": item.rawValue])
+    }
+}
+
+extension OnboardingBrainState {
+    var telemetryName: String {
+        switch self {
+        case .local: return "local"
+        case .bridged: return "bridged"
+        case .downloadingLocked: return "downloading"
+        case .provider: return "provider"
+        case .cloudConnecting: return "cloud_connecting"
+        case .none: return "none"
+        }
     }
 }
 
@@ -141,7 +250,6 @@ extension OnboardingStep {
     var telemetryName: String {
         switch self {
         case .welcome: return "welcome"
-        case .createAgent: return "create_agent"
         case .configureAI: return "configure_ai"
         }
     }

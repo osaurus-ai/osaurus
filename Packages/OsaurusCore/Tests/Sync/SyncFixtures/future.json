@@ -1,0 +1,46 @@
+{
+  "description": "Written by a newer client: unknown fields, an unknown namespace and a blob reference. Readers must ignore what they don't know and writers must keep it.",
+  "conversation": {
+    "title": "From the future",
+    "created_ms": 1767312000000,
+    "pinned": false,
+    "archived": true,
+    "tags": {
+      "osaurus.session": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+      "source": "imported",
+      "futureTag": "kept"
+    },
+    "app_data": {
+      "ai.osaurus.session/1": {
+        "v": 1,
+        "id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+        "source": "imported",
+        "futureSessionField": { "nested": [1, 2, 3] }
+      },
+      "ai.osaurus.session.future/1": { "v": 1, "anything": true }
+    }
+  },
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "An answer with a large tool result.",
+      "created_ms": 1767312000000,
+      "app_data_blobs": {
+        "ai.osaurus.turn/1": [
+          { "name": "toolResults.call_9", "media_type": "application/json", "text": "\"a very long tool result\"" }
+        ]
+      },
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "c0000000-0000-4000-8000-000000000001",
+          "role": "assistant",
+          "toolResults": { "call_9": { "$blob": 0, "size": 25 } },
+          "truncated": true,
+          "futureTurnField": "kept"
+        },
+        "ai.osaurus.turn.future/1": { "v": 1, "opaque": "kept" }
+      }
+    }
+  ]
+}

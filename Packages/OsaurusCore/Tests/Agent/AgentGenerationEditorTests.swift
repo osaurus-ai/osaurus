@@ -4,6 +4,62 @@ import Testing
 @testable import OsaurusCore
 
 struct AgentGenerationEditorTests {
+    @Test("picker saves refresh untouched fields without losing unsaved text or chips")
+    func externalSaveRebasesDraft() throws {
+        let previous = AgentGenerationDraft(temperature: 0.4, maxTokens: 512,
+            settings: .init(topP: 0.8, stop: ["old"], reasoningEffort: "high"))
+        var draft = previous
+        draft.topP.text = "0.73"
+        draft.pendingStopSequence = "pending"
+        let latest = AgentGenerationDraft(temperature: 0.6, maxTokens: 1024,
+            settings: .init(topP: 0.9, stop: ["new"], reasoningEffort: "low"))
+
+        draft.mergeSavedChanges(from: previous, to: latest)
+
+        #expect(draft.reasoningEffort == "low")
+        #expect(try draft.temperature.float(named: "Temperature") == 0.6)
+        #expect(try draft.maxTokens.integer(named: "Max Tokens") == 1024)
+        #expect(try draft.topP.float(named: "Top P") == 0.73)
+        #expect(try draft.stopSequencesIncludingPending() == ["old", "pending"])
+
+        draft.mergeSavedChanges(from: latest, to: .init())
+        #expect(draft.reasoningEffort.isEmpty)
+        #expect(!draft.temperature.isCustom)
+        #expect(draft.topP.text == "0.73")
+        #expect(draft.pendingStopSequence == "pending")
+    }
+
+    @Test("an unsaved reasoning edit survives an external Off save as one control")
+    func externalSavePreservesReasoningEdit() {
+        let previous = AgentGenerationDraft(settings: .init(reasoningEffort: "high"))
+        var draft = previous
+        draft.reasoningEffort = "low"
+        let latest = AgentGenerationDraft(settings: .init(enableThinking: false))
+
+        draft.mergeSavedChanges(from: previous, to: latest)
+
+        #expect(draft.reasoningEffort == "low")
+        #expect(draft.thinking == "inherit")
+        var untouched = previous
+        untouched.mergeSavedChanges(from: previous, to: latest)
+        #expect(untouched.thinking == "off")
+        #expect(untouched.reasoningEffort.isEmpty)
+    }
+
+    @Test("an external picker update never erases an invalid unsaved sampler value")
+    func externalSavePreservesInvalidText() {
+        let previous = AgentGenerationDraft(settings: .init(topP: 0.9, reasoningEffort: "high"))
+        var draft = previous
+        draft.topP.text = "not a number"
+        let latest = AgentGenerationDraft(settings: .init(topP: 0.8, reasoningEffort: "none"))
+
+        draft.mergeSavedChanges(from: previous, to: latest)
+
+        #expect(draft.reasoningEffort == "none")
+        #expect(draft.topP.text == "not a number")
+        #expect(throws: (any Error).self) { try draft.validated() }
+    }
+
     @Test("enabling custom JSON starts with the inherited no-override values")
     func customJSONStartsWithInheritedValues() throws {
         var draft = AgentGenerationDraft()

@@ -28,20 +28,17 @@ struct LiveActivitySection: View {
             status: .engineReady,
             blurb:
                 "Aggregated BatchEngine readout across every model loaded right now. Refreshes every 2 seconds.",
-            spacing: 16
+            spacing: theme.space.s16
         ) {
             BatchDiagnosticsView(snapshot: snapshot)
 
-            SettingsDivider()
             inferenceActivityReadout
 
             if !effectiveGeneration.isEmpty {
-                SettingsDivider()
                 effectiveSamplerReadout
             }
 
             if !lastMTP.isEmpty {
-                SettingsDivider()
                 mtpRuntimeReadout
             }
         }
@@ -50,30 +47,30 @@ struct LiveActivitySection: View {
     }
 
     private var inferenceActivityReadout: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             Text(L("Inference now"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
             if inferenceActivities.isEmpty {
                 Text(L("Idle — no active or queued inference"))
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             ForEach(inferenceActivities) { activity in
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .top, spacing: theme.space.s10) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(activity.modelName)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(
                             "\(activity.phase.displayName) · \(activity.source.displayName) · "
                                 + "\(Self.shortID(activity.id))"
                         )
-                        .font(.system(size: 10).monospacedDigit())
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote.monospacedDigit())
+                        .foregroundColor(theme.text.tertiary)
                         .textSelection(.enabled)
                     }
                     Spacer(minLength: 8)
@@ -108,21 +105,21 @@ struct LiveActivitySection: View {
     /// upstream by `shouldRecordAsLastEffectiveGeneration`, so this describes
     /// a real turn.
     private var effectiveSamplerReadout: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(L("Sampler last used"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
             ForEach(effectiveGeneration.keys.sorted(), id: \.self) { model in
                 if let effective = effectiveGeneration[model] {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(model)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(Self.describe(effective))
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription.monospacedDigit())
+                            .foregroundColor(theme.text.tertiary)
                             .textSelection(.enabled)
                     }
                 }
@@ -141,21 +138,21 @@ struct LiveActivitySection: View {
     /// behaviour looks like the control is ignored. Shown per model, populated
     /// only for turns that actually ran native MTP.
     private var mtpRuntimeReadout: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(L("Speculative decoding last run"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
             ForEach(lastMTP.keys.sorted(), id: \.self) { model in
                 if let stats = lastMTP[model] {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(model)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(Self.describeMTP(stats))
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription.monospacedDigit())
+                            .foregroundColor(theme.text.tertiary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }

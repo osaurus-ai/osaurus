@@ -85,4 +85,47 @@ enum MemoryDistillateScreen {
             options: .regularExpression
         ) != nil
     }
+
+    /// Single-valued identity slots. A user has one name, one employer and
+    /// one home at a time, so a newer fact for a slot supersedes the older
+    /// one instead of both being injected as things to always remember.
+    private static let identitySlotPrefixes: [(prefix: String, slot: String)] = [
+        ("user's name is ", "name"),
+        ("user name is ", "name"),
+        ("user works at ", "employer"),
+        ("user works for ", "employer"),
+        ("user's employer is ", "employer"),
+        ("user lives in ", "location"),
+        ("user is based in ", "location"),
+        ("user's location is ", "location"),
+    ]
+
+    static func identitySlot(_ fact: String) -> String? {
+        var text = fact.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+        if text.lowercased().hasPrefix("the ") { text.removeFirst(4) }
+        let lowered = text.lowercased()
+        guard let match = identitySlotPrefixes.first(where: { lowered.hasPrefix($0.prefix) }) else {
+            return nil
+        }
+        // The value must be a proper name ("Osaurus", "Seattle"); "works at
+        // night" is a habit, not an employer.
+        guard text.dropFirst(match.prefix.count).first?.isUppercase == true else { return nil }
+        return match.slot
+    }
+
+    /// The overrides as injected: absence statements dropped and, per
+    /// single-valued slot, only the latest fact kept. Stored rows written
+    /// before the write-side screen existed are cleaned here.
+    static func resolvedIdentityOverrides(_ overrides: [String]) -> [String] {
+        let kept = overrides.filter { !isAbsenceStatement($0) }
+        var lastIndexForSlot: [String: Int] = [:]
+        for (index, fact) in kept.enumerated() {
+            if let slot = identitySlot(fact) { lastIndexForSlot[slot] = index }
+        }
+        return kept.enumerated().compactMap { index, fact in
+            guard let slot = identitySlot(fact) else { return fact }
+            return lastIndexForSlot[slot] == index ? fact : nil
+        }
+    }
 }

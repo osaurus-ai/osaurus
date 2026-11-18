@@ -229,6 +229,68 @@ final class SSEResponseWriter: ResponseWriter {
         writeSSEChunk(chunk, context: context)
     }
 
+    private struct OwnerApprovalChunk: Encodable {
+        var id: String
+        var object: String
+        var created: Int
+        var model: String
+        var choices: [StreamChoice]
+        var osaurus_owner_approval: OwnerApprovalStatus
+    }
+
+    /// A tool call on a shared agent is waiting on (or was settled by) the
+    /// agent's owner. Name only; arguments never leave the host.
+    func writeOwnerApproval(
+        _ status: OwnerApprovalStatus,
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        writeSSEChunk(
+            OwnerApprovalChunk(
+                id: responseId,
+                object: "chat.completion.chunk",
+                created: created,
+                model: model,
+                choices: [],
+                osaurus_owner_approval: status
+            ),
+            context: context
+        )
+    }
+
+    private struct ParticipantMessageChunk: Encodable {
+        var id: String
+        var object: String
+        var created: Int
+        var model: String
+        var choices: [StreamChoice]
+        var osaurus_participant_message: ParticipantMessage.Wire
+    }
+
+    /// Someone else in a hosted conversation (the agent's owner) said
+    /// something while this run was live.
+    func writeParticipantMessage(
+        _ message: ParticipantMessage,
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        writeSSEChunk(
+            ParticipantMessageChunk(
+                id: responseId,
+                object: "chat.completion.chunk",
+                created: created,
+                model: model,
+                choices: [],
+                osaurus_participant_message: message.wire
+            ),
+            context: context
+        )
+    }
+
     @inline(__always)
     func writeRole(
         _ role: String,
@@ -1837,7 +1899,7 @@ struct AgentToolTraceDetail: Sendable {
         )
     }
 
-    private static func categoryAndIcon(_ toolName: String) -> (String, String) {
+    static func categoryAndIcon(_ toolName: String) -> (String, String) {
         let category = ToolCategory.from(toolName: toolName)
         return (
             String(describing: category),

@@ -37,7 +37,7 @@ struct TerminalDisplayViewTests {
 
     @Test @MainActor func chunkBurstCoalescesToSingleFlush() {
         let view = TerminalDisplayView()
-        view._test_prepareForStreaming(theme: LightTheme())
+        view._test_prepareForStreaming(theme: CustomizableTheme.light())
 
         // 1k single-byte chunks all enqueued in the same synchronous
         // burst — should produce zero in-line flushes (everything
@@ -59,7 +59,7 @@ struct TerminalDisplayViewTests {
 
     @Test @MainActor func emptyEnqueueIsNoop() {
         let view = TerminalDisplayView()
-        view._test_prepareForStreaming(theme: LightTheme())
+        view._test_prepareForStreaming(theme: CustomizableTheme.light())
         view._test_enqueue(Data())
         view._test_flushNow()
         #expect(view._test_flushCount == 0)
@@ -70,7 +70,7 @@ struct TerminalDisplayViewTests {
 
     @Test @MainActor func textStorageCapAppliesHeadDropAndMarker() {
         let view = TerminalDisplayView()
-        view._test_prepareForStreaming(theme: LightTheme())
+        view._test_prepareForStreaming(theme: CustomizableTheme.light())
 
         // Enqueue ~1.5 MB in 1 KB chunks of "x\n" so most lines commit
         // (no perpetual live tail). Without the cap this would push
@@ -96,7 +96,7 @@ struct TerminalDisplayViewTests {
 
     @Test @MainActor func capOnlyTriggersAfterOverflow() {
         let view = TerminalDisplayView()
-        view._test_prepareForStreaming(theme: LightTheme())
+        view._test_prepareForStreaming(theme: CustomizableTheme.light())
 
         // Smallish payload — well under the cap; marker MUST NOT show.
         view._test_enqueue(Data("hello world\n".utf8))
@@ -108,7 +108,7 @@ struct TerminalDisplayViewTests {
 
     @Test @MainActor func progressBarRedrawsCollapseInPlace() {
         let view = TerminalDisplayView()
-        view._test_prepareForStreaming(theme: LightTheme())
+        view._test_prepareForStreaming(theme: CustomizableTheme.light())
 
         // pip-style frame burst with a final newline + a follow-up
         // committed line ("Installing collected packages: foo").
@@ -132,7 +132,7 @@ struct TerminalDisplayViewTests {
 
     @Test @MainActor func trailingLiveLineTracksMostRecentFrame() {
         let view = TerminalDisplayView()
-        view._test_prepareForStreaming(theme: LightTheme())
+        view._test_prepareForStreaming(theme: CustomizableTheme.light())
 
         // No terminating `\n` — the live tail should contain the last
         // frame and `trailingLiveLineLength` should match its length.
@@ -155,7 +155,7 @@ struct TerminalDisplayViewTests {
 
     @Test @MainActor func ansiSequencesAreStrippedBeforeTracking() {
         let view = TerminalDisplayView()
-        view._test_prepareForStreaming(theme: LightTheme())
+        view._test_prepareForStreaming(theme: CustomizableTheme.light())
 
         // Coloured progress bar: SGR escapes around "12%" / "50%",
         // then `\r` overwrites. After ANSI strip + tracker, body
@@ -183,7 +183,7 @@ struct TerminalDisplayViewTests {
             killedByUser: false,
             duration: 1.5
         )
-        view.bind(.completed(snapshot), theme: LightTheme())
+        view.bind(.completed(snapshot), theme: CustomizableTheme.light())
 
         let body = view._test_textStorageString
         #expect(body.contains("$ echo hello"))
@@ -203,7 +203,7 @@ struct TerminalDisplayViewTests {
             output: Data(),
             exitCode: 1
         )
-        view.bind(.completed(snapshot), theme: LightTheme())
+        view.bind(.completed(snapshot), theme: CustomizableTheme.light())
         #expect(view._test_statusLabelString == "exited (1)")
     }
 
@@ -215,7 +215,7 @@ struct TerminalDisplayViewTests {
             exitCode: -1,
             killedByUser: true
         )
-        view.bind(.completed(snapshot), theme: LightTheme())
+        view.bind(.completed(snapshot), theme: CustomizableTheme.light())
         #expect(view._test_statusLabelString == "terminated (user)")
     }
 
@@ -227,7 +227,7 @@ struct TerminalDisplayViewTests {
             exitCode: 0,
             duration: nil
         )
-        view.bind(.completed(snapshot), theme: LightTheme())
+        view.bind(.completed(snapshot), theme: CustomizableTheme.light())
         #expect(view._test_elapsedHidden)
     }
 
@@ -238,7 +238,7 @@ struct TerminalDisplayViewTests {
             output: Data(),
             exitCode: 0
         )
-        view.bind(.completed(snapshot), theme: LightTheme())
+        view.bind(.completed(snapshot), theme: CustomizableTheme.light())
         let body = view._test_textStorageString
         // The wrap should be stripped from the displayed prompt.
         #expect(body.contains("$ ls -la"))
@@ -255,7 +255,7 @@ struct TerminalDisplayViewTests {
             output: Data(raw.utf8),
             exitCode: 0
         )
-        view.bind(.completed(snapshot), theme: LightTheme())
+        view.bind(.completed(snapshot), theme: CustomizableTheme.light())
         let body = view._test_textStorageString
         #expect(body.contains("Downloading 100%"))
         #expect(!body.contains("Downloading 1%"))
@@ -272,13 +272,14 @@ struct TerminalDisplayViewTests {
             output: Data("hi\n".utf8),
             exitCode: 0
         )
-        view.bind(.completed(snapshot), theme: LightTheme())
+        let theme = CustomizableTheme.light()
+        view.bind(.completed(snapshot), theme: theme)
         let h = view._test_currentMeasuredHeight
-        // Header (30) + min body (60) = 90; cap at header + max body
-        // (140) = 170. A two-line body should land near the floor.
-        #expect(h >= TerminalDisplayView.headerHeight + TerminalDisplayView.minCompletedBodyHeight)
-        #expect(h <= TerminalDisplayView.headerHeight + TerminalDisplayView.maxBodyHeight)
-        #expect(h < TerminalDisplayView.headerHeight + TerminalDisplayView.maxBodyHeight)
+        let header = TerminalDisplayView.inspectionHeaderHeight(theme)
+        // Header + min body (60) is the floor; header + max body (140) the
+        // cap. A two-line body should land near the floor.
+        #expect(h >= header + TerminalDisplayView.minCompletedBodyHeight)
+        #expect(h < header + TerminalDisplayView.maxBodyHeight)
     }
 
     @Test @MainActor func completedModeAdaptiveHeightCapsForLongOutput() {
@@ -289,10 +290,11 @@ struct TerminalDisplayViewTests {
             output: Data(many.utf8),
             exitCode: 0
         )
-        view.bind(.completed(snapshot), theme: LightTheme())
+        let theme = CustomizableTheme.light()
+        view.bind(.completed(snapshot), theme: theme)
         let h = view._test_currentMeasuredHeight
         // 100 lines → comfortably past max body; should saturate at
         // header + maxBodyHeight.
-        #expect(h == TerminalDisplayView.headerHeight + TerminalDisplayView.maxBodyHeight)
+        #expect(h == TerminalDisplayView.inspectionHeaderHeight(theme) + TerminalDisplayView.maxBodyHeight)
     }
 }

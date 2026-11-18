@@ -131,14 +131,7 @@ final class ServerController: ObservableObject {
     // MARK: - Private Properties
 
     private var serverActor: OsaurusServer?
-    private var agentsCancellable: AnyCancellable?
     private var runtimeSettingsCancellable: AnyCancellable?
-
-    /// Flipped once `applicationDidFinishLaunching` finishes its server
-    /// wiring. The Bonjour-expose Combine sink consults this so it never
-    /// triggers a `restartServer()` while the launch sequence is still
-    /// bringing the server up (mid-launch server churn — see hang audit).
-    private var isLaunchComplete = false
 
     // Singleton holder to allow async access to the current controller instance when injected as EnvironmentObject
     @MainActor
@@ -166,13 +159,6 @@ final class ServerController: ObservableObject {
     }
 
     // MARK: - Public Methods
-
-    /// Marks launch as complete. Called by the AppDelegate at the end of
-    /// `applicationDidFinishLaunching` so the Bonjour-expose Combine sink may
-    /// begin honoring live config changes with a restart.
-    func markLaunchComplete() {
-        isLaunchComplete = true
-    }
 
     /// Brings the embedded HTTP server up on the live controller instance if it
     /// is not already running. Used by the App Intents surface to provide a
@@ -263,12 +249,11 @@ final class ServerController: ObservableObject {
                     + "idleResidency=\(idleResidency)"
             )
 
-            if configuration.exposeToNetwork {
-                BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
+            // The 6-digit pairing, kept for one release beside Sync.
+            if configuration.exposeToNetwork, !MobileConnectMigration.isRetired() {
                 MobileConnectAdvertiser.shared.startAdvertising(port: configuration.port)
             } else {
-                MobileConnectLog.write("server: not exposed to the network, so nothing is advertised for pairing")
-                BonjourAdvertiser.shared.stopAdvertising()
+                MobileConnectLog.write("server: not exposed to the network or pairing retired, nothing advertised")
                 MobileConnectAdvertiser.shared.stopAdvertising()
             }
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
@@ -296,7 +281,6 @@ final class ServerController: ObservableObject {
         print("[Osaurus] Stopping NIO server...")
 
         RelayTunnelManager.shared.disconnectAll()
-        BonjourAdvertiser.shared.stopAdvertising()
         MobileConnectAdvertiser.shared.stopAdvertising()
         isRunning = false
 
@@ -324,7 +308,6 @@ final class ServerController: ObservableObject {
         // Stop mDNS on the quit path too — `stopServer` does this, but
         // `ensureShutdown` is the only teardown the AppDelegate calls, so
         // without this an advertised service could linger past quit.
-        BonjourAdvertiser.shared.stopAdvertising()
         MobileConnectAdvertiser.shared.stopAdvertising()
         isRunning = false
         serverHealth = .stopping
@@ -383,32 +366,6 @@ final class ServerController: ObservableObject {
         if let existingRuntimeSettings {
             synchronizeSpawnBatchLimit(from: existingRuntimeSettings)
         }
-        // Keep exposeToNetwork in sync with Bonjour-enabled agents.
-        // Only turn ON when a Bonjour agent requires it — never force
-        // it OFF, so the user's manual "expose to local network" setting
-        // is preserved across launches.
-        agentsCancellable = AgentManager.shared.$agents
-            .sink { agents in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    let shouldExpose = agents.contains { $0.bonjourEnabled }
-                    // Only act when an agent is forcing exposure ON.
-                    // If no agent requires it, leave the user's setting alone.
-                    guard shouldExpose, !self.configuration.exposeToNetwork else { return }
-                    self.configuration.exposeToNetwork = true
-                    self.runtimeSettings.network.host = "0.0.0.0"
-                    self.saveConfiguration()
-                    ServerRuntimeSettingsStore.save(self.runtimeSettings)
-                    // Only restart for a live config change *after* launch has
-                    // settled. During launch the initial auto-start already
-                    // reads the updated config, so restarting here would be
-                    // redundant server churn racing the launch sequence — the
-                    // mid-launch restart the hang audit flagged.
-                    if self.isRunning && self.isLaunchComplete {
-                        await self.restartServer()
-                    }
-                }
-            }
     }
 
     /// Runs the one-shot legacy → vmlx runtime-settings migration and
@@ -560,13 +517,18 @@ final class ServerController: ObservableObject {
             saveConfiguration()
         }
 
-        let unloadedModelCount =
-            loadedModelRefreshNeeded
-            ? await ModelRuntime.shared.cachedModelSummaries().count
-            : 0
-        if loadedModelRefreshNeeded {
+        // A change of ONLY the speculative load inputs (the Speculative Decoding row) is judged per resident
+        // model: one whose loaded graph already serves the new selection stays resident (MiniMax-M3.1's DSpark
+        // Off <-> On: no 95 GB reload). Any other load input still clears every resident model.
+        let unloadedModelCount: Int
+        if Self.onlySpeculativeLoadInputsChanged(previous: previousRuntimeSettings, next: settings) {
+            unloadedModelCount = await ModelRuntime.shared.applySpeculativeLoadChange(settings: settings)
+            await ModelRuntime.shared.refreshDiskCacheCaps()
+        } else if loadedModelRefreshNeeded {
+            unloadedModelCount = await ModelRuntime.shared.cachedModelSummaries().count
             await ModelRuntime.shared.clearAll()
         } else {
+            unloadedModelCount = 0
             await ModelRuntime.shared.refreshDiskCacheCaps()
         }
         if restartWasRequested {
@@ -589,13 +551,35 @@ final class ServerController: ObservableObject {
         previous: VMLXServerRuntimeSettings,
         next: VMLXServerRuntimeSettings
     ) -> Bool {
+        // Only the MTP fields that change what gets LOADED force a reload.
+        // Comparing the whole `mtp` struct meant changing the draft-token
+        // depth — a per-request value — evicted every resident model, so a
+        // quick depth switch cost a full 27B reload on the next turn. Even
+        // these MAY not change a given bundle's load: `saveRuntimeSettings`
+        // judges a speculative-only change per resident model
+        // (`ModelRuntime.applySpeculativeLoadChange`).
+        mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
+            || nonSpeculativeLoadInputsRequireRefresh(previous: previous, next: next)
+    }
+
+    /// The change touches load inputs, but only speculative-decoding ones: `saveRuntimeSettings` then asks each
+    /// resident model whether its own load changes (`ModelRuntime.applySpeculativeLoadChange`) instead of clearing
+    /// every resident model.
+    nonisolated static func onlySpeculativeLoadInputsChanged(
+        previous: VMLXServerRuntimeSettings,
+        next: VMLXServerRuntimeSettings
+    ) -> Bool {
+        mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
+            && !nonSpeculativeLoadInputsRequireRefresh(previous: previous, next: next)
+    }
+
+    /// Every load input except the speculative-decoding ones.
+    nonisolated static func nonSpeculativeLoadInputsRequireRefresh(
+        previous: VMLXServerRuntimeSettings,
+        next: VMLXServerRuntimeSettings
+    ) -> Bool {
         previous.cache.requiresModelReload(comparedTo: next.cache)
             || previous.multimodal != next.multimodal
-            // Only the MTP fields that change what gets LOADED force a reload.
-            // Comparing the whole `mtp` struct meant changing the draft-token
-            // depth — a per-request value — evicted every resident model, so a
-            // quick depth switch cost a full 27B reload on the next turn.
-            || mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
             // These values are consumed while constructing the model graph.
             // Compare effective settings so nil versus an explicit default
             // does not unload a resident model unnecessarily.

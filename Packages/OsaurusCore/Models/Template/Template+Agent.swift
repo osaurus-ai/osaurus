@@ -46,14 +46,25 @@ extension Template {
         createdAt: Date = Date(),
         availableToOrchestrator: Bool = true,
         requirements: TemplateRequirements = TemplateRequirements(),
-        actions: [TemplateAction]? = nil
+        actions: [TemplateAction]? = nil,
+        workflows: [WorkflowReference] = []
     ) {
         self.init(
             name: name, summary: summary,
             author: author.map { TemplateAuthor(name: $0) },
             createdAt: createdAt, availableToOrchestrator: availableToOrchestrator,
             requirements: requirements,
-            payload: .agent(AgentTemplatePayload(agent: agent, actions: actions)))
+            payload: .agent(AgentTemplatePayload(agent: agent, actions: actions, workflows: workflows)))
+    }
+
+    /// Workflow templates the agent references.
+    public var workflowReferences: [WorkflowReference] {
+        get { agentPayload?.workflows ?? [] }
+        set {
+            guard case .agent(var p) = payload else { return }
+            p.workflows = newValue
+            payload = .agent(p)
+        }
     }
 
     /// The name to offer on import. When the envelope name collides and a
@@ -81,10 +92,12 @@ extension Template {
             if let v = overrides.description { entry.description = v }
             if let v = overrides.systemPrompt { entry.systemPrompt = v }
             if overrides.model.isSpecified { entry.model = overrides.model }
+            if let v = overrides.modelLocked { entry.modelLocked = v }
             if overrides.temperature.isSpecified { entry.temperature = overrides.temperature }
             if overrides.maxTokens.isSpecified { entry.maxTokens = overrides.maxTokens }
             if overrides.generationSettings.isSpecified { entry.generationSettings = overrides.generationSettings }
             if let show = overrides.showResponseMetrics { entry.showResponseMetrics = show }
+            if let on = overrides.followUpSuggestions { entry.followUpSuggestions = on }
             if overrides.workingFolder.isSpecified { entry.workingFolder = overrides.workingFolder }
             if let v = overrides.capabilities { entry.capabilities = merge(entry.capabilities, v) }
             if let v = overrides.tools { entry.tools = v }
@@ -94,6 +107,7 @@ extension Template {
             if let v = overrides.sandbox { entry.sandbox = v }
             if let v = overrides.subagents { entry.subagents = v }
         }
+        Self.strippingApprovals(&entry)
         var doc = OsaurusConfigDocument()
         doc.version = 1
         doc.agents = [entry]
@@ -112,8 +126,16 @@ extension Template {
         if let v = over.selfSchedulingEnabled { out.selfSchedulingEnabled = v }
         if let v = over.computerUseEnabled { out.computerUseEnabled = v }
         if let v = over.browserUseEnabled { out.browserUseEnabled = v }
+        if let v = over.imageEnabled { out.imageEnabled = v }
+        if let v = over.applescriptEnabled { out.applescriptEnabled = v }
+        if let v = over.appleApps { out.appleApps = v }
         if let v = over.speakEnabled { out.speakEnabled = v }
         if let v = over.renderChartEnabled { out.renderChartEnabled = v }
+        if let v = over.calculatorEnabled { out.calculatorEnabled = v }
+        if let v = over.redactionToolsEnabled { out.redactionToolsEnabled = v }
+        if let v = over.taskChecklistEnabled { out.taskChecklistEnabled = v }
+        if let v = over.clarifyEnabled { out.clarifyEnabled = v }
+        if let v = over.artifactsEnabled { out.artifactsEnabled = v }
         if let v = over.relayEnabled { out.relayEnabled = v }
         return out
     }
@@ -132,6 +154,7 @@ extension Template {
         case knowledge
         case pluginInstructions = "plugin_instructions"
         case actions
+        case workflows
 
         public var id: String { rawValue }
     }
@@ -144,7 +167,10 @@ extension Template {
         var reqs = copy.requirements
         if sections.contains(.systemPrompt) { entry.systemPrompt = nil }
         if sections.contains(.description) { entry.description = nil }
-        if sections.contains(.model) { entry.model = .absent }
+        if sections.contains(.model) {
+            entry.model = .absent
+            entry.modelLocked = nil
+        }
         if sections.contains(.tools) {
             entry.tools = nil
             entry.mcpServers = nil
@@ -164,6 +190,10 @@ extension Template {
         }
         if sections.contains(.pluginInstructions) { entry.pluginInstructions = nil }
         if sections.contains(.actions) { p.actions = nil }
+        if sections.contains(.workflows) {
+            p.workflows = []
+            copy.bundled = []
+        }
         p.agent = entry
         copy.payload = .agent(p)
         copy.requirements = reqs
@@ -229,6 +259,9 @@ extension Template {
         entry.capabilities?.knowledgeCollectionIds = nil
         // Relay exposure is a per-Mac decision, never part of a template.
         entry.capabilities?.relayEnabled = nil
+        // Installed names are per-Mac; workflows travel as references below.
+        entry.workflows = nil
+        strippingApprovals(&entry)
 
         if let path = agent.workingFolderPath, !path.isEmpty {
             reqs.workingFolder = PathHint(path: abbreviateHome(path), label: L("Working Folder"))
@@ -236,6 +269,18 @@ extension Template {
         }
         if agent.settings.appleScriptEnabled {
             reqs.permissions.append(SystemPermission.automation.rawValue)
+        }
+
+        // Enabled workflows travel as references plus the exact template
+        // versions they pin, so the receiver needs nothing else.
+        var refs: [WorkflowReference] = []
+        var bundled: [Template] = []
+        for wid in agent.settings.enabledWorkflowIDs {
+            guard let installed = InstalledWorkflowStore.shared.workflow(id: wid) else { continue }
+            refs.append(WorkflowReference(id: installed.templateID, minVersion: installed.templateVersion))
+            if let pinned = TemplateStore.shared.template(id: installed.templateID, version: installed.templateVersion) {
+                bundled.append(TemplateExportSanitizer.sanitized(pinned))
+            }
         }
 
         let displayName = (name?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
@@ -250,7 +295,8 @@ extension Template {
             requirements: reqs,
             payload: .agent(
                 AgentTemplatePayload(
-                    agent: entry, actions: agent.chatQuickActions?.map(TemplateAction.init))))
+                    agent: entry, actions: agent.chatQuickActions?.map(TemplateAction.init), workflows: refs)))
+        template.bundled = bundled
         template = template.renamed(to: displayName)
         return template.sealed()
     }
@@ -263,6 +309,13 @@ extension Template {
         var copy = entry
         copy.tools?.enabled = enabled.filter { registered.contains($0) }
         return copy
+    }
+
+    /// Approval settings are the receiving user's decision: a template never
+    /// carries them out, and a hand-edited one cannot install with them.
+    static func strippingApprovals(_ entry: inout AgentEntry) {
+        entry.toolApprovals = nil
+        entry.tools?.policies = nil
     }
 
     static func abbreviateHome(_ path: String) -> String {
@@ -310,7 +363,8 @@ extension Template {
     }
 
     /// The agent entry mapped onto this Mac: knowledge names become local
-    /// ids, a missing model becomes `null` (the user's default).
+    /// ids, a missing model becomes `null` (the user's default), and an
+    /// `always` main model slot locks the agent to its model.
     @MainActor
     public func resolvedEntry(overrides: AgentEntry? = nil) -> AgentEntry {
         var entry = document(overrides: overrides).agents?.first ?? agent
@@ -321,6 +375,11 @@ extension Template {
             case .fallbackToDefault, .blocked:
                 entry.model = .null
             }
+        }
+        if entry.modelLocked == nil, modelPolicy == .always,
+            agent.model.valueOrNil?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        {
+            entry.modelLocked = true
         }
         let wanted = knowledgeCollectionNames
         if !wanted.isEmpty {

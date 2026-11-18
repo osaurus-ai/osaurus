@@ -85,7 +85,8 @@ public final class KnowledgeWriteLogDatabase: @unchecked Sendable {
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.knowledge())
             do {
                 db = try OsaurusStorageOpener.open(
-                    path: OsaurusPaths.knowledgeWriteLogDatabaseFile().path
+                    path: OsaurusPaths.knowledgeWriteLogDatabaseFile().path,
+                    cacheTier: .cold
                 )
             } catch let error as EncryptedSQLiteError {
                 throw KnowledgeWriteLogError.failedToOpen(error.localizedDescription)

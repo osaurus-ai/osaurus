@@ -34,11 +34,17 @@ import SwiftUI
 public enum PromptItem: Identifiable {
     case secret(SecretPromptState)
     case clarify(ClarifyPromptState)
+    case workflowDialog(WorkflowDialogPromptState)
+    case workflowSave(WorkflowSavePromptState)
+    case ownerApproval(OwnerApprovalPromptState)
 
     nonisolated public var id: ObjectIdentifier {
         switch self {
         case .secret(let s): return ObjectIdentifier(s)
         case .clarify(let c): return ObjectIdentifier(c)
+        case .workflowDialog(let w): return ObjectIdentifier(w)
+        case .workflowSave(let w): return ObjectIdentifier(w)
+        case .ownerApproval(let o): return ObjectIdentifier(o)
         }
     }
 
@@ -52,6 +58,10 @@ public enum PromptItem: Identifiable {
             return true
         case .clarify:
             return false
+        case .workflowDialog(let w):
+            return w.hasSecretField
+        case .workflowSave, .ownerApproval:
+            return false
         }
     }
 
@@ -63,6 +73,8 @@ public enum PromptItem: Identifiable {
         switch self {
         case .secret(let s): s.cancel()
         case .clarify(let c): c.cancel()
+        case .ownerApproval(let o): o.abandon()
+        case .workflowDialog, .workflowSave: break
         }
     }
 
@@ -75,6 +87,9 @@ public enum PromptItem: Identifiable {
         switch self {
         case .secret(let s): s.cancel()
         case .clarify(let c): c.cancelByUser()
+        case .workflowDialog(let w): w.dismiss()
+        case .workflowSave(let w): w.cancel()
+        case .ownerApproval(let o): o.answer(.denied)
         }
     }
 }
@@ -111,6 +126,15 @@ public final class PromptQueue: ObservableObject {
             current = pending.removeFirst()
         }
     }
+
+    /// Drop prompts resolved elsewhere (another window, the workflow tab,
+    /// a relay client) without cancelling them.
+    public func remove(where shouldRemove: (PromptItem) -> Bool) {
+        pending.removeAll(where: shouldRemove)
+        if let cur = current, shouldRemove(cur) { advance() }
+    }
+
+    public var all: [PromptItem] { (current.map { [$0] } ?? []) + pending }
 
     /// Cancel and drop specific prompts, leaving the rest queued.
     public func dismiss(_ ids: Set<ObjectIdentifier>) {

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Stage the bundled onboarding model for the "full" distribution DMG.
 #
-# Downloads OsaurusAI/Raptor-0.6-4B-JANG_6M at a pinned Hugging Face commit,
+# Downloads OsaurusAI/Raptor-0.7-4B-JANG_6M at a pinned Hugging Face commit,
 # keeps exactly the file set `ModelDownloadService` would download (so the
 # seeded bundle is byte-identical to an in-app download), verifies the
 # weights against a pinned SHA-256, and writes `manifest.json` for
@@ -24,10 +24,10 @@ set -euo pipefail
 #   BUNDLED_MODEL_SOURCE_DIR  stage from an existing local bundle instead of
 #                             downloading (still digest-verified). Local dev only.
 
-MODEL_ID="OsaurusAI/Raptor-0.6-4B-JANG_6M"
-REVISION="41328ca5650100fa2e1913b1be7124ef33cc51c8"
+MODEL_ID="OsaurusAI/Raptor-0.7-4B-JANG_6M"
+REVISION="aaae0920e840ef8c03e8393266b6ec6516e8fc90"
 WEIGHTS_FILE="model-00001-of-00001.safetensors"
-WEIGHTS_SHA256="4b99612854c5f0a4c6c7e0098a0c1dfda98e90880f983bd8254feae09cabf43d"
+WEIGHTS_SHA256="5d9f1f2a3ee83bffcede21e7cf53587f3c3376ad96b7c8c95dfff8557a569012"
 
 # Mirror of ModelDownloadService.downloadFilePatterns / downloadExcludedFiles.
 INCLUDE_GLOBS=("*.json" "*.jinja" "*.txt" "*.model" "*.safetensors")

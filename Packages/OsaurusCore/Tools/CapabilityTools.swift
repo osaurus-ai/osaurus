@@ -62,6 +62,7 @@ actor CapabilityLoadBuffer {
         // spawn specs so the orchestrator can run the new agent in the
         // SAME turn instead of waiting for the next compose.
         "osaurus_config",
+        "osaurus_import",
     ]
 
     static func shouldActivate(after toolName: String) -> Bool {
@@ -1251,6 +1252,19 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             }
         }
+        if ToolRegistry.readOnlyFolderBlockedToolNames.contains(toolId),
+            ChatExecutionContext.currentFolderRoot != nil
+        {
+            let agentId = ChatExecutionContext.currentAgentId
+            if await MainActor.run(body: { ToolRegistry.agentHasReadOnlyWorkingFolder(agentId) }) {
+                return .failure(
+                    LoadFailure(
+                        kind: .rejected,
+                        message: "Tool '\(toolId)' cannot be loaded: " + ToolRegistry.readOnlyFolderMessageSuffix
+                    )
+                )
+            }
+        }
         let allowedNames = await grantedToolNamesForCurrentAgent()
         let (availability, isEnabled, isBuiltIn, toolSpec, isWorkspaceTool) = await MainActor.run {
             (
@@ -1269,10 +1283,25 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // under `isBuiltIn` was dead code, and depending on whether a folder
         // was ever mounted this process they'd otherwise hit "not registered",
         // "not enabled for this agent", or a false "loaded — callable NOW".
-        // Keyed on the NAME so the answer is state-independent. The refusal
-        // stands (the execution boundary does not move on a model's say-so);
-        // it just names the one real next step, which is user-facing.
+        // Keyed on the NAME and this request's exposure, never on registration
+        // state. The refusal stands (the execution boundary does not move on a
+        // model's say-so); it just names the one real next step, which is
+        // user-facing.
         if isWorkspaceTool {
+            // The session store can still list workspace tools from a turn
+            // whose folder was since cleared, so it is not consulted here.
+            let exposedToThisRequest =
+                ChatExecutionContext.toolExecutionScope?.permits(toolId)
+                ?? (ChatExecutionContext.currentFolderRoot != nil)
+            if exposedToThisRequest {
+                return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
+            }
+            let agentId = ChatExecutionContext.currentAgentId
+            if let refusal = await MainActor.run(body: {
+                ToolRegistry.sandboxNotReadyRefusal(tool: toolId, agentId: agentId)
+            }) {
+                return .failure(LoadFailure(kind: .rejected, message: refusal.message))
+            }
             return .failure(
                 LoadFailure(
                     kind: .rejected,
@@ -1329,14 +1358,10 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         if let app = AppleApp.app(forTool: toolId) {
             // Never reachable when the app is on (the tool is already in the
             // baseline and returned "already loaded" above); this is the
-            // off-agent path, so name the real switch.
-            return .failure(
-                LoadFailure(
-                    kind: .rejected,
-                    message:
-                        "Tool '\(toolId)' belongs to the built-in \(app.displayName) app, which is off for this agent and cannot be enabled with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps, or have the Orchestrator set capabilities.apple_apps for this agent."
-                )
-            )
+            // off-agent path, worded for the calling agent.
+            let refusal = ToolRegistry.appleAppOffRefusal(
+                tool: toolId, app: app, agentId: ChatExecutionContext.currentAgentId)
+            return .failure(LoadFailure(kind: refusal.kind, message: refusal.message))
         }
         if isBuiltIn, !isDeferredDefaultConfigureWrite, !isOnDemandBuiltIn {
             return .failure(

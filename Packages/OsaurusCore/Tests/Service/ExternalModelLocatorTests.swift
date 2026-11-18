@@ -350,10 +350,18 @@ struct ExternalModelLocatorTests {
 
         let bundle = customRoot.appendingPathComponent("publisher/repo", isDirectory: true)
         writeBundle(at: bundle)
-        try? Data(#"{"model_type":"gemma4"}"#.utf8)
-            .write(to: bundle.appendingPathComponent("config.json"))
-        try? Data(#"{"metadata":{"total_size":44298536392}}"#.utf8)
-            .write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        let config = Data(#"{"model_type":"gemma4"}"#.utf8)
+        let index = Data(#"{"metadata":{"total_size":44298536392}}"#.utf8)
+        try? config.write(to: bundle.appendingPathComponent("config.json"))
+        try? index.write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        let engram = Data(repeating: 7, count: 517)
+        try? FileManager.default.createDirectory(
+            at: bundle.appendingPathComponent("engram"), withIntermediateDirectories: true)
+        try? engram.write(to: bundle.appendingPathComponent("engram/table.safetensors"))
+        // The index deliberately advertises a stale 44 GB payload. Actual installed
+        // files win; nested SSD tables count toward download, not target weights.
+        let expectedDownloadBytes = Int64(config.count + index.count + engram.count + 2 + 1)
+        #expect(MLXModel.localBundleDownloadSizeBytes(at: bundle) == expectedDownloadBytes)
 
         ExternalModelLocator.testRootsOverride = [(root: customRoot, source: .customModelFolder)]
         ExternalModelLocator.rescan()
@@ -367,14 +375,12 @@ struct ExternalModelLocatorTests {
         #expect(resolved?.standardizedFileURL.path == bundle.standardizedFileURL.path)
 
         let models = ExternalModelLocator.models()
-        #expect(
-            models.contains {
-                $0.id == "publisher/repo"
-                    && $0.externalSource == "Custom model folder"
-                    && $0.modelType == "gemma4"
-                    && $0.downloadSizeBytes == 44_298_536_392
-            }
-        )
+        let model = models.first { $0.id == "publisher/repo" }
+        #expect(model != nil)
+        #expect(model?.externalSource == "Custom model folder")
+        #expect(model?.modelType == "gemma4")
+        #expect(model?.downloadSizeBytes == expectedDownloadBytes)
+        #expect(model?.weightSizeBytes == 1)
 
         #expect(report?.discovered.contains { $0.id == "publisher/repo" } == true)
         #expect(report?.skipped.isEmpty == true)

@@ -142,13 +142,6 @@ struct AgentTemplateParseTests {
     }
 
     @Test
-    func unknownKind_isRejectedWithItsName() {
-        #expect(throws: AgentTemplateError.wrongKind(expected: .agent, got: "bundle")) {
-            _ = try AgentTemplate.parse(#"{"format": "osaurus.template", "kind": "bundle", "name": "K"}"#)
-        }
-    }
-
-    @Test
     func emptyAndGarbage_areRejected() {
         #expect(throws: AgentTemplateError.empty) { _ = try AgentTemplate.parse("   \n") }
         #expect(throws: AgentTemplateError.self) { _ = try AgentTemplate.parse("- just\n- a list") }
@@ -273,6 +266,8 @@ struct TemplateStoreTests {
             #expect(store.template(named: "scout agent")?.id == v1.id)
             #expect(store.template(named: "SCOUT-AGENT")?.id == v1.id)
             #expect(store.template(named: v1.id.uuidString)?.id == v1.id)
+            #expect(store.template(named: "scout agent", kind: .workflow) == nil)
+
             let renamed = try store.rename(id: v1.id, to: "Sky Agent")
             #expect(renamed.version == 2)
             #expect(renamed.agent.name == "Sky Agent")

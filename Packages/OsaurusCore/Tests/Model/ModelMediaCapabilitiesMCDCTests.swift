@@ -34,6 +34,50 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(!LocalVisionEvidence.inspect(noToken, refresh: true).hasVision)
     }
 
+    @Test func miniMaxM3InBundleVisionStackGrantsImagesOnly() throws {
+        let root = try VisionBundleFixture.makeMiniMaxM3()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for alias in ["neutral", "MiniMax-M3.1-Flash-JANGHT1.9"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(!caps.supportsVideo)
+            #expect(!caps.supportsAudio)
+        }
+        #expect(LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        #expect(VLMDetection.isVLM(at: root))
+    }
+
+    @Test(arguments: ["patch_embedding", "pre_layrnorm", "layers.1.self_attn.q_proj", "layers.0.mlp.fc2",
+                      "multi_modal_projector.linear_2", "patch_merge_mlp.linear_1"])
+    func miniMaxM3MissingVisionComponentIsTextOnly(component: String) throws {
+        let root = try VisionBundleFixture.makeMiniMaxM3(omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        #expect(ModelMediaCapabilities.from(directory: root, modelId: "neutral") == .textOnly)
+    }
+
+    /// Opt-in: OSAURUS_M31_BUNDLE=<the installed MiniMax-M3.1 bundle> (reads config files and safetensors headers only).
+    @Test func miniMaxM3RealBundleEvidence() throws {
+        guard let path = ProcessInfo.processInfo.environment["OSAURUS_M31_BUNDLE"] else { return }
+        let evidence = LocalVisionEvidence.inspect(URL(fileURLWithPath: path), refresh: true)
+        #expect(evidence.hasVision, "\(evidence.reason)")
+        let caps = ModelMediaCapabilities.from(directory: URL(fileURLWithPath: path), modelId: "OsaurusAI/MiniMax-M3.1-Flash-JANGHT1.9")
+        #expect(caps.supportsImage && !caps.supportsVideo && !caps.supportsAudio)
+        print("[m31-evidence] \(evidence.modelType): hasVision \(evidence.hasVision): \(evidence.reason)")
+    }
+
+    @Test func miniMaxM3RequiresDepthTokenAndProcessor() throws {
+        for root in [try VisionBundleFixture.makeMiniMaxM3(depth: 3),
+                     try VisionBundleFixture.makeMiniMaxM3(imageTokenId: nil),
+                     try VisionBundleFixture.makeMiniMaxM3(processor: false)] {
+            defer { try? FileManager.default.removeItem(at: root) }
+            #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        }
+        #expect(LocalVisionEvidence.miniMaxM3VisionRuntimeAvailable)
+        #expect(VLMDetection.isVLM(modelType: "minimax_m3_vl"))
+        #expect(!VLMDetection.isVLM(modelType: "minimax_m3"))
+    }
+
     @Test(arguments: [true, false], [true, false])
     func nemotronVideoRequiresBundleTokenAndTemporalWeights(hasToken: Bool, hasTemporalWeights: Bool) throws {
         let root = try VisionBundleFixture.make(type: "nemotron_h_omni")

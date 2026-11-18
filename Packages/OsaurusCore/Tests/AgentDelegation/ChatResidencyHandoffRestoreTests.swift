@@ -18,53 +18,80 @@ import Testing
 
 @Suite(.serialized)
 struct ChatResidencyHandoffRestoreTests {
-    @Test("active file-cache pages remain reclaimable after a child run")
-    func activeFileCacheRemainsReclaimable() {
+    @Test("active file-cache pages remain reclaimable after a child run", arguments: [4096, 16384])
+    func activeFileCacheRemainsReclaimable(page: Int64) {
         let gib: Int64 = 1 << 30
-        let page: Int64 = 16 << 10
-        // 16 GiB host: 2 GiB wired, 1 GiB compressed, 4 GiB internal of
-        // which 1 GiB is purgeable. The remaining 10 GiB is reclaimable,
-        // regardless of whether its file-backed pages sit active or inactive.
+        // Free includes 1 GiB speculative, also present in file-backed.
+        // Reclaim 3 + 7 + 1 - 1 = 10 GiB without counting that overlap twice.
         let result = ChatResidencyHandoff.reclaimableMemoryBytes(
             physicalBytes: 16 * gib,
             pageSize: page,
-            wiredPages: 2 * gib / page,
-            compressorPages: 1 * gib / page,
-            internalPages: 4 * gib / page,
-            purgeablePages: 1 * gib / page
+            freePages: 3 * gib / page,
+            fileBackedPages: 7 * gib / page,
+            purgeablePages: gib / page,
+            speculativePages: gib / page
         )
         #expect(result == 10 * gib)
     }
 
-    @Test("unreclaimable anonymous and compressed pages remain charged")
+    @Test("anonymous and compressed capacity is not added to reclaimable pages")
     func unreclaimablePagesRemainCharged() {
         let gib: Int64 = 1 << 30
         let page: Int64 = 16 << 10
         let result = ChatResidencyHandoff.reclaimableMemoryBytes(
             physicalBytes: 16 * gib,
             pageSize: page,
-            wiredPages: 3 * gib / page,
-            compressorPages: 2 * gib / page,
-            internalPages: 7 * gib / page,
-            purgeablePages: 1 * gib / page
+            freePages: gib / page,
+            fileBackedPages: 4 * gib / page,
+            purgeablePages: gib / page,
+            speculativePages: gib / page
         )
         #expect(result == 5 * gib)
     }
 
-    @Test("invalid or overflowing host counters fail closed")
-    func invalidHostCountersFailClosed() {
-        #expect(
-            ChatResidencyHandoff.reclaimableMemoryBytes(
-                physicalBytes: 16 << 30,
-                pageSize: Int64.max,
-                wiredPages: Int64.max,
-                compressorPages: 1,
-                internalPages: 0,
-                purgeablePages: 0
-            ) == 0
+    @Test("native host snapshot remains nonzero without using the internal aggregate")
+    func nativeHostSnapshot() {
+        // Actual 128 GiB / 16 KiB host; internal_page_count was 11,664,556,
+        // exceeding physical RAM. Only the disjoint reclaimable classes apply.
+        let result = ChatResidencyHandoff.reclaimableMemoryBytes(
+            physicalBytes: 128 << 30,
+            pageSize: 16384,
+            freePages: 3_239_526,
+            fileBackedPages: 2_453_289,
+            purgeablePages: 70_942,
+            speculativePages: 134_556
         )
+        #expect(result == 92_228_829_184)
     }
 
+    @Test("invalid or overflowing host counters retain zero capacity")
+    func invalidHostCountersFailClosed() {
+        let invalid: [(physical: Int64, page: Int64, free: Int64, file: Int64, purge: Int64, spec: Int64)] = [
+            (0, 4096, 1, 0, 0, 0),
+            (16384, 0, 1, 0, 0, 0),
+            (16384, 4096, -1, 0, 0, 0),
+            (16384, 4096, 1, -1, 0, 0),
+            (16384, 4096, 1, 0, -1, 0),
+            (16384, 4096, 1, 0, 0, -1),
+            (16384, 4096, 0, 1, 0, 1),
+            (16384, 4096, 1, 0, 0, 1),
+            (Int64.max, 1, Int64.max, 1, 0, 0),
+            (Int64.max, 1, 1, Int64.max - 1, 1, 0),
+            (Int64.max, Int64.max, 2, 0, 0, 0),
+            (16384, 4096, 5, 0, 0, 0),
+        ]
+        for row in invalid {
+            #expect(ChatResidencyHandoff.reclaimableMemoryBytes(
+                physicalBytes: row.physical, pageSize: row.page,
+                freePages: row.free, fileBackedPages: row.file,
+                purgeablePages: row.purge, speculativePages: row.spec
+            ) == 0)
+        }
+        #expect(ChatResidencyHandoff.reclaimableMemoryBytes(
+            physicalBytes: 16384, pageSize: 4096, freePages: 0,
+            fileBackedPages: 0, purgeablePages: 0, speculativePages: 0
+        ) == 0)
+    }
 
     /// A name `ModelManager.findInstalledModel` can never resolve, so `preload`
     /// fast-throws before touching the GPU — driving the restore failure +
@@ -149,7 +176,7 @@ struct ChatResidencyHandoffRestoreTests {
         )
         #expect(
             insufficient.localizedDescription
-                == "Memory check refused the task: the subagent's model needs ~59.3 GB but only ~54.1 GB would be available after freeing the chat model. Use a smaller model for the subagent, free memory, or turn off \"Check memory before delegating\" in Settings → Subagents."
+                == "Memory check refused the task: the subagent's model needs ~59.3 GB but only ~54.1 GB would be available after freeing the chat model. Use a smaller model for the subagent, free memory, or turn off \"Check memory before delegating\" in Settings → Agents → Delegation."
         )
 
         let busy = ChatResidencyHandoff.HandoffError.chatBusy

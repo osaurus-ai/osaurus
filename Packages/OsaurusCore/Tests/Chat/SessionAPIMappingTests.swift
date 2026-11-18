@@ -115,7 +115,35 @@ struct RemoteSessionContinuationTests {
         )
     }
 
-    @Test func diskReloadHistoryReplaysOpaqueSignedAndReasoningOnlyTurns() async throws {
+    @Test func replayKeepsOpaqueSignedAndReasoningOnlyTurns() throws {
+        let native = try ResponsesHistoryFixture.turn()
+        let items = try ResponsesHistoryFixture.items()
+        let opaqueItem = try #require(items.last)
+        let opaqueOnly = ChatTurnData(
+            role: .assistant, content: "", responsesOutputItems: [opaqueItem]
+        )
+        var signedOnly = ChatTurnData(role: .assistant, content: "")
+        signedOnly.anthropicThinkingBlocks = try ResponsesHistoryFixture.signedBlocks()
+        let reasoningOnly = ChatTurnData(role: .assistant, content: "", thinking: "Retained earlier reasoning")
+        var excluded = try ResponsesHistoryFixture.turn()
+        excluded.modelContextExcluded = true
+        let turns = [
+            ChatTurnData(role: .system, content: "Not replayed"), native, opaqueOnly, signedOnly, reasoningOnly, excluded,
+        ]
+        let history = turns.compactMap(RemoteSessionContinuation.message(from:))
+        try #require(history.count == 4)
+        let replay = try #require(history.first)
+        #expect(replay.reasoning_content == native.thinking)
+        #expect(replay.reasoning_item_id == native.reasoningItemId && replay.reasoning_encrypted == native.reasoningEncrypted)
+        #expect(replay.responses_output_items == native.responsesOutputItems)
+        #expect(replay.tool_calls?.map(\.id) == ["call_b", "call_a"])
+        #expect(replay.tool_calls?.first?.function.arguments == #"{"count":"7"}"#)
+        #expect(history[1].content == "" && history[1].responses_output_items == opaqueOnly.responsesOutputItems)
+        #expect(history[2].content == "" && history[2].anthropic_thinking_blocks == signedOnly.anthropicThinkingBlocks)
+        #expect(history[3].content == "" && history[3].reasoning_content == "Retained earlier reasoning")
+    }
+
+    @Test func storedHistoryReplaysOpaqueSignedAndReasoningOnlyTurns() async throws {
         try await ChatHistoryTestStorage.run {
             let native = try ResponsesHistoryFixture.turn()
             let items = try ResponsesHistoryFixture.items()
@@ -128,16 +156,13 @@ struct RemoteSessionContinuationTests {
             let reasoningOnly = ChatTurnData(role: .assistant, content: "", thinking: "Retained earlier reasoning")
             var excluded = try ResponsesHistoryFixture.turn()
             excluded.modelContextExcluded = true
-            try #require(excluded.id != native.id, "Excluded fixture is a distinct SQL row, not an update of the native row")
+            try #require(excluded.id != native.id, "Excluded fixture is a distinct turn, not an update of the native one")
             let session = ChatSessionData(turns: [
                 ChatTurnData(role: .system, content: "Not replayed"), native, opaqueOnly, signedOnly, reasoningOnly, excluded,
             ])
-            let disk = ChatHistoryDatabase()
-            try disk.open()
-            try disk.saveSession(session)
-            disk.close()
-            // No store/manager save or pending overlay was populated. The
-            // production continuation reader must reopen the committed row.
+            ChatSessionStore.save(session)
+            // The continuation reader goes through the store, as the
+            // agent-run route does.
             let history = await RemoteSessionContinuation.history(for: session.id)
             try #require(history.count == 4)
             let replay = try #require(history.first)
@@ -198,6 +223,17 @@ struct RemoteSessionContinuationTests {
         let other = ChatSessionData(source: .http, externalSessionKey: RemoteSessionContinuation.phoneChatKey)
         #expect(!RemoteSessionContinuation.isFromPairedPhone(other))
         #expect(!RemoteSessionContinuation.isFromPairedPhone(ChatSessionData()))
+    }
+
+    /// Chats started while several phones could pair are tagged with the
+    /// phone's id, and are still the phone's chats.
+    @Test func deviceTaggedPhoneChatKeysAreRecognised() {
+        #expect(RemoteSessionContinuation.isPhoneChatKey("osaurus-connect-phone"))
+        #expect(RemoteSessionContinuation.isPhoneChatKey("osaurus-connect-phone:device-1"))
+        #expect(!RemoteSessionContinuation.isPhoneChatKey("osaurus-connect-phoney"))
+        #expect(!RemoteSessionContinuation.isPhoneChatKey(nil))
+        let tagged = ChatSessionData(externalSessionKey: "osaurus-connect-phone:device-1")
+        #expect(RemoteSessionContinuation.isFromPairedPhone(tagged))
     }
 
     @MainActor @Test func onlyThePairedKeyCountsAsThePhone() {

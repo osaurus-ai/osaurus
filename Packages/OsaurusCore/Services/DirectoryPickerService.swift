@@ -61,11 +61,16 @@ public final class DirectoryPickerService: ObservableObject {
         return processOverrideDirectory
     }
 
+    /// Bumped by every cache write, so a resolution that raced one doesn't
+    /// store its older answer over it.
+    private static nonisolated(unsafe) var cacheGeneration: UInt64 = 0
+
     nonisolated private static func invalidateCache() {
         cacheLock.lock()
         cachedBookmarkURL = nil
         cachedDefaultDirectory = nil
         cacheInitialized = false
+        cacheGeneration &+= 1
         cacheLock.unlock()
     }
 
@@ -76,14 +81,25 @@ public final class DirectoryPickerService: ObservableObject {
             cacheLock.unlock()
             return result
         }
+        let generation = cacheGeneration
+        cacheLock.unlock()
 
+        // Resolution is IPC that can wait on the main thread, so it runs
+        // outside `cacheLock`: a main-thread caller blocked on the lock would
+        // otherwise deadlock against it.
+        let resolved = resolveBookmark(UserDefaults.standard.data(forKey: "ModelDirectoryBookmark"))
+
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if cacheInitialized { return cachedBookmarkURL }
+        guard cacheGeneration == generation else { return resolved }
+        cachedBookmarkURL = resolved
         cacheInitialized = true
-        guard let bookmarkData = UserDefaults.standard.data(forKey: "ModelDirectoryBookmark") else {
-            cachedBookmarkURL = nil
-            cacheLock.unlock()
-            return nil
-        }
+        return resolved
+    }
 
+    nonisolated private static func resolveBookmark(_ bookmarkData: Data?) -> URL? {
+        guard let bookmarkData else { return nil }
         var isStale = false
         // Try security-scoped resolution first
         if let url = try? URL(
@@ -92,33 +108,24 @@ public final class DirectoryPickerService: ObservableObject {
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ), !isStale {
-            cachedBookmarkURL = url
-            cacheLock.unlock()
             return url
         }
 
         // Fallback: resolve without security scope (works for non-sandboxed apps
         // when the security-scoped bookmark becomes stale, e.g. after volume remount)
-        if let url = try? URL(
+        return try? URL(
             resolvingBookmarkData: bookmarkData,
             options: [],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
-        ) {
-            cachedBookmarkURL = url
-            cacheLock.unlock()
-            return url
-        }
-
-        cachedBookmarkURL = nil
-        cacheLock.unlock()
-        return nil
+        )
     }
 
     nonisolated private static func updateCache(with url: URL) {
         cacheLock.lock()
         cachedBookmarkURL = url
         cacheInitialized = true
+        cacheGeneration &+= 1
         cacheLock.unlock()
     }
 

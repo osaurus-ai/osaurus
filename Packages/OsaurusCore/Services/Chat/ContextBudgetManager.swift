@@ -816,6 +816,15 @@ public struct ContextBudgetManager: Sendable {
             return
                 "[Compressed: file content of '\(path)', \(totalLines) lines — no longer in context; re-read the file if you need specifics]"
         }
+        if ToolEnvelope.isSuccess(content),
+            let payload = ToolEnvelope.successPayload(content) as? [String: Any],
+            payload["kind"] as? String == "files",
+            let files = payload["files"] as? [[String: Any]]
+        {
+            let paths = files.compactMap { $0["path"] as? String }.map { "'\($0)'" }
+            return
+                "[Compressed: contents of \(paths.count) files (\(paths.joined(separator: ", "))) — no longer in context; re-read them if you need specifics]"
+        }
 
         // Try to detect the tool type from content patterns
         if content.hasPrefix("Lines ") || content.contains("| ") {

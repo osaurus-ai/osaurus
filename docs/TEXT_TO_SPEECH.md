@@ -12,7 +12,7 @@ Playback streams as audio is synthesized — speech starts before the full utter
 ## Where TTS appears
 
 - **Speaker button** on assistant messages in chat (shown when TTS is enabled). Tap to speak, tap again to stop; tapping a different message switches to it.
-- **`speak` tool** — agents with the Voice capability enabled can speak their replies (Configure → Features → Output → Voice).
+- **`speak` tool** — agents with the **Speak Tool** ability on can read a reply aloud when asked (Agent → Abilities → Overview → Output → Speak Tool). To read every reply aloud, use **Auto Speak Responses** in the Voice section of the agent's page.
 - **Preview** in Settings → Voice → Text-to-Speech, for testing a voice without leaving settings.
 
 ---
@@ -21,7 +21,7 @@ Playback streams as audio is synthesized — speech starts before the full utter
 
 ### On-Device (PocketTTS)
 
-1. Open the Management window (`⌘ Shift M`) → **Voice** → **Text-to-Speech**
+1. Open Settings… (`⌘,`) → **Voice** → **Text to Speech**
 2. Enable **Text-to-Speech**
 3. Leave **Engine** on *On-Device (PocketTTS)*
 4. Click **Download** on the PocketTTS Model card (~700 MB, one time)

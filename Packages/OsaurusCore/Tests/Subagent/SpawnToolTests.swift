@@ -79,15 +79,15 @@ struct SpawnToolTests {
         #expect(webSearch.contains("search_and_extract"))
         #expect(webSearch.contains("read_file"))
 
-        // All capability toggles off → the manual allowlist plus the
-        // unconditional worker baseline (time + `share_artifact`, the
-        // worker's only artifact-delivery path).
+        // All capability toggles off → the manual allowlist plus the worker
+        // baseline (time + `share_artifact`, the worker's only artifact-delivery
+        // path); `calculate` follows the agent's Calculator switch.
         let plain = Set(
             TextSubagentKind.childToolNames(
                 manual: ["read_file"], capabilities: capabilities()
             )
         )
-        #expect(plain == ["calculate", "get_current_time", "read_file", "share_artifact"])
+        #expect(plain == ["get_current_time", "read_file", "share_artifact"])
         #expect(!plain.contains("web_search"))
 
         // Spawn-capability tools and `clarify` are always dropped for children.
@@ -97,7 +97,7 @@ struct SpawnToolTests {
                 capabilities: capabilities()
             )
         )
-        #expect(filtered == ["calculate", "get_current_time", "read_file", "share_artifact"])
+        #expect(filtered == ["get_current_time", "read_file", "share_artifact"])
     }
 
     @Test func refusesRecursion() async throws {

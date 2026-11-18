@@ -193,12 +193,27 @@ extension EvalRunner {
             authoredQueries = [testCase.query, testCase.query]
         }
 
+        if let required = exp.requiredVisibleTextPerTurn,
+           required.count != authoredQueries.count
+            || required.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            return Self.errored(
+                testCase, label: label, modelId: modelId,
+                note: "requiredVisibleTextPerTurn must supply one nonempty phrase per authored turn"
+            )
+        }
+
         let sessionBoundaries = Set(
             (exp.startNewSessionBeforeTurns ?? []).filter {
                 $0 > 1 && $0 <= authoredQueries.count
             }
         )
         let expectedSessionCount = 1 + sessionBoundaries.count
+        if exp.reloadModelOnNewSession == true, sessionBoundaries.isEmpty {
+            return Self.errored(
+                testCase, label: label, modelId: modelId,
+                note: "reloadModelOnNewSession requires at least one valid fresh-session turn"
+            )
+        }
         if exp.systemPrompt != nil, exp.systemPromptsPerSession != nil {
             return Self.errored(
                 testCase, label: label, modelId: modelId,
@@ -240,6 +255,7 @@ extension EvalRunner {
             systemPrompt: isolatedInputs.systemPrompt,
             systemPromptsPerSession: isolatedInputs.systemPromptsPerSession,
             startNewSessionBeforeTurns: exp.startNewSessionBeforeTurns ?? [],
+            reloadModelOnNewSession: exp.reloadModelOnNewSession ?? false,
             toolResultFollowUps: exp.toolResultFollowUps
         )
         let elapsedMs = Date().timeIntervalSince(started) * 1000
@@ -259,6 +275,9 @@ extension EvalRunner {
                 + "diskHits +\(transcript.diskL2HitsDelta) · diskStores +\(transcript.diskL2StoresDelta)",
         ]
         let turnMetrics = transcript.turnMetrics ?? []
+        if exp.reloadModelOnNewSession == true {
+            notes.append("session lifecycle: model drained/unloaded before fresh-session turns \(sessionBoundaries.sorted())")
+        }
         for turn in turnMetrics {
             notes.append(
                 "turn \(turn.turnNumber) session \(turn.sessionNumber): "
@@ -501,6 +520,14 @@ extension EvalRunner {
                         : empty.map { String($0.turnNumber) }.joined(separator: ","))
             )
         }
+        if let required = exp.requiredVisibleTextPerTurn {
+            let problem = cacheProofVisibleTextProblem(required: required, visible: transcript.visibleTurns)
+            check(
+                problem == nil,
+                pass: "every visible turn contains its required answer phrase",
+                fail: problem ?? "visible-answer fidelity mismatch"
+            )
+        }
         if exp.requireClosedReasoning == true {
             let unclosed = turnMetrics.filter(\.unclosedReasoning)
             check(
@@ -697,6 +724,23 @@ extension EvalRunner {
             nil,
             nil
         )
+    }
+
+    /// A cache hit is insufficient if the restored turn answers with unrelated
+    /// reference text. Keep scoring independent of generation and report every
+    /// mismatching one-based turn instead of accepting any nonempty string.
+    nonisolated static func cacheProofVisibleTextProblem(required: [String], visible: [String]) -> String? {
+        guard !required.isEmpty,
+              required.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+        else { return "required visible answer phrases must be nonempty" }
+        guard required.count == visible.count else {
+            return "visible answer count \(visible.count) differs from required turn count \(required.count)"
+        }
+        let mismatches = zip(required, visible).enumerated().compactMap { index, pair in
+            pair.1.range(of: pair.0, options: .caseInsensitive) == nil ? String(index + 1) : nil
+        }
+        return mismatches.isEmpty ? nil
+            : "required visible answer phrase missing on turn(s) " + mismatches.joined(separator: ",")
     }
 
     /// Deterministic validation of the production progress stream. Returning

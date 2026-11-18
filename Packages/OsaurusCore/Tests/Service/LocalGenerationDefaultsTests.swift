@@ -1321,13 +1321,9 @@ struct LocalGenerationDefaultsTests {
         #expect(d.frequencyPenalty == 0.0)
     }
 
-    /// Pins the covered key set against vmlx's `GenerationConfigFile`. This is a
-    /// hand-mirrored decoder, which is exactly why it drifted: vmlx gained two
-    /// keys and nothing here failed. `suppress_tokens` is the one vmlx decodes
-    /// that osaurus still does not adopt — named here rather than left silent,
-    /// because an omission nobody can see is how this happened the first time.
-    /// It has no sink in `makeGenerateParameters`, so wiring it would be inert.
-    @Test("every sampling key vmlx decodes is either adopted or named as a gap")
+    /// The app resolves bundle defaults itself rather than using the engine's
+    /// generation-config initializer. Keep the mirrored sampler fields aligned.
+    @Test("every sampling key vmlx decodes is adopted")
     func vmlxParity() {
         let d = Self.defaults(
             fromJSON: #"""
@@ -1348,6 +1344,6 @@ struct LocalGenerationDefaultsTests {
         #expect(d.doSample == true)
         #expect(d.presencePenalty == 1.5)
         #expect(d.frequencyPenalty == 0.5)
-        // KNOWN GAP: suppress_tokens — adopt here once a sink exists.
+        #expect(d.suppressTokens == [11, 22])
     }
 }

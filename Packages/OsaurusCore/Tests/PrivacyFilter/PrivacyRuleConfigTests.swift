@@ -196,7 +196,13 @@ struct PrivacyRuleConfigTests {
             aiDetectionEnabled: true,
             providerOverrides: ["abc": false],
             skipCodeBlocks: false,
-            alwaysApproveByDefault: true,
+            defaultReviewPolicy: .autoRedact,
+            toolResultPolicy: .autoRedact,
+            modelOutputPolicy: .ask,
+            neverRedact: [
+                NeverRedactEntry(kind: .value, text: "Jane Appleseed"),
+                NeverRedactEntry(kind: .domain, text: "https://Feeds.Example.com/rss"),
+            ],
             builtinPatternEnabled: [.phone: false, .email: true, .url: true, .accountNumber: true],
             presetRules: [PrivacyRulePresets.iban.id: true],
             customRules: [
@@ -223,7 +229,11 @@ struct PrivacyRuleConfigTests {
         #expect(decoded.aiDetectionEnabled == true)
         #expect(decoded.providerOverrides == original.providerOverrides)
         #expect(decoded.skipCodeBlocks == original.skipCodeBlocks)
-        #expect(decoded.alwaysApproveByDefault == original.alwaysApproveByDefault)
+        #expect(decoded.defaultReviewPolicy == .autoRedact)
+        #expect(decoded.toolResultPolicy == .autoRedact)
+        #expect(decoded.modelOutputPolicy == .ask)
+        #expect(decoded.neverRedact == original.neverRedact)
+        #expect(decoded.neverRedact.last?.text == "feeds.example.com")
         #expect(decoded.builtinPatternEnabled[.phone] == false)
         #expect(decoded.presetRules[PrivacyRulePresets.iban.id] == true)
         #expect(decoded.customRules.count == 2)
@@ -237,6 +247,48 @@ struct PrivacyRuleConfigTests {
         #expect(codename?.builder?.matchType == .exactWord)
         #expect(codename?.builder?.terms == ["Bluebird"])
         #expect(codename?.effectivePattern == #"\b(?:Bluebird)\b"#)
+    }
+
+    /// Schema < 3 stored a Bool `alwaysApproveByDefault`. `true` meant
+    /// "redact without asking", which is now `defaultReviewPolicy:
+    /// .autoRedact`; the per-origin policies take their defaults.
+    @Test func config_decodeLegacyAlwaysApprove_migratesToReviewPolicy() throws {
+        let approve = #"{"enabled": true, "schemaVersion": 2, "alwaysApproveByDefault": true}"#
+        let ask = #"{"enabled": true, "schemaVersion": 2, "alwaysApproveByDefault": false}"#
+        let decodedApprove = try JSONDecoder().decode(
+            PrivacyFilterConfiguration.self, from: Data(approve.utf8))
+        let decodedAsk = try JSONDecoder().decode(PrivacyFilterConfiguration.self, from: Data(ask.utf8))
+        #expect(decodedApprove.defaultReviewPolicy == .autoRedact)
+        #expect(decodedAsk.defaultReviewPolicy == .ask)
+        #expect(decodedApprove.toolResultPolicy == .ask)
+        #expect(decodedApprove.modelOutputPolicy == .autoRedact)
+        #expect(decodedApprove.neverRedact.isEmpty)
+
+        // Re-encoding writes the new key only.
+        let reencoded = try JSONEncoder().encode(decodedApprove)
+        let json = try #require(String(data: reencoded, encoding: .utf8))
+        #expect(!json.contains("alwaysApproveByDefault"))
+        #expect(json.contains("defaultReviewPolicy"))
+    }
+
+    @Test func neverRedact_matchesValuesAndDomains() {
+        let value = NeverRedactEntry(kind: .value, text: " Jane Appleseed ")
+        #expect(value.matches("jane appleseed"))
+        #expect(!value.matches("Jane"))
+
+        let domain = NeverRedactEntry(kind: .domain, text: "*.Example.com")
+        #expect(domain.text == "example.com")
+        #expect(domain.matches("https://feeds.example.com/rss"))
+        #expect(domain.matches("alice@example.com"))
+        #expect(domain.matches("example.com"))
+        #expect(!domain.matches("https://notexample.com"))
+        #expect(!domain.matches("Jane Appleseed"))
+
+        var config = PrivacyFilterConfiguration()
+        config.addNeverRedact(NeverRedactEntry(kind: .value, text: "Jane Appleseed"))
+        config.addNeverRedact(NeverRedactEntry(kind: .value, text: "JANE APPLESEED"))
+        #expect(config.neverRedact.count == 1)
+        #expect(config.isNeverRedacted("jane appleseed"))
     }
 
     /// Old on-disk configs (pre-configurable-regex) didn't carry the

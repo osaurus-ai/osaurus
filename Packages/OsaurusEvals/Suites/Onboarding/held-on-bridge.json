@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.held-on-bridge",
+  "domain": "onboarding",
+  "label": "onboarding • personal asks wait on the bridge; a denial links Settings",
+  "query": "held_on_bridge",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "held_on_bridge"
+    }
+  }
+}

@@ -51,8 +51,8 @@ enum DatabaseFilePathResolver {
                         "`\(tool)` reads files from your sandbox workspace or host "
                         + "working folder, but neither is available in this session. "
                         + PromptWorkingFolderTool.attachFolderSteer
-                        + " Then retry (sandbox mode is the other option). "
-                        + "Fallback for tabular data: one `db_insert` with "
+                        + " (Turning on the sandbox is the other option.) "
+                        + "Until then, for tabular data: one `db_insert` with "
                         + "a `rows` array instead of row-by-row inserts.",
                     tool: tool,
                     retryable: false
@@ -69,7 +69,7 @@ enum DatabaseFilePathResolver {
         let tried = candidates.map(\.0.path).joined(separator: ", ")
         return .failed(
             envelope: ToolEnvelope.failure(
-                kind: .invalidArgs,
+                kind: .notFound,
                 message:
                     "No file at `\(path)`. Checked: \(rootsChecked.joined(separator: "; "))."
                     + (tried.isEmpty ? "" : " Candidate paths: \(tried)."),
@@ -111,9 +111,8 @@ enum DatabaseFilePathResolver {
                     kind: .unavailable,
                     message:
                         "`\(tool)` writes files to your sandbox workspace or host "
-                        + "working folder, but neither is available in this session. "
-                        + "Run in sandbox mode or ask the user to pick a working folder, "
-                        + "then retry.",
+                        + "working folder, but neither is available in this session, so nothing was written. "
+                        + "Ask the user to attach a working folder (or turn on the sandbox).",
                     tool: tool,
                     retryable: false
                 )
@@ -177,7 +176,7 @@ enum DatabaseFilePathResolver {
         guard fm.fileExists(atPath: url.path) else {
             return .failed(
                 envelope: ToolEnvelope.failure(
-                    kind: .invalidArgs,
+                    kind: .notFound,
                     message: "No file at `\(url.path)`.",
                     field: "path",
                     tool: tool,
@@ -298,8 +297,10 @@ enum DatabaseFilePathResolver {
         if relativePath.hasPrefix(containerHome + "/") {
             relativePath = String(relativePath.dropFirst(containerHome.count + 1))
         } else if relativePath.hasPrefix("/workspace/") {
-            let stripped = String(relativePath.dropFirst("/workspace/".count))
-            return resolveContainedPath(stripped, within: OsaurusPaths.containerWorkspace())
+            // Own home and `/workspace/shared` only — never another agent's home.
+            guard let (root, relative) = SandboxAgentPathScope(agentName: agentName).split(sandboxPath: relativePath)
+            else { return nil }
+            return resolveContainedPath(relative.isEmpty ? "." : relative, within: root)
         }
         if relativePath.hasPrefix("./") {
             relativePath = String(relativePath.dropFirst(2))

@@ -97,6 +97,9 @@ public final class PendingImportProcessor {
             return ([error.localizedDescription], [])
         }
         await SkillManager.shared.refresh()
+        if operations.contains(where: { $0.kind == .agent }) {
+            await ModelManager.shared.awaitInstalledInventory()
+        }
         let receipts = ImportQueue.loadReceipts()
         var issues: [String] = []
         var warnings: [String] = []
@@ -140,6 +143,11 @@ public final class PendingImportProcessor {
         let installs = request.operations.filter { $0.action != .remove }.sorted { $0.kind < $1.kind }
         let removals = request.operations.filter { $0.action == .remove }
             .sorted { Self.removalOrder($0.kind) < Self.removalOrder($1.kind) }
+        // Launch applies the queue before the models folder scan lands; an
+        // agent's model must resolve against what is on disk, not the seeds.
+        if installs.contains(where: { $0.kind == .agent }) {
+            await ModelManager.shared.awaitInstalledInventory()
+        }
 
         if !installs.isEmpty {
             do {
@@ -173,8 +181,9 @@ public final class PendingImportProcessor {
             items += await remove(op, request: request, receipts: &receipts, removed: &removed)
             saveReceipts(receipts)
         }
+        let warnings = BundleOnboardingPreferences.apply(request)
 
-        let result = ImportResult(requestId: request.id, bundleId: request.bundleId, items: items)
+        let result = ImportResult(requestId: request.id, bundleId: request.bundleId, items: items, warnings: warnings)
         do {
             try ImportQueue.complete(pending, result: result)
         } catch {
@@ -598,7 +607,8 @@ public final class PendingImportProcessor {
             var document = OsaurusConfigDocument()
             document.version = 1
             document.mcpServers = [entry]
-            let rows = await ConfigApplier.apply(document: document, prune: false, options: .bundleImport)
+            let rows = await ConfigApplier.apply(
+                document: document, prune: false, options: .bundleImport, caller: .fileImport)
             guard let row = rows.first(where: { $0.section == "mcp_servers" }) else {
                 return result(.failed, "The server was not applied.")
             }
@@ -617,7 +627,8 @@ public final class PendingImportProcessor {
             var document = OsaurusConfigDocument()
             document.version = 1
             document.harnessRuntimes = [entry]
-            let rows = await ConfigApplier.apply(document: document, prune: false, options: .bundleImport)
+            let rows = await ConfigApplier.apply(
+                document: document, prune: false, options: .bundleImport, caller: .fileImport)
             guard let row = rows.first(where: { $0.section == "harness_runtimes" }) else {
                 return result(.failed, "The runtime was not applied.")
             }
@@ -643,7 +654,8 @@ public final class PendingImportProcessor {
             var document = OsaurusConfigDocument()
             document.version = 1
             document.agents = [entry]
-            let rows = await ConfigApplier.apply(document: document, prune: false, options: .bundleImport)
+            let rows = await ConfigApplier.apply(
+                document: document, prune: false, options: .bundleImport, caller: .fileImport)
             guard let row = rows.first(where: { $0.section == "agents" }) else {
                 return result(.failed, "The agent was not applied.")
             }
@@ -698,7 +710,8 @@ public final class PendingImportProcessor {
             switch (setting.id, value) {
             case (.requireLocalAccessKey, .bool(true)):
                 notes.append(
-                    "Apps and scripts on this Mac now need an access key for /sessions, /agents, /mcp/*, "
+                    "Apps and scripts on this Mac now need an access key for /sessions, /agents, /attention, "
+                        + "/conversations/*, /devices/*, /mcp/*, "
                         + "/admin/config/* and /admin/import/*.")
                 if !settings.hasAccessKeys() {
                     needsUser = true

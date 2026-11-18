@@ -99,6 +99,38 @@ struct ClaudeCodeStreamDecoderTests {
         #expect(trace.isError)
     }
 
+    /// Captured from CLI 2.1.308 under `--permission-mode dontAsk`.
+    @Test func permissionDenialBecomesADeniedEvent() {
+        let denial =
+            "Permission to use Write has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools."
+        let events = decode([
+            #"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_02","name":"Write","input":{}}}}"#,
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"tool_use_id":"toolu_02","content":"\#(denial)"}]}}"#,
+        ])
+        #expect(events.count == 2)
+        #expect(events.last == .toolDenied(callId: "toolu_02", name: "Write"))
+    }
+
+    @Test func olderDenialWordingAndTextBlockContentAreRecognized() {
+        let events = decode([
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"tool_use_id":"toolu_03","content":[{"type":"text","text":"Claude requested permissions to use Bash, but you haven't granted it yet."}]}]}}"#
+        ])
+        #expect(events == [.toolDenied(callId: "toolu_03", name: "")])
+    }
+
+    /// Only a failed result is a denial; a successful one quoting the same
+    /// words (a `grep` over a log, say) stays a normal completion.
+    @Test func denialWordingInASuccessfulResultIsNotADenial() {
+        let events = decode([
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","is_error":false,"tool_use_id":"toolu_04","content":"Permission to use Write has been denied"}]}}"#
+        ])
+        guard case .toolTrace(let trace)? = events.first else {
+            Issue.record("expected a tool trace, got \(events)")
+            return
+        }
+        #expect(!trace.isError)
+    }
+
     @Test func resultFrameEmitsStatsAndEndsTheRun() {
         let events = decode([
             #"{"type":"result","subtype":"success","is_error":false,"duration_ms":2000,"stop_reason":"end_turn","usage":{"output_tokens":40}}"#

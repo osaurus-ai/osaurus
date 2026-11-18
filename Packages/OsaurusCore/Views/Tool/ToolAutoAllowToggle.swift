@@ -25,9 +25,8 @@ struct ToolAutoAllowToggle: View {
     var body: some View {
         SettingsGroup {
             SettingsToggle(
-                title: L("Auto-Allow All Tool Calls"),
-                description:
-                    "Run every tool call without asking for approval, including tools that would normally show a confirmation card. Convenient for multi-step agent workflows, but tools can execute code and modify files. Enable only if you trust the tools you have installed. Per-tool Block policies still apply.",
+                title: "Auto-Allow All Tool Calls",
+                description: ToolApprovalEducation.globalToggleDescription,
                 anchorId: "tools.autoAllowAll",
                 isOn: binding
             )
@@ -35,9 +34,7 @@ struct ToolAutoAllowToggle: View {
         .themedAlert(
             L("Auto-Allow All Tool Calls?"),
             isPresented: $showConfirm,
-            message: L(
-                "Every tool call will run immediately without asking for approval, including tools that can execute code, modify files, or send data. You can turn this off at any time under Tools & MCP → All Tools."
-            ),
+            message: ToolApprovalEducation.globalConfirmMessage,
             primaryButton: .destructive(L("Auto-Allow All")) { autoAllowAllToolsEnabled = true },
             secondaryButton: .cancel(L("Cancel"))
         )

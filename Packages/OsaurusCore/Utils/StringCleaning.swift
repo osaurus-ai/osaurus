@@ -111,6 +111,22 @@ public enum StringCleaning {
         return String(output).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Text a model wrote before it was stopped, fit to save as the reply.
+    /// A local model that writes tool calls as text may be cut off inside
+    /// one: everything from an unclosed `<tool_call>` on is dropped, since a
+    /// half-written call's arguments can't be parsed and scrubbed of
+    /// secrets, and complete calls left in the text are removed as
+    /// `stripLeakedActionJSON` does.
+    static func stoppedReplyText(_ content: String) -> String {
+        var content = content
+        if let open = content.range(of: "<tool_call>", options: .backwards),
+            content.range(of: "</tool_call>", range: open.upperBound ..< content.endIndex) == nil
+        {
+            content.removeSubrange(open.lowerBound ..< content.endIndex)
+        }
+        return stripLeakedActionJSON(content)
+    }
+
     /// Tokens whose presence is necessary for a `{...}` block to satisfy
     /// `isLeakedToolCallJSON`: the two key literals, plus `\u` because a JSON
     /// unicode escape inside a key could spell either of them.

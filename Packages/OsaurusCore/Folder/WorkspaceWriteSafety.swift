@@ -155,7 +155,7 @@ enum WorkspaceFileFormatPolicy {
     /// Model-facing summary of what `file_write` produces.
     static let writableFormatsSummary =
         "UTF-8 text/code (any extension), `.xlsx` from CSV/TSV text or JSON rows, "
-        + "and `.docx`/`.pdf` from Markdown or HTML"
+        + "`.docx`/`.pdf` from Markdown or HTML, and `.pptx` from Markdown (one slide per heading)"
 
     /// Files whose successful persistence is not evidence that the delivered
     /// program or interactive artifact actually runs.
@@ -246,7 +246,7 @@ enum WorkspaceWriteSafety {
                 "Refused to write '\(path)' with \(toolName): .\(ext) is a \(target.label) that \(toolName) cannot generate. "
                 + "\(toolName) writes \(WorkspaceFileFormatPolicy.writableFormatsSummary). \(target.pivot)",
             field: "path",
-            expected: "a UTF-8 text path, or `.xlsx` / `.docx` / `.pdf` for a generated document",
+            expected: "a UTF-8 text path, or `.xlsx` / `.docx` / `.pdf` / `.pptx` for a generated document",
             tool: toolName,
             retryable: false,
             metadata: ["extension": ext, "writable_formats": WorkspaceFileFormatPolicy.writableFormatsSummary]
@@ -334,7 +334,7 @@ enum WorkspaceWriteSafety {
             createsParentDirectories: createsParentDirectories,
             proposedContent: proposedContent
         )
-        let lineCount = proposedContent.components(separatedBy: .newlines).count
+        let lineCount = FolderToolHelpers.contentLines(proposedContent).count
         let resultKind = dryRun ? "workspace_write_preview" : "workspace_write_result"
         let riskLevel = warnings.isEmpty ? "low" : "needs_review"
         var payload: [String: Any] = [

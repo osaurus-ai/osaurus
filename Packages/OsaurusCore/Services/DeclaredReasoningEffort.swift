@@ -194,7 +194,7 @@ enum DeclaredReasoningEffort {
         }
         return Declaration(
             control: fixedNativeEffort(root: root, reasoning: reasoning)
-                ?? nativeThinkingModes(reasoning) ?? parseControl(reasoning),
+                ?? nativeThinkingModes(reasoning) ?? toggleEffortList(reasoning) ?? parseControl(reasoning),
             preserveThinking: parsePreserveThinking(reasoning)
         )
     }
@@ -319,6 +319,34 @@ enum DeclaredReasoningEffort {
                 "none": ["reasoning_effort": .string(offEffort)],
             ]
         )
+    }
+
+    /// Independent effort tiers and a boolean thinking toggle, both explicitly
+    /// named by the bundle. Do not infer this contract from a model family.
+    private static func toggleEffortList(_ reasoning: [String: Any]) -> Control? {
+        guard reasoning["supported_reasoning_efforts"] == nil,
+            reasoning["template_flag"] as? String == "enable_thinking",
+            reasoning["effort_flag"] as? String == "reasoning_effort",
+            transportIsChatTemplateKwarg(reasoning, key: "reasoning_effort_transport"),
+            let modes = reasoning["modes"] as? [String],
+            Set(modes) == ["think", "no_think"],
+            let raw = reasoning["efforts"] as? [String], !raw.isEmpty
+        else { return nil }
+        let levels = raw.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        guard levels.allSatisfy({ ladderRank($0) != nil }), Set(levels).count == levels.count else {
+            return nil
+        }
+        var kwargs: [String: [String: ReasoningModeValue]] = [:]
+        for level in levels {
+            kwargs[level] = ["enable_thinking": .bool(true), "reasoning_effort": .string(level)]
+        }
+        kwargs["none"] = ["enable_thinking": .bool(false)]
+        let declaredDefault = reasoning["default_effort"] as? String
+        let offByDefault = reasoning["default_enabled"] as? Bool == false
+            || reasoning["default_mode"] as? String == "no_think"
+        let defaultLevel = offByDefault ? "none"
+            : declaredDefault.flatMap { levels.contains($0) ? $0 : nil }
+        return .modeKwargs(levels, defaultLevel: defaultLevel, kwargs: kwargs)
     }
 
     /// Preserve a saved/native API effort when a declared mode uses it as

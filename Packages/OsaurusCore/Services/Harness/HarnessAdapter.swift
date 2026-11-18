@@ -14,7 +14,9 @@ public enum HarnessEvent: Sendable, Equatable {
     case text(String)
     case reasoning(String)
     case toolStarted(callId: String?, name: String)
-    case toolFinished(callId: String?, name: String, isError: Bool)
+    /// `message` replaces the generic failure text on the tool card. It is a
+    /// fixed Osaurus string, never the tool's raw result.
+    case toolFinished(callId: String?, name: String, isError: Bool, message: String? = nil)
     /// A status line worth showing inline (retry, compaction, rate limit,
     /// extension notification).
     case notice(String, isError: Bool)
@@ -99,6 +101,8 @@ struct HarnessLaunchContext: Sendable {
     var apiBase: String?
     var serverReachable: Bool
     var sessionMode: SessionMode = .automatic
+    /// Optional flags the installed Claude Code accepts.
+    var claudeCodeFeatures: ClaudeCodeCLIFeatures = .none
 
     struct Fingerprint: Hashable {
         let runtime: HarnessRuntime
@@ -108,6 +112,10 @@ struct HarnessLaunchContext: Sendable {
         let claudeCode: ClaudeCodeAgentConfig
         let serverReachable: Bool
     }
+
+    /// The Architect keeps its fixed persona and tool surface on every
+    /// harness; the runtime's own tool options don't apply to it.
+    var isArchitect: Bool { agentId == Agent.architectId }
 
     var fingerprint: Fingerprint {
         Fingerprint(

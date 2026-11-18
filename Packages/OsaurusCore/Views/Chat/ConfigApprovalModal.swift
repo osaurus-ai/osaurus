@@ -27,14 +27,11 @@ struct ConfigApprovalModal: View {
     /// the note in `ThemedAlertHost`), so it can't be read from there.
     let scope: ThemedAlertScope
 
-    @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var queue = ConfigApprovalQueue.shared
 
     /// Queue request currently presented as a themed alert; the alert
     /// reuses the request's id.
     @State private var presentedId: UUID?
-
-    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
         Color.clear
@@ -66,6 +63,10 @@ struct ConfigApprovalModal: View {
             presentedId = nil
         }
         guard let request else { return }
+        if let review = request.importReview {
+            presentImport(request, review: review)
+            return
+        }
         ThemedAlertCenter.shared.present(
             ThemedAlertRequest(
                 id: request.id,
@@ -83,7 +84,9 @@ struct ConfigApprovalModal: View {
                         queue.resolve(id: request.id, outcome: .denied)
                     }
                 ],
-                customContent: AnyView(planContent(for: request)),
+                customContent: AnyView(ConfigApprovalPlanContent(request: request) { outcome in
+                    queue.resolve(id: request.id, outcome: outcome)
+                }),
                 width: 460,
                 // Let an unrelated alert landing mid-review stack above the
                 // dialog instead of clobbering it — clobbering runs
@@ -95,20 +98,58 @@ struct ConfigApprovalModal: View {
                     // buttons resolving first is fine.
                     queue.resolve(id: request.id, outcome: .denied)
                 }
-            ),
+            ).promptInspectionScope(),
             scope: scope
         )
         presentedId = request.id
     }
 
-    // MARK: - Dialog content
+    private func presentImport(_ request: ConfigApprovalRequest, review: ChatImportReview) {
+        let id = request.id
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: id,
+                title: L("Review what to install"),
+                message: nil,
+                showsHeaderIcon: false,
+                buttons: [
+                    .cancel(L("Cancel")) {
+                        queue.resolve(id: id, outcome: .denied)
+                    }
+                ],
+                customContent: AnyView(
+                    ChatImportReviewView(
+                        requestId: id, review: review,
+                        onCancel: { queue.resolve(id: id, outcome: .denied) },
+                        onInstall: { queue.resolve(id: id, outcome: .approved) }
+                    )),
+                width: 500,
+                hostsNestedAlerts: true,
+                onDismiss: {
+                    queue.resolve(id: id, outcome: .denied)
+                }
+            ).promptInspectionScope(),
+            scope: scope
+        )
+        presentedId = id
+    }
+}
 
-    private func planContent(for request: ConfigApprovalRequest) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+/// The same plan content is hosted by the alert and the inspector.
+private struct ConfigApprovalPlanContent: View {
+    @Environment(\.theme) private var environmentTheme
+    let request: ConfigApprovalRequest
+    var resolve: ((ConfigApprovalOutcome) -> Void)? = nil
+
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planContent.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s12, theme))) {
             if request.plan.hasHighRiskChanges {
                 HStack {
                     Spacer(minLength: 0)
-                    badge(L("HIGH RISK"), color: theme.warningColor)
+                    StatusChip(L("HIGH RISK"), tone: .urgentWarning)
+                        .environment(\.theme, PromptInspectionStyle.badgeTheme(environmentTheme))
                     Spacer(minLength: 0)
                 }
             }
@@ -119,48 +160,49 @@ struct ConfigApprovalModal: View {
 
             planList(request.plan)
 
-            if !request.plan.notes.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(request.plan.notes.enumerated()), id: \.offset) { _, note in
-                        Text(note)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+            if let diff = request.plan.diffText, !diff.isEmpty {
+                ConfigDiffDisclosure(text: diff)
             }
 
-            HStack(spacing: 10) {
-                Spacer()
-                // Resolving pops the request off the queue, which drives
-                // `syncPresentation` to dismiss the alert.
-                secondaryButton(L("Cancel")) {
-                    queue.resolve(id: request.id, outcome: .denied)
-                }
-                primaryButton(L("Apply Changes")) {
-                    queue.resolve(id: request.id, outcome: .approved)
-                }
+            if !request.plan.notes.isEmpty {
+                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planContent.verticalGap2", inheriting: PromptInspectionStyle.metric("gap", theme.space.s2, theme))) {
+                    ForEach(Array(request.plan.notes.enumerated()), id: \.offset) { _, note in
+                        Text(note)
+                            .promptText(.caption, fallback: .micro, theme: theme)
+                            .foregroundColor(theme.text.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planContent.verticalGap2")
             }
-        }
+
+            // Resolving pops the request off the queue, which drives
+            // `syncPresentation` to dismiss the alert.
+            SettingsSheetFooter(
+                primary: .init(label: "Apply Changes", isEnabled: resolve != nil) { resolve?(.approved) },
+                secondary: .init(label: "Cancel", isEnabled: resolve != nil) { resolve?(.denied) },
+                embedded: true
+            )
+        }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planContent.verticalGap")
+        .environment(\.theme, theme)
     }
 
     private var pruneBanner: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.pruneBanner.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s6, theme))) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
-                .foregroundColor(theme.warningColor)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.status[.urgentWarning].foreground)
             Text(
                 "Prune is on: entries not listed in the document will be deleted.",
                 bundle: .module
             )
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(theme.warningColor)
+            .promptText(.body, fallback: .footnote, weight: 500, theme: theme)
+            .foregroundColor(theme.status[.urgentWarning].foreground)
             .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(8)
+        }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.pruneBanner.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.vertical")
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 8).fill(theme.warningColor.opacity(0.1))
+            RoundedRectangle(cornerRadius: theme.radius.medium).fill(theme.status[.urgentWarning].background)
         )
     }
 
@@ -169,67 +211,68 @@ struct ConfigApprovalModal: View {
     private func planList(_ plan: ConfigPlan) -> some View {
         let sections = groupedActions(plan)
         return ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s10, theme))) {
                 ForEach(sections, id: \.section) { group in
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.verticalGap2", inheriting: PromptInspectionStyle.metric("gap", theme.space.s4, theme))) {
                         Text(group.section)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(theme.tertiaryText)
+                            .promptText(.caption, fallback: .micro, weight: 700, theme: theme)
+                            .foregroundColor(theme.text.tertiary)
                             .textCase(.uppercase)
                         ForEach(Array(group.actions.enumerated()), id: \.offset) { _, action in
                             actionRow(action)
                         }
-                    }
+                    }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planList.verticalGap2")
                 }
-            }
+            }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planList.verticalGap")
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planList.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planList.padding.vertical")
         }
         .frame(maxHeight: 240)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground)
+            RoundedRectangle(cornerRadius: theme.radius.medium)
+                .fill(theme.surface.hover)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.radius.medium).stroke(theme.border.default, lineWidth: theme.stroke.default)
                 )
         )
     }
 
     private func actionRow(_ action: ConfigPlanAction) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.actionRow.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s2, theme))) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.actionRow.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s6, theme))) {
                 Text(kindSymbol(action.kind))
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .promptText(.code, fallback: .code, weight: 700, theme: theme)
                     .foregroundColor(kindColor(action.kind))
                     .frame(width: 12, alignment: .center)
                 Text(action.target)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .promptText(.label, fallback: .caption, weight: 500, theme: theme)
+                    .foregroundColor(theme.text.primary)
                 if action.longRunning {
-                    badge(L("LONG-RUNNING"), color: theme.accentColor)
+                    StatusChip(L("LONG-RUNNING"), tone: .info)
+                        .environment(\.theme, PromptInspectionStyle.badgeTheme(environmentTheme))
                 }
                 Spacer(minLength: 0)
-            }
+            }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.actionRow.horizontalGap")
             ForEach(Array(action.changes.enumerated()), id: \.offset) { _, change in
                 Text(change)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
+                    .promptText(.code, fallback: .footnote, family: .code, theme: theme)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 18)
+                    .padding(.leading, theme.space.s16)
             }
             ForEach(Array(action.risks.enumerated()), id: \.offset) { _, risk in
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.actionRow.horizontalGap2", inheriting: PromptInspectionStyle.metric("gap", theme.space.s4, theme))) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(theme.warningColor)
+                        .glyphSize(.tiny)
+                        .foregroundColor(theme.status.warning.foreground)
                     Text(risk)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.warningColor)
+                        .promptText(.body, fallback: .footnote, weight: 500, theme: theme)
+                        .foregroundColor(theme.status.warning.foreground)
                         .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.leading, 18)
+                }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.actionRow.horizontalGap2")
+                .padding(.leading, theme.space.s16)
             }
-        }
+        }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.actionRow.verticalGap")
     }
 
     private struct SectionGroup {
@@ -260,55 +303,22 @@ struct ConfigApprovalModal: View {
 
     private func kindColor(_ kind: ConfigPlanAction.Kind) -> Color {
         switch kind {
-        case .create: return theme.successColor
-        case .update: return theme.accentColor
-        case .delete: return theme.errorColor
-        case .needsUserInput: return theme.warningColor
+        case .create: return theme.status.success.foreground
+        case .update: return theme.status.info.foreground
+        case .delete: return theme.status.error.foreground
+        case .needsUserInput: return theme.status.warning.foreground
         }
     }
+}
 
-    // MARK: - Chrome
-
-    private func badge(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 8, weight: .bold))
-            .foregroundColor(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.12)))
-    }
-
-    private func secondaryButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.tertiaryBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-        // Themed-alert convention: Esc activates cancel.
-        .keyboardShortcut(.cancelAction)
-    }
-
-    private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
-        }
-        .buttonStyle(PlainButtonStyle())
-        // Themed-alert convention: Return activates the primary action.
-        .keyboardShortcut(.defaultAction)
+extension ConfigApprovalModal {
+    @MainActor static func inspectionPlan() -> some View {
+        let plan = ConfigPlan(actions: [
+            .init(section: "Local samples", target: "New sample", kind: .create, changes: ["name: Sample"]),
+            .init(section: "Local samples", target: "Existing sample", kind: .update, changes: ["value: Before → After"], longRunning: true),
+            .init(section: "Local samples", target: "Removed sample", kind: .delete, risks: ["Display-only risk callout"]),
+            .init(section: "Local samples", target: "Review needed", kind: .needsUserInput)
+        ], notes: ["Display only. No configuration request is queued or applied."])
+        return ConfigApprovalPlanContent(request: .init(plan: plan, prune: true))
     }
 }

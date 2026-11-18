@@ -12,10 +12,12 @@ struct TableView: View {
     let rows: [[String]]
     let baseWidth: CGFloat
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var baseComponentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(20, enabled: baseComponentEnabled) }
 
     var body: some View {
-        Grid(horizontalSpacing: 1, verticalSpacing: 1) {
+        Grid(horizontalSpacing: gridStroke, verticalSpacing: gridStroke) {
             // Headers
             GridRow(alignment: .top) {
                 ForEach(Array(headers.enumerated()), id: \.offset) { index, header in
@@ -50,10 +52,14 @@ struct TableView: View {
                 }
             }
         }
-        .padding(1)
-        .background(theme.primaryBorder)  // Grid lines color
-        .cornerRadius(6)
+        .padding(gridStroke)
+        .background(theme.assignedColor("component.library.20.border", fallback: theme.border.subtle))
+        .clipShape(RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: 6)))
         .frame(width: baseWidth, alignment: .leading)
+    }
+
+    private var gridStroke: CGFloat {
+        theme.catalogMetric("borderWidth", fallback: 1)
     }
 }
 
@@ -64,51 +70,49 @@ private struct TableCell: View {
     let isHeader: Bool
     let rowIndex: Int
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var baseComponentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(20, enabled: baseComponentEnabled) }
 
     var body: some View {
         renderMarkdown(text.replacingOccurrences(of: "<br>", with: "\n"))
+            .assignedTypography(isHeader ? "component.library.20.label" : "component.library.20.text",
+                fallback: isHeader ? SettingsFont.compactLabel : SettingsFont.rowDescription)
+            .foregroundColor(theme.text.primary)
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s8)
+            .frame(maxWidth: .infinity, minHeight: theme.catalogMetric("height", fallback: 0), maxHeight: .infinity, alignment: .topLeading)
             .background(background)
     }
 
     private var background: Color {
         if isHeader {
-            return theme.secondaryBackground
+            return theme.surface.subtle
         }
-        return rowIndex % 2 == 0 ? theme.primaryBackground : theme.secondaryBackground.opacity(0.3)
+        return rowIndex % 2 == 0 ? theme.surface.raised : theme.surface.hover
     }
 
     private func renderMarkdown(_ text: String) -> Text {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
 
         guard var attributed = try? AttributedString(markdown: text, options: options) else {
-            return Text(text)
-                .font(
-                    theme.font(
-                        size: CGFloat(isHeader ? theme.bodySize : theme.bodySize),
-                        weight: isHeader ? .bold : .regular
-                    )
-                )
-                .foregroundColor(theme.primaryText)
+            var plain = AttributedString(text)
+            plain.foregroundColor = theme.text.primary
+            return Text(plain)
         }
 
         // Apply base font and color
-        let baseFont = theme.font(size: CGFloat(theme.bodySize), weight: isHeader ? .bold : .regular)
-        let monoFont = theme.monoFont(size: CGFloat(theme.bodySize) * 0.9, weight: .regular)
+        let monoFont = theme.textStyle(.code)
 
-        attributed.font = baseFont
-        attributed.foregroundColor = theme.primaryText
+        attributed.foregroundColor = theme.text.primary
 
         // Style inline code runs
         for run in attributed.runs {
             if let traits = run.inlinePresentationIntent, traits.contains(.code) {
                 attributed[run.range].font = monoFont
-                attributed[run.range].foregroundColor = theme.accentColor
+                attributed[run.range].foregroundColor = baseComponentEnabled ? theme.action.primary.default.background : theme.text.disabled
             }
         }
 

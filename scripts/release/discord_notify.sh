@@ -20,17 +20,28 @@ fi
 # Truncate to ~1900 chars for Discord embed description
 TRUNCATED=$(printf '%s' "$RAW_CHANGELOG" | head -c 1900)
 
+# releases/latest always resolves to Osaurus 1.x, so a Classic post links its
+# own DMG.
+RELEASE_LANE_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/release_lane.py"
+if [ "$(python3 "$RELEASE_LANE_PY" field --version "$VERSION" name)" = "classic" ]; then
+  CONTENT="🛠️ **New Osaurus Classic maintenance release**"
+  DOWNLOAD="[Download Osaurus-${VERSION}.dmg](https://github.com/osaurus-ai/osaurus/releases/download/${VERSION}/Osaurus-${VERSION}.dmg)"
+else
+  CONTENT="🚀 **New Osaurus Release!**"
+  DOWNLOAD="[Download Osaurus.dmg](https://github.com/osaurus-ai/osaurus/releases/latest/download/Osaurus.dmg)"
+fi
+
 jq -n \
-  --arg content  "🚀 **New Osaurus Release!**" \
-  --arg version  "${VERSION}" \
+  --arg content  "$CONTENT" \
+  --arg title    "$(python3 "$RELEASE_LANE_PY" field --version "$VERSION" title)" \
   --arg desc     "$TRUNCATED" \
-  --arg download "[Download Osaurus.dmg](https://github.com/osaurus-ai/osaurus/releases/latest/download/Osaurus.dmg)" \
+  --arg download "$DOWNLOAD" \
   --arg page     "[View on GitHub](https://github.com/osaurus-ai/osaurus/releases/tag/${VERSION})" \
   '{
     content: $content,
     embeds: [
       {
-        title: ("Osaurus " + $version),
+        title: $title,
         description: $desc,
         color: 5814783,
         fields: [

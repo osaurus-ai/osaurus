@@ -645,6 +645,11 @@ struct AgentLoopHooks {
     /// `authorizedToolNames`.
     var announcedToolCallRecovery: (() -> AgentToolLoop.AnnouncedToolCallRecovery?)?
 
+    /// How the run ended, for the Orchestrator's session-state extraction:
+    /// called once on an ordinary final, or once at the step cap. Assigned
+    /// after construction like `authorizedToolNames`.
+    var noteTurnEnding: ((_ ending: TurnEnding) async -> Void)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async throws -> AgentLoopIterationInput,
@@ -1431,7 +1436,7 @@ enum AgentToolLoop {
     /// unfinished at the hard agent-step cap. This is driven by typed Todo
     /// state, never by classifying the model's prose.
     static func unfinishedTodoCapFallback(pending: Int) -> String {
-        "The agent reached the configured step limit with \(pending) todo item\(pending == 1 ? "" : "s") still unfinished. The task is incomplete; continue from the latest completed step or increase Max Tool Attempts under Settings → Conversation → Advanced."
+        "The agent reached the configured step limit with \(pending) todo item\(pending == 1 ? "" : "s") still unfinished. The task is incomplete; continue from the latest completed step or increase Max Tool Attempts under Settings → Chat → Advanced."
     }
 
     /// The iteration-budget warning staged when the remaining budget
@@ -1657,7 +1662,7 @@ enum AgentToolLoop {
         guard windowSource == .userCap else { return overBudgetMessage }
         return
             "Context window cannot fit this request. The limit in force is your "
-            + "Context Window Cap (Settings → Server → Cache → Context & KV Policy), "
+            + "Context Window Cap (Settings → Server → Server Settings → Cache → Context Window Cap (tokens)), "
             + "not the model's own window — raise or clear it, or shorten the input."
     }
 
@@ -1850,12 +1855,13 @@ enum AgentToolLoop {
                 continue
             }
             do {
-                try await scoped {
+                let skipReason = try await scoped {
                     try await ToolRegistry.shared.resolvePermissionGate(
                         name: call.invocation.toolName,
                         argumentsJSON: call.invocation.jsonArguments
                     )
                 }
+                ToolApprovalAudit.record(skipReason, callId: call.callId)
                 approved.append((slot, call.invocation, call.callId))
             } catch {
                 executions[slot] = AgentLoopToolExecution(
@@ -1892,7 +1898,7 @@ enum AgentToolLoop {
     /// let calls AFTER the intercept execute and land in history, where
     /// the serial path stops immediately.
     static let interceptToolNames: Set<String> = [
-        "complete", "clarify", PromptWorkingFolderTool.toolName,
+        "complete", "clarify", PromptWorkingFolderTool.toolName, WorkflowProposeSaveTool.toolName,
     ]
 
     /// Agent-loop control calls are not user-task actions and therefore do
@@ -2140,7 +2146,11 @@ enum AgentToolLoop {
     static func containsIntercept(
         _ calls: [(invocation: ServiceToolInvocation, callId: String)]
     ) -> Bool {
-        calls.contains { interceptToolNames.contains($0.invocation.toolName) }
+        calls.contains {
+            interceptToolNames.contains($0.invocation.toolName)
+                // A Work Mode workflow call can park and end the run.
+                || WorkflowToolCall.isWorkflowCall($0.invocation.toolName)
+        }
     }
 
     /// Whether a tool execution produced a SUCCESSFUL intercept — the
@@ -2315,11 +2325,37 @@ enum AgentToolLoop {
     /// `isolation` inherits the caller's actor isolation (`#isolation`) so
     /// non-Sendable hooks/state never cross an isolation boundary: chat
     /// drives the loop on the MainActor; HTTP/plugin drive it nonisolated.
+    ///
+    /// The whole run holds the local models it generates with resident
+    /// (`ConversationResidencyHold`): a tool that runs longer than the idle
+    /// setting no longer unloads the model between two steps of one turn. The
+    /// hold is released on every exit path (result, throw, cancellation), and
+    /// the idle timer then counts from the loop's end.
     static func run(
         policy: AgentLoopPolicy,
         state: AgentTaskState,
         hooks: AgentLoopHooks,
         isolation: isolated (any Actor)? = #isolation
+    ) async throws -> RunResult {
+        let hold = ConversationResidencyHold()
+        let result: RunResult
+        do {
+            result = try await ConversationResidencyHoldContext.$current.withValue(hold) {
+                try await runHoldingResidency(policy: policy, state: state, hooks: hooks, isolation: isolation)
+            }
+        } catch {
+            await ModelRuntime.shared.releaseConversationResidencyHold(hold)
+            throw error
+        }
+        await ModelRuntime.shared.releaseConversationResidencyHold(hold)
+        return result
+    }
+
+    private static func runHoldingResidency(
+        policy: AgentLoopPolicy,
+        state: AgentTaskState,
+        hooks: AgentLoopHooks,
+        isolation: isolated (any Actor)?
     ) async throws -> RunResult {
         var iteration = 0
         // The `tool_not_found` notice lists what the request may execute;
@@ -2497,7 +2533,13 @@ enum AgentToolLoop {
             nil
         }
 
-        while iteration < policy.maxIterations {
+        while true {
+            if iteration >= policy.maxIterations {
+                if let note = hooks.noteTurnEnding, !(await hooks.isCancelled()) {
+                    await note(.iterationCap)
+                }
+                break
+            }
             if await hooks.isCancelled() {
                 return RunResult(exit: .cancelled, iterations: iteration)
             }
@@ -2552,7 +2594,8 @@ enum AgentToolLoop {
                     let visibleText = await finalVisibleText(),
                     let notice = GroundedConfigClaimCheck.notice(
                         finalText: visibleText,
-                        hasGroundedApply: hasGroundedConfigApply
+                        hasGroundedApply: hasGroundedConfigApply,
+                        viaHandoff: ChatExecutionContext.currentAgentId == Agent.defaultId
                     )
                 {
                     groundedClaimRetries += 1
@@ -2625,6 +2668,7 @@ enum AgentToolLoop {
                     iteration -= 1
                     continue
                 }
+                await hooks.noteTurnEnding?(.finalText)
                 // An ordinary model final is authoritative. Todo is visible
                 // progress metadata; it must never override EOS/stop and make
                 // the driver regenerate the same answer until the step cap.

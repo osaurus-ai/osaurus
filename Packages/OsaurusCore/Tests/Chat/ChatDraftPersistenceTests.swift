@@ -267,12 +267,14 @@ extension ChatDraftPersistenceTests {
             fresh.noteComposerDraft("half-typed follow up")
             #expect(fresh.input == "")
 
+            // Leaving the blank chat closes it; its text comes back in the
+            // next New Chat.
             window.selectTab(id: existingTabId)
             #expect(window.session !== fresh)
-            window.selectTab(id: freshTabId)
-            #expect(window.session === fresh)
-            #expect(fresh.input == "half-typed follow up")
-            #expect(fresh.unsentComposerText == "half-typed follow up")
+            #expect(!window.tabs.contains { $0.id == freshTabId })
+            window.newTab()
+            #expect(window.session.input == "half-typed follow up")
+            #expect(window.session.unsentComposerText == "half-typed follow up")
         }
     }
 

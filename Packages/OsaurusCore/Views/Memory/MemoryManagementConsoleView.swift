@@ -34,7 +34,7 @@ struct MemoryManagementConsoleView: View {
     @State private var isPreviewLoading = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             searchToolbar
             filtersRow
 
@@ -46,19 +46,12 @@ struct MemoryManagementConsoleView: View {
                 contextPreviewPanel
             }
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
 
             resultsPanel
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s16)
+        .settingsChrome(.card)
         .onAppear {
             if snapshot == nil { refresh() }
         }
@@ -84,49 +77,16 @@ struct MemoryManagementConsoleView: View {
     }
 
     private var searchToolbar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-
-                TextField(
-                    "",
-                    text: $searchText,
-                    prompt: Text("Search memories", bundle: .module)
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
+        HStack(spacing: theme.space.s10) {
+            SearchField(text: $searchText, placeholder: "Search memories", fillsAvailableWidth: true)
                 .onSubmit { refresh() }
-
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                        refresh()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .buttonStyle(.plain)
-                    .help(Text("Clear search", bundle: .module))
+                .onChange(of: searchText) { _, newValue in
+                    if newValue.isEmpty { refresh() }
                 }
 
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                }
+            if isLoading {
+                SettingsSpinner()
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
 
             consoleToggleButton(
                 title: "Storage health",
@@ -148,33 +108,29 @@ struct MemoryManagementConsoleView: View {
     }
 
     private var filtersRow: some View {
-        HStack(spacing: 12) {
-            Picker("", selection: $scope) {
-                ForEach(MemoryConsoleScope.allCases) { value in
-                    Text(LocalizedStringKey(value.displayName), bundle: .module).tag(value)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 320)
+        HStack(spacing: theme.space.s12) {
+            AssignedBaseSegmentedPicker(
+                selection: $scope,
+                options: MemoryConsoleScope.allCases.map { .init($0, $0.displayName) }
+            )
+            .fixedSize()
             .onChange(of: scope) { _, _ in refresh() }
 
-            Picker("", selection: $agentFilter) {
+            SettingsMenuPicker(selection: $agentFilter) {
                 Text("All agents", bundle: .module).tag(MemoryAgentFilter.all)
                 Text(Agent.default.displayName).tag(MemoryAgentFilter.defaultAgent)
                 ForEach(agents) { agent in
                     Text(agent.displayName).tag(MemoryAgentFilter.agent(agent.id.uuidString))
                 }
             }
-            .labelsHidden()
-            .frame(width: 200)
+            .accessibilityLabel(Text("Agent", bundle: .module))
             .onChange(of: agentFilter) { _, _ in refresh() }
 
             Toggle(isOn: $includeDisabled) {
                 Text("Include disabled", bundle: .module)
-                    .font(.system(size: 12))
+                    .font(SettingsFont.caption)
             }
-            .toggleStyle(.checkbox)
+            .settingsCheckbox()
             .onChange(of: includeDisabled) { _, _ in refresh() }
 
             Spacer(minLength: 0)
@@ -187,85 +143,49 @@ struct MemoryManagementConsoleView: View {
         isActive: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isActive ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                isActive ? theme.accentColor.opacity(0.35) : Color.clear,
-                                lineWidth: 1
-                            )
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .fixedSize()
+        FilterChip(
+            String(localized: String.LocalizationValue(title), bundle: .module),
+            icon: icon,
+            isSelected: isActive,
+            action: action
+        )
     }
 
     private var contextPreviewPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                Text("BOUNDED CONTEXT PREVIEW", bundle: .module)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.3)
+                    .glyphSize(.footnote, weight: .semibold)
+                    .foregroundColor(theme.text.link)
+                Text("Bounded context preview", bundle: .module)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.tertiary)
                 Spacer()
                 Text("~\(previewTokenLimit) tokens", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
             }
 
-            HStack(spacing: 10) {
-                TextField(
-                    "",
-                    text: $previewQuery,
-                    prompt: Text("Preview query", bundle: .module)
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 7)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
+            HStack(spacing: theme.space.s10) {
+                SettingsTextField(placeholder: L("Preview query"), text: $previewQuery)
 
-                Picker("Preview Agent", selection: $previewAgentId) {
+                SettingsMenuPicker(selection: $previewAgentId) {
                     Text(Agent.default.displayName).tag(Agent.defaultId.uuidString)
                     ForEach(agents) { agent in
                         Text(agent.displayName).tag(agent.id.uuidString)
                     }
                 }
+                .settingsFieldAccessibility(L("Preview Agent"))
                 .frame(width: 190)
 
-                Stepper(value: $previewTokenLimit, in: 100 ... 2000, step: 100) {
-                    EmptyView()
-                }
-                .labelsHidden()
+                SettingsStepper(value: $previewTokenLimit, range: 100 ... 2000, step: 100)
+                    .settingsFieldAccessibility(L("Preview token limit"))
 
                 Button {
                     loadContextPreview()
                 } label: {
                     Image(systemName: "eye")
-                        .font(.system(size: 12, weight: .semibold))
+                        .glyphSize(.caption, weight: .semibold)
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
@@ -274,15 +194,14 @@ struct MemoryManagementConsoleView: View {
             }
 
             if isPreviewLoading {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
+                HStack(spacing: theme.space.s8) {
+                    SettingsSpinner()
                     Text("Assembling preview...", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                 }
             } else if let contextPreview {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     HStack {
                         Text(
                             contextPreview.wasEmpty
@@ -290,8 +209,8 @@ struct MemoryManagementConsoleView: View {
                                 : "Preview context",
                             bundle: .module
                         )
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
+                        .textStyle(.footnote, weight: 600)
+                        .foregroundColor(theme.text.secondary)
 
                         Spacer()
 
@@ -300,49 +219,43 @@ struct MemoryManagementConsoleView: View {
                             Text(
                                 count == 1 ? L("1 redaction") : L("\(count) redactions")
                             )
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.warningColor)
+                            .font(SettingsFont.smallLabel)
+                            .foregroundColor(theme.status.warning.foreground)
                         }
                     }
 
                     Text(contextPreview.redactedContext.text)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.primary)
                         .textSelection(.enabled)
                         .lineLimit(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.inputBackground.opacity(0.55))
-                        )
+                        .padding(theme.space.s8)
+                        .settingsChrome(.inset)
                 }
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.45))
-        )
+        .padding(theme.space.s12)
+        .settingsChrome(.inset)
     }
 
     @ViewBuilder
     private func diagnosticsPanel(_ health: MemoryStorageHealth) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(spacing: theme.space.s8) {
                 Circle()
                     .fill(healthColor(health.level))
                     .frame(width: 8, height: 8)
                 Text(health.level.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 Text(formatBytes(health.databaseSizeBytes))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
             }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 126), spacing: 8)], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 126), spacing: theme.space.s8)], spacing: theme.space.s8) {
                 healthTile("Pinned", "\(health.activePinnedCount)", footnote: "\(health.disabledPinnedCount) disabled")
                 healthTile(
                     "Episodes",
@@ -379,69 +292,55 @@ struct MemoryManagementConsoleView: View {
             }
 
             if !health.diagnostics.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     ForEach(health.diagnostics, id: \.self) { diagnostic in
-                        HStack(alignment: .top, spacing: 6) {
+                        HStack(alignment: .top, spacing: theme.space.s6) {
                             Image(systemName: "exclamationmark.triangle")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(theme.warningColor)
+                                .glyphSize(.micro, weight: .medium)
+                                .foregroundColor(theme.status.warning.foreground)
                             Text(diagnostic)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.secondaryText)
+                                .font(SettingsFont.rowDescription)
+                                .foregroundColor(theme.text.secondary)
                         }
                     }
                 }
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground.opacity(0.6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s12)
+        .settingsChrome(.control)
     }
 
     private var resultsPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("RESULTS", bundle: .module)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.3)
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
+                Text("Results", bundle: .module)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.tertiary)
                 if let count = snapshot?.items.count {
-                    Text("\(count)", bundle: .module)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(theme.tertiaryBackground))
+                    CountBadge(count)
                 }
                 Spacer()
                 if let generatedAt = snapshot?.generatedAt {
                     Text(generatedAt, style: .time)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
 
             if isLoading && snapshot == nil {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
+                HStack(spacing: theme.space.s8) {
+                    SettingsSpinner()
                     Text("Loading memories...", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 24)
+                .padding(.vertical, theme.space.s24)
             } else if let items = snapshot?.items, !items.isEmpty {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         if index > 0 {
-                            Divider().opacity(0.5)
+                            ThemeHairlineDivider()
                         }
                         MemoryConsoleResultRow(
                             item: item,
@@ -461,40 +360,34 @@ struct MemoryManagementConsoleView: View {
                         )
                     }
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground.opacity(0.5))
-                )
+                .settingsChrome(.inset)
             } else {
                 Text("No memories match this search.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 24)
+                    .padding(.vertical, theme.space.s24)
             }
         }
     }
 
     private func healthTile(_ label: String, _ value: String, footnote: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.chip)
+                .foregroundColor(theme.text.tertiary)
             Text(value)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.cardTitle)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
             Text(footnote)
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(theme.cardBackground)
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.surface)
     }
 
     private func refresh() {
@@ -568,9 +461,9 @@ struct MemoryManagementConsoleView: View {
 
     private func healthColor(_ level: MemoryStorageHealth.Level) -> Color {
         switch level {
-        case .healthy: return theme.successColor
-        case .degraded: return theme.warningColor
-        case .unavailable: return theme.errorColor
+        case .healthy: return theme.status.success.foreground
+        case .degraded: return theme.status.warning.foreground
+        case .unavailable: return theme.status.error.foreground
         }
     }
 
@@ -637,53 +530,43 @@ private struct MemoryConsoleResultRow: View {
     let onForget: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(item.isDisabled ? theme.tertiaryText : theme.accentColor)
+                .glyphSize(.caption, weight: .semibold)
+                .foregroundColor(item.isDisabled ? theme.text.tertiary : theme.text.link)
                 .frame(width: 22, height: 22)
                 .background(
                     Circle()
-                        .fill(theme.tertiaryBackground)
+                        .fill(theme.surface.hover)
                 )
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 7) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s6) {
                     Text(LocalizedStringKey(item.kind.displayName), bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                     if item.isDisabled {
-                        Text("Disabled", bundle: .module)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(theme.warningColor)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.warningColor.opacity(0.12)))
+                        StatusChip(L("Disabled"), tone: .warning)
                     }
                     if item.preview.redactionCount > 0 {
-                        Text("Redacted", bundle: .module)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.tertiaryBackground))
+                        StatusChip(L("Redacted"), tone: .neutral)
                     }
                     Spacer()
                 }
 
                 Text(item.preview.text)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(item.relevanceExplanation)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(2)
             }
 
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 iconButton("info.circle", help: "Inspect memory", action: onInspect)
                 iconButton("pause.circle", help: "Disable memory", action: onDisable)
                     .disabled(!item.canDisable)
@@ -692,7 +575,7 @@ private struct MemoryConsoleResultRow: View {
             }
             .fixedSize()
         }
-        .padding(12)
+        .padding(theme.space.s12)
     }
 
     private var icon: String {
@@ -710,13 +593,10 @@ private struct MemoryConsoleResultRow: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(.caption, weight: .medium)
+                .foregroundColor(theme.text.secondary)
                 .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.tertiaryBackground)
-                )
+                .settingsChrome(.inset)
         }
         .buttonStyle(.plain)
         .help(Text(help, bundle: .module))
@@ -732,68 +612,64 @@ private struct MemoryConsoleInspectSheet: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(spacing: theme.space.s0) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     Text(item.kind.displayName)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.detailTitle)
+                        .foregroundColor(theme.text.primary)
                     Text(item.relevanceExplanation)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(.caption, weight: .semibold)
+                        .foregroundColor(theme.text.secondary)
                         .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground)
-                        )
+                        .settingsChrome(.inset)
                 }
                 .buttonStyle(.plain)
                 .help(Text("Close", bundle: .module))
             }
-            .padding(20)
+            .padding(theme.space.s16)
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
                     inspectBlock("Privacy-safe detail", item.detail.text, monospaced: false)
 
                     if item.detail.redactionCount > 0 {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("REDACTIONS", bundle: .module)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(theme.tertiaryText)
-                                .tracking(0.3)
+                        VStack(alignment: .leading, spacing: theme.space.s6) {
+                            Text("Redactions", bundle: .module)
+                                .font(SettingsFont.compactLabel)
+                                .foregroundColor(theme.text.tertiary)
                             ForEach(item.detail.redactionCounts.keys.sorted(), id: \.self) { key in
                                 Text("\(key): \(item.detail.redactionCounts[key] ?? 0)", bundle: .module)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.secondaryText)
+                                    .font(SettingsFont.caption)
+                                    .foregroundColor(theme.text.secondary)
                             }
                         }
                     }
 
                     metadataGrid
                 }
-                .padding(20)
+                .padding(theme.space.s16)
             }
         }
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
     }
 
     private var metadataGrid: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("METADATA", bundle: .module)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.3)
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            Text("Metadata", bundle: .module)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.tertiary)
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: theme.space.s8)], spacing: theme.space.s8) {
                 metadataTile("Storage ID", item.storageId)
                 metadataTile("Agent", item.agentId)
                 if let status = item.metadata.status { metadataTile("Status", status) }
@@ -826,41 +702,34 @@ private struct MemoryConsoleInspectSheet: View {
     }
 
     private func inspectBlock(_ title: String, _ text: String, monospaced: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.3)
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            Text(title)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.tertiary)
 
             Text(text)
-                .font(monospaced ? .system(size: 12, design: .monospaced) : .system(size: 13))
-                .foregroundColor(theme.primaryText)
+                .textStyle(monospaced ? .code : .bodySmall)
+                .foregroundColor(theme.text.primary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground.opacity(0.7))
-                )
+                .padding(theme.space.s12)
+                .settingsChrome(.inset)
         }
     }
 
     private func metadataTile(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.chip)
+                .foregroundColor(theme.text.tertiary)
             Text(value)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .lineLimit(3)
                 .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(theme.inputBackground.opacity(0.6))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 }

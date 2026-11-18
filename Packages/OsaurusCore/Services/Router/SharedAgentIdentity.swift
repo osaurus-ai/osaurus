@@ -27,6 +27,12 @@
 //  An agent that is owned but not hosted here is reached exactly like a
 //  teammate's — pair through the workspace and chat over the relay.
 //
+//  Deprecated for owned-elsewhere agents: when the host is one of the
+//  user's sync devices the chat goes through sync instead
+//  (`ChatWindowState.switchToWorkspaceAgent` → `switchToHostedAgent`). The
+//  relay route stays for hosts on older builds; see docs/SYNC.md,
+//  "Deprecated".
+//
 
 import Foundation
 
@@ -66,6 +72,7 @@ struct SharedAgentIdentity: Equatable {
 
     /// Owned by this identity but running on another of the user's devices.
     /// Reached like a teammate's agent (pair + relay), labelled as yours.
+    /// Deprecated route: a host that is a sync device is reached through sync.
     var isOwnedElsewhere: Bool { isOwnedByMe && !isHostedHere }
 
     /// Hosted on this Mac. Kept as the name the local-affordance call sites
@@ -232,7 +239,10 @@ enum SharedAgentStatus: Equatable {
     /// Gone for good from this Mac's point of view: unshared, membership
     /// lost, or Router turned off. `fix` says where the user can act.
     case unavailable(reason: String, fix: Fix)
-    /// A teammate's conversation served by this host — read-only here.
+    /// A guest-link agent whose owner revoked this Mac's access key.
+    case accessRevoked(since: Date?)
+    /// A teammate's conversation served by this host. The owner can still
+    /// message into it as themselves (`HostedOwnerComposer`).
     case readOnlyTeammate(callerName: String?)
 
     enum Fix: Equatable {
@@ -271,10 +281,14 @@ enum SharedAgentStatus: Equatable {
         isPairing: Bool,
         connectFailure: String?,
         hasAttempted: Bool,
-        phase: RemoteAgentConnectionPhase
+        phase: RemoteAgentConnectionPhase,
+        accessRevokedAt: Date? = nil
     ) -> SharedAgentStatus {
         if isServedForTeammate {
             return .readOnlyTeammate(callerName: callerLabel)
+        }
+        if workspaceId.isEmpty, let accessRevokedAt {
+            return .accessRevoked(since: accessRevokedAt)
         }
         if !rosterLists, rosterHasLoaded, !workspaceId.isEmpty {
             if !routerEnabled {
@@ -370,11 +384,38 @@ enum SharedAgentStatus: Equatable {
         )
     }
 
+    /// Status for a guest-link ("Shared with you") row. There is no router
+    /// presence for these, so the dot reads the pairing's own connection:
+    /// revoked, connected, connecting, last error, or not tried yet.
+    static func forDirectShareRow(
+        accessRevokedAt: Date?,
+        isConnected: Bool,
+        isConnecting: Bool,
+        lastError: String?
+    ) -> SharedAgentStatus {
+        if let accessRevokedAt { return .accessRevoked(since: accessRevokedAt) }
+        if isConnected { return .ready }
+        if isConnecting { return .connecting }
+        if let lastError, !lastError.isEmpty { return .notConnected(reason: lastError, hasAttempted: true) }
+        return .notConnected(reason: nil, hasAttempted: false)
+    }
+
+    @MainActor
+    static func forDirectShareRow(_ agent: RemoteAgent) -> SharedAgentStatus {
+        let state = RemoteProviderManager.shared.providerStates[agent.providerId]
+        return forDirectShareRow(
+            accessRevokedAt: agent.accessRevokedAt,
+            isConnected: state?.isConnected ?? false,
+            isConnecting: state?.isConnecting ?? false,
+            lastError: state?.lastError
+        )
+    }
+
     /// Whether a connect can be (re)issued from this state.
     var offersRetry: Bool {
         switch self {
         case .offline, .notConnected: return true
-        case .ready, .checking, .connecting, .unavailable, .readOnlyTeammate: return false
+        case .ready, .checking, .connecting, .unavailable, .accessRevoked, .readOnlyTeammate: return false
         }
     }
 
@@ -386,7 +427,7 @@ enum SharedAgentStatus: Equatable {
             return hasAttempted ? L("Retry") : L("Connect")
         case .offline:
             return L("Retry")
-        case .ready, .checking, .connecting, .unavailable, .readOnlyTeammate:
+        case .ready, .checking, .connecting, .unavailable, .accessRevoked, .readOnlyTeammate:
             return nil
         }
     }
@@ -398,7 +439,7 @@ enum SharedAgentStatus: Equatable {
         case .checking, .connecting: return "arrow.triangle.2.circlepath"
         case .offline: return "moon.zzz.fill"
         case .notConnected: return "link.badge.plus"
-        case .unavailable: return "person.crop.circle.badge.xmark"
+        case .unavailable, .accessRevoked: return "person.crop.circle.badge.xmark"
         case .readOnlyTeammate: return "rectangle.3.group.fill"
         }
     }
@@ -409,7 +450,7 @@ enum SharedAgentStatus: Equatable {
         switch self {
         case .ready: return .success
         case .checking, .connecting: return .accent
-        case .notConnected: return .warning
+        case .notConnected, .accessRevoked: return .warning
         case .offline, .unavailable, .readOnlyTeammate: return .muted
         }
     }
@@ -417,7 +458,7 @@ enum SharedAgentStatus: Equatable {
     /// Short label for compact surfaces (sidebar subtitle, empty-state badge).
     var shortLabel: String {
         switch self {
-        case .ready: return L("End-to-end encrypted")
+        case .ready: return L("Online")
         case .checking: return L("Checking…")
         case .connecting: return L("Connecting…")
         case .offline(let lastSeen):
@@ -427,7 +468,8 @@ enum SharedAgentStatus: Equatable {
             return L("Offline")
         case .notConnected: return L("Not connected")
         case .unavailable: return L("Unavailable")
-        case .readOnlyTeammate: return L("Read-only")
+        case .accessRevoked: return L("Access revoked")
+        case .readOnlyTeammate: return L("Teammate's chat")
         }
     }
 
@@ -452,8 +494,10 @@ enum SharedAgentStatus: Equatable {
             return String(format: L("%@ isn't connected yet"), agentName)
         case .unavailable:
             return String(format: L("%@ is unavailable"), agentName)
+        case .accessRevoked:
+            return String(format: L("Your access to %@ was revoked"), agentName)
         case .readOnlyTeammate:
-            return L("Read-only conversation")
+            return L("A teammate's conversation")
         }
     }
 
@@ -481,9 +525,19 @@ enum SharedAgentStatus: Equatable {
             return L("Connect to start chatting over the encrypted relay.")
         case .unavailable(let reason, _):
             return Self.sentence(reason) + " " + L("You can still read this conversation.")
+        case .accessRevoked:
+            let owner = hostName ?? L("The owner")
+            return String(
+                format: L(
+                    "%@ turned off your guest link. You can still read this conversation. Ask for a new guest link to chat again, or remove the agent from Shared With You."
+                ),
+                owner
+            )
         case .readOnlyTeammate(let callerName):
             return String(
-                format: L("%@'s conversation with %@ through your workspace. Replying here would inject into their chat."),
+                format: L(
+                    "%@'s conversation with %@ through your workspace. Anything you send appears in their chat as you."
+                ),
                 callerName ?? L("A teammate"), agentName
             )
         }

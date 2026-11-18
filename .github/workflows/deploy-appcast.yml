@@ -32,6 +32,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Resolve release lane
+        run: python3 scripts/release/release_lane.py export --version "$VERSION"
+
       - name: Generate and Deploy Sparkle Appcast
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
@@ -44,8 +47,10 @@ jobs:
           mkdir -p build_output
           curl -L -f -o "build_output/Osaurus-${VERSION}.dmg" \
             "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Osaurus-${VERSION}.dmg"
-          curl -L -f -o build_output/Osaurus.dmg \
-            "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Osaurus.dmg"
+          if [ "$ATTACH_UNVERSIONED_DMG" = "true" ]; then
+            curl -L -f -o build_output/Osaurus.dmg \
+              "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Osaurus.dmg"
+          fi
           curl -L -f -o "build_output/Osaurus-${VERSION}-dSYMs.zip" \
             "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Osaurus-${VERSION}-dSYMs.zip" \
             || echo "::warning::dSYM zip not found on release; skipping."
@@ -58,7 +63,7 @@ jobs:
             build_output/Osaurus-${{ env.VERSION }}.dmg
             build_output/Osaurus.dmg
             build_output/Osaurus-${{ env.VERSION }}-dSYMs.zip
-            updates/appcast.xml
+            updates/${{ env.APPCAST_FILE }}
           if-no-files-found: warn
 
       - name: Post to Discord

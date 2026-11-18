@@ -22,7 +22,9 @@ import Testing
                     .init(mode: mode, draftTokenLimit: depth, explicitDepth: depth))
                 #expect(result.mode == .auto)
                 #expect(result.explicitDepth == nil && result.draftTokenLimit == nil)
-                #expect(MLXBatchAdapter.nativeMTPDepthPolicy(result) == .adaptive(maximumDepth: 5))
+                #expect(
+                    MLXBatchAdapter.nativeMTPDepthPolicy(result)
+                        == .adaptive(maximumDepth: MLXBatchAdapter.nativeMTPAdaptiveNoHostCeiling))
                 #expect(ModelRuntime.requestDraftStrategy(nil, mtp: result) == nil)
                 #expect(NativeMTPSelectionDefault.adaptiveSelection(result) == result)
             }

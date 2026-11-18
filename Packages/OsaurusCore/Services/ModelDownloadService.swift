@@ -80,7 +80,11 @@ final class ModelDownloadService: ObservableObject {
     /// it without blocking the UI. `ModelManager` drives the refresh after
     /// each local-discovery merge, which is also what `.localModelsChanged`
     /// triggers, so the figure always covers the same set the header counts.
-    @Published private(set) var totalDownloadedSizeBytes: Int64 = 0
+    struct DownloadedInventorySize: Equatable, Sendable {
+        let modelCount: Int
+        let allocatedBytes: Int64
+    }
+    @Published private(set) var downloadedInventorySize = DownloadedInventorySize(modelCount: 0, allocatedBytes: 0)
 
     /// Categorised failure info shown in the alert. The `title` describes
     /// the kind of failure, `message` is the human-readable cause, and
@@ -94,6 +98,26 @@ final class ModelDownloadService: ObservableObject {
         let title: String
         let message: String
         let details: String
+    }
+
+    /// Why a completed download can't run, or nil when it can. Embedding
+    /// bundles run on the embedding engine, so they are judged by its
+    /// support rules rather than the chat runtime's.
+    nonisolated static func postDownloadCompatibilityIssue(for model: MLXModel) -> String? {
+        if model.isEmbedding {
+            guard case .unsupported(let reason) = EmbeddingDetection.runtimeSupport(at: model.localDirectory)
+            else { return nil }
+            return "Compatibility preflight: Embedding model not supported. Osaurus can't run it because \(reason)"
+        }
+        let preflight = ModelCompatibilityDiagnostics.report(
+            modelId: model.id,
+            modelName: model.name,
+            modelTypeHint: model.modelType,
+            bundleURL: model.localDirectory,
+            externalSource: model.externalSource
+        ).preflight
+        guard preflight.blocksRuntimeLoad else { return nil }
+        return "Compatibility preflight: \(preflight.title). \(preflight.detail)"
     }
 
     /// Build a categorised alert from a raw error message and the affected
@@ -206,6 +230,16 @@ final class ModelDownloadService: ObservableObject {
     private var downloadTokens: [String: UUID] = [:]
     private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
     private var lastKnownSpeed: [String: Double] = [:]
+    /// Last progress actually published to `downloadStates`/`downloadMetrics`
+    /// per model. Per-file delegates each throttle on their own, so a
+    /// multi-file download can call `updateDownloadProgress` many times per
+    /// second; every write to those `@Published` dictionaries fires
+    /// `objectWillChange`, which `ModelManager` forwards and which
+    /// re-evaluates the whole model grid on the main thread (app hangs).
+    /// Coalesce publishes through `shouldPublishProgress`.
+    private var lastPublishedProgress: [String: (time: TimeInterval, fraction: Double)] = [:]
+    nonisolated static let progressPublishInterval: TimeInterval = 0.5
+    nonisolated static let progressPublishMinDelta: Double = 0.01
     /// Per-model transfer accounting for aggregate progress: bytes from
     /// files already fully on disk (`fileTransferBase`), live per-file byte
     /// counts (`fileTransferProgress`), and the manifest total.
@@ -282,7 +316,7 @@ final class ModelDownloadService: ObservableObject {
 
     func repair(_ model: MLXModel) {
         guard !isActiveDownload(model.id) else { return }
-        guard model.bundleDirectory == nil, model.externalSource == nil else {
+        guard !model.isExternallyOwned else {
             repairMessages[model.id] = L("External models are managed by their original application.")
             return
         }
@@ -332,6 +366,7 @@ final class ModelDownloadService: ObservableObject {
             etaSeconds: nil
         )
         progressSamples[model.id] = []
+        lastPublishedProgress[model.id] = nil
 
         let task = Task { [weak self, resuming] in
             guard let self = self else { return }
@@ -698,18 +733,12 @@ final class ModelDownloadService: ObservableObject {
                         "Download incomplete: \(missing.count) of \(files.count) files are missing or have wrong size"
                 )
             }
-            // Also detached: the report reads config/tokenizer files out
-            // of the bundle it diagnoses.
-            let compatibilityReport =
+            // Also detached: the check reads config/tokenizer files out of
+            // the bundle it diagnoses.
+            let compatibilityIssue: String? =
                 isComplete
                 ? await Task.detached(priority: .userInitiated) {
-                    ModelCompatibilityDiagnostics.report(
-                        modelId: model.id,
-                        modelName: model.name,
-                        modelTypeHint: model.modelType,
-                        bundleURL: model.localDirectory,
-                        externalSource: model.externalSource
-                    )
+                    Self.postDownloadCompatibilityIssue(for: model)
                 }.value
                 : nil
             await MainActor.run {
@@ -729,18 +758,15 @@ final class ModelDownloadService: ObservableObject {
                             ? L("All model files match Hugging Face. No repair was needed.")
                             : L("Repair complete. Restored \(filesToDownload.count) file(s).")
                     }
-                    if let compatibilityReport {
-                        if compatibilityReport.preflight.blocksRuntimeLoad {
-                            self.downloadAlert = Self.makeAlert(
-                                modelId: model.id,
-                                rawError:
-                                    "Compatibility preflight: \(compatibilityReport.preflight.title). \(compatibilityReport.preflight.detail)",
-                                stage: "compatibility-preflight"
-                            )
-                            ModelManager.invalidateLocalModelsCache()
-                            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
-                            return
-                        }
+                    if let compatibilityIssue {
+                        self.downloadAlert = Self.makeAlert(
+                            modelId: model.id,
+                            rawError: compatibilityIssue,
+                            stage: "compatibility-preflight"
+                        )
+                        ModelManager.invalidateLocalModelsCache()
+                        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                        return
                     }
                     NotificationService.shared.postModelReady(
                         modelId: model.id,
@@ -1017,6 +1043,7 @@ final class ModelDownloadService: ObservableObject {
         )
         progressSamples[modelId] = []
         lastKnownSpeed[modelId] = nil
+        lastPublishedProgress[modelId] = nil
         fileTransferProgress[modelId] = nil
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
@@ -1057,6 +1084,7 @@ final class ModelDownloadService: ObservableObject {
         downloadTokens[modelId] = nil
         progressSamples[modelId] = nil
         lastKnownSpeed[modelId] = nil
+        lastPublishedProgress[modelId] = nil
         fileTransferProgress[modelId] = nil
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
@@ -1091,7 +1119,7 @@ final class ModelDownloadService: ObservableObject {
 
         let modelID = model.id
         let modelName = model.name
-        let isExternal = model.bundleDirectory != nil || model.externalSource != nil
+        let isExternal = model.isExternallyOwned
         let localPath = model.localDirectory.path
         let cacheDirName = "models--\(model.id.replacingOccurrences(of: "/", with: "--"))"
         let cacheRoots = Self.hfCacheRoots()
@@ -1179,7 +1207,8 @@ final class ModelDownloadService: ObservableObject {
         // revision-less entries) so re-opening the detail modal doesn't
         // re-hit the network. On a miss, fetch the tree-sum and write it
         // back so the value persists across launches.
-        if let cached = ModelSizeCache.bytes(forId: model.id) {
+        if let cached = ModelSizeCache.bytes(forId: model.id),
+            ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)) != nil {
             return cached
         }
         let fetched = await HuggingFaceService.shared.estimateTotalSize(
@@ -1223,7 +1252,9 @@ final class ModelDownloadService: ObservableObject {
         activeDownloadTasks[modelId] != nil
     }
 
+    var totalDownloadedSizeBytes: Int64 { downloadedInventorySize.allocatedBytes }
     var totalDownloadedSize: Int64 { totalDownloadedSizeBytes }
+    var totalDownloadedModelCount: Int { downloadedInventorySize.modelCount }
 
     var totalDownloadedSizeString: String {
         ByteCountFormatter.string(fromByteCount: totalDownloadedSizeBytes, countStyle: .file)
@@ -1239,14 +1270,19 @@ final class ModelDownloadService: ObservableObject {
     /// SwiftUI body, which is where the header reads `totalDownloadedSizeString`.
     func refreshTotalDownloadedSize(inventoryCandidates: [MLXModel]) {
         Task { @MainActor [weak self] in
-            let bytes = await Task.detached(priority: .utility) { () -> Int64 in
-                ModelManager.installedModels(among: inventoryCandidates)
-                    .reduce(Int64(0)) { partial, model in
-                        partial + (ModelDownloadService.directoryAllocatedSize(at: model.localDirectory) ?? 0)
-                    }
+            let snapshot = await Task.detached(priority: .utility) {
+                Self.measureDownloadedInventory(inventoryCandidates)
             }.value
-            self?.totalDownloadedSizeBytes = bytes
+            self?.downloadedInventorySize = snapshot
         }
+    }
+
+    nonisolated static func measureDownloadedInventory(_ candidates: [MLXModel]) -> DownloadedInventorySize {
+        let installed = ModelManager.installedModels(among: candidates)
+        let bytes = installed.reduce(Int64(0)) { partial, model in
+            partial + (directoryAllocatedSize(at: model.localDirectory) ?? 0)
+        }
+        return DownloadedInventorySize(modelCount: installed.count, allocatedBytes: bytes)
     }
 
     // MARK: - State Management
@@ -1285,6 +1321,7 @@ final class ModelDownloadService: ObservableObject {
         downloadMetrics[modelId] = nil
         progressSamples[modelId] = nil
         lastKnownSpeed[modelId] = nil
+        lastPublishedProgress[modelId] = nil
         fileTransferProgress[modelId] = nil
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
@@ -1484,7 +1521,6 @@ final class ModelDownloadService: ObservableObject {
         let fraction =
             totalBytes > 0
             ? min(1.0, Double(completedBytes) / Double(totalBytes)) : 0
-        downloadStates[modelId] = .downloading(progress: fraction)
 
         let now = Date().timeIntervalSince1970
         var samples = progressSamples[modelId] ?? []
@@ -1513,12 +1549,44 @@ final class ModelDownloadService: ObservableObject {
             if remaining > 0 { eta = remaining / speed }
         }
 
+        // Speed samples above are always recorded; only the UI-facing
+        // `@Published` writes are coalesced.
+        let last = lastPublishedProgress[modelId]
+        guard
+            Self.shouldPublishProgress(
+                now: now,
+                fraction: fraction,
+                lastTime: last?.time,
+                lastFraction: last?.fraction
+            )
+        else { return }
+        lastPublishedProgress[modelId] = (time: now, fraction: fraction)
+
+        let newState = DownloadState.downloading(progress: fraction)
+        if downloadStates[modelId] != newState {
+            downloadStates[modelId] = newState
+        }
         downloadMetrics[modelId] = DownloadMetrics(
             bytesReceived: completedBytes,
             totalBytes: totalBytes,
             bytesPerSecond: speed,
             etaSeconds: eta
         )
+    }
+
+    /// Whether a progress update should be published to the UI. Publishes the
+    /// first update, completion, any update after `progressPublishInterval`,
+    /// or a jump of at least `progressPublishMinDelta`.
+    nonisolated static func shouldPublishProgress(
+        now: TimeInterval,
+        fraction: Double,
+        lastTime: TimeInterval?,
+        lastFraction: Double?
+    ) -> Bool {
+        guard let lastTime, let lastFraction else { return true }
+        if fraction >= 1.0 && lastFraction < 1.0 { return true }
+        if now - lastTime >= progressPublishInterval { return true }
+        return abs(fraction - lastFraction) >= progressPublishMinDelta
     }
 
     // MARK: - Background Top-Up
@@ -1710,7 +1778,7 @@ final class ModelDownloadService: ObservableObject {
         var total: Int64 = 0
         guard
             let enumerator = fileManager.enumerator(
-                at: url,
+                at: url.resolvingSymlinksInPath(),
                 includingPropertiesForKeys: [
                     .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .fileSizeKey, .isRegularFileKey,
                 ],
@@ -1720,7 +1788,7 @@ final class ModelDownloadService: ObservableObject {
         else { return nil }
         for case let fileURL as URL in enumerator {
             do {
-                let rv = try fileURL.resourceValues(forKeys: [
+                let rv = try fileURL.resolvingSymlinksInPath().resourceValues(forKeys: [
                     .isRegularFileKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .fileSizeKey,
                 ])
                 guard rv.isRegularFile == true else { continue }

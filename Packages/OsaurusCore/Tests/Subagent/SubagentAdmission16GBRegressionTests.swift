@@ -185,10 +185,10 @@ struct SubagentAdmission16GBRegressionTests {
         let sharedAvailable = ChatResidencyHandoff.reclaimableMemoryBytes(
             physicalBytes: Int64(16 * gib),
             pageSize: page,
-            wiredPages: Int64(2 * gib) / page,
-            compressorPages: Int64(1 * gib) / page,
-            internalPages: Int64(4 * gib) / page,
-            purgeablePages: Int64(1 * gib) / page
+            freePages: Int64(3 * gib) / page,
+            fileBackedPages: Int64(7 * gib) / page,
+            purgeablePages: Int64(1 * gib) / page,
+            speculativePages: Int64(1 * gib) / page
         )
         #expect(sharedAvailable == Int64(10 * gib))
 

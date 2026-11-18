@@ -5,7 +5,11 @@
 //  ObservableObject backing the redaction review sheet. Created by
 //  `PrivacyReviewService` with a continuation; the sheet flips
 //  per-row `approved` flags and calls `resolve(_:)` exactly once
-//  (Approve, Skip All, Cancel, or the lifecycle dismiss fallback).
+//  (Send, Cancel, or the lifecycle dismiss fallback).
+//
+//  Choices that outlive this send (the conversation policy, category
+//  answers, Never Redact entries) are staged here and committed only on
+//  Send, so Cancel leaves everything as it was.
 //
 
 import Foundation
@@ -13,50 +17,100 @@ import Foundation
 @MainActor
 final class RedactionReviewState: ObservableObject, Identifiable {
     let id = UUID()
+    /// The privacy scope (root chat session) this review is for.
     let sessionId: String
+    /// Display name of the provider the send is bound for, when known.
+    let providerName: String?
 
     @Published var entities: [DetectedEntity]
-    @Published var alwaysApprove: Bool = false
-    /// The entity currently focused in the right-hand context pane.
-    /// Mutated by row taps; `nil` only briefly before the first
-    /// auto-select fires. Stored as the entity's `id` (not an
-    /// index) so reorder / filter changes can't accidentally
-    /// point at the wrong row.
+    /// The entity currently focused for the context preview. Stored as
+    /// the entity's `id` (not an index) so reorder / filter changes
+    /// can't accidentally point at the wrong row.
     @Published var selectedEntityID: UUID?
+
+    /// The conversation policy picked in the footer. Starts at the
+    /// conversation's policy in force (`initialPolicy`).
+    @Published private(set) var policy: ConversationPrivacyPolicy = .ask
+    var initialPolicy: ConversationPrivacyPolicy = .ask {
+        didSet { policy = initialPolicy }
+    }
+
+    /// Never Redact entries staged from row menus, keyed by the row
+    /// that added them.
+    @Published private(set) var neverRedactAdds: [UUID: NeverRedactEntry] = [:]
+    /// Conversation-wide category answers staged from row menus.
+    @Published private(set) var categoryAnswers: [EntityCategory: PrivacyCategoryDecision] = [:]
 
     /// Single-shot resolver. The continuation behind it is finished
     /// in `resolve(_:)`; we guard with a flag because SwiftUI may
     /// fire both a button action and a sheet dismissal in quick
     /// succession.
     var onResolve: ((PrivacyReviewOutcome) -> Void)?
-    private var resolved = false
+    private(set) var resolved = false
 
-    init(detections: [DetectedEntity], sessionId: String) {
+    init(detections: [DetectedEntity], sessionId: String, providerName: String? = nil) {
         self.sessionId = sessionId
+        self.providerName = providerName
         self.entities = detections
-        // Auto-focus the first detection so the right pane has
-        // content the moment the sheet appears.
+        // Auto-focus the first detection so the preview has content
+        // the moment the sheet appears.
         self.selectedEntityID = detections.first?.id
     }
 
     var approvedCount: Int { entities.filter(\.approved).count }
     var skippedCount: Int { entities.count - approvedCount }
 
-    /// Convenience accessor used by the right-hand context pane.
-    /// Returns `nil` only if the list is empty or the selection
-    /// somehow points at a removed entity (defensive — we never
-    /// remove rows in practice).
+    /// `true` when every row is redacted, `false` when none is, `nil`
+    /// when mixed. Drives the "Redact all" checkbox.
+    var allApproved: Bool? {
+        if approvedCount == entities.count { return true }
+        if approvedCount == 0 { return false }
+        return nil
+    }
+
+    /// Rows grouped by where their text came from, in first-seen order.
+    var groups: [(origin: PrivacySegmentOrigin, entities: [DetectedEntity])] {
+        var order: [PrivacySegmentOrigin] = []
+        var buckets: [PrivacySegmentOrigin: [DetectedEntity]] = [:]
+        for entity in entities {
+            if buckets[entity.origin] == nil { order.append(entity.origin) }
+            buckets[entity.origin, default: []].append(entity)
+        }
+        return order.map { ($0, buckets[$0] ?? []) }
+    }
+
+    /// Convenience accessor used by the context preview. Returns `nil`
+    /// only if the list is empty.
     var selectedEntity: DetectedEntity? {
         guard let id = selectedEntityID else { return entities.first }
         return entities.first(where: { $0.id == id }) ?? entities.first
     }
 
-    /// Move focus to `entity` in the right-hand context pane.
-    /// Idempotent — re-selecting the same row is a no-op so SwiftUI
-    /// doesn't churn the detail view on every render.
+    /// The Never Redact entry a row staged, if any.
+    func neverRedactEntry(for entity: DetectedEntity) -> NeverRedactEntry? {
+        neverRedactAdds[entity.id]
+    }
+
+    /// Move focus to `entity`. Idempotent — re-selecting the same row
+    /// is a no-op so SwiftUI doesn't churn the preview on every render.
     func select(_ entity: DetectedEntity) {
         guard selectedEntityID != entity.id else { return }
         selectedEntityID = entity.id
+    }
+
+    /// Keyboard navigation: move the selection up (`-1`) or down (`+1`)
+    /// in display (grouped) order.
+    func moveSelection(by delta: Int) {
+        let ordered = groups.flatMap(\.entities)
+        guard !ordered.isEmpty else { return }
+        let current = ordered.firstIndex(where: { $0.id == selectedEntityID }) ?? 0
+        let next = min(max(current + delta, 0), ordered.count - 1)
+        selectedEntityID = ordered[next].id
+    }
+
+    func toggleSelected() {
+        guard let entity = selectedEntity else { return }
+        setApproval(entity, to: !entity.approved)
     }
 
     func toggleApproval(_ entity: DetectedEntity) {
@@ -88,15 +142,54 @@ final class RedactionReviewState: ObservableObject, Identifiable {
         }
     }
 
+    /// Pick the conversation policy. Redact automatically ticks every
+    /// row and Off unticks every row, so this send matches the choice.
+    func setPolicy(_ newPolicy: ConversationPrivacyPolicy) {
+        policy = newPolicy
+        switch newPolicy {
+        case .autoRedact: approveAll()
+        case .off: skipAll()
+        case .ask: break
+        }
+    }
+
+    /// Stage a Never Redact entry from `entity`'s row and send every
+    /// row it matches as written.
+    func addNeverRedact(_ kind: NeverRedactEntry.Kind, for entity: DetectedEntity) {
+        let text = kind == .domain ? (NeverRedactEntry.host(of: entity.original) ?? entity.original) : entity.original
+        let entry = NeverRedactEntry(kind: kind, text: text)
+        neverRedactAdds[entity.id] = entry
+        for row in entities where entry.matches(row.original) {
+            setApproval(row, to: false)
+        }
+    }
+
+    func removeNeverRedact(for entity: DetectedEntity) {
+        neverRedactAdds.removeValue(forKey: entity.id)
+        setApproval(entity, to: true)
+    }
+
+    /// Stage (or clear, with `nil`) a conversation-wide answer for a
+    /// category and apply it to this send's rows.
+    func setCategoryAnswer(_ category: EntityCategory, _ decision: PrivacyCategoryDecision?) {
+        categoryAnswers[category] = decision
+        guard let decision else { return }
+        for row in entities where row.category == category {
+            setApproval(row, to: decision == .alwaysRedact)
+        }
+    }
+
+    /// Commit the staged choices, then resolve. The commit lands before
+    /// the pipeline continues, so the next queued review for this
+    /// conversation already sees the new policy and answers.
     func confirm() {
         guard !resolved else { return }
         resolved = true
-        // Mirror the toggle's final state to the session store so a
-        // user who turns it off mid-review actually gets review again
-        // on the next send (previously this only ever wrote `true`).
-        let desired = alwaysApprove
-        Task { await SessionRedactionStore.shared.setAutoApprove(sessionId, enabled: desired) }
-        onResolve?(.approved(entities))
+        let approved = entities
+        Task { @MainActor in
+            await commitChoices()
+            onResolve?(.approved(approved))
+        }
     }
 
     func cancel() {
@@ -110,5 +203,22 @@ final class RedactionReviewState: ObservableObject, Identifiable {
     /// pending send doesn't silently fire with unreviewed redactions.
     func sheetDismissed() {
         cancel()
+    }
+
+    private func commitChoices() async {
+        let store = SessionRedactionStore.shared
+        if policy != initialPolicy {
+            await store.setPolicy(sessionId, policy)
+        }
+        for (category, decision) in categoryAnswers {
+            await store.setCategoryDecision(sessionId, category, decision)
+        }
+        if !neverRedactAdds.isEmpty {
+            var config = PrivacyFilterStore.snapshot()
+            for entry in neverRedactAdds.values {
+                config.addNeverRedact(entry)
+            }
+            PrivacyFilterStore.save(config)
+        }
     }
 }

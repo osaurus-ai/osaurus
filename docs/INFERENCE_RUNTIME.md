@@ -192,14 +192,14 @@ the `LayerKind.deepseekV4` disk serializer instead of generic paged KV blocks.
 
 ## Residency policy
 
-Settings > Local Inference > Model Management includes **Keep model loaded
-after use**. The default is **15 minutes**
-(`ModelIdleResidencyPolicy.defaultWarm = .afterSeconds(900)`) so follow-up
-turns don't pay a full cold load and per-model cache/coordinator state
-survives between nearby requests. Users can choose 5, 15, 30, or 60 minutes,
-`Immediately` (the old window-close GC behavior, still useful on low-memory
-machines), or `Never`, to keep weights resident after the last stream
-releases its `ModelLease`.
+Server → Server Settings → Model Memory → **Model Residency** has **Keep
+Model Loaded** and, when that is off, **Unload After**. The default is **30
+seconds** (`ModelIdleResidencyPolicy.defaultWarm = .afterSeconds(30)`), and the
+model also unloads when the last chat window using it closes, so a short
+follow-up doesn't pay a cold load while permanent residency stays an explicit
+opt-in. Users can choose 5, 15 or 30 minutes, 1 hour, `Immediately` (still
+useful on low-memory machines), or Keep Model Loaded (`Never`) to keep weights
+resident after the last stream releases its `ModelLease`.
 
 This is an Osaurus memory-residency policy around `ModelRuntime.unload(name:)`.
 It unloads model weights and runtime buffers only; it does not delete

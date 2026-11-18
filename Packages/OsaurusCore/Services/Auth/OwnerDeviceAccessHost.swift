@@ -18,6 +18,11 @@
 //  `team_redeem` flows (so relays need no new route), under the same rate
 //  limiter, redaction, and HPKE sealing contract.
 //
+//  Deprecated: the user's other Macs and iPhones reach these agents through
+//  Sync (hosted runs, docs/SYNC_MOBILE_CONTRACT.md). Kept, with its access
+//  keys, only for Macs on older builds; removal is tracked in docs/SYNC.md,
+//  "Deprecated".
+//
 
 import CryptoKit
 import Foundation

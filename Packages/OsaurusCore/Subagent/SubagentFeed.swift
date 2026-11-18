@@ -69,6 +69,8 @@ public struct SubagentActivityEvent: Sendable, Identifiable, Equatable {
     public let success: Bool?
     /// For `progress`: completion in `0...1` when known (e.g. image gen).
     public let fraction: Double?
+    /// Text the row keeps collapsed until clicked.
+    public let expandableText: String?
 
     public init(
         id: UUID = UUID(),
@@ -78,7 +80,8 @@ public struct SubagentActivityEvent: Sendable, Identifiable, Equatable {
         title: String,
         detail: String? = nil,
         success: Bool? = nil,
-        fraction: Double? = nil
+        fraction: Double? = nil,
+        expandableText: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -88,6 +91,7 @@ public struct SubagentActivityEvent: Sendable, Identifiable, Equatable {
         self.detail = detail
         self.success = success
         self.fraction = fraction
+        self.expandableText = expandableText
     }
 
     /// SF Symbol the UI uses for this event kind.
@@ -488,25 +492,54 @@ public final class SubagentRunLogArchive: @unchecked Sendable {
     private let lock = NSLock()
     private var logs: [String: SubagentRunLog] = [:]
     private var restoredFeeds: [String: SubagentFeed] = [:]
+    /// Recency per tool-call id. Both maps are capped: a long session (or
+    /// many reopened chats) would otherwise keep every run log and rebuilt
+    /// feed for the life of the process. An evicted row falls back to its
+    /// markdown summary, and reopening its chat stores the log again.
+    private var lastUse: [String: UInt64] = [:]
+    private var clock: UInt64 = 0
+    static let maxLogs = 256
+    static let maxRestoredFeeds = 32
 
     private init() {}
 
     public func store(_ log: SubagentRunLog, for toolCallId: String) {
         lock.lock()
         defer { lock.unlock() }
+        touch(toolCallId)
         guard logs[toolCallId] != log else { return }
         logs[toolCallId] = log
         restoredFeeds.removeValue(forKey: toolCallId)
+        for id in leastRecent(Array(logs.keys), keeping: Self.maxLogs) {
+            logs.removeValue(forKey: id)
+            restoredFeeds.removeValue(forKey: id)
+            lastUse.removeValue(forKey: id)
+        }
     }
 
     public func feed(for toolCallId: String) -> SubagentFeed? {
         lock.lock()
         defer { lock.unlock() }
+        guard logs[toolCallId] != nil || restoredFeeds[toolCallId] != nil else { return nil }
+        touch(toolCallId)
         if let feed = restoredFeeds[toolCallId] { return feed }
         guard let log = logs[toolCallId] else { return nil }
         let feed = SubagentFeed.restored(toolCallId: toolCallId, log: log)
         restoredFeeds[toolCallId] = feed
+        for id in leastRecent(Array(restoredFeeds.keys), keeping: Self.maxRestoredFeeds) {
+            restoredFeeds.removeValue(forKey: id)
+        }
         return feed
+    }
+
+    private func touch(_ id: String) {
+        clock &+= 1
+        lastUse[id] = clock
+    }
+
+    private func leastRecent(_ ids: [String], keeping cap: Int) -> ArraySlice<String> {
+        guard ids.count > cap else { return [] }
+        return ids.sorted { (lastUse[$0] ?? 0) < (lastUse[$1] ?? 0) }.prefix(ids.count - cap)
     }
 }
 

@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.default-workflows",
+  "domain": "onboarding",
+  "label": "onboarding • the seven default workflows read only",
+  "query": "default_workflows",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "default_workflows"
+    }
+  }
+}

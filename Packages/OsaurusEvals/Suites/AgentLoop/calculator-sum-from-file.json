@@ -1,0 +1,30 @@
+{
+  "id": "agent_loop.calculator-sum-from-file",
+  "domain": "agent_loop",
+  "label": "agent loop • calculator: exact total of a 15-row expense list read from a file",
+  "query": "What's the exact total of all the amounts in expenses.csv?",
+  "notes": "Summing a column is the everyday finance-agent arithmetic. Contract: the model reads the file, passes the amounts to `calculate` in a valid expression (e.g. `sum(...)` or a `+` chain; the 1,249.99 row must not be split at its thousands comma), and reports 2,930.74. Measures whether the shipped `calculate` schema tells the model enough to call it correctly. Off-CI (needs a model).",
+  "fixtures": {
+    "agentCapabilities": { "calculatorEnabled": true },
+    "workspaceFiles": [
+      {
+        "path": "expenses.csv",
+        "contents": "date,merchant,amount\n2026-05-01,Green Leaf Grocery,110.21\n2026-05-02,Metro Fuel,135.67\n2026-05-03,Page Turner Books,222.04\n2026-05-05,Bean There Cafe,113.36\n2026-05-06,City Transit,123.36\n2026-05-08,Green Leaf Grocery,142.21\n2026-05-09,Streamly,46.76\n2026-05-11,Metro Fuel,124.32\n2026-05-13,Page Turner Books,152.28\n2026-05-15,Green Leaf Grocery,190.94\n2026-05-17,Bean There Cafe,25.31\n2026-05-19,City Transit,74.91\n2026-05-21,Streamly,24.49\n2026-05-24,Metro Fuel,194.89\n2026-05-28,Harbor Furniture,\"1,249.99\"\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "allowedExits": ["finalResponse"],
+      "mustCallTools": ["file_read", "calculate"],
+      "noToolErrors": true,
+      "toolUsageAudit": [
+        { "tool": "calculate", "minCalls": 1, "maxCalls": 3, "maxErrors": 0 }
+      ],
+      "rubric": [
+        "Reports the total as 2,930.74 (or 2930.74), matching the file exactly."
+      ]
+    }
+  }
+}

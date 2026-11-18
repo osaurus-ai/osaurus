@@ -15,7 +15,7 @@ public final class CalculatorTool: OsaurusTool, @unchecked Sendable {
     public static let toolName = "calculate"
     public let name = CalculatorTool.toolName
     public let description =
-        "Evaluate math exactly — use it for ANY arithmetic instead of computing in your head. "
+        "Exact math (e.g. `sum(12.5, 8, 40)`, `r = 3; pi*r^2`); never compute in your head. "
         + "Pass one `expression` in ordinary math notation, e.g. \"(1250 * 1.08) / 12\", "
         + "\"sqrt(2) * 3^4\", \"15% of 80\", \"sin(30°)\", \"log(1000)\", \"10!\". "
         + "Separate steps with `;` to use variables (\"r = 3; pi * r^2\"); "
@@ -36,7 +36,9 @@ public final class CalculatorTool: OsaurusTool, @unchecked Sendable {
             "angle_unit": .object([
                 "type": .string("string"),
                 "enum": .array([.string("radians"), .string("degrees")]),
-                "description": .string("Unit for trig functions. Default radians; `30°` is always degrees."),
+                "description": .string(
+                    "Angle unit for trig functions only; omit it for any other math. Default radians; `30°` is always degrees."
+                ),
             ]),
         ]),
         "required": .array([.string("expression")]),

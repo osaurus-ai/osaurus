@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.isolation",
+  "domain": "onboarding",
+  "label": "onboarding • no teammate holds private data and a way out together",
+  "query": "isolation",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "isolation"
+    }
+  }
+}

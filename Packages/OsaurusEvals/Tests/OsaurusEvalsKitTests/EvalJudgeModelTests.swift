@@ -35,7 +35,7 @@ struct EvalJudgeModelTests {
             runModelId: "mlx-community/Qwen3-4B-4bit",
             environment: ["XAI_API_KEY": "secret"]
         )
-        #expect(resolution.modelId == "xai/grok-4.3")
+        #expect(resolution.modelId == "xai/grok-4.7")
         #expect(resolution.isSelfJudge == false)
         #expect(resolution.note?.contains("auto-selected strong judge") == true)
     }
@@ -46,7 +46,7 @@ struct EvalJudgeModelTests {
             runModelId: "local/x",
             environment: ["OPENAI_API_KEY": "o", "XAI_API_KEY": "x", "ANTHROPIC_API_KEY": "a"]
         )
-        #expect(resolution.modelId == "xai/grok-4.3")
+        #expect(resolution.modelId == "xai/grok-4.7")
     }
 
     @Test func doesNotUpgradeToJudgeEqualToRunModel() {
@@ -54,7 +54,7 @@ struct EvalJudgeModelTests {
         // candidate equals the run model, so it must NOT be auto-selected;
         // fall through to self-judge (flagged).
         let resolution = EvalJudgeModel.resolve(
-            runModelId: "xai/grok-4.3",
+            runModelId: "xai/grok-4.7",
             environment: ["XAI_API_KEY": "x"]
         )
         #expect(resolution.modelId == nil)
@@ -78,7 +78,7 @@ struct EvalJudgeModelTests {
             runModelId: "local/x",
             environment: ["JUDGE_MODEL": "   ", "ANTHROPIC_API_KEY": "a"]
         )
-        #expect(resolution.modelId == "anthropic/claude-sonnet-4-5")
+        #expect(resolution.modelId == "anthropic/claude-sonnet-5-5")
     }
 
     @Test func judgesConfigParsesAndLeadsWithXAI() {
@@ -88,7 +88,7 @@ struct EvalJudgeModelTests {
         let loaded = EvalJudgeModel.loadJudgeCandidates(environment: [:])
         #expect(loaded != nil)
         #expect(loaded?.first?.envKey == "XAI_API_KEY")
-        #expect(loaded?.first?.modelId == "xai/grok-4.3")
+        #expect(loaded?.first?.modelId == "xai/grok-4.7")
         // File and built-in fallback must stay in sync so behavior is
         // identical whether or not the checkout file is reachable.
         #expect(

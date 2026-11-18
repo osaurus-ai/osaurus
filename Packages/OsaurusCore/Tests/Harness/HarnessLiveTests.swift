@@ -128,6 +128,100 @@ struct HarnessLiveTests {
         await session.close(grace: 5)
     }
 
+    private func toolFinishes(_ events: [HarnessEvent]) -> [(name: String, isError: Bool, message: String?)] {
+        events.compactMap {
+            if case .toolFinished(_, let name, let isError, let message) = $0 { return (name, isError, message) }
+            return nil
+        }
+    }
+
+    private func toolStarts(_ events: [HarnessEvent]) -> [String] {
+        events.compactMap { if case .toolStarted(_, let name) = $0 { return name } else { return nil } }
+    }
+
+    /// The default agent can't run shell commands, so Claude must never be
+    /// offered Bash — not offered and then refused on every call.
+    @Test func claudeAgentWithShellOffIsNeverOfferedBash() async throws {
+        let directory = try HarnessFixtures.temporaryDirectory("live-claude-no-shell")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let context = HarnessFixtures.context(
+            runtime: claudeRuntime,
+            workingDirectory: directory,
+            claudeCode: ClaudeCodeAgentConfig(model: "haiku")
+        )
+        let session = HarnessSession(chatId: context.chatId)
+
+        let first = try await run(
+            "Run the shell command `uname -s` and tell me its output. If you have no tool that can run shell commands, reply with exactly: NO SHELL",
+            on: session,
+            context: context
+        )
+        print("[HarnessLive] shell off: tools=\(toolStarts(first)) text=\(first.visibleText)")
+        #expect(Set(toolStarts(first)).isDisjoint(with: ClaudeCodeConfiguration.shellTools))
+        #expect(!toolFinishes(first).contains { $0.isError })
+        #expect(first.visibleText.contains("NO SHELL"), "got: \(first.visibleText)")
+        print("[HarnessLive] shell off tokens/s = \(tokensPerSecond(first) ?? -1)")
+
+        let next = try await run("Reply with only the word: ready", on: session, context: context)
+        #expect(next.visibleText.lowercased().contains("ready"), "got: \(next.visibleText)")
+        await session.close(grace: 5)
+    }
+
+    @Test func claudeAgentWithShellOnRunsBash() async throws {
+        let directory = try HarnessFixtures.temporaryDirectory("live-claude-shell")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let context = HarnessFixtures.context(
+            runtime: claudeRuntime,
+            workingDirectory: directory,
+            claudeCode: ClaudeCodeAgentConfig(allowShell: true, model: "haiku")
+        )
+        let session = HarnessSession(chatId: context.chatId)
+
+        let events = try await run(
+            "Use the Bash tool to run `printf osaurus-%s $((6*7)) > marker.txt && cat marker.txt`, then reply with only its output.",
+            on: session,
+            context: context
+        )
+        print("[HarnessLive] shell on: finishes=\(toolFinishes(events)) text=\(events.visibleText)")
+        #expect(toolFinishes(events).contains { $0.name == "Bash" && !$0.isError })
+        #expect(events.visibleText.contains("osaurus-42"), "got: \(events.visibleText)")
+        print("[HarnessLive] shell on tokens/s = \(tokensPerSecond(events) ?? -1)")
+        await session.close(grace: 5)
+    }
+
+    /// Writes are scoped to the chat folder, so a write elsewhere is still
+    /// refused — and the card must name the setting, not say "failed".
+    @Test func claudeRefusedWriteNamesTheSetting() async throws {
+        let directory = try HarnessFixtures.temporaryDirectory("live-claude-denied")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outside = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-live-denied-\(UUID().uuidString).txt")
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let context = HarnessFixtures.context(
+            runtime: claudeRuntime,
+            workingDirectory: directory,
+            claudeCode: ClaudeCodeAgentConfig(allowWrites: true, model: "haiku")
+        )
+        let session = HarnessSession(chatId: context.chatId)
+
+        let events = try await run(
+            "Use the Write tool exactly once to create \(outside.path) containing the word hi. Do not retry and do not use any other tool. Then reply with one short sentence about what happened.",
+            on: session,
+            context: context
+        )
+        let finishes = toolFinishes(events)
+        print("[HarnessLive] denied write: finishes=\(finishes) text=\(events.visibleText)")
+        #expect(!FileManager.default.fileExists(atPath: outside.path))
+        #expect(
+            finishes.contains {
+                $0.name == "Write" && $0.isError
+                    && $0.message == ClaudeCodeConfiguration.permissionDeniedMessage(tool: "Write")
+            }
+        )
+        print("[HarnessLive] denied write tokens/s = \(tokensPerSecond(events) ?? -1)")
+        await session.close(grace: 5)
+    }
+
     // MARK: - Pi
 
     private var piRuntime: HarnessRuntime {

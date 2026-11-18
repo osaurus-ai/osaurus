@@ -628,7 +628,14 @@ public final class SpeechService: ObservableObject {
     @Published public var isModelLoaded: Bool = false
     @Published public var isLoadingModel: Bool = false
     @Published public var loadedModelId: String?
-    @Published public var lastError: String?
+    /// Shown as a toast when it changes: the mic button otherwise just
+    /// stops, with no reason given.
+    @Published public var lastError: String? {
+        didSet {
+            guard let lastError, lastError != oldValue else { return }
+            _ = ToastManager.shared.error(L("Voice input stopped"), message: lastError)
+        }
+    }
     @Published public var microphonePermissionGranted: Bool = false
     @Published public var isRecording: Bool = false
     @Published public var currentTranscription: String = ""
@@ -779,6 +786,18 @@ public final class SpeechService: ObservableObject {
         isModelLoaded = false
         loadedModelId = nil
         print("[SpeechService] Model unloaded")
+    }
+
+    /// Frees the speech model when no mic session, transcription, or VAD
+    /// listener needs it. The next mic tap loads it again. Called under
+    /// critical memory pressure.
+    public func unloadIfIdle() {
+        guard isModelLoaded, !isRecording, !isTranscribing, !isLoadingModel else { return }
+        switch VADService.shared.state {
+        case .starting, .listening: return
+        case .idle, .error: break
+        }
+        unloadModel()
     }
 
     /// Auto-load the model if a default model is selected
@@ -1114,6 +1133,7 @@ public final class SpeechService: ObservableObject {
                 return finalText
             } catch {
                 print("[SpeechService] Final transcription error: \(error)")
+                await MainActor.run { self.lastError = error.localizedDescription }
                 activity?.finish(
                     transcript: confirmedTranscription, language: nil, error: error.localizedDescription,
                     audioSeconds: sessionSeconds)
@@ -1323,7 +1343,7 @@ public final class SpeechService: ObservableObject {
 
         guard recoveryAttempts < maxRecoveryAttempts else {
             print("[SpeechService] Max recovery attempts (\(maxRecoveryAttempts)) reached")
-            lastError = "Audio device changed. Please restart voice input."
+            lastError = L("Audio device changed. Please restart voice input.")
             audioBuffer.setActive(false)
             await transcriptionWorker?.stop()
             transcriptionWorker = nil
@@ -1355,7 +1375,7 @@ public final class SpeechService: ObservableObject {
             print("[SpeechService] Audio engine recovered successfully")
         } catch {
             print("[SpeechService] Audio engine recovery failed: \(error)")
-            lastError = "Audio device changed. Please restart voice input."
+            lastError = L("Audio device changed. Please restart voice input.")
         }
     }
 

@@ -104,23 +104,28 @@ struct HostContinuationIntentTests {
                 }
                 let worker = Agent(name: "Report worker \(UUID())", description: "Returns a bounded validation token.",
                     defaultModel: Self.modelID, autonomousExec: .init(enabled: false), memoryEnabled: false)
+                var parent = Agent(name: "Report parent \(UUID())", description: "Delegates bounded tasks.",
+                    defaultModel: Self.modelID, autonomousExec: .init(enabled: false), memoryEnabled: false)
+                parent.settings.spawnDelegationEnabled = true
+                parent.settings.spawnableAgentIDs = [worker.id]
                 AgentStore.save(worker)
+                AgentStore.save(parent)
                 AgentManager.shared.refresh()
-                defer { AgentStore.delete(id: worker.id); AgentManager.shared.refresh() }
-                SubagentConfigurationStore.save(.init(spawnableAgentIDs: [worker.id]))
+                defer {
+                    AgentStore.delete(id: worker.id)
+                    AgentStore.delete(id: parent.id)
+                    AgentManager.shared.refresh()
+                }
                 var config = ChatConfigurationStore.load()
                 config.warmModelsOnLoad = false
                 config.autoGenerateChatTitles = false
                 ChatConfigurationStore.save(config)
-                DefaultAgentConfigurationStore.save(.init(defaultModel: Self.modelID,
-                    autonomousExec: .init(enabled: false), toolSelectionMode: .auto))
-                DefaultAgentConfigurationStore.resetCacheForTests()
-                AgentManager.shared.refresh()
 
                 let capture = Capture()
                 let engine = ChatEngine(services: [Service(capture: capture)],
                     installedModelsProvider: { [] }, remoteServicesProvider: { [] })
                 let session = ChatSession()
+                session.agentId = parent.id
                 session.selectedModel = Self.modelID
                 session.forceChatEngineRouteForTests = true
                 session.toolsDisabledForTestingOverride = false
@@ -130,7 +135,7 @@ struct HostContinuationIntentTests {
                     "kind": "spawn_result", "session_id": workerSessionID.uuidString, "summary": "BG_TOKEN_9"])
                 let report = SubagentReportBack.message(title: "Delegated to Responses Proof Worker", success: true,
                     summary: "BG_TOKEN_9", completedEnvelope: completed)
-                let composed = await SystemPromptComposer.composeChatContext(agentId: Agent.defaultId,
+                let composed = await SystemPromptComposer.composeChatContext(agentId: parent.id,
                     executionMode: .none, model: Self.modelID, query: report)
                 try #require(composed.tools.contains { $0.function.name == "spawn_agent" },
                     "The real parent must offer the tool named in the host report")

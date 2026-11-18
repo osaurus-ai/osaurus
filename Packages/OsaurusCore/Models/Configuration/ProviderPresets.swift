@@ -88,26 +88,6 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Gradient colors for visual accents
-    var gradient: [Color] {
-        switch self {
-        case .anthropic: return [Color(red: 0.85, green: 0.55, blue: 0.35), Color(red: 0.75, green: 0.4, blue: 0.25)]
-        case .azureOpenAI: return [Color(red: 0.0, green: 0.47, blue: 0.84), Color(red: 0.0, green: 0.62, blue: 0.72)]
-        case .atlasCloud: return [Color(red: 0.03, green: 0.23, blue: 0.21), Color(red: 0.07, green: 0.39, blue: 0.34)]
-        case .openai: return [Color(red: 0.0, green: 0.65, blue: 0.52), Color(red: 0.0, green: 0.5, blue: 0.4)]
-        case .google: return [Color(red: 0.26, green: 0.52, blue: 0.96), Color(red: 0.18, green: 0.38, blue: 0.85)]
-        case .xai: return [Color(red: 0.1, green: 0.1, blue: 0.1), Color(red: 0.2, green: 0.2, blue: 0.2)]
-        case .deepseek: return [Color(red: 0.18, green: 0.36, blue: 0.95), Color(red: 0.34, green: 0.52, blue: 0.98)]
-        case .fireworks: return [Color(red: 0.42, green: 0.16, blue: 0.94), Color(red: 0.56, green: 0.31, blue: 0.98)]
-        case .mistral: return [Color(red: 0.98, green: 0.42, blue: 0.11), Color(red: 0.87, green: 0.24, blue: 0.09)]
-        case .minimax: return [Color(red: 0.93, green: 0.27, blue: 0.23), Color(red: 0.83, green: 0.15, blue: 0.18)]
-        case .venice: return [Color(red: 0.83, green: 0.66, blue: 0.33), Color(red: 0.72, green: 0.53, blue: 0.17)]
-        case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
-        case .ollama: return [Color(red: 0.36, green: 0.36, blue: 0.4), Color(red: 0.22, green: 0.22, blue: 0.26)]
-        case .custom: return [Color(red: 0.55, green: 0.55, blue: 0.6), Color(red: 0.4, green: 0.4, blue: 0.45)]
-        }
-    }
-
     /// URL to the provider's API key console page (empty for custom)
     var consoleURL: String {
         switch self {
@@ -550,22 +530,21 @@ struct ProviderPresetConfiguration {
 
 /// Reusable badge pill shown next to a provider name (e.g. "Privacy" for Venice AI).
 struct ProviderBadge: View {
+    @Environment(\.theme) private var theme
     let text: String
     let gradient: [Color]
-    let fontSize: CGFloat
 
-    init(_ text: String, gradient: [Color], fontSize: CGFloat = 9) {
+    init(_ text: String, gradient: [Color]) {
         self.text = text
         self.gradient = gradient
-        self.fontSize = fontSize
     }
 
     var body: some View {
         Text(text)
-            .font(.system(size: fontSize, weight: .bold))
-            .foregroundColor(.white)
-            .padding(.horizontal, fontSize < 10 ? 5 : 7)
-            .padding(.vertical, fontSize < 10 ? 1.5 : 2)
+            .font(SettingsFont.footnote.weight(.bold))
+            .foregroundColor(FixedPalette.onMedia)
+            .padding(.horizontal, theme.space.s4)
+            .padding(.vertical, theme.space.s2)
             .background(
                 Capsule()
                     .fill(
@@ -596,7 +575,7 @@ struct ProviderIcon: View {
                 .foregroundColor(color)
         } else {
             Image(systemName: preset.icon)
-                .font(.system(size: size, weight: .medium))
+                .glyphSize(points: size, weight: .medium)
                 .foregroundColor(color)
         }
     }
@@ -606,12 +585,13 @@ struct ProviderIcon: View {
 
 /// Reusable console + documentation link buttons for provider help sections.
 struct ProviderHelpLinks: View {
+    @Environment(\.theme) private var theme
     let preset: ProviderPreset
     let accentColor: Color
     let secondaryTextColor: Color
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: theme.space.s16) {
             Button {
                 if let url = URL(string: preset.consoleURL) {
                     // Async open: the synchronous `open(_:)` blocks the main
@@ -624,16 +604,16 @@ struct ProviderHelpLinks: View {
                     )
                 }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Text(
                         preset.configuration.authType == .none
                             ? "Install \(preset.name)"
                             : "Open \(preset.name) Console",
                         bundle: .module
                     )
-                    .font(.system(size: 13, weight: .medium))
+                    .font(SettingsFont.rowTitle.weight(.medium))
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .glyphSize(.footnote, weight: .semibold)
                 }
                 .foregroundColor(accentColor)
             }
@@ -651,11 +631,11 @@ struct ProviderHelpLinks: View {
                         )
                     }
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Text("View Docs", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(SettingsFont.rowTitle.weight(.medium))
                         Image(systemName: "book")
-                            .font(.system(size: 11, weight: .semibold))
+                            .glyphSize(.footnote, weight: .semibold)
                     }
                     .foregroundColor(secondaryTextColor)
                 }

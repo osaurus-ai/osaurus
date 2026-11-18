@@ -1,0 +1,28 @@
+{
+  "id": "orchestrator.continuity-project-decision",
+  "domain": "orchestrator",
+  "label": "orchestrator • five turns: a decision from turn 1 survives three unrelated turns",
+  "query": "We decided the new app is code-named Bluefin and it launches on June 12. Keep that in mind for later.",
+  "notes": "Continuity: the Orchestrator keeps only the 3 latest exchanges, so by turn 5 turn 1 has dropped out of the history it sees. The code name and date reach turn 5 only through the session state. Turns 2-4 are unrelated one-line asks it answers itself.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "followUpTurns": [
+        "Suggest a short, friendly subject line for a team announcement email.",
+        "What's the difference between a bug and a feature request, in one sentence?",
+        "Give me a two-word motto for a small team.",
+        "What was the code name we picked, and when does it launch?"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "rubric": [
+        "Names the code name Bluefin.",
+        "Gives the launch date as June 12.",
+        "Does not claim to be unsure or ask the user to repeat the code name or date."
+      ],
+      "maxIterations": 4
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "chat_import_reader.cursor-install-link",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • decoded Cursor install-link payload (fast path)",
+  "query": "Install this",
+  "notes": "The resolver decodes a cursor:// link's base64 config into a `link payload` document wrapped as mcpServers; the fast path reads it.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "cursor://anysphere.cursor-deeplink/mcp/install?name=postgres&config=e30=",
+          "path": "link payload",
+          "text": "{\"mcpServers\": {\"postgres\": {\"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-postgres\", \"postgresql://localhost/mydb\"]}}}"
+        }
+      ],
+      "items": [{ "kind": "mcp_server", "name": "postgres" }]
+    }
+  }
+}

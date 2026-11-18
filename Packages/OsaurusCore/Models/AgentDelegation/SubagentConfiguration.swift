@@ -1442,6 +1442,8 @@ struct SpawnTargetAuthority: Equatable, Sendable {
     let knowledgeEnabled: Bool
     let knowledgeCollectionIDs: [UUID]
     let knowledgeCuratorEnabled: Bool
+    let calculatorEnabled: Bool
+    let artifactsEnabled: Bool
 
     init(_ agent: Agent) {
         id = agent.id
@@ -1469,5 +1471,7 @@ struct SpawnTargetAuthority: Equatable, Sendable {
         knowledgeCollectionIDs = agent.settings.knowledgeCollectionIds
         knowledgeCuratorEnabled =
             agent.settings.knowledgeCuratorEnabled
+        calculatorEnabled = agent.settings.calculatorEnabled
+        artifactsEnabled = agent.settings.artifactsEnabled
     }
 }

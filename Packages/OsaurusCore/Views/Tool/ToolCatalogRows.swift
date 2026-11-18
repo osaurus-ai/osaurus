@@ -25,9 +25,9 @@ enum ToolPolicyStyle {
 
     static func color(for policy: ToolPermissionPolicy, theme: ThemeProtocol) -> Color {
         switch policy {
-        case .auto: theme.successColor
-        case .ask: .orange
-        case .deny: theme.errorColor
+        case .auto: theme.status.success.foreground
+        case .ask: theme.status.warning.foreground
+        case .deny: theme.status.error.foreground
         }
     }
 
@@ -53,53 +53,32 @@ enum ToolPolicyStyle {
 
 // MARK: - Menu Pill
 
-/// Button style that wraps a menu label in a capsule without touching the
+/// Button style that wraps a menu label in kit chrome without touching the
 /// label's own layout. A custom `ButtonStyle` passes `configuration.label`
 /// through verbatim, so the label's spacing/padding survive — unlike
 /// `.bordered`, which re-lays out the label and ignores its `HStack` spacing.
-private struct PillButtonStyle: ButtonStyle {
-    let fill: Color
-    let stroke: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(Capsule().fill(fill))
-            .overlay(Capsule().stroke(stroke, lineWidth: 1))
-            .contentShape(Capsule())
-            .opacity(configuration.isPressed ? 0.65 : 1)
-    }
-}
-
-/// A pill-shaped dropdown whose visible chrome is a fully custom `label`. It is
-/// a real `Menu` (so clicking works) rendered as a button with `PillButtonStyle`
-/// and the system menu indicator hidden — the label owns all spacing, padding,
-/// background, and colors.
+/// A compact dropdown on the kit's compact button chrome, with the system
+/// menu indicator hidden so the label can draw its own chevron.
 struct MenuPill<MenuContent: View, Label: View>: View {
-    let fill: Color
-    let stroke: Color
     private let menuContent: () -> MenuContent
     private let label: () -> Label
 
     init(
-        fill: Color,
-        stroke: Color,
         @ViewBuilder menuContent: @escaping () -> MenuContent,
         @ViewBuilder label: @escaping () -> Label
     ) {
-        self.fill = fill
-        self.stroke = stroke
         self.menuContent = menuContent
         self.label = label
     }
 
     var body: some View {
-        Menu {
+        SettingsActionMenu(accessibilityLabel: L("Tool options")) {
             menuContent()
         } label: {
             label()
         }
         .menuStyle(.button)
-        .buttonStyle(PillButtonStyle(fill: fill, stroke: stroke))
+        .assignedSettingsButtonStyle(.secondary, size: .compact)
         .menuIndicator(.hidden)
     }
 }
@@ -108,9 +87,18 @@ struct MenuPill<MenuContent: View, Label: View>: View {
 
 /// Reusable permission-behavior selector menu for a single tool entry.
 struct ToolPolicyMenu: View {
+    /// Where the choice is stored. `agent` writes the agent's own policy
+    /// (`AgentSettings.toolPolicies`) and adds **Default**, which clears it;
+    /// `info` must then come from `policyInfo(for:agentId:)`.
+    enum Scope: Equatable {
+        case global
+        case agent(UUID)
+    }
+
     @Environment(\.theme) private var theme
     let toolName: String
     let info: ToolRegistry.ToolPolicyInfo
+    var scope: Scope = .global
     let onChange: () -> Void
 
     private var color: Color {
@@ -124,45 +112,87 @@ struct ToolPolicyMenu: View {
         ToolRegistry.shared.requiresPerCallApproval(toolName) ? [.ask, .deny] : [.auto, .ask, .deny]
     }
 
+    /// In agent scope `defaultPolicy` is the global effective policy. A
+    /// global Deny cannot be loosened by an agent.
+    private var globalDenies: Bool { scope != .global && info.defaultPolicy == .deny }
+
+    private func isSelected(_ policy: ToolPermissionPolicy) -> Bool {
+        scope == .global ? policy == info.effectivePolicy : policy == info.configuredPolicy
+    }
+
+    private func choose(_ policy: ToolPermissionPolicy?) {
+        switch scope {
+        case .global:
+            if let policy { ToolRegistry.shared.setPolicy(policy, for: toolName) }
+        case .agent(let agentId):
+            AgentManager.shared.updateToolPolicy(for: agentId, tool: toolName, policy: policy)
+        }
+        onChange()
+    }
+
     var body: some View {
-        MenuPill(fill: color.opacity(0.14), stroke: color.opacity(0.22)) {
-            ForEach(offeredPolicies, id: \.self) { policy in
+        MenuPill {
+            if scope != .global {
                 Button {
-                    ToolRegistry.shared.setPolicy(policy, for: toolName)
-                    onChange()
+                    choose(nil)
                 } label: {
                     HStack {
-                        Image(systemName: ToolPolicyStyle.icon(for: policy))
-                        Text(ToolPolicyStyle.title(for: policy))
-                        if policy == info.effectivePolicy {
+                        Text(
+                            "Default (\(ToolPolicyStyle.title(for: info.defaultPolicy)))", bundle: .module)
+                        if info.configuredPolicy == nil {
                             Image(systemName: "checkmark")
                         }
                     }
                 }
+                Divider()
+            }
+            ForEach(offeredPolicies, id: \.self) { policy in
+                Button {
+                    choose(policy)
+                } label: {
+                    HStack {
+                        Image(systemName: ToolPolicyStyle.icon(for: policy))
+                        Text(ToolPolicyStyle.title(for: policy))
+                        if isSelected(policy) {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+                .disabled(globalDenies && policy != .deny)
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: ToolPolicyStyle.icon(for: info.effectivePolicy))
-                    .font(.system(size: 9, weight: .semibold))
+                    .glyphSize(.tiny, weight: .semibold)
                 Text(ToolPolicyStyle.compactTitle(for: info.effectivePolicy))
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(SettingsFont.chip)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
-                    .opacity(0.7)
+                    .glyphSize(.tiny, weight: .bold)
+                    .opacity(theme.isDark ? 0.7 : 1)
             }
             .foregroundStyle(color)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
         }
         .fixedSize()
-        .help(Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module))
+        .help(helpText)
         .accessibilityLabel(
             Text(
                 "Permission behavior for \(toolName): \(ToolPolicyStyle.title(for: info.effectivePolicy))",
                 bundle: .module
             )
         )
+    }
+
+    private var helpText: Text {
+        if globalDenies {
+            return Text("Blocked for every agent under Tools & MCP → All Tools", bundle: .module)
+        }
+        if scope != .global {
+            return Text(
+                "Choose whether this tool runs automatically, asks first, or is blocked for this agent. Default follows Tools & MCP → All Tools.",
+                bundle: .module)
+        }
+        return Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module)
     }
 }
 
@@ -184,9 +214,7 @@ struct ToolEnableToggle: View {
                 }
             )
         )
-        .toggleStyle(SwitchToggleStyle())
-        .labelsHidden()
-        .scaleEffect(0.85)
+        .settingsSwitch()
         .help(Text("Turn this tool on or off", bundle: .module))
         .accessibilityLabel(Text("Enable \(entry.name)", bundle: .module))
     }
@@ -203,57 +231,20 @@ struct ToolCatalogStatusPill: View {
 
     private var tint: Color {
         switch status {
-        case .ready: theme.successColor
-        case .off: theme.secondaryText
-        case .needsAttention: theme.warningColor
+        case .ready: theme.status.success.foreground
+        case .off: theme.text.secondary
+        case .needsAttention: theme.status.warning.foreground
         }
     }
 
     var body: some View {
-        Text(status.displayLabel)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(tint)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(tint.opacity(0.12)))
+        StatusChip(status.displayLabel, tint: tint)
             .help(Text(detail))
             .accessibilityLabel(Text("Status: \(status.displayLabel). \(detail)", bundle: .module))
     }
 }
 
 // MARK: - Tool Section Header
-
-/// Group header used inside the catalog list, with an explicit tool count so
-/// the screen carries its own numbers instead of the tab bar.
-struct ToolSectionHeader: View {
-    @Environment(\.theme) private var theme
-    let title: String
-    let icon: String
-    var count: Int?
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.accentColor)
-            Text(title)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.secondaryText)
-            if let count {
-                Text("\(count)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(theme.tertiaryBackground))
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 4)
-        .padding(.top, 4)
-        .accessibilityElement(children: .combine)
-    }
-}
 
 /// A source header that keeps large inventories out of the default scan while
 /// preserving a one-click path to every tool.
@@ -267,37 +258,29 @@ struct ToolSectionDisclosureHeader: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundColor(theme.text.link)
                     .frame(width: 16)
 
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
 
-                Text("\(count)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(theme.tertiaryBackground))
+                CountBadge(count)
 
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(.micro, weight: .semibold)
+                    .foregroundColor(theme.text.tertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
             .contentShape(Rectangle())
-            .padding(.horizontal, 10)
+            .padding(.horizontal, theme.space.s8)
             .frame(height: 36)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground.opacity(0.45))
-            )
+            .settingsChrome(.inset)
         }
         .buttonStyle(PlainButtonStyle())
         .accessibilityLabel(Text("\(title), \(count) tools", bundle: .module))
@@ -317,26 +300,23 @@ struct ShowAllToolsButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
+                    .glyphSize(.micro, weight: .semibold)
                 if isExpanded {
                     Text("Show fewer", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(SettingsFont.compactLabel)
                 } else {
                     Text("Show \(hiddenCount) more", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(SettingsFont.compactLabel)
                 }
                 Spacer()
             }
-            .foregroundColor(theme.accentColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .foregroundColor(theme.text.link)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground.opacity(0.5))
-            )
+            .settingsChrome(.inset)
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -362,7 +342,7 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
     @Binding var selection: Option
 
     var body: some View {
-        MenuPill(fill: theme.tertiaryBackground, stroke: theme.inputBorder) {
+        MenuPill {
             ForEach(options, id: \.self) { option in
                 Button {
                     selection = option
@@ -376,52 +356,20 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
                 }
             }
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
+                    .glyphSize(.micro, weight: .semibold)
                 Text(selection.title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsFont.smallLabel)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(.tiny, weight: .bold)
+                    .foregroundColor(theme.text.tertiary)
             }
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .foregroundColor(theme.text.primary)
         }
         .fixedSize()
         .accessibilityLabel(Text("\(accessibilityTitle): \(selection.title)"))
-    }
-}
-
-// MARK: - Card Chrome
-
-/// Rounded card chrome whose hover-reactive border/shadow live in their own
-/// small subview. Used as a `.background(...)` so hovering a card re-renders
-/// only this lightweight view instead of invalidating the card's content
-/// body — important when the mouse sweeps across a list of cards.
-struct HoverableCardBackground: View {
-    @Environment(\.theme) private var theme
-    @State private var isHovering = false
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(theme.shadowOpacity),
-                radius: theme.cardShadowRadius,
-                x: 0,
-                y: theme.cardShadowY
-            )
-            .onHover { isHovering = $0 }
     }
 }
 
@@ -445,39 +393,36 @@ struct RuntimeManagedToolEntryRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s10) {
                 ToolRowIcon(systemName: "terminal", showsWarning: hasMissingSystemPermissions)
                 toolInfo
                     .frame(maxWidth: .infinity, alignment: .leading)
                 policyMenu
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 ToolSourceBadge(title: badge)
                 Spacer(minLength: 8)
             }
-            .padding(.leading, 38)
+            .padding(.leading, theme.space.s40)
         }
-        .padding(9)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     private var toolInfo: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(spacing: theme.space.s4) {
                 Text(entry.name)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                 ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
             }
             Text(entry.description)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .lineLimit(1)
         }
     }
@@ -506,42 +451,39 @@ struct ToolEntryRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s10) {
                 ToolRowIcon(systemName: "function", showsWarning: hasMissingSystemPermissions)
                 toolInfo
                     .frame(maxWidth: .infinity, alignment: .leading)
                 policyMenu
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 if let sourceLabel {
                     ToolSourceBadge(title: sourceLabel)
                 }
                 Spacer(minLength: 8)
                 ToolEnableToggle(entry: entry, onChange: onChange)
             }
-            .padding(.leading, 38)
+            .padding(.leading, theme.space.s40)
         }
-        .padding(9)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     private var toolInfo: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(spacing: theme.space.s4) {
                 Text(entry.name)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.primary)
 
                 ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
             }
             Text(entry.description)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(1)
         }
     }
@@ -581,40 +523,37 @@ struct RemoteToolRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s10) {
                 ToolRowIcon(systemName: "function", showsWarning: false)
                 toolInfo
                     .frame(maxWidth: .infinity, alignment: .leading)
                 policyMenu
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 ToolSourceBadge(title: providerName)
                 Spacer(minLength: 8)
                 ToolEnableToggle(entry: entry, onChange: onChange)
             }
-            .padding(.leading, 38)
+            .padding(.leading, theme.space.s40)
         }
-        .padding(9)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     private var toolInfo: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(spacing: theme.space.s4) {
                 Text(displayName)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                 ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
             }
             Text(entry.description)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(1)
         }
     }
@@ -631,15 +570,7 @@ struct ToolSourceBadge: View {
     let title: String
 
     var body: some View {
-        Text(title)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(theme.secondaryText)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(theme.tertiaryBackground))
-            .help(Text("Where this tool comes from", bundle: .module))
+        StatusChip(title, help: L("Where this tool comes from"))
     }
 }
 
@@ -654,19 +585,19 @@ private struct ToolRowIcon: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: theme.radius.medium)
                 .fill(
                     showsWarning
-                        ? theme.warningColor.opacity(0.1) : theme.accentColor.opacity(0.08)
+                        ? theme.status.warning.background : theme.status.info.background
                 )
             Image(systemName: systemName)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(showsWarning ? theme.warningColor : theme.accentColor)
+                .glyphSize(.footnote, weight: .medium)
+                .foregroundColor(showsWarning ? theme.status.warning.foreground : theme.text.link)
 
             if showsWarning {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 8))
-                    .foregroundColor(theme.warningColor)
+                    .glyphSize(.tiny)
+                    .foregroundColor(theme.status.warning.foreground)
                     .offset(x: 10, y: -10)
             }
         }

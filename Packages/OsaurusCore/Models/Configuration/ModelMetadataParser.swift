@@ -11,8 +11,8 @@ import Foundation
 enum ModelMetadataParser {
     // MARK: - Memoization
 
-    // `parameterCount` / `quantization` are read from `ModelRowView.metadataBadges`
-    // on every SwiftUI body evaluation, for every row. Both are pure functions of an
+    // `parameterCount` / `quantization` are read while building every
+    // Local Models table row and on detail body evaluations. Both are pure functions of an
     // immutable repo ID, so the regex work is cached the first time an ID is seen and
     // returned for free thereafter. Lock-guarded because the parser is nonisolated and
     // can be reached from background discovery tasks as well as the main actor.
@@ -61,7 +61,8 @@ enum ModelMetadataParser {
     }
 
     private static func computeParameterCount(from repoId: String) -> String? {
-        let text = repoId.lowercased()
+        // Precision suffixes such as JANG_6M are storage labels, not six million parameters.
+        let text = familySegments(from: repoId).joined(separator: "-").lowercased()
         for regex in parameterCountRegexes {
             let range = NSRange(text.startIndex..., in: text)
             if let match = regex.firstMatch(in: text, options: [], range: range),
@@ -112,13 +113,12 @@ enum ModelMetadataParser {
         return precisionFormat(from: repoId)
     }
 
-    /// Strips developer-oriented tokens (quantization, MoE active-param notation,
-    /// MLX/instruction-tuned suffixes, TurboQuant labels) from a friendly name
-    static func simpleName(from name: String) -> String {
-        var text = name
-
-        // whole word patterns to drop entirely (case insensitive)
-        let dropPatterns: [String] = [
+    // Compiled once: `simpleName` runs from `ModelCardContent.init` on every
+    // SwiftUI body evaluation of the catalog / Top Picks cards, so compiling
+    // these per call blocked the main thread (APPLE-MACOS-3PY app hang).
+    // Whole word patterns to drop entirely (case insensitive via inline flag).
+    private static let simpleNameDropRegexes: [NSRegularExpression] = {
+        let patterns: [String] = [
             #"(?i)\bmxfp\d+\b"#,  // mxfp4
             #"(?i)\bfp(16|32)\b"#,  // fp16 / fp32
             #"(?i)\bbf16\b"#,
@@ -133,28 +133,38 @@ enum ModelMetadataParser {
             #"(?i)\bjang\b"#,  // plain affine JANG storage marker
             #"(?i)\ba\d+(\.\d+)?b\b"#,  // A3B / A2.5B active param count
         ]
-        for pat in dropPatterns {
-            if let re = try? NSRegularExpression(pattern: pat) {
-                let r = NSRange(text.startIndex..., in: text)
-                text = re.stringByReplacingMatches(in: text, range: r, withTemplate: "")
-            }
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0) }
+    }()
+
+    /// "Qwen3.6" -> "Qwen 3.6": a known family name followed by a version digit.
+    private static let familyVersionSpacingRegex = try? NSRegularExpression(
+        pattern: #"(?i)(qwen|gemma|llama|phi|mistral|deepseek|granite)(\d)"#
+    )
+
+    private static let whitespaceRunRegex = try? NSRegularExpression(pattern: #"\s+"#)
+
+    /// Strips developer-oriented tokens (quantization, MoE active-param notation,
+    /// MLX/instruction-tuned suffixes, TurboQuant labels) from a friendly name
+    static func simpleName(from name: String) -> String {
+        var text = name
+
+        for re in simpleNameDropRegexes {
+            let r = NSRange(text.startIndex..., in: text)
+            text = re.stringByReplacingMatches(in: text, range: r, withTemplate: "")
         }
 
-        // "Qwen3.6" -> "Qwen 3.6": insert a space between known family
-        // names and the version digit that follows
-        if let re = try? NSRegularExpression(
-            pattern: #"(?i)(qwen|gemma|llama|phi|mistral|deepseek|granite)(\d)"#
-        ) {
+        // insert a space between known family names and the version digit that follows
+        if let re = familyVersionSpacingRegex {
             let r = NSRange(text.startIndex..., in: text)
             text = re.stringByReplacingMatches(in: text, range: r, withTemplate: "$1 $2")
         }
 
         // collapse repeated whitespace and trim
-        text = text.replacingOccurrences(
-            of: #"\s+"#,
-            with: " ",
-            options: .regularExpression
-        ).trimmingCharacters(in: .whitespaces)
+        if let re = whitespaceRunRegex {
+            let r = NSRange(text.startIndex..., in: text)
+            text = re.stringByReplacingMatches(in: text, range: r, withTemplate: " ")
+        }
+        text = text.trimmingCharacters(in: .whitespaces)
 
         return text.isEmpty ? name : text
     }
@@ -186,6 +196,7 @@ enum ModelMetadataParser {
             #"^qat$"#,  // quantization-aware-training marker
             #"^jangtq[_0-9a-z]*$"#,  // JANGTQ / JANGTQ4 / JANGTQ_K TurboQuant
             #"^jang_?\d+[a-z]?$"#,  // JANG_4M / JANG_2S mixed precision
+            #"^jang(?:ht|h)\d+(?:\.\d+)?$"#,  // JANGH / JANGHT packed variants
             #"^jang$"#,  // plain affine JANG storage
             #"^ternary$"#,  // ternary / two-bit storage variant
             #"^\d+-?bit$"#,  // 4bit / 8bit / 4-bit
@@ -200,6 +211,7 @@ enum ModelMetadataParser {
     }()
 
     private nonisolated(unsafe) static var familyKeyCache: [String: String] = [:]
+    private nonisolated(unsafe) static var familyDisplayNameCache: [String: String] = [:]
 
     /// Lowercased grouping key for collapsing precision/quant variants of the
     /// same model into a single catalog card. Keeps the org prefix so families
@@ -231,11 +243,27 @@ enum ModelMetadataParser {
     /// removed, run through the friendly-name capitalization and the
     /// developer-token stripper (drops "it"/"instruct"/active-param notation).
     static func familyDisplayName(from repoId: String) -> String {
+        cacheLock.lock()
+        if let cached = familyDisplayNameCache[repoId] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let result: String
         let kept = familySegments(from: repoId)
-        guard !kept.isEmpty else { return simpleName(from: friendlyName(from: repoId)) }
-        let joined = kept.joined(separator: "-")
-        let name = simpleName(from: friendlyName(from: joined))
-        return name.isEmpty ? friendlyName(from: repoId) : name
+        if kept.isEmpty {
+            result = simpleName(from: friendlyName(from: repoId))
+        } else {
+            let joined = kept.joined(separator: "-")
+            let name = simpleName(from: friendlyName(from: joined))
+            result = name.isEmpty ? friendlyName(from: repoId) : name
+        }
+
+        cacheLock.lock()
+        familyDisplayNameCache[repoId] = result
+        cacheLock.unlock()
+        return result
     }
 
     /// Repo-tail segments with precision/quant/delivery tokens removed,
@@ -278,6 +306,9 @@ enum ModelMetadataParser {
             // Underscore suffixes (`JANGTQ_K`) read as "JANGTQ K" in the UI,
             // matching the JANG mixed-precision label treatment below.
             return String(text[match]).uppercased().replacingOccurrences(of: "_", with: " ")
+        }
+        if let match = text.range(of: #"jang(?:ht|h)\d+(?:\.\d+)?"#, options: .regularExpression) {
+            return String(text[match]).uppercased()
         }
         // JANG mixed-precision labels (`JANG_4M`/`4K`/`2L`/`2S`): the leading
         // digit encodes the dominant bit-class (4 ≈ 4-bit, 2 ≈ 2-bit). Surface

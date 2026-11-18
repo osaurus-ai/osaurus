@@ -250,6 +250,28 @@ extension EvalRunner {
                 removeEvalAgent(id)
             }
         }
+        // A worker pinned to a model this host has not installed is not a
+        // runnable target, so the schema would withhold spawn_agent and the
+        // case would score a missing install as a delegation failure.
+        if !evalSpawnTargetIds.isEmpty {
+            let unrunnable = await EvalHostBootstrap.unrunnableSpawnTargets(evalSpawnTargetIds)
+            if !unrunnable.isEmpty {
+                let workers = zip(testCase.fixtures.agentCapabilities?.spawnAgents ?? [], evalSpawnTargetIds)
+                    .filter { unrunnable.contains($0.1) }
+                    .map { "\($0.0.name) (\($0.0.modelId ?? modelId))" }
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: [
+                        "spawn target not runnable on this host: \(workers.joined(separator: ", "))"
+                            + " — install the pinned worker model to run this case"
+                    ],
+                    modelId: modelId
+                )
+            }
+        }
 
         // Per-case capability fixtures: register a TEMPORARY agent whose
         // settings carry the requested flags so prompt gating / tool
@@ -369,10 +391,11 @@ extension EvalRunner {
                 }
             }
             for secret in sandboxFixture.seedSecrets ?? [] {
-                _ = AgentSecretsKeychain.saveSecret(
-                    secret.value,
-                    id: secret.key,
-                    agentId: evalAgentId
+                CredentialStore.current.save(
+                    secret.key,
+                    scope: .agent(evalAgentId),
+                    value: secret.value,
+                    origin: .sandboxPrompt
                 )
             }
         }
@@ -960,7 +983,12 @@ extension EvalRunner {
                     var budgets = caps?.childBudgets ?? SubagentBudgets()
                     if let maximum = caps?.maxParallelSpawns { budgets.maxParallelSpawns = maximum }
                     return budgets.normalized
-                }()
+                }(),
+                calculatorEnabled: caps?.calculatorEnabled ?? false,
+                redactionToolsEnabled: caps?.redactionToolsEnabled ?? false,
+                taskChecklistEnabled: caps?.taskChecklistEnabled ?? true,
+                clarifyEnabled: caps?.clarifyEnabled ?? true,
+                artifactsEnabled: caps?.artifactsEnabled ?? true
             )
         )
         AgentStore.save(agent)
@@ -1221,8 +1249,8 @@ extension EvalRunner {
         }
     }
 
-    /// Post-case sandbox teardown: delete the eval agent's keychain
-    /// secrets, uninstall + unregister any plugin the case created
+    /// Post-case sandbox teardown: delete the eval agent's credentials,
+    /// uninstall + unregister any plugin the case created
     /// (diffed against the pre-run library snapshot), and unprovision
     /// the agent (Linux user, VM home dir via the host mount, plugin
     /// state, background jobs). The container intentionally stays
@@ -1232,7 +1260,7 @@ extension EvalRunner {
         agentId: UUID,
         pluginIdsBeforeRun: Set<String>
     ) async {
-        AgentSecretsKeychain.deleteAllSecrets(agentId: agentId)
+        CredentialStore.current.deleteAll(agentId: agentId)
 
         let createdPluginIds = Set(SandboxPluginLibrary.shared.plugins.map(\.id))
             .subtracting(pluginIdsBeforeRun)
@@ -1263,7 +1291,7 @@ extension EvalRunner {
     // MARK: - Telemetry
 
     /// Fold the transcript into per-tool usage counters for the report.
-    private static func toolUsageStats(_ transcript: AgentLoopTranscript) -> [ToolUsageStat]? {
+    static func toolUsageStats(_ transcript: AgentLoopTranscript) -> [ToolUsageStat]? {
         guard !transcript.toolCalls.isEmpty else { return nil }
         var calls: [String: Int] = [:]
         var errors: [String: Int] = [:]

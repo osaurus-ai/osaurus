@@ -303,6 +303,31 @@ struct DeclaredReasoningEffortTests {
         }
     }
 
+    @Test("explicit effort tiers plus boolean toggle drive picker and request kwargs")
+    func effortListWithBooleanThinkingToggle() throws {
+        let data = Data(#"{"chat":{"reasoning":{"supported":true,"template_flag":"enable_thinking","effort_flag":"reasoning_effort","modes":["think","no_think"],"efforts":["low","high"],"default_effort":"low","default_enabled":true}}}"#.utf8)
+        let declaration = try #require(DeclaredReasoningEffort.parseJangDeclaration(data: data))
+        guard case .modeKwargs(let levels, let defaultLevel, let kwargs)? = declaration.control else {
+            Issue.record("Explicit effort list was reduced to a boolean toggle")
+            return
+        }
+        #expect(levels == ["low", "high"])
+        #expect(defaultLevel == "low")
+        #expect(kwargs["none"] == ["enable_thinking": .bool(false)])
+        try withOverride(declaration, forModelId: "proof/effort-list-toggle") {
+            let caps = try #require(DeclaredReasoningEffort.capabilities(forModelId: "proof/effort-list-toggle"))
+            #expect(caps.levels.map(\.id) == ["none", "low", "high"])
+            for effort in ["none", "low", "high"] {
+                let context = MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(temperature: nil, maxTokens: 64,
+                        modelOptions: ["reasoningEffort": .string(effort)]),
+                    modelName: "proof/effort-list-toggle")
+                #expect(context["enable_thinking"] as? Bool == (effort != "none"))
+                #expect(context["reasoning_effort"] as? String == (effort == "none" ? nil : effort))
+            }
+        }
+    }
+
     // MARK: - jang_config parsing
 
     @Test("the full Qwen3.8 stamp parses: levels, default, preserve_thinking")

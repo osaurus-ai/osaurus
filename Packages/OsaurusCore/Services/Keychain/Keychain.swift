@@ -123,7 +123,7 @@ private struct SecItemKeychainBackend: KeychainBackend {
 /// update N, so legitimately owned items read back without any prompt across
 /// updates.
 ///
-/// The `KeychainQueryHelpers.disablesKeychainForProcess` gate is enforced
+/// The service-scoped `KeychainQueryHelpers.disablesKeychain(for:)` gate is enforced
 /// centrally here for every operation, so no consumer can accidentally reach
 /// the user's login keychain in test/live-proof mode. Wrapper stores keep
 /// their own guards as well (they are pinned by the live-proof source
@@ -172,7 +172,7 @@ enum Keychain {
     private static func baseQuery(service: String, account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecAttrAccount as String: account,
         ]
     }
@@ -280,7 +280,7 @@ enum Keychain {
         accessible: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
     ) -> KeychainMutationOutcome {
         let (backend, bypassesGate) = currentBackend()
-        if !bypassesGate, KeychainQueryHelpers.disablesKeychainForProcess { return .disabled }
+        if !bypassesGate, KeychainQueryHelpers.disablesKeychain(for: service) { return .disabled }
         return onWriteQueueSync {
             let base = baseQuery(service: service, account: account)
             // Accessibility is a creation-time attribute; the legacy keychain
@@ -328,7 +328,7 @@ enum Keychain {
     /// absence from transient unavailability and access denial.
     static func readItem(service: String, account: String) -> KeychainReadOutcome {
         let (backend, bypassesGate) = currentBackend()
-        if !bypassesGate, KeychainQueryHelpers.disablesKeychainForProcess { return .disabled }
+        if !bypassesGate, KeychainQueryHelpers.disablesKeychain(for: service) { return .disabled }
         var query = baseQuery(service: service, account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -359,7 +359,7 @@ enum Keychain {
     /// counts as success (the desired end state holds).
     static func deleteItem(service: String, account: String) -> KeychainMutationOutcome {
         let (backend, bypassesGate) = currentBackend()
-        if !bypassesGate, KeychainQueryHelpers.disablesKeychainForProcess { return .disabled }
+        if !bypassesGate, KeychainQueryHelpers.disablesKeychain(for: service) { return .disabled }
         return onWriteQueueSync {
             let status = backend.delete(query: baseQuery(service: service, account: account))
             if status == errSecSuccess || status == errSecItemNotFound { return .success }
@@ -372,12 +372,12 @@ enum Keychain {
     /// account name, with an authoritative flag for cache decisions.
     static func fetchAllItems(service: String, returnData: Bool) -> KeychainEnumerationOutcome {
         let (backend, bypassesGate) = currentBackend()
-        if !bypassesGate, KeychainQueryHelpers.disablesKeychainForProcess {
+        if !bypassesGate, KeychainQueryHelpers.disablesKeychain(for: service) {
             return KeychainEnumerationOutcome(items: [], status: errSecSuccess, isDefinitive: true)
         }
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,

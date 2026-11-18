@@ -173,6 +173,11 @@ struct FileReadDocumentFormatsTests {
         #expect(integerText.contains("Delta page"))
         #expect(!integerText.contains("Charlie page"))
         #expect(EnvelopeAssertions.successPayload(integer)?["pages_requested"] as? String == "4")
+
+        let all = try await tool.execute(argumentsJSON: #"{"path":"report.pdf","pages":"all"}"#)
+        #expect(ToolEnvelope.isSuccess(all), Comment(rawValue: all))
+        let allText = EnvelopeAssertions.successText(all) ?? ""
+        #expect(allText.contains("Alpha page") && allText.contains("Delta page"))
     }
 
     @Test func pdfReadPagesOverridesStartAndEndLine() async throws {

@@ -648,64 +648,33 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         return frequency.nextRunDate()
     }
 
-    /// Most recent execution anchor. Trigger time wins over completion time so
-    /// failed or in-flight runs do not replay the same missed slot.
-    public var executionAnchor: Date? {
-        lastTriggeredAt ?? lastRunAt
+    /// The trigger timing this schedule's anchors describe.
+    public var timing: ScheduleTiming {
+        ScheduleTiming(
+            frequency: frequency, isEnabled: isEnabled, lastTriggeredAt: lastTriggeredAt, lastRunAt: lastRunAt)
     }
 
-    /// Execution anchor snapped to the consumed slot when the raw stamp
-    /// landed inside the interval-aware early-fire window (e.g. 04:59:59
-    /// for a 05:00 daily). One-shot anchors are never snapped.
-    public var consumedExecutionAnchor: Date? {
-        guard let raw = executionAnchor else { return nil }
-        if case .once = frequency { return raw }
-        return frequency.alignedAnchor(from: raw)
-    }
+    public var executionAnchor: Date? { timing.executionAnchor }
 
-    /// Calculate the next run date from the consumed execution anchor.
+    public var consumedExecutionAnchor: Date? { timing.consumedExecutionAnchor }
+
     public func nextRunDateAfterExecutionAnchor(asOf now: Date = Date()) -> Date? {
-        guard isEnabled else { return nil }
-        if case .once = frequency, executionAnchor != nil { return nil }
-        return frequency.nextRunDate(after: consumedExecutionAnchor ?? now)
+        timing.nextRunDateAfterExecutionAnchor(asOf: now)
     }
 
-    /// Most recent slot that is already `<= now`. `nil` when nothing is
-    /// overdue — including when the next slot is in the 60s `shouldRunNow`
-    /// window but still in the future.
-    ///
-    /// With no execution anchor (never run), walk from
-    /// `now - initialLookbackSeconds` so a late first fire stamps today's
-    /// slot instead of `nextRunDate(after: now)` (tomorrow). The missed
-    /// path still requires an anchor and will not use this lookback.
     public func latestDueSlot(
         asOf now: Date = Date(),
         initialLookbackSeconds: TimeInterval = 3600
     ) -> Date? {
-        guard isEnabled else { return nil }
-        if case .once(let date) = frequency {
-            return date <= now && executionAnchor == nil ? date : nil
-        }
-        let raw = executionAnchor ?? now.addingTimeInterval(-initialLookbackSeconds)
-        return frequency.latestDueSlot(after: raw, asOf: now).slot
+        timing.latestDueSlot(asOf: now, initialLookbackSeconds: initialLookbackSeconds)
     }
 
-    /// Recurring catch-up: a prior trigger exists and a later slot is
-    /// already past. One-shots and never-run schedules are not missed
-    /// replays — the timer / one-shot path owns those.
     public func hasMissedRecurringRun(asOf now: Date = Date()) -> Bool {
-        guard isEnabled else { return false }
-        if case .once = frequency { return false }
-        guard executionAnchor != nil else { return false }
-        return latestDueSlot(asOf: now) != nil
+        timing.hasMissedRecurringRun(asOf: now)
     }
 
-    /// Slot to stamp when the timer selects this schedule. Prefer the most
-    /// recent overdue slot so a stale anchor does not cascade one skipped
-    /// fire at a time; otherwise the upcoming slot (`shouldRunNow` may be
-    /// true up to 60s early).
     public func scheduledFireTime(asOf now: Date = Date()) -> Date? {
-        latestDueSlot(asOf: now) ?? nextRunDateAfterExecutionAnchor(asOf: now)
+        timing.scheduledFireTime(asOf: now)
     }
 
     /// Human-readable description of when this will next run
@@ -746,25 +715,13 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         return formatter.string(from: nextRun)
     }
 
-    /// Whether this schedule should run now (or was missed)
     public func shouldRunNow(
         asOf now: Date = Date(),
         toleranceSeconds: TimeInterval = 60,
         initialLookbackSeconds: TimeInterval = 3600
     ) -> Bool {
-        guard isEnabled else { return false }
-
-        let latestAllowedFireDate = now.addingTimeInterval(toleranceSeconds)
-
-        // A one-shot should never replay once it has been selected for dispatch.
-        if case .once(let date) = frequency {
-            guard executionAnchor == nil else { return false }
-            return date <= latestAllowedFireDate
-        }
-
-        let checkFrom = consumedExecutionAnchor ?? now.addingTimeInterval(-initialLookbackSeconds)
-        guard let nextRun = frequency.nextRunDate(after: checkFrom) else { return false }
-        return nextRun <= latestAllowedFireDate
+        timing.shouldRunNow(
+            asOf: now, toleranceSeconds: toleranceSeconds, initialLookbackSeconds: initialLookbackSeconds)
     }
 }
 
