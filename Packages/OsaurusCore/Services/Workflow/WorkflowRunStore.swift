@@ -258,7 +258,7 @@ public final class WorkflowRunStore: ObservableObject {
         finishedRecords = finishedRecords.filter { $0.value.workflowID != workflowID }
         recentPersisted = recentPersisted?.filter { $0.workflowID != workflowID }
         if ensureOpen() { writer.deleteRuns(workflowID: workflowID) }
-        for folder in ["runs", "artifacts"] {
+        for folder in ["runs", "artifacts", "phone-inputs"] {
             try? FileManager.default.removeItem(
                 at: OsaurusPaths.workflowDirectory(workflowID).appendingPathComponent(folder, isDirectory: true))
         }

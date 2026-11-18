@@ -65,6 +65,7 @@ enum SyncDeviceFeedContract {
         "workflow_step_details",
         "directory_models",
         "manage_workflows",
+        "workflow_file_inputs",
     ]
 
     /// Each device's record under `prefix`, keyed by device key. With
@@ -307,6 +308,8 @@ enum SyncDeviceFeedContract {
         /// `runWorkflow`
         var workflowId: String?
         var input: JSONValue?
+        /// `runWorkflow` (`workflow_file_inputs`): files the phone attached, by field key.
+        var files: [String: WorkflowFileRef]?
         /// `workflowOutput`
         var runId: String?
         var requestedMs: Int64
@@ -335,6 +338,13 @@ enum SyncDeviceFeedContract {
             self.scope = scope
             self.requestedMs = requestedMs
         }
+    }
+
+    /// A file the phone attached for one `runWorkflow` field: its message on the manage conversation and the
+    /// attachment's hash there. A reference, never a path (`SyncWorkflowInputs`).
+    struct WorkflowFileRef: Codable, Equatable, Sendable {
+        var message: String
+        var blob: String
     }
 
     struct ManageRequests: Codable, Equatable, Sendable {

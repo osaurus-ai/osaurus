@@ -498,7 +498,7 @@ final class SyncManageFeed {
                 save: LedgerStore.save,
                 perform: { request in
                     let started = Date()
-                    let result = await Self.perform(request)
+                    let result = await Self.perform(request, device: source.device)
                     Self.record(request, result: result, deviceLabel: deviceLabel, started: started)
                     return result
                 }
@@ -644,8 +644,12 @@ final class SyncManageFeed {
         )
     }
 
-    /// Applies one request as the Mac's own editor would.
-    static func perform(_ request: SyncDeviceFeedContract.ManageRequest) async -> SyncDeviceFeedContract.ManageResult {
+    /// Applies one request as the Mac's own editor would. `device`: the device that signed it, nil for the
+    /// shared list from before per-device ones.
+    static func perform(
+        _ request: SyncDeviceFeedContract.ManageRequest,
+        device: String? = nil
+    ) async -> SyncDeviceFeedContract.ManageResult {
         func done(agentId: UUID? = nil) -> SyncDeviceFeedContract.ManageResult {
             .init(ok: true, agentId: agentId?.uuidString.lowercased(), doneMs: SyncHostedRunContract.nowMs())
         }
@@ -729,7 +733,19 @@ final class SyncManageFeed {
             guard written else { return failed("failed", "The run's output couldn't be sent.") }
             return answered(["runId": payload.runId])
         case .runWorkflow:
-            switch SyncWorkflowLibrary.start(workflowId: request.workflowId, values: request.input) {
+            var paths: [String: String] = [:]
+            if let raw = request.workflowId, let id = UUID(uuidString: raw),
+                let workflow = InstalledWorkflowStore.shared.workflow(id: id)
+            {
+                let fields = WorkflowFormFields.fields(fromInputSchema: workflow.definition.inputSchema)
+                switch await SyncWorkflowInputs.paths(
+                    workflowId: id, fields: fields, files: request.files, device: device)
+                {
+                case .success(let made): paths = made
+                case .failure(.invalidInput(let reason)): return failed("invalid_input", reason)
+                }
+            }
+            switch SyncWorkflowLibrary.start(workflowId: request.workflowId, values: request.input, paths: paths) {
             case .success(let runId):
                 return answered(["runId": runId.uuidString.lowercased()])
             case .failure(.notFound):

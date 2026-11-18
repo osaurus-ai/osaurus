@@ -54,7 +54,8 @@
           "agent_calls",
           "workflow_step_details",
           "directory_models",
-          "manage_workflows"
+          "manage_workflows",
+          "workflow_file_inputs"
         ],
         "build": "0.25.31 (1234)",
         "presence": {

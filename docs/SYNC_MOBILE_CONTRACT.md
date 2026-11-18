@@ -63,6 +63,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `agent_calls` | Agents calling the user back: PushKit grants in push registrations, `call-answer/1`, `call` in the manage state (§5.7) |
 | `workflow_step_details` | `steps` on every `workflow_outputs` message, an empty list for a run without any (§5.5) |
 | `manage_workflows` | the workflow library is a message in the manage conversation, not in the manage state, which a large library took past 64 KiB (§5.4) |
+| `workflow_file_inputs` | `runWorkflow` takes `files` the phone attached, and fills file and folder fields from the last run (`lastUsed`) (§5.4) |
 | `directory_models` | each directory entry carries the agent's `model`, and the agent directory conversation carries the models message (§5.2) too, so a new iPhone has both before the manage conversation arrives |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
@@ -747,10 +748,16 @@ app data `ai.osaurus.manage-workflows/1`, `{ "v": 1, "workflows": [ … ], "dige
   `type`s are the dialog field types of §4 (`text`, `long_text`, `number`, `bool`, `choice`,
   `date`, `file`, `folder`).
 - `prefill` is the last run's input.
-- `phoneStartable` is false when a required field is a `file`, `folder` or `secret`. Those
-  workflows are started on the Mac: `runWorkflow` for one is refused (`invalid_input`). The Mac
-  takes `input` values only for the fields of types the phone fills in; the rest keep their
-  defaults.
+- `lastUsed` (`workflow_file_inputs`), on a `file` or `folder` field, is the name of what the last
+  run used: the name only, never the path. A start from the phone that sends nothing for the field
+  reuses it, if it still exists on the Mac.
+- `phoneStartable` is false when a required field is a `secret`, or a `file` or `folder` with no
+  `lastUsed`. Those workflows are started on the Mac: `runWorkflow` for one is refused
+  (`invalid_input`). A phone that sees `workflow_file_inputs` can still start one whose only such
+  fields are `file`s, by attaching them (`files` below).
+- The Mac takes `input` values only for the fields of types the phone fills in. A `file` or
+  `folder` field gets only a path the Mac makes: the file the phone attached, else the last run's,
+  else its default. Never a path the phone sends.
 - `blocked`, when present, says what has to be set up on the Mac first.
 - `facts` and `steps` (`workflow_details`) are what the Mac's workflow page shows:
 
@@ -801,6 +808,14 @@ app data `ai.osaurus.manage-workflows/1`, `{ "v": 1, "workflows": [ … ], "dige
 run. Fields left out keep their defaults, and the input is checked against the schema.
 - The result's `data` is `{ "runId": "…" }`.
 - Errors: `workflow_not_found`, `needs_setup` and `invalid_input`, each with a message to show.
+- `files` (`workflow_file_inputs`) fills `file` fields with files from the phone:
+  `{ "<fieldKey>": { "message": "<messageId>", "blob": "<hash>" } }`.
+  - Send the file first, as an attachment on a message of the manage conversation, then the request
+    naming it. Its `content` is `"workflow input"` and its role `user`.
+  - The Mac takes it only from a message on its manage conversation that the requesting device wrote,
+    with that attachment, at most 10 MB, for a field of type `file`. Otherwise the request fails with
+    `invalid_input`. The Mac waits up to 30 seconds for the message to arrive.
+  - The Mac saves a copy for the run, so the phone may delete its message once the request has a result.
 - The run's forms come through the attention feed (§4) with no `session_id`.
 
 The Mac also writes its recent runs on the manage conversation, whatever started them: each
