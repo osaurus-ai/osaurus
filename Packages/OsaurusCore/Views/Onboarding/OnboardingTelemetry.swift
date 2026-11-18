@@ -116,16 +116,19 @@ enum OnboardingTelemetry {
     /// moving the opt-in up front. If they never opted in, consent stays
     /// undecided and the event is buffered, then dropped when
     /// `finishOnboarding` finalizes the decline.
+    ///
+    /// The Classic upgrade screen adds `raptor_download`: whether its
+    /// Get Raptor 0.7 switch started a download.
     static func completed(
         lastStep: OnboardingStep,
         via: Completion,
+        raptorDownload: Bool? = nil,
         distribution: Distribution = .current,
         service: TelemetryService = .shared
     ) {
-        service.track(
-            "onboarding_completed",
-            withDistribution(["last_step": lastStep.telemetryName, "via": via.rawValue], distribution)
-        )
+        var props: [String: Value] = ["last_step": lastStep.telemetryName, "via": via.rawValue]
+        if let raptorDownload { props["raptor_download"] = raptorDownload }
+        service.track("onboarding_completed", withDistribution(props, distribution))
     }
 
     enum Completion: String {
@@ -137,6 +140,12 @@ enum OnboardingTelemetry {
         /// Finished Configure AI after an installed bundle skipped the
         /// welcome step; no walkthrough in chat follows.
         case bundleSkip = "bundle_skip"
+        /// The Classic upgrade screen's Add starter team: the team and
+        /// default workflows were added, and the walkthrough follows.
+        case classicInstall = "classic_install"
+        /// The Classic upgrade screen's Keep my setup (or Skip setup):
+        /// nothing was created.
+        case classicKeep = "classic_keep"
     }
 
     // MARK: - First run in chat
@@ -251,6 +260,7 @@ extension OnboardingStep {
         switch self {
         case .welcome: return "welcome"
         case .configureAI: return "configure_ai"
+        case .classicUpgrade: return "classic_upgrade"
         }
     }
 }

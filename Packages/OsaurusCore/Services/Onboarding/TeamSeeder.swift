@@ -19,7 +19,7 @@ import OsaurusRepository
 
 @MainActor
 public enum TeamSeeder {
-    public static let seededDefaultsKey = "onboardingTeamSeeded"
+    nonisolated public static let seededDefaultsKey = "onboardingTeamSeeded"
 
     /// Repo Digest reads Builder's project, so it ships only with Builder.
     nonisolated static let repoDigestTemplateID = UUID(uuidString: "0f5c1a4e-6b7d-4c1a-9a01-000000000207")!
@@ -84,6 +84,24 @@ public enum TeamSeeder {
         if seeded { defaults.set(true, forKey: seededDefaultsKey) }
         FeatureTelemetry.teamSeeded(
             source: seeded ? "fresh_install" : "fresh_install_failed", teammates: created.count,
+            workflows: workflows, developerMac: options.developerMac)
+        return created
+    }
+
+    /// The upgrade seed, for an install that came from Classic and chose
+    /// the team on the upgrade screen: the team and the default workflows.
+    /// The Privacy Filter is left alone, so an existing setup keeps behaving
+    /// as it did. Marked seeded by the same rule as the fresh seed.
+    @discardableResult
+    public static func seedClassicUpgrade(_ options: Options, defaults: UserDefaults = .standard) async -> [Agent] {
+        guard !hasSeeded(defaults) else { return [] }
+        let wanted = options.teammates
+        let created = await create(wanted, bookmarkingGuardedFolders: false)
+        let workflows = installDefaultWorkflows(options)
+        let seeded = seedCounts(wanted: wanted, present: Set(AgentManager.shared.agents.compactMap(\.teammate)))
+        if seeded { defaults.set(true, forKey: seededDefaultsKey) }
+        FeatureTelemetry.teamSeeded(
+            source: seeded ? "classic_upgrade" : "classic_upgrade_failed", teammates: created.count,
             workflows: workflows, developerMac: options.developerMac)
         return created
     }

@@ -22,6 +22,9 @@ enum OnboardingHelp {
         case localModel
         /// Connecting an AI account or key.
         case ownAccount
+        /// The upgrade screen after updating from Classic, with or without
+        /// its Get Raptor 0.7 switch.
+        case classicUpgrade(offersRaptor: Bool)
     }
 
     /// The local model the step is offering, as the explainers describe it.
@@ -70,6 +73,18 @@ enum OnboardingHelp {
                 L("Some let you sign in with your account. Others need an API key: a long secret code you copy from the provider's website."),
                 L("Your key is stored in this Mac's Keychain, and your messages go to the provider you connect."),
             ]
+        case .classicUpgrade(let offersRaptor):
+            var pages = [
+                L("Welcome back! Everything you had came with you: your chats, agents, models, and settings. Nothing was reset."),
+                L("The big new thing in 1.0 is a team. Each teammate handles one part of your Mac, like your calendar, Mail, files, or the web. Ask me anything and I'll pass the job to the right one."),
+                L("Workflows are ready-made routines, like a Morning Brief or Mail Triage. They run only when you start them, until you give them a schedule."),
+                L("Not sure yet? Keep my setup leaves everything exactly as it is. You can add the same team later with Create starter agents in Settings, under Agents and Delegation."),
+            ]
+            if offersRaptor {
+                pages.append(
+                    L("Raptor 0.7 is the newest local model built for Osaurus agents. It downloads in the background, and agents still on an older Raptor switch to it when it's done."))
+            }
+            return pages
         }
     }
 

@@ -908,7 +908,8 @@ enum FeatureTelemetry {
     }
 
     /// The day-one team was created. `source` is `fresh_install` (end of
-    /// onboarding) or `starter_agents` (Settings' Create Starter Agents).
+    /// onboarding), `classic_upgrade` (the upgrade screen after updating
+    /// from Classic), or `starter_agents` (Settings' Create Starter Agents).
     /// Counts and a bool only; no teammate names or workflow ids.
     static func teamSeeded(
         source: String,
@@ -920,6 +921,12 @@ enum FeatureTelemetry {
         service.track(
             "team_seeded",
             ["source": source, "teammates": teammates, "workflows": workflows, "developer_mac": developerMac])
+    }
+
+    /// Raptor 0.7 landed after the Classic upgrade screen started its
+    /// download, and `agents` agents on a retired Raptor moved to it.
+    static func raptorUpgradeApplied(agents: Int, service: TelemetryService = .shared) {
+        service.track("raptor_upgrade_applied", ["agents": agents])
     }
 
     // MARK: - Workflows

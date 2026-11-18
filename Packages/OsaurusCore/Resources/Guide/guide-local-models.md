@@ -14,6 +14,7 @@ Osaurus runs open-weight models locally on Apple Silicon using MLX — no intern
 - Or just ask the default Osaurus assistant in chat to download a model — it can list recommended models and start the download for you.
 - Models are stored in `~/MLXModels` (override with the `OSU_MODELS_DIR` environment variable). Model weights live outside `~/.osaurus/`.
 - The full download of Osaurus (the ~4 GB `Osaurus-<version>-full.dmg`) ships Raptor 0.7 inside the app. On first launch it is installed into `~/MLXModels/OsaurusAI/Raptor-0.7-4B-JANG_6M` (an instant APFS clone when the app and your models folder share a volume, so it costs no extra disk), onboarding skips the model download, and later updates stay small because the installed copy lives in `~/MLXModels`, not in the app. Deleting it from **Local Models → On This Mac** is permanent for that install; download it again from the catalog if you want it back.
+- An install updated from Osaurus Classic gets the smaller app, without the bundled Raptor 0.7. Its one-time upgrade screen offers **Get Raptor 0.7** (shown only when the model fits this Mac; progress appears in Local Models). Nothing switches while it downloads, so chats stay on their current model. Once the download finishes, the Orchestrator, custom agents, and the model new agents start with move to Raptor 0.7 only if they were on Raptor v0.5 or 0.6; agents on any other model, or with Lock Model on, stay as they are. If that download fails, a later download of Raptor 0.7 from Local Models makes the same switch.
 
 ## Choosing a model
 

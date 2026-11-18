@@ -422,10 +422,16 @@ final class ConfigureAIState: ObservableObject {
     /// `nil` when the download fits (or sizes are unknown — fail open).
     private func evaluateDiskShortfall() -> String? {
         refreshFreeDiskSpace()
-        guard let model = selectedModel,
-            Self.downloadWontFit(neededBytes: model.totalSizeEstimateBytes, freeBytes: freeDiskBytes),
+        guard let model = selectedModel else { return nil }
+        return Self.diskShortfallWarning(for: model, freeBytes: freeDiskBytes)
+    }
+
+    /// The inline "not enough disk space" warning for downloading `model`
+    /// with `freeBytes` free, or `nil` when it fits or a size is unknown.
+    static func diskShortfallWarning(for model: MLXModel, freeBytes: Int64?) -> String? {
+        guard downloadWontFit(neededBytes: model.totalSizeEstimateBytes, freeBytes: freeBytes),
             let needed = model.formattedDownloadSize,
-            let freeBytes = freeDiskBytes
+            let freeBytes
         else { return nil }
         let free = freeBytes.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
         return L(
