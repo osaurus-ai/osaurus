@@ -709,7 +709,7 @@ final class SyncManageFeed {
             return await contextUsage(request)
         case .workflowOutput:
             let payload: SyncWorkflowOutput.Payload
-            switch SyncWorkflowOutput.payload(runId: request.runId) {
+            switch SyncWorkflowOutput.payload(runId: request.runId, partial: request.partial == true) {
             case .success(let found): payload = found
             case .failure(.notFound): return failed("run_not_found", "That run isn't on this Mac any more.")
             case .failure(.running): return failed("running", "The run hasn't finished yet.")

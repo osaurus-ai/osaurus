@@ -66,6 +66,7 @@ enum SyncDeviceFeedContract {
         "directory_models",
         "manage_workflows",
         "workflow_file_inputs",
+        "workflow_live_steps",
     ]
 
     /// Each device's record under `prefix`, keyed by device key. With
@@ -312,6 +313,8 @@ enum SyncDeviceFeedContract {
         var files: [String: WorkflowFileRef]?
         /// `workflowOutput`
         var runId: String?
+        /// `workflowOutput` (`workflow_live_steps`): a run still going too, with its finished steps' details.
+        var partial: Bool?
         var requestedMs: Int64
 
         init(

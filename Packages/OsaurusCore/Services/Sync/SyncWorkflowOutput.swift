@@ -50,19 +50,23 @@ enum SyncWorkflowOutput {
         case running
     }
 
-    /// The output message's content for `runId`, once the run has ended.
+    /// The output message's content for `runId`, once the run has ended. `partial` (`workflow_live_steps`): a run
+    /// still going too, with the details of the steps it has finished (`finishedOnly`).
     @MainActor
-    static func payload(runId raw: String?) -> Result<Payload, Failure> {
+    static func payload(runId raw: String?, partial: Bool = false) -> Result<Payload, Failure> {
         guard let raw, let id = UUID(uuidString: raw), let run = WorkflowRunStore.shared.run(id: id) else {
             return .failure(.notFound)
         }
-        guard run.status.isTerminal else { return .failure(.running) }
-        return .success(payload(for: run, staging: FileManager.default.temporaryDirectory))
+        guard run.status.isTerminal || partial else { return .failure(.running) }
+        return .success(
+            payload(for: run, staging: FileManager.default.temporaryDirectory, finishedOnly: !run.status.isTerminal))
     }
 
     /// `run`'s input, output and files. JSON over the inline limit is staged
     /// as a file under `staging` and sent as a blob, and so is a copy of each file.
-    static func payload(for run: WorkflowRun, staging: URL) -> Payload {
+    /// `finishedOnly`: a run still going, sent with only the details of its finished steps (the rest by id, as
+    /// `pending`), and without its output or files, which aren't final yet.
+    static func payload(for run: WorkflowRun, staging: URL, finishedOnly: Bool = false) -> Payload {
         var object: [String: JSONValue] = [
             "v": .number(1),
             "runId": .string(run.id.uuidString.lowercased()),
@@ -98,12 +102,13 @@ enum SyncWorkflowOutput {
             return blob(key, bytes, into: &blobs, base: 0)
         }
         object["input"] = placed("input", run.input)
-        if let output = run.output { object["output"] = placed("output", output) }
+        if !finishedOnly, let output = run.output { object["output"] = placed("output", output) }
         if let error = run.error?.reason { object["error"] = .string(String(error.prefix(lineLimit * 4))) }
 
         var total = 0
         var files: [JSONValue] = []
-        for (index, artifact) in run.artifacts.filter({ !$0.isDirectory }).prefix(fileCountLimit).enumerated() {
+        let artifacts = finishedOnly ? [] : run.artifacts.filter { !$0.isDirectory }
+        for (index, artifact) in artifacts.prefix(fileCountLimit).enumerated() {
             var entry: [String: JSONValue] = [
                 "id": .string(String(artifact.id.prefix(200))),
                 "filename": .string(String(artifact.filename.prefix(255))),
@@ -142,11 +147,18 @@ enum SyncWorkflowOutput {
         // oldest steps without their details (id and status only, as the card has); then the run's own
         // input and output as blobs too; last, the files without their descriptions.
         let shown = run.nodes.filter { $0.status != .skipped }
+        let finished: (NodeRun) -> Bool = { [.done, .failed, .pinned].contains($0.status) }
+        // Which steps have finished, in the digest: one finishing without input or output still changes it, so
+        // the message is written again.
+        hasher.update(data: Data(shown.map { "\($0.nodeID)|\($0.status.rawValue)" }.joined(separator: ",").utf8))
         let base = blobs.count
         func steps(stepLimit: Int, lean: Bool, bare: Int) -> (steps: [JSONValue], blobs: [AttachmentFile]) {
             var stepBlobs: [AttachmentFile] = []
             let steps = shown.enumerated().compactMap { index, node -> JSONValue? in
                 if index < bare { return .object(["id": .string(node.nodeID), "trimmed": .bool(true)]) }
+                if finishedOnly, !finished(node) {
+                    return .object(["id": .string(node.nodeID), "pending": .bool(true)])
+                }
                 let entry = step(node) { name, value in
                     guard let bytes = encoded(value) else { return nil }
                     guard bytes.count > stepLimit else { return value }

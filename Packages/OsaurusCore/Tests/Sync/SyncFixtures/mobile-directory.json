@@ -55,7 +55,8 @@
           "workflow_step_details",
           "directory_models",
           "manage_workflows",
-          "workflow_file_inputs"
+          "workflow_file_inputs",
+          "workflow_live_steps"
         ],
         "build": "0.25.31 (1234)",
         "presence": {
