@@ -530,6 +530,7 @@ public final class TTSService: ObservableObject {
                 let chunks = TTSTextChunker.split(text)
                 TTSDebugLog.log(
                     "playback start id=\(messageId) engine=\(engine.modelId) voice=\(voice) "
+                        + "temperature=\(config.temperature.map { String(format: "%.2f", $0) } ?? "default") "
                         + "textChars=\(text.count) chunks=\(chunks.count)")
                 let playbackStart = Date()
                 for (index, chunk) in chunks.enumerated() {
