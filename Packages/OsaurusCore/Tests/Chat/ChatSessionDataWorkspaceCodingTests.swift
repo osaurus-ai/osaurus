@@ -4,14 +4,12 @@
 //
 //  Pins the workspace identity a persisted chat session can carry:
 //  `WorkspaceSessionContext` round-trips through `ChatSessionData`'s
-//  Codable, legacy rows without the field still decode, the v16 SQLite
-//  columns (`workspace_context` JSON + `remote_agent_address`) are written
-//  and read back, and `ChatSessionsManager` keys teammate-agent chats by
+//  Codable, legacy rows without the field still decode, the conversation
+//  store keeps it, and `ChatSessionsManager` keys teammate-agent chats by
 //  address instead of by the local agent that hosted the tab.
 //
 
 import Foundation
-import OsaurusSQLCipher
 import Testing
 
 @testable import OsaurusCore
@@ -61,7 +59,16 @@ struct ChatSessionDataWorkspaceCodingTests {
         )
         #expect(named.isServedForTeammate)
         #expect(named.callerWallet == "0xcaller00000000000000000000000000000000aa")
-        #expect(named.callerLabel == "Alice")
+        #expect(named.callerLabel == "0xcall…00aa")
+
+        let handled = WorkspaceSessionContext(
+            workspaceId: "ws-1",
+            agentAddress: Self.address,
+            callerWallet: "0xCALLER00000000000000000000000000000000AA",
+            callerName: "Alice",
+            callerHandle: "alice"
+        )
+        #expect(handled.callerLabel == "@alice")
 
         let unnamed = WorkspaceSessionContext(
             workspaceId: "ws-1",
@@ -121,84 +128,36 @@ struct ChatSessionDataWorkspaceCodingTests {
                 workspaceId: "ws-1",
                 agentAddress: Self.address,
                 callerWallet: "0xcaller",
-                callerName: "Alice"
+                callerName: "Alice",
+                callerHandle: "alice"
             ),
             agentId: UUID(),
             source: .workspace
         )
         #expect(served.isWorkspaceAgentChat == false)
         #expect(served.remoteAgentAddress == Self.address.lowercased())
-        #expect(served.source.originLabel(workspace: served.workspace) == "for Alice · Workspace")
+        #expect(served.source.originLabel(workspace: served.workspace) == "for @alice · Workspace")
     }
 
-    // MARK: - SQLite v16 columns
+    // MARK: - Store round trip
 
-    @Test func database_persistsWorkspaceContextAndRemoteAddressColumn() throws {
-        let db = ChatHistoryDatabase()
-        try db.openInMemory()
-        defer { db.close() }
+    @Test @MainActor func store_persistsWorkspaceContext() async throws {
+        try await ChatHistoryTestStorage.run {
+            let store = SyncConversationStore.shared
+            let context = WorkspaceSessionContext(workspaceId: "ws-1", agentAddress: Self.address)
+            var session = makeSession(workspace: context)
+            session.turns = [ChatTurnData(role: .user, content: "hi teammate agent")]
+            ChatSessionStore.save(session)
 
-        let context = WorkspaceSessionContext(workspaceId: "ws-1", agentAddress: Self.address)
-        let session = makeSession(workspace: context)
-        try db.saveSession(session)
+            let loaded = try #require(store.loadSession(id: session.id))
+            #expect(loaded.workspace == context)
+            #expect(loaded.remoteAgentAddress == Self.address.lowercased())
 
-        let loaded = try #require(db.loadSession(id: session.id))
-        #expect(loaded.workspace == context)
-
-        // The denormalized address column is populated for indexed lookups.
-        var storedAddress: String?
-        var storedJSON: String?
-        try db.executeReadInTest(
-            "SELECT remote_agent_address, workspace_context FROM sessions WHERE id = ?1"
-        ) { stmt in
-            sqlite3_bind_text(
-                stmt,
-                1,
-                (session.id.uuidString as NSString).utf8String,
-                -1,
-                unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_destructor_type.self)
-            )
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                if let c = sqlite3_column_text(stmt, 0) { storedAddress = String(cString: c) }
-                if let c = sqlite3_column_text(stmt, 1) { storedJSON = String(cString: c) }
-            }
+            var local = makeSession(workspace: nil)
+            local.turns = [ChatTurnData(role: .user, content: "local chat")]
+            ChatSessionStore.save(local)
+            #expect(store.loadSession(id: local.id)?.workspace == nil)
         }
-        #expect(storedAddress == Self.address.lowercased())
-        #expect(WorkspaceSessionContext.decode(json: storedJSON) == context)
-
-        // A plain local session leaves both columns NULL.
-        let local = makeSession(workspace: nil)
-        try db.saveSession(local)
-        var localAddressIsNull = false
-        try db.executeReadInTest("SELECT remote_agent_address FROM sessions WHERE id = ?1") { stmt in
-            sqlite3_bind_text(
-                stmt,
-                1,
-                (local.id.uuidString as NSString).utf8String,
-                -1,
-                unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_destructor_type.self)
-            )
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                localAddressIsNull = sqlite3_column_type(stmt, 0) == SQLITE_NULL
-            }
-        }
-        #expect(localAddressIsNull)
-        #expect(db.loadSession(id: local.id)?.workspace == nil)
-    }
-
-    @Test func database_schemaVersionIsV16WithRemoteAgentIndex() throws {
-        let db = ChatHistoryDatabase()
-        try db.openInMemory()
-        defer { db.close() }
-
-        #expect(ChatHistoryDatabase.latestSchemaVersion >= 16)
-        var indexNames: [String] = []
-        try db.executeReadInTest("PRAGMA index_list('sessions')") { stmt in
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                if let c = sqlite3_column_text(stmt, 1) { indexNames.append(String(cString: c)) }
-            }
-        }
-        #expect(indexNames.contains("idx_sessions_remote_agent"))
     }
 
     // MARK: - ChatSessionsManager filtering
@@ -247,24 +206,5 @@ struct ChatSessionDataWorkspaceCodingTests {
             let byAddress = manager.sessions(forRemoteAgentAddress: Self.address.uppercased()).map(\.id)
             #expect(byAddress == [teamChat.id], "address lookup is case-insensitive and excludes host-served rows")
         }
-    }
-}
-
-// MARK: - Test hook
-
-extension ChatHistoryDatabase {
-    /// Prepare `sql` on this instance's connection and let the caller bind +
-    /// step (same shape as `IncrementalSaveSessionTests`' helper).
-    fileprivate func executeReadInTest(_ sql: String, _ body: (OpaquePointer) -> Void) throws {
-        #if DEBUG
-            try queueRunForTest { connection in
-                var stmt: OpaquePointer?
-                guard sqlite3_prepare_v2(connection, sql, -1, &stmt, nil) == SQLITE_OK, let s = stmt else {
-                    throw ChatHistoryDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(connection)))
-                }
-                defer { sqlite3_finalize(s) }
-                body(s)
-            }
-        #endif
     }
 }

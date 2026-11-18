@@ -63,13 +63,22 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
     /// far above any realistic document, but stops a runaway copy of a
     /// disk image / model checkpoint from filling the disk.
     static let defaultMaxCopyBytes = 512 * 1024 * 1024
+    /// A workflow step delivering a result (a downloaded video, an export)
+    /// from the sandbox share to the person's folder moves media-sized
+    /// files; the copy is a host-side `FileManager` call, so the cap is only
+    /// a guard against a runaway copy.
+    static let workflowMaxCopyBytes = 4 * 1024 * 1024 * 1024
 
     private let fixedRootPath: URL?
-    private let maxCopyBytes: Int
+    private let configuredMaxCopyBytes: Int
+    private var maxCopyBytes: Int {
+        ChatExecutionContext.currentWorkflowRunId != nil
+            ? max(configuredMaxCopyBytes, Self.workflowMaxCopyBytes) : configuredMaxCopyBytes
+    }
 
     init(rootPath: URL? = nil, maxCopyBytes: Int = FileCopyTool.defaultMaxCopyBytes) {
         self.fixedRootPath = rootPath
-        self.maxCopyBytes = maxCopyBytes
+        self.configuredMaxCopyBytes = maxCopyBytes
     }
 
     /// The executing chat's folder root (TaskLocal scope), or the fixed
@@ -105,22 +114,6 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
         let sourceRoute: CombinedFileRoute = bridge == nil ? .host : combinedFileRoute(path: source)
         let destinationRoute: CombinedFileRoute =
             bridge == nil ? .host : combinedFileRoute(path: destination)
-
-        // Host-bound destinations are writes to the user's folder — when a
-        // sandbox is attached they are gated on the same per-agent opt-in
-        // as `file_write` / `file_edit`.
-        if bridge != nil, destinationRoute == .host, !ChatExecutionContext.allowHostFolderWrites {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message:
-                    "Refused to copy to '\(destination)': the workspace is read-only in sandbox "
-                    + "mode, so `file_copy` can only copy INTO the sandbox (a `/workspace/...` "
-                    + "destination). The user can enable folder writes in the agent's sandbox "
-                    + "settings; meanwhile, deliver files to the user with `share_artifact`.",
-                tool: name,
-                retryable: false
-            )
-        }
 
         let sourceURL: URL
         switch sourceRoute {
@@ -176,7 +169,7 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
             guard let rootPath else {
                 return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
             }
-            destinationURL = try FolderToolHelpers.resolvePath(destination, rootPath: rootPath)
+            destinationURL = try FolderToolHelpers.resolvePath(destination, rootPath: rootPath, intent: .write)
             // Same tamper gate as `file_write`: an agent must not create or
             // overwrite secret-shaped files in the workspace.
             if FolderToolHelpers.shouldRefuseSecret(fileURL: destinationURL) {
@@ -230,6 +223,10 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
             )
         }
 
+        if destinationExists, destinationRoute == .host {
+            try await FolderToolHelpers.confirmWorkflowReplace(destinationURL, path: destination)
+        }
+
         do {
             try FileManager.default.createDirectory(
                 at: destinationURL.deletingLastPathComponent(),
@@ -255,6 +252,9 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
             throw FolderToolError.operationFailed(
                 "Copy failed: \(error.localizedDescription)"
             )
+        }
+        if destinationRoute == .host {
+            await FolderToolHelpers.recordWorkflowHostWrite(destinationURL, replaced: destinationExists)
         }
 
         var result: [String: Any] = [
@@ -286,10 +286,17 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
     /// (`OsaurusPaths.containerWorkspace()` is mounted as `/workspace` in
     /// the VM); see `WorkspaceShareRoute`.
     private static func resolveSandboxURL(_ path: String, home: String?) throws -> URL {
-        if let home, let absolute = WorkspaceShareRoute.absoluteSandboxPath(path, home: home) {
-            return try WorkspaceShareRoute.hostURL(forSandboxPath: absolute)
+        guard let home else {
+            throw FolderToolError.invalidArguments(
+                "'\(path)' is a sandbox path, but this chat has no sandbox home to resolve it in."
+            )
         }
-        return try WorkspaceShareRoute.hostURL(forSandboxPath: path)
+        guard let absolute = WorkspaceShareRoute.absoluteSandboxPath(path, home: home) else {
+            throw FolderToolError.invalidArguments(
+                "'\(path)' is outside your sandbox home and `\(SandboxAgentPathScope.sharedMountPath)`."
+            )
+        }
+        return try WorkspaceShareRoute.hostURL(forSandboxPath: absolute, home: home)
     }
 
     private static func areaLabel(_ route: CombinedFileRoute) -> String {

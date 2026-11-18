@@ -154,4 +154,26 @@ struct ImageSubagentKindTests {
         let decision = await gen.permission(scope, resolved)
         #expect(decision == .allow)
     }
+
+    /// A workflow step that lists `image` was approved with the workflow, so
+    /// a local job under `.ask` runs without prompting (unattended runs).
+    @Test("workflow-granted local image under .ask → allow without a prompt")
+    func workflowGrantedImageSkipsAskPrompt() async {
+        let lease = await acquireSubagentStoreSandbox("image-permission-workflow")
+        defer { lease.release() }
+        var perms = SubagentPermissionDefaults()
+        perms.setPolicy(.ask, for: SubagentCapabilityRegistry.image.id)
+        SubagentConfigurationStore.save(SubagentConfiguration(permissionDefaults: perms))
+
+        let scope = SubagentScope(
+            sessionId: "s", toolCallId: "t", agentId: Agent.defaultId, workflowGrantedToolNames: ["image"])
+        let resolved = ResolvedModel(name: "test-model", isLocal: true)
+        let gen = ImageSubagentKind(
+            params: ImageTool.buildParams(args: ["prompt": "a cat"], prompt: "a cat"), argumentsJSON: "{}")
+        #expect(await gen.permission(scope, resolved) == .allow)
+        let edit = ImageSubagentKind(
+            params: ImageTool.buildParams(args: ["prompt": "recolor", "source_paths": ["/tmp/a.png"]], prompt: "recolor"),
+            argumentsJSON: "{}")
+        #expect(await edit.permission(scope, resolved) == .allow)
+    }
 }

@@ -17,6 +17,8 @@ import Testing
 private let agentA = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
 private let agentB = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
 
+/// `defaultAgent` is an event for any room; each route is an event that
+/// runs `agent` in `room` (nil = any room).
 private func makeSource(
     connectionId: String = "discord",
     displayName: String = "Discord",
@@ -25,19 +27,19 @@ private func makeSource(
     writableRoomIds: [String] = ["room-1"],
     dispatchEnabled: Bool = true,
     defaultAgent: UUID? = agentA,
-    routes: [AgentChannelDispatchRoute] = []
+    routes: [(room: String?, agent: UUID)] = []
 ) -> AgentChannelAutoDestinationSource {
-    AgentChannelAutoDestinationSource(
+    var agents: [(UUID, [String])] = defaultAgent.map { [($0, [])] } ?? []
+    agents += routes.map { ($0.agent, $0.room.map { [$0] } ?? []) }
+    return AgentChannelAutoDestinationSource(
         connectionId: connectionId,
         displayName: displayName,
         hasCredential: hasCredential,
         writeEnabled: writeEnabled,
         writableRoomIds: writableRoomIds,
-        dispatch: AgentChannelInboundDispatchConfiguration(
-            enabled: dispatchEnabled,
-            targetAgentId: defaultAgent,
-            routes: routes
-        )
+        listeners: dispatchEnabled
+            ? EventTestFixtures.listeners(agents: agents, kind: .discord, connectionId: connectionId)
+            : ChannelEventListeners()
     )
 }
 
@@ -69,7 +71,7 @@ struct AgentChannelAutoDestinationResolverTests {
         let source = makeSource(
             writableRoomIds: ["room-1", "room-2"],
             defaultAgent: agentA,
-            routes: [AgentChannelDispatchRoute(roomId: "room-2", agentId: agentB)]
+            routes: [("room-2", agentB)]
         )
         let derived = AgentChannelAutoDestinationResolver.derivedBindings(
             sources: [source],
@@ -103,7 +105,7 @@ struct AgentChannelAutoDestinationResolverTests {
         let source = makeSource(
             writableRoomIds: ["room-1", "room-2"],
             defaultAgent: nil,
-            routes: [AgentChannelDispatchRoute(roomId: nil, agentId: agentB)]
+            routes: [(nil, agentB)]
         )
         let derived = AgentChannelAutoDestinationResolver.derivedBindings(
             sources: [source],
@@ -160,7 +162,7 @@ struct AgentChannelAutoDestinationResolverTests {
         let source = makeSource(
             writableRoomIds: ["room-1"],
             defaultAgent: agentA,
-            routes: [AgentChannelDispatchRoute(roomId: "room-1", agentId: agentB)]
+            routes: [("room-1", agentB)]
         )
         let stored = makeStoredBinding(agentId: agentA, roomId: "room-1")
         let derived = AgentChannelAutoDestinationResolver.derivedBindings(

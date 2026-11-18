@@ -1,0 +1,23 @@
+{
+  "id": "orchestrator.route-status",
+  "domain": "orchestrator",
+  "label": "orchestrator • what is running right now comes from status",
+  "query": "Is anything running or waiting on me right now?",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "status"
+      ],
+      "mustNotCallTools": [
+        "configurator_handoff",
+        "architect_handoff",
+        "spawn_agent"
+      ],
+      "rubric": [
+        "Answers whether anything is running or waiting, consistent with a status result (nothing invented)."
+      ],
+      "maxIterations": 4
+    }
+  }
+}

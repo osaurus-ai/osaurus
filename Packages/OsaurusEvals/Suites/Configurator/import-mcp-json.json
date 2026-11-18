@@ -1,0 +1,32 @@
+{
+  "id": "configurator.import-mcp-json",
+  "domain": "configurator",
+  "label": "configurator • a pasted mcpServers JSON block goes to osaurus_import",
+  "query": "Set this up for me:\n```json\n{\n  \"mcpServers\": {\n    \"acme-docs\": {\n      \"url\": \"https://mcp.acme-docs.example/mcp\"\n    }\n  }\n}\n```",
+  "notes": "Universal chat import. A pasted MCP config is an import, not something to retype into osaurus_config yaml. The Configurator passes the block to osaurus_import once and repeats the result's summary. The import card auto-approves in this headless lane, so the server lands in the throwaway eval root.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_import"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load",
+        "web_fetch"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_import",
+          "args": {
+            "source": "mcp.acme-docs.example"
+          }
+        }
+      ],
+      "rubric": [
+        "Reports in one or two sentences that the Acme Docs MCP server was added (or what still needs doing), based on the tool result, without pasting the JSON back."
+      ],
+      "maxIterations": 6
+    }
+  }
+}

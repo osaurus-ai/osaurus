@@ -1,0 +1,101 @@
+{
+  "id": "workflow.structured-extraction",
+  "domain": "workflow",
+  "label": "workflow \u2022 inference node returns schema-valid extracted fields",
+  "query": "inference node returns schema-valid extracted fields",
+  "notes": "One generate node with a three-field required schema. The value checks pin that the model grounded the output in the input, not just the shape.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [],
+        "examples": [],
+        "input_schema": {
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "extract",
+            "inference": {
+              "instructions": "Extract the sender's full name, email address, and company from the text.",
+              "mode": "generate",
+              "model_slot": "extractor"
+            },
+            "input": {
+              "text": "{{input.text}}"
+            },
+            "kind": "inference",
+            "name": "Extract Contact",
+            "output_schema": {
+              "properties": {
+                "company": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "email",
+                "company"
+              ],
+              "type": "object"
+            },
+            "retry": {
+              "backoff_seconds": 1,
+              "max_attempts": 1
+            },
+            "timeout": 120
+          }
+        ],
+        "output": "{{nodes.extract.output}}",
+        "output_schema": {
+          "properties": {
+            "company": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "email",
+            "company"
+          ],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {
+        "text": "Hello! This is Dana Lee from Northwind Traders. You can reach me at dana.lee@northwind.example any time."
+      },
+      "outputKeys": [
+        "name",
+        "company"
+      ],
+      "outputValues": {
+        "email": [
+          "dana.lee@northwind.example"
+        ]
+      }
+    }
+  }
+}

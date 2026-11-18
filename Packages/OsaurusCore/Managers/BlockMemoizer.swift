@@ -21,30 +21,23 @@ final class BlockMemoizer {
     private var lastContentRevision: UInt64 = 0
     private var lastThinkingLen = 0
     /// Completed Responses calls can arrive after text/reasoning and preview
-    /// state have stopped changing. Retain shallow value snapshots so the
-    /// fast path cannot hide a running call until its result is appended.
-    /// Strings/arrays keep their shared storage; this does not parse or hash
-    /// the potentially large argument payload on every streaming update.
+    /// state have stopped changing, so tool state is part of the fast-path
+    /// key. `toolStateRevision` bumps on every `toolCalls` / `toolResults` /
+    /// `toolCallDurations` write, so identity plus revision is the whole key.
+    /// Snapshotting the values instead kept the previous dictionaries alive,
+    /// and the turn's next write then copied its whole tool-result map.
     private struct ToolStateKey: Equatable {
-        let turnId: UUID
-        let calls: [ToolCall]
-        let results: [String: String]
-        let durations: [String: TimeInterval]
+        /// Held strongly so a later turn can't reuse its address.
+        let turn: ChatTurn
+        let revision: UInt64
 
         init(_ turn: ChatTurn) {
-            turnId = turn.id
-            calls = turn.toolCalls ?? []
-            results = turn.toolResults
-            durations = turn.toolCallDurations
+            self.turn = turn
+            revision = turn.toolStateRevision
         }
 
         static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.turnId == rhs.turnId && lhs.results == rhs.results && lhs.durations == rhs.durations
-                && lhs.calls.elementsEqual(rhs.calls, by: { left, right in
-                    left.id == right.id && left.type == right.type
-                        && left.function.name == right.function.name
-                        && left.function.arguments == right.function.arguments
-                })
+            lhs.turn === rhs.turn && lhs.revision == rhs.revision
         }
     }
     private var lastToolStates: [ToolStateKey] = []
@@ -61,6 +54,7 @@ final class BlockMemoizer {
         let lastOutputAt: Date?
         let completedAt: Date?
         let prefillProgress: PrefillProgressState?
+        let isLoadingModel: Bool
         let isReasoningActive: Bool
         let thinkingDuration: TimeInterval?
 
@@ -73,6 +67,7 @@ final class BlockMemoizer {
             lastOutputAt = turn.lastOutputAt
             completedAt = turn.completedAt
             prefillProgress = turn.prefillProgress
+            isLoadingModel = turn.isLoadingModel
             isReasoningActive = turn.isReasoningActive
             thinkingDuration = turn.thinkingDuration
         }
@@ -101,6 +96,10 @@ final class BlockMemoizer {
     private var lastActiveTurnId: UUID?
     private let streamingMaxBlocks = 80
     private let nonStreamingMaxBlocks = 400
+    /// Blocks retained in `cached`. The view never shows more than
+    /// `nonStreamingMaxBlocks`, so older blocks were only memory; the
+    /// headroom keeps a turn boundary inside the trimmed range.
+    private let cacheMaxBlocks = 600
     /// callId → occurrence ordinal of that exact call (name + canonical args)
     /// since the last user message; feeds the "×N" repeat badge. Owned HERE
     /// rather than computed inside `generateBlocks` because the incremental /
@@ -232,7 +231,7 @@ final class BlockMemoizer {
         }
 
         // Update cache state
-        cached = blocks
+        cached = Self.trimmedAtTurnBoundary(blocks, keeping: cacheMaxBlocks)
         lastCount = count
         lastTurnId = lastId
         lastContentLen = contentLen
@@ -324,6 +323,18 @@ final class BlockMemoizer {
         )
 
         return stablePrefix + freshBlocks
+    }
+
+    /// Drops leading blocks past `cap`, cutting only where a new turn starts
+    /// so incremental regeneration still finds every kept turn whole.
+    static func trimmedAtTurnBoundary(_ blocks: [ContentBlock], keeping cap: Int) -> [ContentBlock] {
+        guard blocks.count > cap, ProcessEnvironment.value("USE_MOCK_CHAT_DATA") != "1" else { return blocks }
+        var start = blocks.count - cap
+        while start < blocks.count, start > 0, blocks[start].turnId == blocks[start - 1].turnId {
+            start += 1
+        }
+        guard start < blocks.count else { return blocks }
+        return Array(blocks[start...])
     }
 
     private func limited(streaming: Bool) -> [ContentBlock] {

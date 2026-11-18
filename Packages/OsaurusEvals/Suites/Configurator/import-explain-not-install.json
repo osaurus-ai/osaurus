@@ -1,0 +1,20 @@
+{
+  "id": "configurator.import-explain-not-install",
+  "domain": "configurator",
+  "label": "configurator • \"what does this config do?\" is explained, not imported",
+  "query": "Don't install anything, I just want to understand it. What does this do?\n```json\n{\"mcpServers\":{\"acme-docs\":{\"url\":\"https://mcp.acme-docs.example/mcp\"}}}\n```",
+  "notes": "Negative case for universal chat import. Pasted config with an explicit request to explain must not reach osaurus_import or osaurus_config apply.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustNotCallTools": [
+        "osaurus_import",
+        "osaurus_config"
+      ],
+      "rubric": [
+        "Explains that the block registers one remote MCP server named acme-docs at that URL, which would give an agent its tools, and installs nothing."
+      ],
+      "maxIterations": 4
+    }
+  }
+}

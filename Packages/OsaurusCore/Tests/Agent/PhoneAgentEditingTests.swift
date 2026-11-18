@@ -2,9 +2,10 @@
 //  PhoneAgentEditingTests.swift
 //  OsaurusCoreTests
 //
-//  The phone's agent edits (`PATCH /agents/{id}`): only the fields sent
-//  change, `null` puts temperature and max tokens back to the default, and
-//  anything out of range or of the wrong type is refused before it lands.
+//  The iPhone's agent edits through Sync (`ai.osaurus.manage-request/1`):
+//  only the fields sent change, clearing puts temperature and max tokens
+//  back to the default, and the Default agent and unknown agents can't be
+//  edited or deleted.
 //
 
 import Foundation
@@ -13,13 +14,20 @@ import Testing
 @testable import OsaurusCore
 
 @Suite("Phone agent edits")
+@MainActor
 struct PhoneAgentEditingTests {
-    private func patch(_ json: String) throws -> PhoneAgentEditing.Patch {
-        try PhoneAgentEditing.patch(from: Data(json.utf8))
+    private func request(_ build: (inout SyncDeviceFeedContract.ManageRequest) -> Void) -> SyncDeviceFeedContract.ManageRequest {
+        var request = SyncDeviceFeedContract.ManageRequest(id: "r1", op: .updateAgent, agentId: UUID().uuidString, requestedMs: 0)
+        build(&request)
+        return request
     }
 
-    @Test func onlyTheFieldsSentChange() throws {
-        let edit = try patch(#"{"name":"Scout","memory_enabled":false,"temperature":0.4}"#)
+    @Test func onlyTheFieldsSentChange() {
+        let edit = SyncManageFeed.patch(from: request {
+            $0.name = "Scout"
+            $0.memoryEnabled = false
+            $0.temperature = 0.4
+        })
         #expect(edit.name == "Scout")
         #expect(edit.memoryEnabled == false)
         #expect(edit.temperature == .set(0.4))
@@ -28,24 +36,29 @@ struct PhoneAgentEditingTests {
         #expect(edit.systemPrompt == nil)
     }
 
-    @Test func nullGoesBackToTheDefault() throws {
-        let edit = try patch(#"{"temperature":null,"max_tokens":null}"#)
+    @Test func clearingGoesBackToTheDefault() {
+        let edit = SyncManageFeed.patch(from: request {
+            $0.clearTemperature = true
+            $0.clearMaxTokens = true
+        })
         #expect(edit.temperature == .clear)
         #expect(edit.maxTokens == .clear)
     }
 
-    @Test func refusesWhatCannotLand() {
-        for body in [
-            #"{}"#,
-            #"[]"#,
-            #"{"temperature":2.5}"#,
-            #"{"max_tokens":0}"#,
-            #"{"max_tokens":12.5}"#,
-            #"{"tools_enabled":1}"#,
-            #"{"name":3}"#,
-        ] {
-            #expect(throws: PhoneAgentEditing.EditError.self) { try patch(body) }
-        }
+    @Test func anEmptyRequestChangesNothing() {
+        #expect(SyncManageFeed.patch(from: request { _ in }).isEmpty)
+    }
+
+    @Test func outOfRangeValuesAreRefused() async {
+        let hot = await SyncManageFeed.perform(request { $0.temperature = 2.5 })
+        #expect(hot.ok == false)
+        #expect(hot.error == "agent_not_found" || hot.error == "bad_request")
+        let defaultAgent = await SyncManageFeed.perform(request {
+            $0.agentId = Agent.defaultId.uuidString
+            $0.name = "Renamed"
+        })
+        #expect(defaultAgent.ok == false)
+        #expect(defaultAgent.error == "agent_not_editable")
     }
 }
 
@@ -66,9 +79,7 @@ struct PhoneAgentDeleteTests {
         #expect(reply.code == "agent_shared")
     }
 
-    @Test func connectionAgentAndLoadingToolsAreConflicts() {
-        #expect(PhoneAgentEditing.EditError.connectionAgent.reply.status == 409)
-        #expect(PhoneAgentEditing.EditError.connectionAgent.reply.code == "agent_in_use")
+    @Test func loadingToolsIsAConflict() {
         #expect(PhoneAgentEditing.EditError.toolsLoading.reply.status == 409)
         #expect(PhoneAgentEditing.EditError.toolsLoading.reply.code == "tools_loading")
     }

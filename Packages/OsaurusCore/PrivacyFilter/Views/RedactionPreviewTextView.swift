@@ -33,6 +33,11 @@ struct RedactionPreviewTextView: NSViewRepresentable {
     /// per `updateNSView` so a theme change in Settings re-paints
     /// the preview without rebuilding the SwiftUI hierarchy.
     let theme: any ThemeProtocol
+    /// Text to scroll into view (the selected item's placeholder, or its
+    /// original when it is sent as written). Injected context such as the
+    /// current time often precedes the user's words, so the top of the
+    /// preview rarely shows the item under review.
+    var focusText: String? = nil
 
     /// Owns the hover controller so it survives `updateNSView`
     /// calls. SwiftUI tears `NSViewRepresentable` instances down
@@ -60,12 +65,15 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         /// can hand the hover controller the same set without
         /// re-running the highlighter.
         var lastAppliedRanges: [AppliedRedactionRange] = []
+        /// Last (text, focus) pair scrolled to, so re-renders don't fight
+        /// the user's own scrolling.
+        var lastFocusFingerprint: String = ""
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+        let scrollView = FocusingScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
@@ -100,11 +108,11 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
 
         textView.selectedTextAttributes = [
-            .backgroundColor: NSColor(theme.selectionColor)
+            .backgroundColor: NSColor(theme.selection.background)
         ]
-        textView.insertionPointColor = NSColor(theme.cursorColor)
-        textView.accentColor = NSColor(theme.accentColor)
-        textView.secondaryBackgroundColor = NSColor(theme.secondaryBackground)
+        textView.insertionPointColor = NSColor(theme.cursor)
+        textView.accentColor = NSColor(theme.text.link)
+        textView.secondaryBackgroundColor = NSColor(theme.surface.subtle)
 
         scrollView.documentView = textView
 
@@ -119,9 +127,9 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         // Reapply selection/theme colors so a live theme change in
         // Settings is picked up without reconstructing the view.
         textView.selectedTextAttributes = [
-            .backgroundColor: NSColor(theme.selectionColor)
+            .backgroundColor: NSColor(theme.selection.background)
         ]
-        textView.accentColor = NSColor(theme.accentColor)
+        textView.accentColor = NSColor(theme.text.link)
 
         let fingerprint = makeFingerprint()
         let textRebuilt: Bool
@@ -146,7 +154,7 @@ struct RedactionPreviewTextView: NSViewRepresentable {
             // on unchanged text, strip the old runs first or their
             // underlines outlive the redactions they marked.
             if !textRebuilt {
-                Self.clearHighlightAttributes(in: storage, bodyColor: NSColor(theme.primaryText))
+                Self.clearHighlightAttributes(in: storage, bodyColor: NSColor(theme.text.primary))
             }
             // Solid, not the chat bubble's dotted underline. A patterned
             // underline is drawn as a dashed line stroke, and when Skip All
@@ -157,7 +165,7 @@ struct RedactionPreviewTextView: NSViewRepresentable {
             applied = RedactionHighlighter.apply(
                 on: storage,
                 highlights: highlights,
-                accentColor: NSColor(theme.accentColor),
+                accentColor: NSColor(theme.action.primary.default.background),
                 underlineStyle: .single,
                 a11yLabelBuilder: { Self.accessibilityLabel(for: $0) }
             )
@@ -187,6 +195,20 @@ struct RedactionPreviewTextView: NSViewRepresentable {
                 ranges: applied
             )
         }
+
+        if let focusingView = scrollView as? FocusingScrollView {
+            scrollToFocus(focusingView, coordinator: context.coordinator)
+        }
+    }
+
+    private func scrollToFocus(_ scrollView: FocusingScrollView, coordinator: Coordinator) {
+        guard let focusText, !focusText.isEmpty else { return }
+        let fingerprint = "\(scrubbedText.hashValue)|\(focusText)"
+        guard coordinator.lastFocusFingerprint != fingerprint else { return }
+        coordinator.lastFocusFingerprint = fingerprint
+        let range = (scrubbedText as NSString).range(of: focusText)
+        guard range.location != NSNotFound else { return }
+        scrollView.focus(on: range, margin: theme.lineHeight(.body))
     }
 
     /// Remove every attribute `RedactionHighlighter` paints and restore
@@ -207,28 +229,17 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         storage.endEditing()
     }
 
-    /// Build the body attributed string. Plain text, body font,
-    /// theme primaryText color. Line spacing matches the chat
-    /// bubble paragraph spacing so the preview reads as a quote of
-    /// the message the user is about to send.
+    /// Build the body attributed string in the chat body text style so the
+    /// preview reads as a quote of the message the user is about to send.
     private static func buildAttributedString(
         scrubbedText: String,
         theme: any ThemeProtocol
     ) -> NSAttributedString {
         let body = NSMutableAttributedString(string: scrubbedText)
-        let fontSize = CGFloat(theme.bodySize)
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
-        let paragraph = NSMutableParagraphStyle()
-        // ~1.4 line height — same value the chat bubble uses for
-        // paragraph blocks so the preview looks like a quote of the
-        // outgoing message.
-        paragraph.lineSpacing = 4
-        paragraph.paragraphSpacing = 6
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor(theme.primaryText),
-            .paragraphStyle: paragraph,
-        ]
+        var attributes = theme.textAttributes(.body, color: NSColor(theme.text.primary))
+        let paragraph = theme.paragraphStyle(.body)
+        paragraph.paragraphSpacing = theme.space.s6
+        attributes[.paragraphStyle] = paragraph
         body.addAttributes(attributes, range: NSRange(location: 0, length: body.length))
         return body
     }
@@ -240,9 +251,8 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         return String(format: format, highlight.placeholderToken)
     }
 
-    /// (text, theme-mode) fingerprint. Theme mode is folded in so a
-    /// dark/light switch counts as a change and re-rebuilds the
-    /// attributed string with the new foreground/background colors.
+    /// (text, theme) fingerprint. Any theme change that affects rendering
+    /// rebuilds the attributed string with the new colors and type.
     /// Body text fingerprint INTENTIONALLY excludes `highlights`
     /// because they're applied as a separate pass on the same
     /// storage; folding them in here would rebuild the attributed
@@ -254,7 +264,7 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         // still rebuild, or the old text and its highlights stay on screen.
         var hasher = Hasher()
         hasher.combine(scrubbedText)
-        return "\(hasher.finalize())|\(theme.isDark ? 1 : 0)|\(theme.bodySize)"
+        return "\(hasher.finalize())|\(theme.renderFingerprint)"
     }
 
     /// (scrubbedText, highlights, accent) fingerprint used to gate
@@ -275,10 +285,51 @@ struct RedactionPreviewTextView: NSViewRepresentable {
                 hasher.combine(h.direction.rawValue)
             }
         }
-        // Accent description is `(red, green, blue, alpha)`-ish via
-        // NSColor's debug description — stable enough to detect a
-        // user-driven theme accent change.
-        hasher.combine(NSColor(theme.accentColor).description)
+        hasher.combine(theme.renderFingerprint)
         return String(hasher.finalize())
+    }
+}
+
+/// Scrolls a character range into view once the text has a width to lay
+/// out in. SwiftUI sizes the view after the first update, so a scroll
+/// requested then has nothing to scroll and must wait for `layout()`.
+final class FocusingScrollView: NSScrollView {
+    private var pendingFocus: (range: NSRange, margin: CGFloat)?
+
+    func focus(on range: NSRange, margin: CGFloat) {
+        pendingFocus = (range, margin)
+        needsLayout = true
+        applyPendingFocus()
+    }
+
+    override func layout() {
+        super.layout()
+        applyPendingFocus()
+    }
+
+    private func applyPendingFocus() {
+        guard let pending = pendingFocus,
+            contentView.bounds.width > 0, contentView.bounds.height > 0,
+            let textView = documentView as? NSTextView, textView.frame.width > 0,
+            let container = textView.textContainer,
+            let layoutManager = textView.layoutManager
+        else { return }
+        layoutManager.ensureLayout(for: container)
+        textView.sizeToFit()
+        let glyphs = layoutManager.glyphRange(forCharacterRange: pending.range, actualCharacterRange: nil)
+        let rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+        guard !rect.isEmpty else { return }
+        pendingFocus = nil
+        // `scrollToVisible` is a no-op when called from inside `layout()`,
+        // so move the clip view directly.
+        let item = textView.convert(rect, to: contentView)
+        let clip = contentView.bounds
+        let maxY = max(textView.frame.maxY - clip.height, textView.frame.minY)
+        var y = item.midY - clip.height / 2
+        if item.height + 2 * pending.margin > clip.height { y = item.minY - pending.margin }
+        y = min(max(y, textView.frame.minY), maxY)
+        guard abs(y - clip.origin.y) > 0.5 else { return }
+        contentView.scroll(to: NSPoint(x: clip.origin.x, y: y))
+        reflectScrolledClipView(contentView)
     }
 }

@@ -47,11 +47,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
     private static let telegramConnectionId = AgentChannelConnection.nativeTelegramConnectionId
     private static let imessageConnectionId = AgentChannelConnection.nativeIMessageConnectionId
     private static let whatsappConnectionId = AgentChannelConnection.nativeWhatsAppConnectionId
+    private static let emailConnectionId = AgentChannelConnection.nativeEmailConnectionId
     private let discordService: DiscordConnectionService
     private let slackService: SlackConnectionService
     private let telegramService: TelegramConnectionService
     private let imessageService: IMessageConnectionService
     private let whatsappService: WhatsAppConnectionService
+    private let emailService: EmailChannelService
     private let customJSONRunner: any AgentChannelCustomJSONRunning
     private let writeKillSwitch: ChannelWriteKillSwitch
 
@@ -61,6 +63,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         telegramService: TelegramConnectionService = .shared,
         imessageService: IMessageConnectionService = .shared,
         whatsappService: WhatsAppConnectionService = .shared,
+        emailService: EmailChannelService = .shared,
         customJSONRunner: any AgentChannelCustomJSONRunning = AgentChannelCustomJSONRunner(),
         writeKillSwitch: ChannelWriteKillSwitch = .shared
     ) {
@@ -69,27 +72,31 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         self.telegramService = telegramService
         self.imessageService = imessageService
         self.whatsappService = whatsappService
+        self.emailService = emailService
         self.customJSONRunner = customJSONRunner
         self.writeKillSwitch = writeKillSwitch
     }
 
+    /// One row per channel account (every bot, workspace and mail account),
+    /// then the custom connections.
     func listConnections() -> [[String: Any]] {
-        var rows = [
-            discordConnectionDictionary(),
-            slackConnectionDictionary(),
-            telegramConnectionDictionary(),
-            imessageConnectionDictionary(),
-            whatsappConnectionDictionary(),
-        ]
-        let customRows = AgentChannelConfigurationStore.load().connections
-            .filter { connection in
-                let id = connection.id.lowercased()
-                return id != Self.discordConnectionId
-                    && id != Self.slackConnectionId
-                    && id != Self.telegramConnectionId
-                    && id != Self.imessageConnectionId
-                    && id != Self.whatsappConnectionId
+        var rows: [[String: Any]] = []
+        for kind in [AgentChannelKind.discord, .slack, .telegram] {
+            for account in ChannelAccounts.accounts(kind: kind) {
+                switch kind {
+                case .discord: rows.append(discordConnectionDictionary(discordService(account.connectionId)))
+                case .slack: rows.append(slackConnectionDictionary(slackService(account.connectionId)))
+                default: rows.append(telegramConnectionDictionary(telegramService(account.connectionId)))
+                }
             }
+        }
+        rows.append(imessageConnectionDictionary())
+        rows.append(whatsappConnectionDictionary())
+        let email = emailService.configuration()
+        let emailIds = email.accounts.isEmpty ? [Self.emailConnectionId] : email.accounts.map(\.channelConnectionId)
+        for id in emailIds { rows.append(emailConnectionDictionary(id)) }
+        let customRows = AgentChannelConfigurationStore.load().connections
+            .filter { !ChannelAccounts.isReserved($0.id) }
             .map(connectionDictionary)
         rows.append(contentsOf: customRows)
         return rows
@@ -100,14 +107,14 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             let connection = try resolveConnection(connectionId)
             switch connection.kind {
             case .discord:
-                let diagnostics = await discordService.diagnostics()
+                let diagnostics = await discord(connection).diagnostics()
                 var payload = diagnostics.dictionary
                 payload["connection_id"] = connection.id
                 payload["kind"] = connection.kind.rawValue
                 payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
                 payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
                 payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
-                payload["message_store"] = discordService.messageStoreDiagnostics()
+                payload["message_store"] = discord(connection).messageStoreDiagnostics()
                 payload["transport_health"] = await AgentChannelTransportHealthCenter.shared
                     .allStates(connectionId: connection.id)
                     .map(\.dictionary)
@@ -120,31 +127,31 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 ]
                 return payload
             case .slack:
-                var payload = await slackService.diagnostics().dictionary
+                var payload = await slack(connection).diagnostics().dictionary
                 payload["connection_id"] = connection.id
                 payload["kind"] = connection.kind.rawValue
                 payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
                 payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
                 payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
-                payload["message_store"] = slackService.messageStoreDiagnostics()
+                payload["message_store"] = slack(connection).messageStoreDiagnostics()
                 payload["transport_health"] = await AgentChannelTransportHealthCenter.shared
                     .allStates(connectionId: connection.id)
                     .map(\.dictionary)
                 payload["receive_transport"] = [
-                    "status": slackService.hasAppToken() ? "configured" : "not_configured",
+                    "status": slack(connection).hasAppToken() ? "configured" : "not_configured",
                     "transport_id": SlackSocketModeTransportRuntime.transportId,
                     "summary": "Slack Socket Mode receive starts when an app token, readable channels, and authorized sender IDs are configured.",
-                    "app_token_saved": slackService.hasAppToken(),
+                    "app_token_saved": slack(connection).hasAppToken(),
                 ]
                 return payload
             case .telegram:
-                var payload = await telegramService.diagnostics().dictionary
+                var payload = await telegram(connection).diagnostics().dictionary
                 payload["connection_id"] = connection.id
                 payload["kind"] = connection.kind.rawValue
                 payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
                 payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
                 payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
-                payload["message_store"] = telegramService.messageStoreDiagnostics()
+                payload["message_store"] = telegram(connection).messageStoreDiagnostics()
                 payload["transport_health"] = await AgentChannelTransportHealthCenter.shared
                     .allStates(connectionId: connection.id)
                     .map(\.dictionary)
@@ -185,6 +192,24 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     "summary": "The WhatsApp receive stream starts when the osaurus-wa helper is verified, an account is linked via QR, and readable chats plus authorized senders are configured.",
                 ]
                 return payload
+            case .email:
+                let diagnostics = await emailService.diagnostics(channelConnectionId: connection.id)
+                var payload = diagnostics.dictionary
+                payload["connection_id"] = connection.id
+                payload["kind"] = connection.kind.rawValue
+                payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
+                payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
+                payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
+                payload["message_store"] = emailService.messageStoreDiagnostics()
+                payload["transport_health"] = await AgentChannelTransportHealthCenter.shared
+                    .allStates(connectionId: connection.id)
+                    .map(\.dictionary)
+                payload["receive_transport"] = [
+                    "status": diagnostics.receiveReady ? "configured" : "not_configured",
+                    "transport_id": EmailChannelTransportRuntime.transportId,
+                    "summary": "Watched mailboxes are checked when Receive Mail is on, at least one account is watched, and allowed senders are configured.",
+                ]
+                return payload
             case .customHTTP:
                 var payload = await customJSONRunner.diagnostics(connection: connection)
                 payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
@@ -213,8 +238,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     .healthSnapshot(connectionId: connection.id)
                     .dictionary
                 payload["receive_transport"] = [
-                    "status": (connection.n8n?.inboundDispatch.isConfigured ?? false)
-                        ? "configured" : "not_configured",
+                    "status": EventManager.channelListeners(kind: connection.kind, connectionId: connection.id)
+                        .isEmpty ? "not_configured" : "configured",
                     "transport_id": AgentChannelWebhookIngress.transportId,
                     "summary":
                         "n8n posts verified envelopes to /channels/n8n/\(connection.id)/inbound and polls /channels/n8n/\(connection.id)/tasks/{task_id} for replies.",
@@ -233,7 +258,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         let connection = try requireAction(.listSpaces, connectionId: connectionId)
         switch connection.kind {
         case .discord:
-            return try await discordService.listServers().map { row in
+            return try await discord(connection).listServers().map { row in
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
@@ -243,7 +268,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 ]
             }
         case .slack:
-            return try await slackService.listWorkspaces().map { row in
+            return try await slack(connection).listWorkspaces().map { row in
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
@@ -253,7 +278,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 ]
             }
         case .telegram:
-            return telegramService.listSpaces().map { row in
+            return telegram(connection).listSpaces().map { row in
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
@@ -282,6 +307,12 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     "raw": row,
                 ]
             }
+        case .email:
+            return await emailService.listSpaces(channelConnectionId: connection.id).map { row in
+                var out = row
+                out["connection_id"] = connection.id
+                return out
+            }
         case .customHTTP, .n8n:
             return try await customJSONRunner.listSpaces(connection: connection)
         }
@@ -291,7 +322,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         let connection = try requireAction(.listRooms, connectionId: connectionId)
         switch connection.kind {
         case .discord:
-            return try await discordService.listChannels(guildId: spaceId).map { row in
+            return try await discord(connection).listChannels(guildId: spaceId).map { row in
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
@@ -304,7 +335,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 ]
             }
         case .slack:
-            return try await slackService.listChannels(teamId: spaceId).map { row in
+            return try await slack(connection).listChannels(teamId: spaceId).map { row in
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
@@ -319,7 +350,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 ]
             }
         case .telegram:
-            return try await telegramService.listChats().map { row in
+            return try await telegram(connection).listChats().map { row in
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
@@ -359,6 +390,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     "raw": row,
                 ]
             }
+        case .email:
+            return await emailService.listRooms(spaceId: spaceId, channelConnectionId: connection.id).map { row in
+                var out = row
+                out["space_id"] = spaceId
+                out["connection_id"] = connection.id
+                return out
+            }
         case .customHTTP, .n8n:
             return try await customJSONRunner.listRooms(connection: connection, spaceId: spaceId)
         }
@@ -368,19 +406,19 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         let connection = try requireAction(.readMessages, connectionId: connectionId)
         switch connection.kind {
         case .discord:
-            var payload = try await discordService.readChannel(channelId: roomId, limit: limit)
+            var payload = try await discord(connection).readChannel(channelId: roomId, limit: limit)
             payload["connection_id"] = connection.id
             payload["room_id"] = roomId
             payload["standard_kind"] = "channel_messages"
             return payload
         case .slack:
-            var payload = try await slackService.readChannel(channelId: roomId, limit: limit)
+            var payload = try await slack(connection).readChannel(channelId: roomId, limit: limit)
             payload["connection_id"] = connection.id
             payload["room_id"] = roomId
             payload["standard_kind"] = "channel_messages"
             return payload
         case .telegram:
-            var payload = try telegramService.readChat(TelegramReadRequest(chatId: roomId, limit: limit))
+            var payload = try telegram(connection).readChat(TelegramReadRequest(chatId: roomId, limit: limit))
             payload["connection_id"] = connection.id
             payload["room_id"] = roomId
             payload["standard_kind"] = "chat_messages"
@@ -397,6 +435,11 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["room_id"] = roomId
             payload["standard_kind"] = "chat_messages"
             return payload
+        case .email:
+            var payload = try emailService.readMailbox(roomId: roomId, limit: limit, channelConnectionId: connection.id)
+            payload["connection_id"] = connection.id
+            payload["standard_kind"] = "mailbox_messages"
+            return payload
         case .customHTTP, .n8n:
             return try await customJSONRunner.readMessages(connection: connection, roomId: roomId, limit: limit)
         }
@@ -406,13 +449,18 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         let connection = try requireAction(.readThread, connectionId: connectionId)
         switch connection.kind {
         case .discord:
-            var payload = try await discordService.readThread(threadId: threadId, limit: limit)
+            var payload = try await discord(connection).readThread(threadId: threadId, limit: limit)
             payload["connection_id"] = connection.id
             payload["thread_id"] = threadId
             payload["standard_kind"] = "thread_messages"
             return payload
         case .slack:
-            var payload = try await slackService.readThread(threadId: threadId, limit: limit)
+            var payload = try await slack(connection).readThread(threadId: threadId, limit: limit)
+            payload["connection_id"] = connection.id
+            payload["standard_kind"] = "thread_messages"
+            return payload
+        case .email:
+            var payload = try emailService.readThread(threadId: threadId, limit: limit, channelConnectionId: connection.id)
             payload["connection_id"] = connection.id
             payload["standard_kind"] = "thread_messages"
             return payload
@@ -433,7 +481,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         let connection = try requireAction(.searchMessages, connectionId: connectionId)
         switch connection.kind {
         case .discord:
-            var payload = try await discordService.findRecentMessages(
+            var payload = try await discord(connection).findRecentMessages(
                 query: query,
                 channelIds: roomIds,
                 limitPerChannel: limitPerRoom,
@@ -444,7 +492,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "message_search"
             return payload
         case .slack:
-            var payload = try await slackService.findRecentMessages(
+            var payload = try await slack(connection).findRecentMessages(
                 query: query,
                 channelIds: roomIds,
                 limitPerChannel: limitPerRoom,
@@ -455,7 +503,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "message_search"
             return payload
         case .telegram:
-            var payload = try telegramService.searchMessages(
+            var payload = try telegram(connection).searchMessages(
                 query: query,
                 chatIds: roomIds,
                 limitPerChat: limitPerRoom,
@@ -487,6 +535,14 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["room_ids"] = roomIds ?? []
             payload["standard_kind"] = "message_search"
             return payload
+        case .email:
+            var payload = try emailService.searchMessages(
+                query: query, roomIds: roomIds, limitPerRoom: limitPerRoom, maxMatches: maxMatches,
+                channelConnectionId: connection.id)
+            payload["connection_id"] = connection.id
+            payload["room_ids"] = roomIds ?? []
+            payload["standard_kind"] = "message_search"
+            return payload
         case .customHTTP, .n8n:
             return try await customJSONRunner.searchMessages(
                 connection: connection,
@@ -502,19 +558,19 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         let connection = try requireAction(.draftMessage, connectionId: connectionId)
         switch connection.kind {
         case .discord:
-            var payload = try discordService.draftMessage(channelId: roomId, content: content)
+            var payload = try discord(connection).draftMessage(channelId: roomId, content: content)
             payload["connection_id"] = connection.id
             payload["room_id"] = roomId
             payload["standard_kind"] = "message_draft"
             return payload
         case .slack:
-            var payload = try slackService.draftMessage(channelId: roomId, content: content)
+            var payload = try slack(connection).draftMessage(channelId: roomId, content: content)
             payload["connection_id"] = connection.id
             payload["room_id"] = roomId
             payload["standard_kind"] = "message_draft"
             return payload
         case .telegram:
-            var payload = try telegramService.draftMessage(chatId: roomId, content: content)
+            var payload = try telegram(connection).draftMessage(chatId: roomId, content: content)
             payload["connection_id"] = connection.id
             payload["room_id"] = roomId
             payload["standard_kind"] = "message_draft"
@@ -533,20 +589,25 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             return payload
         case .customHTTP, .n8n:
             return try customJSONRunner.draftMessage(connection: connection, roomId: roomId, content: content)
+        case .email:
+            throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
     }
 
+    /// `telegramReplyToMessageId` threads a Telegram send under that
+    /// message; other platforms ignore it.
     func sendMessage(
         connectionId: String?,
         roomId: String,
         content: String,
-        confirmSend: Bool
+        confirmSend: Bool,
+        telegramReplyToMessageId: Int? = nil
     ) async throws -> [String: Any] {
         let connection = try requireAction(.sendMessage, connectionId: connectionId)
         try requireGlobalWritesEnabled()
         switch connection.kind {
         case .discord:
-            var payload = try await discordService.sendMessage(
+            var payload = try await discord(connection).sendMessage(
                 channelId: roomId,
                 content: content,
                 confirmSend: confirmSend
@@ -556,7 +617,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "message_sent"
             return payload
         case .slack:
-            var payload = try await slackService.sendMessage(
+            var payload = try await slack(connection).sendMessage(
                 channelId: roomId,
                 content: content,
                 confirmSend: confirmSend
@@ -566,11 +627,11 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "message_sent"
             return payload
         case .telegram:
-            var payload = try await telegramService.sendMessage(
+            var payload = try await telegram(connection).sendMessage(
                 TelegramWriteRequest(
                     chatId: roomId,
                     text: content,
-                    replyToMessageId: nil,
+                    replyToMessageId: telegramReplyToMessageId,
                     confirmSend: confirmSend
                 )
             )
@@ -605,6 +666,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 content: content,
                 confirmSend: confirmSend
             )
+        case .email:
+            throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
     }
 
@@ -618,7 +681,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         try requireGlobalWritesEnabled()
         switch connection.kind {
         case .discord:
-            var payload = try await discordService.replyToThread(
+            var payload = try await discord(connection).replyToThread(
                 threadId: threadId,
                 content: content,
                 confirmSend: confirmSend
@@ -627,7 +690,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "thread_reply_sent"
             return payload
         case .slack:
-            var payload = try await slackService.replyToThread(
+            var payload = try await slack(connection).replyToThread(
                 threadId: threadId,
                 content: content,
                 confirmSend: confirmSend
@@ -643,6 +706,16 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 threadId: threadId,
                 content: content,
                 confirmSend: confirmSend
+            )
+            payload["connection_id"] = connection.id
+            payload["standard_kind"] = "thread_reply_sent"
+            return payload
+        case .email:
+            var payload = try await emailService.replyToThread(
+                threadId: threadId,
+                content: content,
+                confirmSend: confirmSend,
+                channelConnectionId: connection.id
             )
             payload["connection_id"] = connection.id
             payload["standard_kind"] = "thread_reply_sent"
@@ -671,21 +744,21 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         var payload: [String: Any]
         switch connection.kind {
         case .discord:
-            payload = try await discordService.editMessage(
+            payload = try await discord(connection).editMessage(
                 channelId: roomId,
                 messageId: messageId,
                 content: content,
                 confirmSend: confirmSend
             )
         case .slack:
-            payload = try await slackService.editMessage(
+            payload = try await slack(connection).editMessage(
                 channelId: roomId,
                 messageId: messageId,
                 content: content,
                 confirmSend: confirmSend
             )
         case .telegram:
-            payload = try await telegramService.editMessage(
+            payload = try await telegram(connection).editMessage(
                 chatId: roomId,
                 messageId: messageId,
                 content: content,
@@ -715,6 +788,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 content: content,
                 confirmSend: confirmSend
             )
+        case .email:
+            throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
         payload["connection_id"] = connection.id
         payload["room_id"] = roomId
@@ -733,19 +808,19 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         var payload: [String: Any]
         switch connection.kind {
         case .discord:
-            payload = try await discordService.deleteMessage(
+            payload = try await discord(connection).deleteMessage(
                 channelId: roomId,
                 messageId: messageId,
                 confirmSend: confirmSend
             )
         case .slack:
-            payload = try await slackService.deleteMessage(
+            payload = try await slack(connection).deleteMessage(
                 channelId: roomId,
                 messageId: messageId,
                 confirmSend: confirmSend
             )
         case .telegram:
-            payload = try await telegramService.deleteMessage(
+            payload = try await telegram(connection).deleteMessage(
                 chatId: roomId,
                 messageId: messageId,
                 confirmSend: confirmSend
@@ -771,6 +846,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 messageId: messageId,
                 confirmSend: confirmSend
             )
+        case .email:
+            throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
         payload["connection_id"] = connection.id
         payload["room_id"] = roomId
@@ -792,7 +869,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         var payload: [String: Any]
         switch connection.kind {
         case .discord:
-            payload = try await discordService.setReaction(
+            payload = try await discord(connection).setReaction(
                 channelId: roomId,
                 messageId: messageId,
                 reaction: reaction,
@@ -800,7 +877,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 confirmSend: confirmSend
             )
         case .slack:
-            payload = try await slackService.setReaction(
+            payload = try await slack(connection).setReaction(
                 channelId: roomId,
                 messageId: messageId,
                 reaction: reaction,
@@ -808,7 +885,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 confirmSend: confirmSend
             )
         case .telegram:
-            payload = try await telegramService.setReaction(
+            payload = try await telegram(connection).setReaction(
                 chatId: roomId,
                 messageId: messageId,
                 reaction: reaction,
@@ -841,6 +918,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 adding: adding,
                 confirmSend: confirmSend
             )
+        case .email:
+            throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
         payload["connection_id"] = connection.id
         payload["room_id"] = roomId
@@ -858,12 +937,12 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         var payload: [String: Any]
         switch connection.kind {
         case .discord:
-            payload = try await discordService.sendTyping(
+            payload = try await discord(connection).sendTyping(
                 channelId: roomId,
                 confirmSend: confirmSend
             )
         case .telegram:
-            payload = try await telegramService.sendTyping(
+            payload = try await telegram(connection).sendTyping(
                 chatId: roomId,
                 confirmSend: confirmSend
             )
@@ -883,7 +962,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 roomId: roomId,
                 confirmSend: confirmSend
             )
-        case .slack:
+        case .slack, .email:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
         payload["connection_id"] = connection.id
@@ -1115,7 +1194,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         }
         guard let senderId,
             !policy.senderAllowlist.isEmpty,
-            policy.senderAllowlist.contains(senderId)
+            connection.kind == .email
+                ? EmailChannelConfiguration.allowlist(policy.senderAllowlist, contains: senderId)
+                : policy.senderAllowlist.contains(senderId)
         else {
             return deny("sender_not_allowlisted")
         }
@@ -1184,14 +1265,20 @@ final class AgentChannelConnectionService: @unchecked Sendable {
     private func resolveConnection(_ connectionId: String?) throws -> AgentChannelConnection {
         let id = AgentChannelConnection.normalizedId(connectionId ?? "")
         let resolvedId = id.isEmpty ? Self.discordConnectionId : id
-        if resolvedId.lowercased() == Self.discordConnectionId {
-            return discordConnection()
+        let lowered = resolvedId.lowercased()
+        if lowered == Self.discordConnectionId || isAccount(lowered, of: .discord) {
+            return discordConnection(discordService(lowered))
         }
-        if resolvedId.lowercased() == Self.slackConnectionId {
-            return slackConnection()
+        if lowered == Self.slackConnectionId || isAccount(lowered, of: .slack) {
+            return slackConnection(slackService(lowered))
         }
-        if resolvedId.lowercased() == Self.telegramConnectionId {
-            return telegramConnection()
+        if lowered == Self.telegramConnectionId || isAccount(lowered, of: .telegram) {
+            return telegramConnection(telegramService(lowered))
+        }
+        if lowered.hasPrefix(ChannelAccounts.extraPrefix(.email)),
+            emailService.configuration().account(channelConnectionId: lowered) != nil
+        {
+            return emailConnection(lowered)
         }
         if resolvedId.lowercased() == Self.imessageConnectionId {
             return imessageConnection()
@@ -1199,17 +1286,69 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         if resolvedId.lowercased() == Self.whatsappConnectionId {
             return whatsappConnection()
         }
+        if resolvedId.lowercased() == Self.emailConnectionId {
+            return emailConnection(Self.emailConnectionId)
+        }
         guard let connection = AgentChannelConfigurationStore.load().connection(id: resolvedId) else {
             throw AgentChannelConnectionServiceError.connectionNotFound(resolvedId)
         }
         return connection
     }
 
-    private func discordConnection() -> AgentChannelConnection {
-        let config = discordService.configuration()
+    // MARK: - Accounts
+
+    /// Whether `id` is an extra account of the kind: the injected instance
+    /// (inbound authorization builds this service around it) or one in
+    /// `ChannelAccounts`.
+    private func isAccount(_ id: String, of kind: AgentChannelKind) -> Bool {
+        guard id.hasPrefix(ChannelAccounts.extraPrefix(kind)) else { return false }
+        switch kind {
+        case .discord where discordService.connectionId == id: return true
+        case .slack where slackService.connectionId == id: return true
+        case .telegram where telegramService.connectionId == id: return true
+        default: return ChannelAccounts.account(connectionId: id) != nil
+        }
+    }
+
+    private func discordService(_ id: String) -> DiscordConnectionService {
+        if discordService.connectionId == id { return discordService }
+        if id == Self.discordConnectionId { return discordService }
+        return ChannelAccountServices.discord(id) ?? discordService
+    }
+
+    private func slackService(_ id: String) -> SlackConnectionService {
+        if slackService.connectionId == id { return slackService }
+        if id == Self.slackConnectionId { return slackService }
+        return ChannelAccountServices.slack(id) ?? slackService
+    }
+
+    private func telegramService(_ id: String) -> TelegramConnectionService {
+        if telegramService.connectionId == id { return telegramService }
+        if id == Self.telegramConnectionId { return telegramService }
+        return ChannelAccountServices.telegram(id) ?? telegramService
+    }
+
+    private func discord(_ connection: AgentChannelConnection) -> DiscordConnectionService {
+        discordService(connection.id.lowercased())
+    }
+
+    private func slack(_ connection: AgentChannelConnection) -> SlackConnectionService {
+        slackService(connection.id.lowercased())
+    }
+
+    private func telegram(_ connection: AgentChannelConnection) -> TelegramConnectionService {
+        telegramService(connection.id.lowercased())
+    }
+
+    private static func accountName(_ connectionId: String, kind: AgentChannelKind) -> String {
+        ChannelAccounts.displayName(connectionId: connectionId) ?? kind.displayName
+    }
+
+    private func discordConnection(_ service: DiscordConnectionService) -> AgentChannelConnection {
+        let config = service.configuration()
         return AgentChannelConnection(
-            id: Self.discordConnectionId,
-            name: "Discord",
+            id: service.connectionId,
+            name: Self.accountName(service.connectionId, kind: .discord),
             kind: .discord,
             enabled: true,
             supportedActions: [
@@ -1251,15 +1390,11 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         )
     }
 
-    private func slackConnection() -> AgentChannelConnection {
-        let config = slackService.configuration()
-        let workspaceTeamIds = config.workspaceAccounts.map(\.teamId)
-        let workspaceReadRooms = config.workspaceAccounts.flatMap(\.readableChannelIds)
-        let workspaceWriteRooms = config.workspaceAccounts.flatMap(\.writableChannelIds)
-        let workspaceSenders = config.workspaceAccounts.flatMap(\.senderAllowlist)
+    private func slackConnection(_ service: SlackConnectionService) -> AgentChannelConnection {
+        let config = service.configuration()
         return AgentChannelConnection(
-            id: Self.slackConnectionId,
-            name: "Slack",
+            id: service.connectionId,
+            name: Self.accountName(service.connectionId, kind: .slack),
             kind: .slack,
             enabled: true,
             supportedActions: [
@@ -1277,9 +1412,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 .addReaction,
                 .removeReaction,
             ],
-            spaceAllowlist: config.configuredTeamIds + workspaceTeamIds,
-            readRoomAllowlist: config.readableChannelIds + workspaceReadRooms,
-            writeRoomAllowlist: config.writableChannelIds + workspaceWriteRooms,
+            spaceAllowlist: config.configuredTeamIds,
+            readRoomAllowlist: config.readableChannelIds,
+            writeRoomAllowlist: config.writableChannelIds,
             writeEnabled: config.writeEnabled,
             defaultReadLimit: config.defaultReadLimit,
             secrets: [
@@ -1297,8 +1432,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 ),
             ],
             inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
-                senderAllowlist: config.senderAllowlist + workspaceSenders,
-                roomAllowlist: config.readableChannelIds + workspaceReadRooms,
+                senderAllowlist: config.senderAllowlist,
+                roomAllowlist: config.readableChannelIds,
                 allowUnscopedSpaces: config.configuredTeamIds.isEmpty,
                 allowBotMessages: false,
                 allowSelfMessages: false,
@@ -1308,36 +1443,36 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         )
     }
 
-    private func discordConnectionDictionary() -> [String: Any] {
-        var row = connectionDictionary(discordConnection())
-        row["credential_saved"] = discordService.hasBotToken()
+    private func discordConnectionDictionary(_ service: DiscordConnectionService) -> [String: Any] {
+        var row = connectionDictionary(discordConnection(service))
+        row["credential_saved"] = service.hasBotToken()
         let readRooms = row["read_room_allowlist"] as? [String] ?? []
         let writeRooms = row["write_room_allowlist"] as? [String] ?? []
         row["configured"] =
-            discordService.hasBotToken()
+            service.hasBotToken()
             && (!readRooms.isEmpty || !writeRooms.isEmpty)
         return row
     }
 
-    private func slackConnectionDictionary() -> [String: Any] {
-        var row = connectionDictionary(slackConnection())
-        row["credential_saved"] = slackService.hasBotToken()
-        row["bot_token_saved"] = slackService.hasBotToken()
-        row["signing_secret_saved"] = slackService.hasSigningSecret()
-        row["app_token_saved"] = slackService.hasAppToken()
-        row["sender_allowlist"] = slackService.configuration().senderAllowlist
+    private func slackConnectionDictionary(_ service: SlackConnectionService) -> [String: Any] {
+        var row = connectionDictionary(slackConnection(service))
+        row["credential_saved"] = service.hasBotToken()
+        row["bot_token_saved"] = service.hasBotToken()
+        row["signing_secret_saved"] = service.hasSigningSecret()
+        row["app_token_saved"] = service.hasAppToken()
+        row["sender_allowlist"] = service.configuration().senderAllowlist
         let readRooms = row["read_room_allowlist"] as? [String] ?? []
         let writeRooms = row["write_room_allowlist"] as? [String] ?? []
-        row["configured"] = slackService.hasBotToken()
+        row["configured"] = service.hasBotToken()
             && (!readRooms.isEmpty || !writeRooms.isEmpty)
         return row
     }
 
-    private func telegramConnection() -> AgentChannelConnection {
-        let config = telegramService.configuration()
+    private func telegramConnection(_ service: TelegramConnectionService) -> AgentChannelConnection {
+        let config = service.configuration()
         return AgentChannelConnection(
-            id: Self.telegramConnectionId,
-            name: "Telegram",
+            id: service.connectionId,
+            name: Self.accountName(service.connectionId, kind: .telegram),
             kind: .telegram,
             enabled: true,
             supportedActions: [
@@ -1377,13 +1512,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         )
     }
 
-    private func telegramConnectionDictionary() -> [String: Any] {
-        var row = connectionDictionary(telegramConnection())
-        row["credential_saved"] = telegramService.hasBotToken()
+    private func telegramConnectionDictionary(_ service: TelegramConnectionService) -> [String: Any] {
+        var row = connectionDictionary(telegramConnection(service))
+        row["credential_saved"] = service.hasBotToken()
         let readRooms = row["read_room_allowlist"] as? [String] ?? []
         let writeRooms = row["write_room_allowlist"] as? [String] ?? []
         row["configured"] =
-            telegramService.hasBotToken()
+            service.hasBotToken()
             && (!readRooms.isEmpty || !writeRooms.isEmpty)
         return row
     }
@@ -1508,6 +1643,56 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         return row
     }
 
+    /// Reading is local (mail stored as it arrived) and the only write is a
+    /// reply to received mail: email has no edits, deletes, reactions or
+    /// typing, and agents can't start new mail to arbitrary addresses.
+    private func emailConnection(_ channelConnectionId: String) -> AgentChannelConnection {
+        let account = emailService.configuration().account(channelConnectionId: channelConnectionId)
+        let rooms = account?.roomIds ?? []
+        let writeEnabled = account?.writeEnabled ?? false
+        return AgentChannelConnection(
+            id: channelConnectionId,
+            name: Self.accountName(channelConnectionId, kind: .email),
+            kind: .email,
+            enabled: true,
+            supportedActions: [
+                .diagnostics,
+                .listSpaces,
+                .listRooms,
+                .readMessages,
+                .readThread,
+                .searchMessages,
+                .replyThread,
+            ],
+            spaceAllowlist: account.map { [$0.connectionId] } ?? [],
+            readRoomAllowlist: rooms,
+            writeRoomAllowlist: writeEnabled ? rooms : [],
+            writeEnabled: writeEnabled,
+            defaultReadLimit: account?.defaultReadLimit ?? 25,
+            // Credentials belong to the mail accounts (Mail, or the IMAP
+            // password in the Keychain), not to the channel.
+            secrets: [],
+            inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                senderAllowlist: account?.senderAllowlist ?? [],
+                roomAllowlist: rooms,
+                allowUnscopedSpaces: false,
+                allowBotMessages: false,
+                allowSelfMessages: false,
+                requireProviderEventId: true,
+                auditDecisionReason: "email_receive_authorization"
+            )
+        )
+    }
+
+    private func emailConnectionDictionary(_ channelConnectionId: String) -> [String: Any] {
+        let connection = emailConnection(channelConnectionId)
+        var row = connectionDictionary(connection)
+        let watched = !connection.spaceAllowlist.isEmpty
+        row["credential_saved"] = watched
+        row["configured"] = watched && !connection.readRoomAllowlist.isEmpty
+        return row
+    }
+
     private func connectionDictionary(_ connection: AgentChannelConnection) -> [String: Any] {
         [
             "id": connection.id,
@@ -1603,7 +1788,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 }
                 return (.available, nil)
             }
-        case .discord, .slack, .telegram, .imessage, .whatsapp:
+        case .discord, .slack, .telegram, .imessage, .whatsapp, .email:
             switch action {
             case .diagnostics, .listSpaces:
                 return (.available, nil)
@@ -1681,29 +1866,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 inboundAuthorization: connection.inboundAuthorization
             )
         }
-        let dispatch: AgentChannelInboundDispatchConfiguration?
-        switch connection.kind {
-        case .slack:
-            dispatch = slackService.configuration().inboundDispatch
-        case .telegram:
-            dispatch = telegramService.configuration().inboundDispatch
-        case .discord:
-            dispatch = discordService.configuration().inboundDispatch
-        case .imessage:
-            dispatch = imessageService.configuration().inboundDispatch
-        case .whatsapp:
-            dispatch = whatsappService.configuration().inboundDispatch
-        case .n8n:
-            dispatch = connection.n8n?.inboundDispatch
-        case .customHTTP:
-            dispatch = nil
-        }
-        if let dispatch, dispatch.isConfigured {
+        let listeners = EventManager.channelListeners(kind: connection.kind, connectionId: connection.id)
+        if connection.kind != .customHTTP, !listeners.isEmpty {
             return AgentChannelRelayReceivePolicy(
                 status: .available,
-                reason: dispatch.autoReplyEnabled
-                    ? "Verified inbound messages dispatch to the selected agent and replies use existing write allowlists."
-                    : "Verified inbound messages dispatch to the selected agent; automatic provider replies are disabled.",
+                reason: listeners.repliesAutomatically
+                    ? "Verified inbound messages fire this channel's events and replies use existing write allowlists."
+                    : "Verified inbound messages fire this channel's events; automatic provider replies are disabled.",
                 providerEventIdRequired: connection.inboundAuthorization.requireProviderEventId,
                 inboundAuthorization: connection.inboundAuthorization
             )

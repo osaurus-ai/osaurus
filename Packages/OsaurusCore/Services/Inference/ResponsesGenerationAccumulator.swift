@@ -73,7 +73,7 @@ struct ResponsesGenerationAccumulator: Sendable {
             drainStatus = .compatibilityStreamClosed
         case .drainFailed(let message): throw CollectionError.drainFailed(message)
         case .providerEvent, .prefillProgress, .toolEnvelopeDelta, .functionCallAdded, .functionNamePreview,
-            .functionPreviewReset, .functionArgumentsPreview:
+            .functionPreviewReset, .functionArgumentsPreview, .ownerApproval, .participantMessage:
             break
         }
     }

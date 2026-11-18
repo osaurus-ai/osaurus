@@ -131,14 +131,7 @@ final class ServerController: ObservableObject {
     // MARK: - Private Properties
 
     private var serverActor: OsaurusServer?
-    private var agentsCancellable: AnyCancellable?
     private var runtimeSettingsCancellable: AnyCancellable?
-
-    /// Flipped once `applicationDidFinishLaunching` finishes its server
-    /// wiring. The Bonjour-expose Combine sink consults this so it never
-    /// triggers a `restartServer()` while the launch sequence is still
-    /// bringing the server up (mid-launch server churn — see hang audit).
-    private var isLaunchComplete = false
 
     // Singleton holder to allow async access to the current controller instance when injected as EnvironmentObject
     @MainActor
@@ -166,13 +159,6 @@ final class ServerController: ObservableObject {
     }
 
     // MARK: - Public Methods
-
-    /// Marks launch as complete. Called by the AppDelegate at the end of
-    /// `applicationDidFinishLaunching` so the Bonjour-expose Combine sink may
-    /// begin honoring live config changes with a restart.
-    func markLaunchComplete() {
-        isLaunchComplete = true
-    }
 
     /// Brings the embedded HTTP server up on the live controller instance if it
     /// is not already running. Used by the App Intents surface to provide a
@@ -263,12 +249,11 @@ final class ServerController: ObservableObject {
                     + "idleResidency=\(idleResidency)"
             )
 
-            if configuration.exposeToNetwork {
-                BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
+            // The 6-digit pairing, kept for one release beside Sync.
+            if configuration.exposeToNetwork, !MobileConnectMigration.isRetired() {
                 MobileConnectAdvertiser.shared.startAdvertising(port: configuration.port)
             } else {
-                MobileConnectLog.write("server: not exposed to the network, so nothing is advertised for pairing")
-                BonjourAdvertiser.shared.stopAdvertising()
+                MobileConnectLog.write("server: not exposed to the network or pairing retired, nothing advertised")
                 MobileConnectAdvertiser.shared.stopAdvertising()
             }
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
@@ -296,7 +281,6 @@ final class ServerController: ObservableObject {
         print("[Osaurus] Stopping NIO server...")
 
         RelayTunnelManager.shared.disconnectAll()
-        BonjourAdvertiser.shared.stopAdvertising()
         MobileConnectAdvertiser.shared.stopAdvertising()
         isRunning = false
 
@@ -324,7 +308,6 @@ final class ServerController: ObservableObject {
         // Stop mDNS on the quit path too — `stopServer` does this, but
         // `ensureShutdown` is the only teardown the AppDelegate calls, so
         // without this an advertised service could linger past quit.
-        BonjourAdvertiser.shared.stopAdvertising()
         MobileConnectAdvertiser.shared.stopAdvertising()
         isRunning = false
         serverHealth = .stopping
@@ -383,32 +366,6 @@ final class ServerController: ObservableObject {
         if let existingRuntimeSettings {
             synchronizeSpawnBatchLimit(from: existingRuntimeSettings)
         }
-        // Keep exposeToNetwork in sync with Bonjour-enabled agents.
-        // Only turn ON when a Bonjour agent requires it — never force
-        // it OFF, so the user's manual "expose to local network" setting
-        // is preserved across launches.
-        agentsCancellable = AgentManager.shared.$agents
-            .sink { agents in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    let shouldExpose = agents.contains { $0.bonjourEnabled }
-                    // Only act when an agent is forcing exposure ON.
-                    // If no agent requires it, leave the user's setting alone.
-                    guard shouldExpose, !self.configuration.exposeToNetwork else { return }
-                    self.configuration.exposeToNetwork = true
-                    self.runtimeSettings.network.host = "0.0.0.0"
-                    self.saveConfiguration()
-                    ServerRuntimeSettingsStore.save(self.runtimeSettings)
-                    // Only restart for a live config change *after* launch has
-                    // settled. During launch the initial auto-start already
-                    // reads the updated config, so restarting here would be
-                    // redundant server churn racing the launch sequence — the
-                    // mid-launch restart the hang audit flagged.
-                    if self.isRunning && self.isLaunchComplete {
-                        await self.restartServer()
-                    }
-                }
-            }
     }
 
     /// Runs the one-shot legacy → vmlx runtime-settings migration and

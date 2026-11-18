@@ -1,0 +1,20 @@
+{
+  "id": "chat_import_reader.agents-md",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • a repository AGENTS.md",
+  "query": "Import the AGENTS.md from this repo",
+  "notes": "Project instructions for coding agents with no persona: one skill pointing at the document.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "https://github.com/acme/api",
+          "path": "AGENTS.md",
+          "text": "# AGENTS.md\n\n## Setup\n- Install deps with `pnpm install`.\n- Start the dev server with `pnpm dev`.\n\n## Code style\n- TypeScript strict mode.\n- Single quotes, no semicolons.\n\n## Testing\n- Run `pnpm test` before every commit."
+        }
+      ],
+      "items": [{ "kind": "skill", "name": "" }]
+    }
+  }
+}

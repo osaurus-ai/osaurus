@@ -37,21 +37,19 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         /// advertising video support.
         case video(Data, filename: String?)
 
-        /// Spillover variant: image bytes have been written to
-        /// `AttachmentBlobStore` (encrypted) and only a content-address
-        /// hash + size live in the chat-history JSON column.
-        /// Created by `AttachmentBlobStore.spillIfNeeded`.
+        /// Spillover variant: image bytes live in `AttachmentBlobStore`
+        /// and only a content-address hash + size travel with the turn.
         case imageRef(hash: String, byteCount: Int)
 
-        /// Spillover variant: document `content` text has been written
-        /// to `AttachmentBlobStore` (encrypted). `fileSize` is the
-        /// original on-disk size; `hash` indexes the encrypted blob.
+        /// Spillover variant: document `content` text lives in
+        /// `AttachmentBlobStore`. `fileSize` is the original on-disk size;
+        /// `hash` indexes the blob.
         case documentRef(filename: String, hash: String, fileSize: Int)
 
-        /// Spillover variant: audio bytes spilled to encrypted blob store.
+        /// Spillover variant: audio bytes live in the blob store.
         case audioRef(hash: String, byteCount: Int, format: String, filename: String?)
 
-        /// Spillover variant: video bytes spilled to encrypted blob store.
+        /// Spillover variant: video bytes live in the blob store.
         case videoRef(hash: String, byteCount: Int, filename: String?)
 
         private enum CodingKeys: String, CodingKey {
@@ -290,6 +288,17 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         }
     }
 
+    /// Inline bytes `AttachmentBlobStore.spillIfNeeded` would move to a blob.
+    public var hasSpillableInlinePayload: Bool {
+        switch kind {
+        case .image(let data): return data.count >= AttachmentBlobStore.spillThreshold
+        case .document(_, let content, _): return content.utf8.count >= AttachmentBlobStore.spillThreshold
+        case .audio(let data, _, _): return data.count >= Self.audioSpillThresholdBytes
+        case .video(let data, _): return data.count >= Self.videoSpillThresholdBytes
+        case .imageRef, .documentRef, .audioRef, .videoRef: return false
+        }
+    }
+
     /// Returns inline image bytes if present. For `imageRef` variants
     /// you must hydrate via `AttachmentBlobStore.read(hash)`. Use
     /// `loadImageData()` for a unified accessor that lazily resolves
@@ -345,14 +354,12 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     }
 
     /// Resolves the attachment to its raw audio bytes — inline or
-    /// hydrated from the encrypted blob store. Returns `nil` for non-audio
-    /// kinds or read failures.
+    /// hydrated from the blob store. Returns `nil` for non-audio kinds or
+    /// read failures.
     ///
-    /// Memory note: audio attachments are eligible for spillover via
-    /// `AttachmentBlobStore.spillIfNeeded` so chat-history JSON columns
-    /// don't bloat with raw PCM. A 30-second wav at 16 kHz mono is
-    /// ~960 KB inline; spillover writes the bytes to an encrypted blob
-    /// keyed by content-hash and persists only the hash inline.
+    /// Memory note: a 30-second wav at 16 kHz mono is ~960 KB, so audio
+    /// above `audioSpillThresholdBytes` is kept in the blob store and only
+    /// its hash stays on the loaded turn.
     public func loadAudioData() -> Data? {
         switch kind {
         case .audio(let data, _, _):
@@ -365,12 +372,11 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     }
 
     /// Resolves the attachment to its raw video bytes — inline or
-    /// hydrated from the encrypted blob store.
+    /// hydrated from the blob store.
     ///
     /// Memory note: video attachments are heavyweight — even a 1-min mp4
-    /// is typically ~30 MB. Always use spillover (`AttachmentBlobStore.
-    /// spillIfNeeded`) for video; never inline more than a frame
-    /// thumbnail in chat-history JSON.
+    /// is typically ~30 MB — so loaded turns carry a `videoRef` for
+    /// anything above `videoSpillThresholdBytes`.
     public func loadVideoData() -> Data? {
         switch kind {
         case .video(let data, _):
@@ -551,18 +557,14 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
 
     // MARK: - Spillover hooks (memory + disk-cache integration)
 
-    /// Threshold above which inline payloads SHOULD spill to encrypted
-    /// blob storage. Mirrors the existing image-spill policy and keeps
-    /// chat-history JSON columns bounded.
+    /// Size above which a loaded turn carries a blob reference instead of
+    /// the bytes (`SyncConversationMapper`), keeping chat loads small.
     ///
-    /// Audio threshold is lower (256 KB) because chat-history is read
-    /// often and a single 5-min wav (~9.6 MB) read on every history
-    /// open would tax the SQLite page cache.
+    /// Audio uses 256 KB: chats are loaded often, and a 5-min wav
+    /// (~9.6 MB) inline on every open adds up.
     ///
-    /// Video threshold is even lower (64 KB) — virtually all real video
-    /// attachments will spill. The inline path exists only for
-    /// in-memory request lifetimes; persistence always goes via
-    /// `AttachmentBlobStore.spillIfNeeded`.
+    /// Video uses 64 KB, so virtually every real clip is a reference; the
+    /// inline path exists only for in-memory request lifetimes.
     public static let audioSpillThresholdBytes = 256 * 1024
     public static let videoSpillThresholdBytes = 64 * 1024
 }

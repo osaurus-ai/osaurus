@@ -79,7 +79,7 @@ struct ModelMemoryTelemetryTests {
             Set(props.keys)
                 == Set([
                     "phase", "severity", "host_swap_gib", "peak_swap_growth_gib", "process_footprint_gib",
-                    "host_swapins_pages_s", "host_decompressions_pages_s", "total_memory_gb",
+                    "host_swapins_pages_s", "host_decompressions_pages_s", "total_memory_gb", "build_channel",
                 ])
         )
         #expect(props["process_footprint_gib"] as? String == "4-16")

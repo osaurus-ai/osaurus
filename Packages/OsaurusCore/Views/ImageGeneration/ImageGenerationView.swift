@@ -2,31 +2,26 @@
 //  ImageGenerationView.swift
 //  osaurus
 //
-//  Top-level "Images" management view. Mirrors the Voice/Privacy pattern:
-//  a header with sub-tabs for the global Defaults (default models,
-//  permissions, cloud video, load policy) and an Image Models browser for
-//  downloading on-device image bundles (vMLXFlux / mflux).
+//  "Images & Video" (Capabilities): who may start image and video jobs, and
+//  the recent cloud video jobs. Which models those jobs use lives in Models →
+//  Model Defaults; image bundles download from Local Models → Image. Whether
+//  image generation is enabled at all is a per-agent switch (Agents →
+//  Abilities → Subagents).
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - Image Generation Tab Enum
 
-/// Raw values are stable deep-link ids (`imageGenerationSubTabRequest`,
-/// settings-search `subTab`); only the visible titles were renamed.
-enum ImageGenerationTab: String, CaseIterable, AnimatedTabItem {
+/// Retired inner tabs, kept so settings-search `subTab` values and older
+/// links still resolve: Defaults now opens Model Defaults, Image Models opens
+/// Local Models filtered to Image.
+enum ImageGenerationTab: String, CaseIterable {
     case settings = "Settings"
     case models = "Models"
 
-    var title: String {
-        switch self {
-        case .settings: return L("Defaults")
-        case .models: return L("Image Models")
-        }
-    }
-
-    /// Accepts the visible titles alongside the raw values.
     static func resolved(from rawValue: String) -> ImageGenerationTab? {
         if let tab = ImageGenerationTab(rawValue: rawValue) { return tab }
         switch rawValue.lowercased() {
@@ -37,290 +32,165 @@ enum ImageGenerationTab: String, CaseIterable, AnimatedTabItem {
     }
 }
 
-// MARK: - Image Generation View
+// MARK: - Subagent Configuration Editor
+
+/// Shared editing state for `SubagentConfiguration` (`agent-delegation.json`):
+/// persists each edit immediately and reconciles with changes made by other
+/// surfaces, without round-tripping the initial load back through `save()`.
+@MainActor
+final class SubagentConfigurationEditorModel: ObservableObject {
+    @Published var configuration: SubagentConfiguration {
+        didSet {
+            guard hasLoaded, configuration != oldValue else { return }
+            let saved = SubagentConfigurationStore.saveEditorSnapshot(configuration, loadedBaseline: baseline)
+            baseline = saved
+            if saved != configuration { configuration = saved }
+        }
+    }
+
+    private var baseline: SubagentConfiguration
+    private var hasLoaded = false
+    private var subscription: AnyCancellable?
+
+    init() {
+        let latest = SubagentConfigurationStore.snapshot()
+        configuration = latest
+        baseline = latest
+        subscription = NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.reconcile() }
+            }
+    }
+
+    /// Re-snapshot on appear so the UI reflects the latest persisted config,
+    /// then start saving user edits on the next runloop turn.
+    func reload() {
+        hasLoaded = false
+        let latest = SubagentConfigurationStore.snapshot()
+        baseline = latest
+        configuration = latest
+        DispatchQueue.main.async { [weak self] in self?.hasLoaded = true }
+    }
+
+    private func reconcile() {
+        let latest = SubagentConfigurationStore.snapshot()
+        let reconciled = SubagentConfiguration.mergingEditorSnapshot(
+            configuration,
+            loadedBaseline: baseline,
+            live: latest
+        )
+        baseline = latest
+        if reconciled != configuration {
+            let wasLoaded = hasLoaded
+            hasLoaded = false
+            configuration = reconciled
+            hasLoaded = wasLoaded
+        }
+    }
+}
+
+// MARK: - Images & Video View
 
 struct ImageGenerationView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
-    @ObservedObject private var downloads = ImageModelDownloadService.shared
+    @StateObject private var editor = SubagentConfigurationEditorModel()
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    @State private var videoJobs: [DurableMediaJob] = []
 
-    @State private var selectedTab: ImageGenerationTab = .settings
-    @State private var hasAppeared = false
-    @State private var installedCount = 0
-    @State private var showImportSheet = false
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
+    private var imageKindId: String { SubagentCapabilityRegistry.image.id }
 
     var body: some View {
-        VStack(spacing: 0) {
-            headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
+        SettingsPage {
+            SettingsPageHeader(
+                title: "Images & Video",
+                subtitle: "Who can start image and video jobs, and what they made recently."
+            )
+        } content: {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                SettingsSectionHeader(title: "Permissions")
+                SettingsGroup {
+                    SettingsPickerRow(
+                        title: "Image Jobs",
+                        description: "Ask before each image job, always allow, or deny.",
+                        anchorId: "imageGeneration.permission",
+                        selection: permissionSelection(imageKindId),
+                        options: SubagentPermissionPolicy.allCases.map { .init($0, $0.displayName) }
+                    )
+                    SettingsPickerRow(
+                        title: "Video Jobs",
+                        description: "Ask before each local or cloud video job, always allow, or deny.",
+                        anchorId: "imageGeneration.videoPermission",
+                        selection: permissionSelection(SubagentCapabilityRegistry.video.id),
+                        options: SubagentPermissionPolicy.allCases.map { .init($0, $0.displayName) }
+                    )
+                }
+                SettingsGroupFooter(
+                    "Turn image or video generation on per agent under Agents → the agent → Abilities → Subagents."
+                )
+            }
 
-            Group {
-                switch selectedTab {
-                case .settings:
-                    ImageGenerationSettingsTab()
-                case .models:
-                    ImageModelsDownloadView(onImport: { showImportSheet = true })
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                SettingsSectionHeader(title: "Models")
+                SettingsGroup {
+                    SettingsNavigationRow(
+                        icon: ManagementTab.modelDefaults.icon,
+                        title: "Default Image and Video Models",
+                        subtitle: "Generation, edit, text-to-video and image-to-video models, and the image load policy.",
+                        anchorId: "imageGeneration.models"
+                    ) {
+                        managementState.selectedTab = .modelDefaults
+                    }
+                    SettingsNavigationRow(
+                        icon: LocalModelKind.image.icon,
+                        title: "Download Image Models",
+                        subtitle: "On-device image generation and editing bundles.",
+                        anchorId: "imageGeneration.download"
+                    ) {
+                        managementState.openLocalModels(kind: .image)
+                    }
                 }
             }
-            .opacity(hasAppeared ? 1 : 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
-        .task { await refreshInstalledCount() }
-        .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
-            Task { await refreshInstalledCount() }
-        }
-        .onAppear {
-            applySubTabRequestIfNeeded()
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
+
+            if !videoJobs.isEmpty {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
+                    SettingsSectionHeader(title: "Recent Video Jobs")
+                    SettingsGroup {
+                        ForEach(videoJobs.prefix(10)) { job in
+                            videoJobRow(job)
+                        }
+                    }
+                    SettingsGroupFooter(
+                        "Video can run locally on this Mac or on connected cloud providers. Local jobs are free and stop when cancelled. Paid cloud jobs are quoted before queueing and keep being recovered after Stop or relaunch because providers do not offer upstream cancellation."
+                    )
+                }
+                .settingsLandingAnchor("imageGeneration.video")
             }
+        }
+        .environment(\.theme, theme)
+        .onAppear {
+            editor.reload()
+            applySubTabRequestIfNeeded()
+            Task { await refreshVideoJobs() }
         }
         .onChange(of: managementState.imageGenerationSubTabRequest) { _, _ in
             applySubTabRequestIfNeeded()
         }
-        .sheet(isPresented: $showImportSheet) {
-            HuggingFaceImportSheet(
-                onImported: { _ in
-                    // A language model was pasted — route the user to the Models
-                    // window where it has been resolved into the catalog.
-                    showImportSheet = false
-                    managementState.selectedTab = .models
-                },
-                onImportedImage: { _ in
-                    showImportSheet = false
-                    Task { await refreshInstalledCount() }
-                }
-            )
-            .environment(\.theme, themeManager.currentTheme)
-        }
-    }
-
-    // MARK: - Header
-
-    private var headerView: some View {
-        ManagerHeaderWithTabs(
-            title: L("Images"),
-            subtitle: headerSubtitle
-        ) {
-            if selectedTab == .models {
-                HeaderSecondaryButton(L("Import"), icon: "square.and.arrow.down") {
-                    showImportSheet = true
-                }
-            }
-        } tabsRow: {
-            HeaderTabsRow(
-                selection: $selectedTab,
-                counts: installedCount > 0 ? [.models: installedCount] : nil,
-                badges: activeDownloadCount > 0
-                    ? [.models: activeDownloadCount]
-                    : nil
-            )
-        }
-    }
-
-    private var headerSubtitle: String {
-        installedCount > 0
-            ? L("Generate and edit images locally or with connected providers • \(installedCount) on device")
-            : L("Generate and edit images locally or with connected providers")
-    }
-
-    /// Number of image bundles currently downloading, for the Models tab badge.
-    private var activeDownloadCount: Int {
-        downloads.states.values.filter { state in
-            if case .downloading = state { return true }
-            return false
-        }.count
-    }
-
-    // MARK: - Helpers
-
-    private func applySubTabRequestIfNeeded() {
-        guard let requested = managementState.imageGenerationSubTabRequest else { return }
-        if let tab = ImageGenerationTab.resolved(from: requested) {
-            selectedTab = tab
-        }
-        managementState.imageGenerationSubTabRequest = nil
-    }
-
-    private func refreshInstalledCount() async {
-        let models = (try? await ImageGenerationService.shared.availableModels()) ?? []
-        installedCount = models.count
-    }
-}
-
-// MARK: - Image Generation Settings Tab
-
-/// The global image defaults: the fallback generation/edit models, the
-/// permission gates, the cloud video defaults, and — under Advanced — the
-/// GPU residency (load) policy for image jobs. Whether image generation is
-/// *enabled* is a per-agent toggle (Agents → Subagents), so there is no
-/// master switch here. All persist to the shared `SubagentConfiguration`
-/// store (`agent-delegation.json`).
-private struct ImageGenerationSettingsTab: View {
-    @Environment(\.theme) private var theme
-
-    @State private var configuration = SubagentConfigurationStore.snapshot()
-    @State private var configurationBaseline = SubagentConfigurationStore.snapshot()
-    @State private var pickerItems: [ModelPickerItem] = []
-    @State private var videoJobs: [DurableMediaJob] = []
-
-    /// Gates the persist-on-change save until the initial snapshot/re-snapshot
-    /// has landed, so loading the tab (which assigns `configuration`) never
-    /// round-trips a transient/default value back through `save()` and clobbers
-    /// the stored config. Mirrors `AgentsView`'s `isInitialLoadComplete`.
-    @State private var hasLoaded = false
-
-    private var imageKindId: String { SubagentCapabilityRegistry.image.id }
-
-    private static let advancedAnchorIds: Set<String> = ["imageGeneration.loadPolicy"]
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                SettingsSection(title: "Default Models", icon: "photo.stack", anchorId: "imageGeneration.models") {
-                    sectionBlurb(
-                        "The models image jobs fall back to. Each agent can override these in its own Subagents settings."
-                    )
-
-                    controlRow("Image generation model") {
-                        targetDropdown(
-                            selection: $configuration.defaultImageGenerationTarget,
-                            candidates: pickerItems.imageGenerationDelegateCandidates
-                        )
-                    }
-                    controlRow("Edit model") {
-                        modelDropdown(
-                            \.defaultImageEditModelId,
-                            candidates: pickerItems.imageEditDelegateCandidates
-                        )
-                    }
-                    if pickerItems.imageEditDelegateCandidates.isEmpty {
-                        editModelEmptyStateHint
-                    }
-                }
-
-                SettingsSection(title: "Permissions", icon: "hand.raised") {
-                    SettingsPickerRow(
-                        title: "Image jobs",
-                        description: "Ask before each image job, always allow, or deny.",
-                        anchorId: "imageGeneration.permission",
-                        selection: permissionSelection,
-                        options: SubagentPermissionPolicy.allCases.map { .init($0, $0.displayName) }
-                    )
-                    SettingsPickerRow(
-                        title: "Video jobs",
-                        description: "Ask before each local or cloud video job, always allow, or deny.",
-                        anchorId: "imageGeneration.videoPermission",
-                        selection: videoPermissionSelection,
-                        options: SubagentPermissionPolicy.allCases.map { .init($0, $0.displayName) }
-                    )
-                }
-
-                SettingsSection(title: "Video", icon: "video", anchorId: "imageGeneration.video") {
-                    sectionBlurb(
-                        "Video can run locally on this Mac or on connected cloud providers. Local jobs are free and stop when cancelled. Paid cloud jobs are quoted before queueing and keep being recovered after Stop or relaunch because providers do not offer upstream cancellation."
-                    )
-                    controlRow("Text-to-video model") {
-                        targetDropdown(
-                            selection: $configuration.defaultTextToVideoTarget,
-                            candidates: videoCandidates(.textToVideo)
-                        )
-                    }
-                    controlRow("Image-to-video model") {
-                        targetDropdown(
-                            selection: $configuration.defaultImageToVideoTarget,
-                            candidates: videoCandidates(.imageToVideo)
-                        )
-                    }
-                    if pickerItems.videoGenerationDelegateCandidates.isEmpty {
-                        Text(
-                            "Add a native Wan bundle to your image models folder, connect a Venice API-key provider, or enable Osaurus Cloud when its media catalog is available.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                    }
-                    if !videoJobs.isEmpty {
-                        SettingsSubsection(label: "Recent Jobs") {
-                            VStack(spacing: 10) {
-                                ForEach(videoJobs.prefix(10)) { job in
-                                    videoJobRow(job)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                SettingsAdvancedDisclosure(anchorIds: Self.advancedAnchorIds) {
-                    controlRow(
-                        "Image model load policy",
-                        hint: "Controls image-model cleanup after a job. The shared Swap local models for subagents setting controls whether the invoking chat model unloads. Restoring that parent always unloads the image model first."
-                    ) {
-                        SettingsMenuDropdown(
-                            options: SubagentImageLoadPolicy.visibleCases.map { value in
-                                SettingsMenuDropdown<SubagentImageLoadPolicy>.Option(
-                                    tag: value,
-                                    label: Text(
-                                        LocalizedStringKey(value.displayName),
-                                        bundle: .module
-                                    )
-                                )
-                            },
-                            selection: imageCleanupSelection
-                        )
-                    }
-                    .settingsLandingAnchor("imageGeneration.loadPolicy")
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
-        }
-        .onReceive(ModelPickerItemCache.shared.$items) { options in
-            pickerItems = options
-        }
-        // Re-snapshot the store on appear so the UI always reflects the latest
-        // persisted config even if the `@State` default was captured against a
-        // cold/stale cache (the "all settings reset on open" report). The save
-        // guard below is flipped on the next runloop tick so this assignment —
-        // and the change-notification re-snapshot — never round-trip back
-        // through `save()`.
-        .onAppear {
-            let latest = SubagentConfigurationStore.snapshot()
-            configurationBaseline = latest
-            configuration = latest
-            Task { await refreshVideoJobs() }
-            DispatchQueue.main.async { hasLoaded = true }
-        }
         .onReceive(NotificationCenter.default.publisher(for: .mediaJobChanged)) { _ in
             Task { await refreshVideoJobs() }
         }
-        // Persist immediately on edit, mirroring the Settings → Subagents card.
-        // Gated on `hasLoaded` so only real user edits write back.
-        .onChange(of: configuration) { _, newValue in
-            guard hasLoaded else { return }
-            let saved = SubagentConfigurationStore.saveEditorSnapshot(
-                newValue,
-                loadedBaseline: configurationBaseline
-            )
-            configurationBaseline = saved
-            if saved != newValue { configuration = saved }
-        }
-        // Re-snapshot if another surface mutates the shared store.
-        .onReceive(
-            NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
-        ) { _ in
-            let latest = SubagentConfigurationStore.snapshot()
-            let reconciled = SubagentConfiguration.mergingEditorSnapshot(
-                configuration,
-                loadedBaseline: configurationBaseline,
-                live: latest
-            )
-            configurationBaseline = latest
-            if reconciled != configuration { configuration = reconciled }
+    }
+
+    /// Forwards the retired Defaults / Image Models sub-tabs to their new homes.
+    private func applySubTabRequestIfNeeded() {
+        guard let requested = managementState.imageGenerationSubTabRequest else { return }
+        managementState.imageGenerationSubTabRequest = nil
+        switch ImageGenerationTab.resolved(from: requested) {
+        case .settings: managementState.selectedTab = .modelDefaults
+        case .models: managementState.openLocalModels(kind: .image)
+        case nil: break
         }
     }
 
@@ -329,18 +199,25 @@ private struct ImageGenerationSettingsTab: View {
         videoJobs = await MediaGenerationCoordinator.shared.videoJobs()
     }
 
+    private func permissionSelection(_ kindId: String) -> Binding<SubagentPermissionPolicy> {
+        Binding(
+            get: { editor.configuration.permissionDefaults.policy(for: kindId) },
+            set: { editor.configuration.permissionDefaults.setPolicy($0, for: kindId) }
+        )
+    }
+
     private func videoJobRow(_ job: DurableMediaJob) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             Image(systemName: job.state == .completed ? "checkmark.circle.fill" : "clock")
-                .foregroundColor(job.state == .completed ? .green : theme.tertiaryText)
-            VStack(alignment: .leading, spacing: 2) {
+                .foregroundColor(job.state == .completed ? theme.status.success.foreground : theme.text.tertiary)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(job.modelID)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                 Text(videoJobDetail(job))
-                    .font(.system(size: 10))
-                    .foregroundColor(job.state == .failed ? .red : theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(job.state == .failed ? theme.status.error.foreground : theme.text.tertiary)
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
@@ -365,88 +242,95 @@ private struct ImageGenerationSettingsTab: View {
         }
         return values.joined(separator: " · ")
     }
+}
 
-    // MARK: - Controls
+// MARK: - Image & Video Default Models
 
-    /// One settings row: label (and optional hint) on the leading edge with the
-    /// control pinned to the trailing edge — the same shape as `SettingsToggle`
-    /// and the per-agent Subagents rows. This lets the control sit naturally at
-    /// the right (filling the row) instead of in a narrow, left-pinned box.
-    private func controlRow<Control: View>(
-        _ label: String,
-        hint: String? = nil,
-        @ViewBuilder control: () -> Control
-    ) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                if let hint {
-                    Text(LocalizedStringKey(hint), bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+/// The models image and video jobs fall back to, plus the image-model load
+/// policy. Rendered on Models → Model Defaults; each agent can override the
+/// models in its own Subagents settings.
+struct ImageVideoDefaultModelsGroup: View {
+    @ObservedObject var editor: SubagentConfigurationEditorModel
+
+    @State private var pickerItems: [ModelPickerItem] = []
+
+    var body: some View {
+        SettingsSection(title: "Images & Video") {
+                SettingsRow(
+                    title: "Image Generation Model",
+                    description: "Used when an agent generates an image without naming a model.",
+                    anchorId: "modelDefaults.imageGeneration"
+                ) {
+                    targetDropdown(
+                        selection: $editor.configuration.defaultImageGenerationTarget,
+                        candidates: pickerItems.imageGenerationDelegateCandidates
+                    )
                 }
-            }
-            Spacer(minLength: 12)
-            control()
+                SettingsRow(
+                    title: "Edit Model",
+                    description: pickerItems.imageEditDelegateCandidates.isEmpty
+                        ? "No image-edit models installed, so editing is unavailable. Download an edit-capable model (e.g. Qwen-Image-Edit) from Local Models → Image."
+                        : "Used when an agent edits an image.",
+                    anchorId: "modelDefaults.imageEdit"
+                ) {
+                    menuPicker(
+                        options: modelOptions(
+                            candidates: pickerItems.imageEditDelegateCandidates,
+                            currentId: editor.configuration.defaultImageEditModelId
+                        ),
+                        selection: Binding(
+                            get: { editor.configuration.defaultImageEditModelId ?? "" },
+                            set: {
+                                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                                editor.configuration.defaultImageEditModelId = trimmed.isEmpty ? nil : trimmed
+                            }
+                        )
+                    )
+                }
+                SettingsRow(
+                    title: "Text-to-Video Model",
+                    description: videoHint,
+                    anchorId: "modelDefaults.textToVideo"
+                ) {
+                    targetDropdown(
+                        selection: $editor.configuration.defaultTextToVideoTarget,
+                        candidates: videoCandidates(.textToVideo)
+                    )
+                }
+                SettingsRow(
+                    title: "Image-to-Video Model",
+                    description: "",
+                    anchorId: "modelDefaults.imageToVideo"
+                ) {
+                    targetDropdown(
+                        selection: $editor.configuration.defaultImageToVideoTarget,
+                        candidates: videoCandidates(.imageToVideo)
+                    )
+                }
+                SettingsRow(
+                    title: "Image Model Load Policy",
+                    description:
+                        "Controls image-model cleanup after a job. Swap Local Models for Subagents (Orchestrator) controls whether the invoking chat model unloads; restoring it always unloads the image model first.",
+                    anchorId: "imageGeneration.loadPolicy"
+                ) {
+                    menuPicker(
+                        options: SubagentImageLoadPolicy.visibleCases.map { value in
+                            .init(tag: value, label: Text(LocalizedStringKey(value.displayName), bundle: .module))
+                        },
+                        selection: Binding(
+                            get: { editor.configuration.imageJobLoadPolicy.effectiveCleanupPolicy },
+                            set: { editor.configuration.imageJobLoadPolicy = $0 }
+                        )
+                    )
+                }
         }
+        .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
     }
 
-    /// Section-level descriptive copy shown above a section's control rows.
-    private func sectionBlurb(_ text: String) -> some View {
-        Text(LocalizedStringKey(text), bundle: .module)
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Shown under the Edit model row when no image-edit model is installed.
-    /// The dropdown can only offer "Choose automatically" in that state, so
-    /// without this the empty control looks broken. Explains why editing is
-    /// unavailable and offers a one-tap jump to the Models browser to download
-    /// an edit-capable bundle (e.g. Qwen-Image-Edit), which makes the dropdown
-    /// populate and chat image-editing work.
-    private var editModelEmptyStateHint: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-            Text(
-                "No image-edit models installed, so editing is unavailable. Download an edit-capable model (e.g. Qwen-Image-Edit) to enable it.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Button {
-                ManagementStateManager.shared.imageGenerationSubTabRequest =
-                    ImageGenerationTab.models.rawValue
-            } label: {
-                Text("Browse models", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
-        }
-    }
-
-    /// The trailing image-model dropdown for one default-model field.
-    /// `nil` (Choose automatically) resolves to the first ready model at run
-    /// time; a stored id no longer on disk shows an "(unavailable)" row so the
-    /// selection isn't silently dropped.
-    private func modelDropdown(
-        _ keyPath: WritableKeyPath<SubagentConfiguration, String?>,
-        candidates: [ModelPickerItem]
-    ) -> some View {
-        SettingsMenuDropdown(
-            options: modelOptions(candidates: candidates, currentId: configuration[keyPath: keyPath]),
-            selection: modelBinding(keyPath)
-        )
+    private var videoHint: String {
+        pickerItems.videoGenerationDelegateCandidates.isEmpty
+            ? "Add a native Wan bundle to your image models folder, connect a Venice API-key provider, or enable Osaurus Cloud when its media catalog is available."
+            : "Video runs on this Mac for free, or on connected cloud providers quoted before queueing."
     }
 
     private func videoCandidates(_ kind: MediaGenerationKind) -> [ModelPickerItem] {
@@ -457,7 +341,7 @@ private struct ImageGenerationSettingsTab: View {
         selection: Binding<MediaModelTarget?>,
         candidates: [ModelPickerItem]
     ) -> some View {
-        SettingsMenuDropdown(
+        menuPicker(
             options: targetOptions(candidates: candidates, current: selection.wrappedValue),
             selection: selection
         )
@@ -466,25 +350,21 @@ private struct ImageGenerationSettingsTab: View {
     private func targetOptions(
         candidates: [ModelPickerItem],
         current: MediaModelTarget?
-    ) -> [SettingsMenuDropdown<MediaModelTarget?>.Option] {
-        var options: [SettingsMenuDropdown<MediaModelTarget?>.Option] = [
+    ) -> [MenuOption<MediaModelTarget?>] {
+        var options: [MenuOption<MediaModelTarget?>] = [
             .init(tag: nil, label: Text("Choose automatically", bundle: .module))
         ]
         let targets = candidates.map {
             $0.mediaModel?.target ?? MediaModelTarget(backend: .local, modelID: $0.id)
         }
         if let current, !targets.contains(current) {
-            options.append(
-                .init(
-                    tag: current,
-                    label: Text(verbatim: "\(current.modelID) (unavailable)")
-                )
-            )
+            options.append(.init(tag: current, label: Text(verbatim: "\(current.modelID) (unavailable)")))
         }
         options += zip(candidates, targets).map { item, target in
-            let price = item.mediaModel?.pricing?.minimumUSD.map {
-                " · from \(OsaurusRouter.formatUSDAsCredits($0))"
-            } ?? ""
+            let price =
+                item.mediaModel?.pricing?.minimumUSD.map {
+                    " · from \(OsaurusRouter.formatUSDAsCredits($0))"
+                } ?? ""
             return .init(
                 tag: Optional(target),
                 label: Text(verbatim: "\(item.displayName) · \(item.source.displayName)\(price)")
@@ -493,147 +373,39 @@ private struct ImageGenerationSettingsTab: View {
         return options
     }
 
-    /// The dropdown rows for a model picker: "Choose automatically" first, a
-    /// stale "(unavailable)" row when the stored id is no longer downloaded,
-    /// then the live candidates.
+    /// "Choose automatically" first, a stale "(unavailable)" row when the
+    /// stored id is no longer downloaded, then the live candidates.
     private func modelOptions(
         candidates: [ModelPickerItem],
         currentId: String?
-    ) -> [SettingsMenuDropdown<String>.Option] {
-        var options: [SettingsMenuDropdown<String>.Option] = [
+    ) -> [MenuOption<String>] {
+        var options: [MenuOption<String>] = [
             .init(tag: "", label: Text("Choose automatically", bundle: .module))
         ]
-        if let currentId,
-            !currentId.isEmpty,
-            !candidates.contains(where: { $0.id == currentId })
-        {
-            options.append(
-                .init(tag: currentId, label: Text("\(currentId) (unavailable)", bundle: .module))
-            )
+        if let currentId, !currentId.isEmpty, !candidates.contains(where: { $0.id == currentId }) {
+            options.append(.init(tag: currentId, label: Text("\(currentId) (unavailable)", bundle: .module)))
         }
         options += candidates.map { .init(tag: $0.id, label: Text(verbatim: $0.displayName)) }
         return options
     }
-
-    // MARK: - Bindings
-
-    /// Two-way binding to an optional model-id default, mapping "" (the
-    /// "Choose automatically" row) to `nil`. Shared by the generation/edit rows.
-    private func modelBinding(
-        _ keyPath: WritableKeyPath<SubagentConfiguration, String?>
-    ) -> Binding<String> {
-        Binding(
-            get: { configuration[keyPath: keyPath] ?? "" },
-            set: { configuration[keyPath: keyPath] = normalized($0) }
-        )
-    }
-
-    private var imageCleanupSelection: Binding<SubagentImageLoadPolicy> {
-        Binding(
-            get: { configuration.imageJobLoadPolicy.effectiveCleanupPolicy },
-            set: { configuration.imageJobLoadPolicy = $0 }
-        )
-    }
-
-    private var permissionSelection: Binding<SubagentPermissionPolicy> {
-        Binding(
-            get: { configuration.permissionDefaults.policy(for: imageKindId) },
-            set: { configuration.permissionDefaults.setPolicy($0, for: imageKindId) }
-        )
-    }
-
-    private var videoPermissionSelection: Binding<SubagentPermissionPolicy> {
-        Binding(
-            get: {
-                configuration.permissionDefaults.policy(
-                    for: SubagentCapabilityRegistry.video.id
-                )
-            },
-            set: {
-                configuration.permissionDefaults.setPolicy(
-                    $0,
-                    for: SubagentCapabilityRegistry.video.id
-                )
-            }
-        )
-    }
-
-    /// Trims whitespace; an empty result becomes `nil` (Choose automatically).
-    private func normalized(_ value: String) -> String? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
 }
 
-// MARK: - Settings Menu Dropdown
+// MARK: - Menu Options
 
-/// The app's compact custom dropdown, matching `presetPickerMenu` in the
-/// Computer Use settings: a borderless `Menu` that hugs its content on the
-/// shared tertiary-fill control chrome, with the selected value followed by a
-/// trailing `chevron.up.chevron.down`. Pinned to the trailing edge of a
-/// `controlRow`, it reads like every other settings control rather than a raw
-/// native pop-up. (`.fixedSize()` is what lets the borderless `Menu` keep this
-/// custom label/background — without it the control collapses to the system
-/// default chevron-and-text rendering.)
-private struct SettingsMenuDropdown<Tag: Hashable>: View {
-    @Environment(\.theme) private var theme
+/// One pop-up row with a fully-formed `Text`, so each call site keeps its
+/// own localization (localized policy names, verbatim model names).
+private struct MenuOption<Tag: Hashable>: Identifiable {
+    let tag: Tag
+    let label: Text
+    var id: Tag { tag }
+}
 
-    /// One selectable row. `label` is a fully-formed `Text` so each call site
-    /// keeps its own localization (localized policy names, verbatim model names).
-    struct Option: Identifiable {
-        let tag: Tag
-        let label: Text
-        var id: Tag { tag }
+@MainActor
+private func menuPicker<Tag: Hashable>(options: [MenuOption<Tag>], selection: Binding<Tag>) -> some View {
+    SettingsMenuPicker(selection: selection) {
+        ForEach(options) { $0.label.tag($0.tag) }
     }
-
-    let options: [Option]
-    @Binding var selection: Tag
-
-    private var currentLabel: Text {
-        options.first { $0.tag == selection }?.label ?? Text(verbatim: "")
-    }
-
-    var body: some View {
-        Menu {
-            ForEach(options) { option in
-                Button {
-                    selection = option.tag
-                } label: {
-                    if option.tag == selection {
-                        HStack {
-                            Image(systemName: "checkmark")
-                            option.label
-                        }
-                    } else {
-                        option.label
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                currentLabel
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-    }
+    .settingsPickerHugging()
 }
 
 // MARK: - Preview

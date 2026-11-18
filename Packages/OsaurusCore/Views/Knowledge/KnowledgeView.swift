@@ -19,7 +19,7 @@ import SwiftUI
 /// afternoon of agent work produced enough rows in testing to push the
 /// collection grid off screen. It stays hidden until an agent has actually
 /// written something.
-enum KnowledgeTab: String, CaseIterable, AnimatedTabItem {
+enum KnowledgeTab: String, CaseIterable {
     case collections
     case history
 
@@ -31,20 +31,23 @@ enum KnowledgeTab: String, CaseIterable, AnimatedTabItem {
     }
 }
 
+private struct CollectionCreateRequest: Identifiable {
+    let id = UUID()
+    var name = ""
+    /// Project the created collection is granted to (a project page's Add
+    /// Collection shortcut).
+    var grantProjectId: UUID?
+}
+
 struct KnowledgeView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var knowledgeManager = KnowledgeManager.shared
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
-    @State private var isCreating = false
-    /// Name prefilled into the create sheet by a deep link (e.g. the project
-    /// page's Add Collection shortcut). Cleared when the sheet closes.
-    @State private var creationPrefillName = ""
-    /// Project the created collection should be granted to, from the same
-    /// deep link. Captured into the save closure, so clearing on dismiss
-    /// can't race the async create.
-    @State private var creationGrantProjectId: UUID?
+    /// The open create sheet. Its prefill travels with it: a sheet built
+    /// from separate state can render before that state lands.
+    @State private var createRequest: CollectionCreateRequest?
     @State private var editingCollection: KnowledgeCollection?
     @State private var hasAppeared = false
     @State private var successMessage: String?
@@ -67,19 +70,28 @@ struct KnowledgeView: View {
     @State private var writeRuns: [KnowledgeWriteRun] = []
     @State private var reviewingProposal: KnowledgeProposal?
     @State private var selectedTab: KnowledgeTab = .collections
+    @State private var searchText = ""
+
+    private var filteredCollections: [KnowledgeCollection] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return knowledgeManager.collections }
+        return knowledgeManager.collections.filter {
+            $0.name.localizedCaseInsensitiveContains(query) || $0.summary.localizedCaseInsensitiveContains(query)
+        }
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerView
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .animation(theme.motion.springAnimation, value: hasAppeared)
 
             ZStack {
                 if knowledgeManager.collections.isEmpty {
                     SettingsEmptyState(
                         icon: "books.vertical.fill",
-                        title: L("Add Your First Knowledge Collection"),
+                        title: "Add Your First Knowledge Collection",
                         subtitle: L(
                             "Point Osaurus at a folder of guides, templates, and standards and grant it to agents so they can consult it on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are supported."
                         ),
@@ -87,27 +99,30 @@ struct KnowledgeView: View {
                             .init(
                                 icon: "doc.text",
                                 title: L("Guides & Policies"),
-                                description: L("How your team does things, written down")
+                                description: L("How your team does things, written down"),
+                                action: { createCollection(named: L("Guides & Policies")) }
                             ),
                             .init(
                                 icon: "square.on.square",
                                 title: L("Templates"),
-                                description: L("Wording you reuse, like email replies")
+                                description: L("Wording you reuse, like email replies"),
+                                action: { createCollection(named: L("Templates")) }
                             ),
                             .init(
                                 icon: "book",
                                 title: L("How-To Steps"),
-                                description: L("Simple instructions for everyday tasks")
+                                description: L("Simple instructions for everyday tasks"),
+                                action: { createCollection(named: L("How-To Steps")) }
                             ),
                         ],
                         primaryAction: .init(
                             title: L("Add Collection"),
                             icon: "plus",
-                            handler: { isCreating = true }
+                            handler: { createRequest = CollectionCreateRequest() }
                         ),
                         hasAppeared: hasAppeared
                     )
-                    .padding(.horizontal, 32)
+                    .padding(.horizontal, theme.space.s32)
                     // Falls back to Collections rather than showing an empty
                     // tab: the selector is gone once the log is, and a
                     // selection left pointing at it would strand the view.
@@ -121,12 +136,12 @@ struct KnowledgeView: View {
                         curationSection
                         LazyVGrid(
                             columns: [
-                                GridItem(.flexible(minimum: 300), spacing: 20),
-                                GridItem(.flexible(minimum: 300), spacing: 20),
+                                GridItem(.flexible(minimum: 300), spacing: theme.libraryGridGap),
+                                GridItem(.flexible(minimum: 300), spacing: theme.libraryGridGap),
                             ],
-                            spacing: 20
+                            spacing: theme.libraryGridGap
                         ) {
-                            ForEach(Array(knowledgeManager.collections.enumerated()), id: \.element.id) {
+                            ForEach(Array(filteredCollections.enumerated()), id: \.element.id) {
                                 index,
                                 collection in
                                 KnowledgeCollectionCard(
@@ -163,7 +178,7 @@ struct KnowledgeView: View {
                                 )
                             }
                         }
-                        .padding(24)
+                        .settingsPageInsets()
                     }
                     .opacity(hasAppeared ? 1 : 0)
                 }
@@ -173,28 +188,22 @@ struct KnowledgeView: View {
                         Spacer()
                         ThemedToastView(message, type: toastType)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .padding(.bottom, 20)
+                            .padding(.bottom, theme.space.s16)
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
-        .sheet(
-            isPresented: $isCreating,
-            onDismiss: {
-                creationPrefillName = ""
-                creationGrantProjectId = nil
-            }
-        ) {
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
+        .sheet(item: $createRequest) { request in
             KnowledgeCollectionEditorSheet(
                 collection: nil,
-                initialName: creationPrefillName,
+                initialName: request.name,
                 onSave: {
-                    [grantProjectId = creationGrantProjectId]
+                    [grantProjectId = request.grantProjectId]
                     name, summary, folderPath, remoteURL, includeGlobs, excludeGlobs in
-                    isCreating = false
+                    createRequest = nil
                     if let remoteURL, !remoteURL.isEmpty {
                         showSuccess("Cloning \"\(name)\"…")
                         Task {
@@ -229,7 +238,7 @@ struct KnowledgeView: View {
                         }
                     }
                 },
-                onCancel: { isCreating = false }
+                onCancel: { createRequest = nil }
             )
         }
         .sheet(item: $editingCollection) { collection in
@@ -343,7 +352,7 @@ struct KnowledgeView: View {
             reloadCuration()
         }
         .onAppear {
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
+            withAnimation(theme.motion.standard.delay(0.05)) {
                 hasAppeared = true
             }
             reloadCuration()
@@ -389,12 +398,14 @@ struct KnowledgeView: View {
         detailCollection = collection
     }
 
+    private func createCollection(named name: String) {
+        createRequest = CollectionCreateRequest(name: name)
+    }
+
     private func applyPendingCreateRequest() {
         guard let request = ManagementStateManager.shared.pendingKnowledgeCreate else { return }
         ManagementStateManager.shared.pendingKnowledgeCreate = nil
-        creationPrefillName = request.prefillName
-        creationGrantProjectId = request.grantProjectId
-        isCreating = true
+        createRequest = CollectionCreateRequest(name: request.prefillName, grantProjectId: request.grantProjectId)
     }
 
     /// Grant a freshly created collection to the deep link's project, so the
@@ -414,16 +425,16 @@ struct KnowledgeView: View {
     @ViewBuilder
     private var curationSection: some View {
         if !pendingProposals.isEmpty || !openTickets.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Text("Curation", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     "Agents leave a note here when a document looks out of date but fixing it was not the task at hand. Open one in a chat to have an agent correct it; you review the change before it is saved.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
                 // Drain-only. Nothing creates proposals any more — the tool
@@ -436,23 +447,22 @@ struct KnowledgeView: View {
                         "Left over from the old review flow. Approve or dismiss these; agents now write documents directly, with your approval at the time.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(.orange)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.warning.foreground)
                     .fixedSize(horizontal: false, vertical: true)
                 }
 
                 ForEach(pendingProposals) { proposal in
-                    HStack(spacing: 10) {
+                    HStack(spacing: theme.space.s8) {
                         Image(systemName: "doc.badge.ellipsis")
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.accentColor)
-                        VStack(alignment: .leading, spacing: 1) {
+                            .glyphSize(.label)
+                            .foregroundColor(theme.text.link)
+                        SettingsRowText(compact: true) {
                             Text(String(format: L("Proposal #%lld: %@"), proposal.id, proposal.relPath))
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(theme.primaryText)
+                                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        } description: {
                             Text(proposal.rationale)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
+                                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                                 .lineLimit(2)
                         }
                         Spacer(minLength: 8)
@@ -460,36 +470,35 @@ struct KnowledgeView: View {
                             reviewingProposal = proposal
                         } label: {
                             Text("Review", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
+                                .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                         }
                     }
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+                    .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
+                    .settingsChrome(.inset)
                 }
 
                 ForEach(openTickets) { ticket in
-                    HStack(spacing: 10) {
+                    HStack(spacing: theme.space.s8) {
                         Image(systemName: "exclamationmark.bubble")
-                            .font(.system(size: 13))
-                            .foregroundColor(.orange)
-                        VStack(alignment: .leading, spacing: 1) {
+                            .glyphSize(.label)
+                            .foregroundColor(theme.status.warning.foreground)
+                        SettingsRowText(compact: true) {
                             Text(String(format: L("Ticket #%lld: %@"), ticket.id, ticket.relPath))
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(theme.primaryText)
+                                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        } description: {
                             Text(ticket.reason)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
+                                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                                 .lineLimit(2)
                             Text("Open this in a chat to have it fixed", bundle: .module)
-                                .font(.system(size: 10))
-                                .foregroundColor(.orange)
+                                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                                .foregroundColor(theme.status.warning.foreground)
                         }
                         Spacer(minLength: 8)
                         Button {
                             startTicketFix(for: ticket)
                         } label: {
                             Text("Fix in a chat", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
+                                .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                         }
                         Button {
                             Task.detached(priority: .userInitiated) {
@@ -497,16 +506,16 @@ struct KnowledgeView: View {
                             }
                         } label: {
                             Text("Dismiss", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
+                                .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                                .foregroundColor(theme.text.secondary)
                         }
                     }
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+                    .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
+                    .settingsChrome(.inset)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
+            .padding(.horizontal, theme.settingsPageInset)
+            .padding(.top, theme.settingsPageTop)
         }
     }
 
@@ -559,21 +568,18 @@ struct KnowledgeView: View {
     /// duplicate strip of the same rows; with a tab of its own, that was the
     /// same list rendered twice on one screen.
     private var fullHistorySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Text(
                 "Everything agents have written to your collections, newest first. Reverting puts the document back the way it was before that run.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             historyList
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 20)
-        .padding(.bottom, 24)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .settingsPageInsets()
     }
 
     private var historyList: some View {
@@ -599,7 +605,9 @@ struct KnowledgeView: View {
                             )
                         }
                     } else if failures.isEmpty {
-                        showSuccess(L("Reverted \(run.records.count) documents"))
+                        showSuccess(
+                            run.records.count == 1
+                                ? L("Reverted 1 document") : L("Reverted \(run.records.count) documents"))
                     } else {
                         // Best-effort per record: say what could not be put
                         // back rather than implying the whole run undid.
@@ -671,62 +679,54 @@ struct KnowledgeView: View {
         }
     }
 
-    /// Tabs live inside the header container, not under it.
-    ///
-    /// `ManagerHeaderWithTabs` is what paints the header band and owns the
-    /// row's insets; a selector placed in the body below it sits on the page
-    /// background with nothing to anchor to, and reads as floating.
-    ///
-    /// Still only rendered once an agent has written something, so the common
-    /// case keeps the plain header it has always had.
+    /// History (what agents wrote) opens as a pushed page; its button only
+    /// appears once an agent has actually written something.
     @ViewBuilder
     private var headerView: some View {
-        if writeRuns.isEmpty {
-            ManagerHeaderWithActions(
-                title: L("Knowledge"),
-                subtitle: L("Folders of documents your agents can search and read on demand"),
-                count: knowledgeManager.collections.isEmpty
-                    ? nil : knowledgeManager.collections.count,
-                actions: { headerActions }
+        if selectedTab == .history, !writeRuns.isEmpty {
+            SettingsPageHeader(
+                title: "History",
+                subtitle: "Everything agents added to or changed in your collections"
             )
+            .settingsBackDestination(L("Knowledge"), verbatim: true) { selectedTab = .collections }
         } else {
-            ManagerHeaderWithTabs(
-                title: L("Knowledge"),
-                subtitle: L("Folders of documents your agents can search and read on demand"),
-                count: knowledgeManager.collections.isEmpty
-                    ? nil : knowledgeManager.collections.count,
-                actions: { headerActions },
-                tabsRow: {
-                    HeaderTabsRow(
-                        selection: $selectedTab,
-                        counts: [
-                            .collections: knowledgeManager.collections.count,
-                            .history: writeRuns.count,
-                        ]
-                    )
+            SettingsPageHeader(
+                title: "Knowledge",
+                subtitle: "Folders of documents your agents can search and read on demand",
+                count: knowledgeManager.collections.count,
+                onRefresh: {
+                    knowledgeManager.scheduleIndexAll()
+                    showSuccess("Incremental re-index started")
+                },
+                refreshHelp: "Re-index all collections",
+                secondary: {
+                    if !writeRuns.isEmpty {
+                        SettingsButton(.secondary, L("History (\(writeRuns.count))"), icon: "clock.arrow.circlepath") {
+                            withAnimation(theme.motion.quick) { selectedTab = .history }
+                        }
+                    }
+                },
+                primary: {
+                    SettingsButton(.primary, "Add Collection", icon: "plus") {
+                        createRequest = CollectionCreateRequest()
+                    }
+                },
+                toolbar: {
+                    if !knowledgeManager.collections.isEmpty {
+                        SettingsHeaderToolbar(searchText: $searchText, searchPlaceholder: "Search collections")
+                    }
                 }
             )
         }
     }
 
-    @ViewBuilder
-    private var headerActions: some View {
-        HeaderIconButton("arrow.clockwise", help: "Re-index all collections") {
-            knowledgeManager.scheduleIndexAll()
-            showSuccess("Incremental re-index started")
-        }
-        HeaderPrimaryButton("Add Collection", icon: "plus") {
-            isCreating = true
-        }
-    }
-
     private func showSuccess(_ message: String, type: SimpleToastType = .success) {
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             successMessage = message
             toastType = type
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 successMessage = nil
             }
         }
@@ -736,7 +736,9 @@ struct KnowledgeView: View {
 // MARK: - Collection Card
 
 private struct KnowledgeCollectionCard: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var projectManager = ProjectManager.shared
 
@@ -750,6 +752,8 @@ private struct KnowledgeCollectionCard: View {
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onOpenDetail: () -> Void
+
+    var inspectionDisplayOnly = false
 
     /// OKF conformance, computed on appear so the badge shows status at a
     /// glance rather than hiding it behind a click.
@@ -786,9 +790,9 @@ private struct KnowledgeCollectionCard: View {
 
     private var okfColor: Color {
         switch okfStatus {
-        case .conformant: return .green
-        case .nonconforming: return theme.secondaryText
-        case .unknown: return theme.secondaryText
+        case .conformant: return theme.status.success.foreground
+        case .nonconforming: return theme.text.secondary
+        case .unknown: return theme.text.secondary
         }
     }
 
@@ -807,27 +811,27 @@ private struct KnowledgeCollectionCard: View {
     private var grantedAgentsRow: some View {
         let agents = grantedAgents
         let shown = Array(agents.prefix(4))
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             if agents.isEmpty {
                 Image(systemName: "person.slash")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(.micro)
+                    .foregroundColor(theme.text.tertiary)
                 Text("No agents with access", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             } else {
                 HStack(spacing: -8) {
                     ForEach(shown) { agent in
                         AgentAvatarView(
                             mascotId: agent.avatar,
                             name: agent.name,
-                            tint: theme.accentColor,
+                            tint: theme.action.primary.default.background,
                             diameter: 20,
                             customImageURL: agent.customAvatarURL,
                             monogramFontSize: 9,
                             borderWidth: 0
                         )
-                        .overlay(Circle().stroke(theme.secondaryBackground, lineWidth: 1.5))
+                        .overlay(Circle().stroke(theme.surface.subtle, lineWidth: theme.stroke.default))
                     }
                 }
                 Text(
@@ -835,8 +839,8 @@ private struct KnowledgeCollectionCard: View {
                         ? L("1 agent")
                         : String(format: L("%lld agents"), agents.count)
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .componentInspectionText(53, role: .caption, fallback: .footnote, theme: theme)
+                .foregroundColor(theme.text.secondary)
             }
         }
         .help(
@@ -847,7 +851,7 @@ private struct KnowledgeCollectionCard: View {
     }
 
     /// Projects granting this collection to their chats. Purely informational
-    /// — grants are edited on each project's page; the card just surfaces the
+    /// — grants are edited in Settings → Projects; the card just surfaces the
     /// blast radius of disabling or deleting the collection.
     private var grantingProjects: [Project] {
         projectManager.projects.filter { $0.knowledgeCollectionIds.contains(collection.id) }
@@ -857,21 +861,21 @@ private struct KnowledgeCollectionCard: View {
     private var grantingProjectsRow: some View {
         let projects = grantingProjects
         if !projects.isEmpty {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "folder")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.secondaryText)
+                    .glyphSize(.micro)
+                    .foregroundColor(theme.text.secondary)
                 Text(
                     projects.count == 1
                         ? String(format: L("Used by project %@"), projects[0].name)
                         : String(format: L("Used by %lld projects"), projects.count)
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .componentInspectionText(53, role: .caption, fallback: .footnote, theme: theme)
+                .foregroundColor(theme.text.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             }
-            .help(L("Projects using this collection: \(projects.map(\.name).joined(separator: ", "))"))
+            .help(L("Projects using this collection: \(projects.map(\.name).joined(separator: ", ")). Change this in Projects."))
         }
     }
 
@@ -916,6 +920,7 @@ private struct KnowledgeCollectionCard: View {
     }
 
     private func refreshOKFStatus() async {
+        if inspectionDisplayOnly { okfStatus = .conformant; return }
         let failing = await KnowledgeIndexService.shared
             .uncategorizedDocuments(collectionId: collection.id.uuidString)
         uncategorizedPaths = failing
@@ -923,150 +928,75 @@ private struct KnowledgeCollectionCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "books.vertical.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(theme.accentColor)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(collection.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    if !collection.summary.isEmpty {
-                        Text(collection.summary)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
-                    }
-                }
-                Spacer(minLength: 8)
-                Toggle("", isOn: Binding(get: { collection.isEnabled }, set: onToggle))
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                    .labelsHidden()
+        LibraryCard(
+            title: collection.name,
+            animationDelay: animationDelay,
+            hasAppeared: hasAppeared,
+            action: onOpenDetail
+        ) {
+            LibraryIcon(symbol: "books.vertical.fill", tint: theme.action.primary.default.background)
+        } accessory: {
+            Toggle("", isOn: Binding(get: { collection.isEnabled }, set: onToggle))
+                .settingsSwitch()
+        } content: {
+            if !collection.summary.isEmpty {
+                LibraryCardPreview(text: collection.summary)
             }
-
             // Folder path and git remote intentionally omitted — they
             // crowd the card and live in the detail sheet (tap the card).
             grantedAgentsRow
             grantingProjectsRow
-            Button(action: {
-                Task {
-                    await refreshOKFStatus()
-                    showingCategoryAlert = true
-                }
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: okfIcon)
-                        .font(.system(size: 9))
-                    Text(verbatim: okfLabel)
-                        .font(.system(size: 9, weight: .bold))
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(okfColor.opacity(0.15)))
-                .foregroundColor(okfColor)
-            }
-            .buttonStyle(.plain)
-            .help(okfHelp)
-            .themedAlert(
-                categoryAlertTitle,
-                isPresented: $showingCategoryAlert,
-                message: categoryAlertMessage,
-                primaryButton: .cancel(L("OK"))
-            )
-            .task(id: collection.updatedAt) { await refreshOKFStatus() }
-            .onChange(of: isIndexing) { indexing in
-                // Recompute the category badge once the pass completes and
-                // the index reflects the folder on disk.
-                if !indexing { Task { await refreshOKFStatus() } }
-            }
+            categoryChip
             if !collection.folderExistsCached {
                 Text("Folder not found. Search serves the last indexed state.", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(.orange)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.status.warning.foreground)
             }
-
-            HStack(spacing: 10) {
+        } footer: {
+            HStack(spacing: theme.space.s8) {
                 if collection.isGitRepositoryCached {
-                    cardButton("Sync", icon: "arrow.triangle.2.circlepath.circle", action: onSync)
+                    SettingsButton(.secondary, "Sync", icon: "arrow.triangle.2.circlepath.circle", size: .compact, action: onSync)
                 }
-                if isIndexing {
-                    indexingIndicator
-                } else {
-                    cardButton("Re-index", icon: "arrow.triangle.2.circlepath", action: onReindex)
-                }
-                cardButton("Edit", icon: "pencil", action: onEdit)
+                SettingsButton(
+                    .secondary,
+                    isIndexing ? "Indexing…" : "Re-index",
+                    icon: isIndexing ? nil : "arrow.triangle.2.circlepath",
+                    isLoading: isIndexing,
+                    size: .compact,
+                    help: isIndexing ? "Indexing in progress" : nil,
+                    action: onReindex
+                )
+                .disabled(isIndexing)
+                SettingsButton(.secondary, "Edit", icon: "pencil", size: .compact, action: onEdit)
                 Spacer()
-                cardButton("Delete", icon: "trash", destructive: true, action: onDelete)
+                SettingsButton(.destructive, "Delete", icon: "trash", size: .compact, action: onDelete)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(theme.primaryBorder, lineWidth: 1)
-        )
-        // Tapping empty areas of the card opens its detail. The inner
-        // Buttons and Toggle consume their own taps, so this fires only on
-        // the non-control regions and never fights the row actions.
-        .contentShape(RoundedRectangle(cornerRadius: 12))
-        .onTapGesture { onOpenDetail() }
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 10)
-        .animation(
-            .spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay),
-            value: hasAppeared
-        )
     }
 
-    /// Non-interactive counterpart to the Re-index button, shown while a
-    /// pass is in flight so the action reads as busy rather than tappable.
-    private var indexingIndicator: some View {
-        HStack(spacing: 4) {
-            ProgressView()
-                .controlSize(.mini)
-            Text("Indexing…", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .foregroundColor(theme.secondaryText)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.tertiaryBackground)
-        )
-        .help(Text("Indexing in progress", bundle: .module))
-    }
-
-    private func cardButton(
-        _ title: LocalizedStringKey,
-        icon: String,
-        destructive: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 10))
-                Text(title, bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+    private var categoryChip: some View {
+        Button(action: {
+            Task {
+                await refreshOKFStatus()
+                showingCategoryAlert = true
             }
-            .foregroundColor(destructive ? .red : theme.secondaryText)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.tertiaryBackground)
-            )
+        }) {
+            StatusChip(okfLabel, tint: okfColor, icon: okfIcon)
         }
         .buttonStyle(.plain)
+        .help(okfHelp)
+        .themedAlert(
+            categoryAlertTitle,
+            isPresented: $showingCategoryAlert,
+            message: categoryAlertMessage,
+            primaryButton: .cancel(L("OK"))
+        )
+        .task(id: collection.updatedAt) { await refreshOKFStatus() }
+        .onChange(of: isIndexing) { indexing in
+            // Recompute the category badge once the pass completes and
+            // the index reflects the folder on disk.
+            if !indexing { Task { await refreshOKFStatus() } }
+        }
     }
 }
 
@@ -1074,7 +1004,7 @@ private struct KnowledgeCollectionCard: View {
 
 private struct KnowledgeCollectionEditorSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     /// nil → create mode.
     let collection: KnowledgeCollection?
@@ -1134,92 +1064,73 @@ private struct KnowledgeCollectionEditorSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             Text(collection == nil ? "Add Knowledge Collection" : "Edit Knowledge Collection", bundle: .module)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                .foregroundColor(theme.text.primary)
 
-            StyledSettingsTextField(
+            SettingsTextFieldRow(
                 label: "Name",
                 text: $name,
                 placeholder: "WordPress Development",
                 help: ""
             )
 
-            StyledSettingsTextField(
+            SettingsTextFieldRow(
                 label: "Summary (optional)",
                 text: $summary,
                 placeholder: "What this corpus contains, shown to agents",
                 help: ""
             )
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Folder", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                HStack(spacing: 10) {
-                    TextField("/path/to/knowledge-folder", text: $folderPath)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
+                HStack(spacing: theme.space.s8) {
+                    SettingsTextField(placeholder: "/path/to/knowledge-folder", text: $folderPath, monospaced: true)
                     Button {
                         chooseFolder()
                     } label: {
                         Text("Choose…", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.accentColor.opacity(0.1))
-                            )
                     }
-                    .buttonStyle(.plain)
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
                 Text(
                     "Files in this folder are indexed in place and never modified. Markdown, plain text, code, and documents (PDF, Word, Excel, PowerPoint, CSV) are supported; YAML frontmatter (`type`, `tags`, …) in markdown is used for filtering.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Index filters (optional)", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                StyledSettingsTextField(
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
+                SettingsTextFieldRow(
                     label: "Include",
                     text: $includeGlobs,
                     placeholder: "docs/**, *.md",
-                    help: ""
+                    help: "",
+                    monospaced: true
                 )
-                StyledSettingsTextField(
+                SettingsTextFieldRow(
                     label: "Exclude",
                     text: $excludeGlobs,
                     placeholder: "src/**, test/**",
-                    help: ""
+                    help: "",
+                    monospaced: true
                 )
                 Text(
                     "Junk and .gitignore files are skipped automatically. Most folders need nothing here.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     globHintRow("Include: index only matching files, e.g. docs/**")
                     globHintRow("Exclude: skip matching files. Wins over Include.")
                     globHintRow("* matches inside a folder, ** across folders.")
@@ -1234,19 +1145,21 @@ private struct KnowledgeCollectionEditorSheet: View {
             // stays local-only. Restore this block to re-enable git sync.
             /*
             if collection == nil {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     Text("Or clone from a git URL", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                    TextField("https://github.com/team/knowledge.git", text: $remoteURL)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
+                    SettingsTextField(
+                        placeholder: "https://github.com/team/knowledge.git",
+                        text: $remoteURL,
+                        monospaced: true
+                    )
                     Text(
                         "Clones into Osaurus-managed storage and keeps the git link for Sync. Uses your existing git credentials (credential helper or SSH agent). Leave empty to use the folder above.",
                         bundle: .module
                     )
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1259,7 +1172,7 @@ private struct KnowledgeCollectionEditorSheet: View {
                 } label: {
                     Text("Cancel", bundle: .module)
                 }
-                .buttonStyle(SettingsButtonStyle())
+                .assignedSettingsButtonStyle()
                 .keyboardShortcut(.cancelAction)
                 Button {
                     onSave(
@@ -1273,26 +1186,26 @@ private struct KnowledgeCollectionEditorSheet: View {
                 } label: {
                     Text(collection == nil ? "Add" : "Save", bundle: .module)
                 }
-                .buttonStyle(SettingsButtonStyle(isPrimary: true))
+                .assignedSettingsButtonStyle(.primary)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSave)
             }
         }
-        .padding(20)
+        .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
         .frame(width: 460)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
     }
 
     /// One bulleted hint line under the index-filter fields.
     private func globHintRow(_ text: LocalizedStringKey) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
             Text("•")
             Text(text, bundle: .module)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .font(.system(size: 11))
-        .foregroundColor(theme.tertiaryText)
+        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+        .foregroundColor(theme.text.tertiary)
     }
 
     private func chooseFolder() {
@@ -1312,7 +1225,7 @@ private struct KnowledgeCollectionEditorSheet: View {
 
 private struct KnowledgeProposalReviewSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     private enum ViewMode: String, CaseIterable {
         case diff = "Changes"
@@ -1351,34 +1264,32 @@ private struct KnowledgeProposalReviewSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             HStack(alignment: .firstTextBaseline) {
                 Text(String(format: L("Proposal #%lld"), proposal.id))
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
-                Picker("", selection: $viewMode) {
-                    ForEach(ViewMode.allCases, id: \.self) { mode in
-                        Text(LocalizedStringKey(mode.rawValue)).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 180)
-                .labelsHidden()
+                AssignedBaseSegmentedPicker(
+                    selection: $viewMode,
+                    options: ViewMode.allCases.map { .init($0, $0.rawValue) },
+                    size: .compact
+                )
+                .fixedSize()
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text("[\(collectionName)] \(proposal.relPath)")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.secondary)
                 if let ticketId = proposal.ticketId {
                     Text(String(format: L("Answers ticket #%lld"), ticketId))
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Text(proposal.rationale)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1393,15 +1304,15 @@ private struct KnowledgeProposalReviewSheet: View {
                 "Approving writes this content into the collection folder and re-indexes it. Your edits in the Edit tab are what gets written. Dismissing reopens the linked ticket.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
 
             HStack {
                 Button {
                     onDismissProposal()
                 } label: {
                     Text("Dismiss Proposal", bundle: .module)
-                        .foregroundColor(.red)
+                        .foregroundColor(theme.status.error.foreground)
                 }
                 Spacer()
                 Button {
@@ -1420,10 +1331,10 @@ private struct KnowledgeProposalReviewSheet: View {
                 .disabled(editedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .padding(20)
+        .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
         .frame(width: 680)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
         .onAppear(perform: loadDiff)
     }
 
@@ -1431,65 +1342,60 @@ private struct KnowledgeProposalReviewSheet: View {
 
     @ViewBuilder
     private var diffPane: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text(currentContent.isEmpty ? "New document" : "Changes vs. current document", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
             ScrollView {
                 if !diffLoaded {
                     Text("Loading…", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(10)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
+                        .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
                 } else {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                    LazyVStack(alignment: .leading, spacing: theme.space.s0) {
                         ForEach(diffLines) { line in
                             diffRow(line)
                         }
                     }
-                    .padding(6)
+                    .padding(.horizontal, theme.space.s6).padding(.vertical, theme.space.s6)
                 }
             }
             .frame(minHeight: 240, maxHeight: 380)
-            .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+            .settingsChrome(.inset)
         }
     }
 
     private func diffRow(_ line: KnowledgeDiff.Line) -> some View {
         let (prefix, color, background): (String, Color, Color) = {
             switch line.kind {
-            case .context: return (" ", theme.tertiaryText, .clear)
-            case .added: return ("+", Color.green, Color.green.opacity(0.08))
-            case .removed: return ("-", Color.red, Color.red.opacity(0.08))
+            case .context: return (" ", theme.text.tertiary, .clear)
+            case .added: return ("+", theme.status.success.foreground, theme.status.success.background)
+            case .removed: return ("-", theme.status.error.foreground, theme.status.error.background)
             }
         }()
-        return HStack(alignment: .top, spacing: 6) {
+        return HStack(alignment: .top, spacing: theme.space.s6) {
             Text(prefix)
-                .font(.system(size: 11, design: .monospaced))
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
                 .foregroundColor(color)
             Text(line.text.isEmpty ? " " : line.text)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(line.kind == .context ? theme.primaryText : color)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                .foregroundColor(line.kind == .context ? theme.text.primary : color)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 1)
+        .padding(.horizontal, theme.space.s4)
+        .padding(.vertical, theme.space.s2)
         .background(background)
     }
 
     @ViewBuilder
     private var editPane: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Edit before approving", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            TextEditor(text: $editedContent)
-                .font(.system(size: 11, design: .monospaced))
-                .scrollContentBackground(.hidden)
-                .padding(6)
-                .frame(minHeight: 240, maxHeight: 380)
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
+            SettingsTextEditor(text: $editedContent, minHeight: 240, maxHeight: 380, monospaced: true)
         }
     }
 
@@ -1537,7 +1443,7 @@ private struct KnowledgeProposalReviewSheet: View {
 /// `AgentManager.update` refuses to persist them.
 private struct KnowledgeGrantAgentsSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let collection: KnowledgeCollection
     /// Passes the number of agents actually granted (0 when none/skipped).
@@ -1561,17 +1467,17 @@ private struct KnowledgeGrantAgentsSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text("Grant \"\(collection.name)\" to agents", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     "Pick which agents can search and read this collection. You can change this later in each agent's Features → Knowledge section.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1580,20 +1486,20 @@ private struct KnowledgeGrantAgentsSheet: View {
                     "No agents to grant yet. Create an agent, then enable Knowledge for it in its Features section.",
                     bundle: .module
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 24)
+                .padding(.vertical, theme.space.s24)
             } else {
                 ScrollView {
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         ForEach(agents) { agent in
                             agentRow(agent)
                         }
                     }
                 }
                 .frame(minHeight: 160, maxHeight: 320)
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+                .settingsChrome(.inset)
             }
 
             HStack {
@@ -1603,7 +1509,7 @@ private struct KnowledgeGrantAgentsSheet: View {
                 } label: {
                     Text(agents.isEmpty ? "Close" : "Skip", bundle: .module)
                 }
-                .buttonStyle(SettingsButtonStyle())
+                .assignedSettingsButtonStyle()
                 .keyboardShortcut(.cancelAction)
                 if !agents.isEmpty {
                     Button {
@@ -1611,16 +1517,16 @@ private struct KnowledgeGrantAgentsSheet: View {
                     } label: {
                         Text("Grant Access", bundle: .module)
                     }
-                    .buttonStyle(SettingsButtonStyle(isPrimary: true))
+                    .assignedSettingsButtonStyle(.primary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(selectedIds.isEmpty)
                 }
             }
         }
-        .padding(20)
+        .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
         .frame(width: 460)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
     }
 
     private func agentRow(_ agent: Agent) -> some View {
@@ -1632,29 +1538,28 @@ private struct KnowledgeGrantAgentsSheet: View {
                 selectedIds.insert(agent.id)
             }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14))
-                    .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
-                VStack(alignment: .leading, spacing: 1) {
+                    .glyphSize(.body)
+                    .foregroundColor(selected ? theme.text.link : theme.text.tertiary)
+                SettingsRowText {
                     Text(agent.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
+                } description: {
                     if !agent.displayDescription.isEmpty {
                         Text(agent.displayDescription)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                             .lineLimit(1)
                     }
                 }
                 Spacer()
                 if !agent.settings.knowledgeEnabled {
                     Text("Enables Knowledge", bundle: .module)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                        .foregroundColor(theme.text.secondary)
                 }
             }
-            .padding(10)
+            .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1693,7 +1598,7 @@ private struct KnowledgeCollectionDetailSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var knowledgeManager = KnowledgeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let collection: KnowledgeCollection
     let onEdit: () -> Void
@@ -1719,46 +1624,37 @@ private struct KnowledgeCollectionDetailSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: theme.settingsSectionGap) {
                     infoSection
                     statsSection
                     accessSection
                     documentsSection
                 }
-                .padding(20)
+                .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
             }
             Divider()
             footer
         }
         .fittedSheetFrame(width: 560, height: 640)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
         .onAppear(perform: loadData)
     }
 
     // MARK: Header / Footer
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "books.vertical.fill")
-                .font(.system(size: 20))
-                .foregroundColor(theme.accentColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(live.name)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                if !live.summary.isEmpty {
-                    Text(live.summary)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 8)
+        SettingsDetailHeader(
+            icon: "books.vertical.fill",
+            title: live.name,
+            subtitle: live.summary
+        ) {
+            EmptyView()
+        } actions: {
             Toggle(
                 "",
                 isOn: Binding(
@@ -1770,20 +1666,19 @@ private struct KnowledgeCollectionDetailSheet: View {
                     }
                 )
             )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
+            .settingsSwitch()
         }
-        .padding(20)
+        .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
     }
 
     private var footer: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s8) {
             Button(role: .destructive) {
                 confirmingDelete = true
             } label: {
                 Text("Delete", bundle: .module)
             }
-            .buttonStyle(SettingsButtonStyle(isDestructive: true))
+            .assignedSettingsButtonStyle(.destructive)
             .confirmationDialog(
                 Text(String(format: L("Delete \"%@\"?"), live.name)),
                 isPresented: $confirmingDelete,
@@ -1806,60 +1701,55 @@ private struct KnowledgeCollectionDetailSheet: View {
             Button(action: onEdit) {
                 Text("Edit", bundle: .module)
             }
-            .buttonStyle(SettingsButtonStyle())
+            .assignedSettingsButtonStyle()
             Spacer()
             Button(action: onClose) {
                 Text("Done", bundle: .module)
             }
-            .buttonStyle(SettingsButtonStyle(isPrimary: true))
+            .assignedSettingsButtonStyle(.primary)
             .keyboardShortcut(.defaultAction)
         }
-        .padding(20)
+        .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
     }
 
     // MARK: Sections
 
     private func sectionHeader(_ title: LocalizedStringKey) -> some View {
         Text(title, bundle: .module)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(theme.secondaryText)
-            .textCase(.uppercase)
+            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+            .foregroundColor(theme.text.secondary)
     }
 
     private var infoSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             sectionHeader("Location")
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: live.folderExistsCached ? "folder.fill" : "folder.badge.questionmark")
-                    .font(.system(size: 11))
-                    .foregroundColor(live.folderExistsCached ? theme.tertiaryText : .orange)
+                    .glyphSize(.footnote)
+                    .foregroundColor(live.folderExistsCached ? theme.text.tertiary : theme.status.warning.foreground)
                 Text(live.folderPath)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.secondary)
                     .textSelection(.enabled)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if live.isGitRepositoryCached {
-                    Text("git", bundle: .module)
-                        .font(.system(size: 9, weight: .bold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(theme.accentColor.opacity(0.18)))
-                        .foregroundColor(theme.accentColor)
+                    StatusChip(L("git"), tone: .accent)
+                        .foregroundColor(theme.text.link)
                 }
             }
             if live.isGitRepositoryCached, let remote = live.gitRemoteURL {
                 Text(remote)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
                     .textSelection(.enabled)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             if !live.folderExistsCached {
                 Text("Folder not found. Search serves the last indexed state.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(.orange)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.warning.foreground)
             }
             Text(
                 String(
@@ -1868,15 +1758,15 @@ private struct KnowledgeCollectionDetailSheet: View {
                     live.updatedAt.formatted(date: .abbreviated, time: .shortened)
                 )
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .componentInspectionText(53, role: .caption, fallback: .footnote, theme: theme)
+            .foregroundColor(theme.text.tertiary)
         }
     }
 
     private var statsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             sectionHeader("Status")
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 statPill(
                     icon: "doc.text",
                     text: docsLoaded
@@ -1884,7 +1774,7 @@ private struct KnowledgeCollectionDetailSheet: View {
                             ? L("1 document")
                             : String(format: L("%lld documents"), documents.count))
                         : L("Loading…"),
-                    color: theme.secondaryText
+                    color: theme.text.secondary
                 )
                 if docsLoaded && !documents.isEmpty {
                     let categorized = documents.count - nonconformingCount
@@ -1893,140 +1783,124 @@ private struct KnowledgeCollectionDetailSheet: View {
                         text: nonconformingCount == 0
                             ? L("All categorized")
                             : String(format: L("%lld of %lld categorized"), categorized, documents.count),
-                        color: nonconformingCount == 0 ? .green : theme.secondaryText
+                        color: nonconformingCount == 0 ? theme.status.success.foreground : theme.text.secondary
                     )
                 }
                 if isIndexing {
-                    statPill(icon: "arrow.triangle.2.circlepath", text: L("Indexing…"), color: theme.accentColor)
+                    statPill(
+                        icon: "arrow.triangle.2.circlepath",
+                        text: L("Indexing…"),
+                        color: theme.action.primary.default.background
+                    )
                 }
             }
         }
     }
 
     private func statPill(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-            Text(verbatim: text)
-                .font(.system(size: 11, weight: .medium))
-        }
-        .foregroundColor(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Capsule().fill(color.opacity(0.12)))
+        StatusChip(text, tint: color, icon: icon)
     }
 
     private var accessSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             sectionHeader("Agents with access")
             if editableAgents.isEmpty {
                 Text("No agents with access", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(editableAgents) { agent in
                         accessRow(agent)
                     }
                 }
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+                .settingsChrome(.inset)
             }
         }
     }
 
     private func accessRow(_ agent: Agent) -> some View {
         let granted = agent.settings.knowledgeCollectionIds.contains(collection.id)
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s8) {
             AgentAvatarView(
                 mascotId: agent.avatar,
                 name: agent.name,
-                tint: theme.accentColor,
+                tint: theme.action.primary.default.background,
                 diameter: 24,
                 customImageURL: agent.customAvatarURL,
                 monogramFontSize: 11,
                 borderWidth: 0
             )
-            VStack(alignment: .leading, spacing: 1) {
+            SettingsRowText {
                 Text(agent.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
+            } description: {
                 if !agent.displayDescription.isEmpty {
                     Text(agent.displayDescription)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 8)
             Toggle("", isOn: Binding(get: { granted }, set: { _ in toggleAccess(agent) }))
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
+                .settingsSwitch()
         }
-        .padding(10)
+        .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
     }
 
     private var documentsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             sectionHeader("Documents")
             if !docsLoaded {
                 Text("Loading…", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
             } else if documents.isEmpty {
                 Text("No documents indexed yet", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(documents, id: \.id) { doc in
                         documentRow(doc)
                     }
                 }
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+                .settingsChrome(.inset)
             }
         }
     }
 
     private func documentRow(_ doc: KnowledgeDocument) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "doc.text")
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
-            VStack(alignment: .leading, spacing: 1) {
+                .glyphSize(.caption)
+                .foregroundColor(theme.text.tertiary)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(doc.title.isEmpty ? doc.relPath : doc.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                 Text(doc.relPath)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            Text(
-                verbatim: doc.effectiveType.isEmpty
+            StatusChip(
+                doc.effectiveType.isEmpty
                     ? L("Uncategorized")
                     : doc.isTypeInferred
-                        ? String(format: L("%@ (auto)"), doc.effectiveType) : doc.effectiveType
+                        ? String(format: L("%@ (auto)"), doc.effectiveType) : doc.effectiveType,
+                tone: doc.effectiveType.isEmpty ? .neutral : .accent
             )
-            .font(.system(size: 9, weight: .bold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(
-                Capsule().fill(
-                    doc.effectiveType.isEmpty
-                        ? theme.secondaryText.opacity(0.12) : theme.accentColor.opacity(0.15)
-                )
-            )
-            .foregroundColor(doc.effectiveType.isEmpty ? theme.secondaryText : theme.accentColor)
             .help(
                 doc.isTypeInferred
                     ? L("Category inferred from the folder name. Add a `type:` line to the file's frontmatter to override it.")
                     : ""
             )
         }
-        .padding(10)
+        .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
     }
 
     // MARK: Actions
@@ -2061,3 +1935,13 @@ private struct KnowledgeCollectionDetailSheet: View {
         }
     }
 }
+
+#if OSAURUS_DESIGN_INSPECTOR
+extension KnowledgeView {
+    static func inspectionPopulatedCard(_ indexing: Bool) -> some View {
+        var card = KnowledgeCollectionCard(collection: KnowledgeCollection(id: UUID(uuidString: "ABC00000-0000-4000-8000-000000000053")!, name: "Local reference library", summary: "Populated original knowledge card. Local display only; no collection, folder grant or index is created.", folderPath: "/private/tmp/osaurus-inspector-nonexistent-collection"), animationDelay: 0, hasAppeared: true, onToggle: { _ in }, onReindex: {}, isIndexing: indexing, onSync: {}, onEdit: {}, onDelete: {}, onOpenDetail: {})
+        card.inspectionDisplayOnly = true
+        return card.allowsHitTesting(false)
+    }
+}
+#endif

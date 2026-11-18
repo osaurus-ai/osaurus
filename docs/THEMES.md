@@ -1,319 +1,155 @@
-# Theme JSON Reference
+# Themes
 
-This document describes the JSON schema for Osaurus custom themes. Themes can be imported and exported as `.json` files through the Themes view.
+A theme paints every Osaurus window: colors, fonts and readability. Pick one in
+**Settings → General → Appearance → Theme** or **View → Theme**.
 
-## General Notes
+Themes are generated, not hand-painted. A theme stores a few choices (accent,
+tone, contrast, corners, transparency, readability) plus optional token overrides. Osaurus
+layers them onto the bundled design library (`design-library.json`) and checks
+the result for contrast. Every theme therefore keeps the same components,
+spacing and states, and the default **Osaurus** theme is the bundled design
+itself.
 
-- **Colors** are hex strings: `"#RRGGBB"` for opaque, `"#AARRGGBB"` for colors with alpha (e.g. `"#80FF0000"` is 50% transparent red).
-- **Dates** use ISO 8601 format: `"2026-01-15T00:00:00Z"`.
-- **`metadata.id`** is ignored on import -- a new UUID is always generated.
-- **`isBuiltIn`** is forced to `false` on import.
-- All top-level sections are required unless noted otherwise.
-- `library` is optional provenance metadata managed by Osaurus. It is safe to omit in hand-written themes.
+## Built-in themes
 
-## Top-Level Structure
+| Theme    | Tone    | Accent   | Notes                                             |
+| -------- | ------- | -------- | ------------------------------------------------- |
+| Osaurus  | Warm    | Teal     | The default: cream neutrals, teal actions and lime highlights in light; near-black with lime actions and teal links in dark (osaurus.ai brand) |
+| Graphite | Neutral | Graphite | Monochrome, the pre-brand 1.0 look                |
+| Nord     | Cool    | Blue     |                                                   |
+| Paper    | Warm    | Amber    | Light only, subtle corners, solid window          |
+| Terminal | Neutral | Green    | Dark only, SF Mono interface font                 |
 
-```json
-{
-  "metadata": { ... },
-  "colors": { ... },
-  "background": { ... },
-  "glass": { ... },
-  "typography": { ... },
-  "animationConfig": { ... },
-  "shadows": { ... },
-  "messages": { ... },
-  "borders": { ... },
-  "library": { ... },
-  "isBuiltIn": false,
-  "isDark": true,
-  "followsSystemAccent": false
-}
-```
+Built-in themes are read-only. **Duplicate** one to make it your own.
 
-| Field | Type | Description |
-|---|---|---|
-| `isBuiltIn` | Bool | Always set to `false` for custom themes. Forced to `false` on import. |
-| `isDark` | Bool | Whether this is a dark theme. Affects system appearance matching. |
-| `followsSystemAccent` | Bool | Optional, defaults to `false`. When `true`, accent-adjacent colors (`accentColor`, `accentColorLight`, `focusBorder`, `cursorColor`, `selectionColor`, `sidebarSelectedBackground`, `infoColor`) are re-derived from the user's macOS system accent color when the theme is applied. The stored hex values are used as-is when the system accent matches the theme's `accentColor` (the palette authored for the default blue accent). |
+## The editor
 
-`messages`, `borders`, and `library` are optional -- missing `messages` and `borders` fall back to defaults, and missing `library` is treated as a local custom theme.
+**New Theme**, **Edit…** and **Duplicate** open the editor. Changes preview
+across Osaurus while it is open; **Cancel** puts the saved theme back.
 
----
+- **Accent**: buttons, links and focus. Seven swatches, or any custom color.
+  A custom color keeps its hue. Chroma is capped and lightness is solved
+  separately for light and dark so links and focus rings reach 4.5:1 and
+  filled buttons reach 4.5:1 for their labels.
+- **Tone**: Warm, Neutral or Cool backgrounds and borders.
+- **Appearance**: Light and Dark, Light only, or Dark only. A single-mode
+  theme locks General → Appearance while it is active.
+- **Contrast**: Standard, or High (7:1 text, 4.5:1 control borders). macOS
+  **Increase Contrast** turns High on for every theme.
+- **Corners**: Rounded, or Subtle for tighter radii.
+- **Transparency**: how much of the desktop shows through the icon rail and
+  title bar. **Frosted** (the default) tints the blur heavily, **Glass** lets
+  more through, and **Solid** makes them opaque. The window keeps three tones
+  at every level: content, the opaque sidebar, and the rail. macOS **Reduce
+  Transparency** and **Increase Contrast** make every theme solid.
+- **Readability**: **Reading Size** (Default, Large, Larger; stacks with
+  Text Size), **Line Spacing** (Default, Relaxed), **Interface Font** and
+  **Code Font**, **Stronger Outlines** and **Larger Controls**.
 
-## metadata
+The font menus list System, then readable families that are installed:
+Atkinson Hyperlegible, Lexend, OpenDyslexic, Inter and IBM Plex Sans for the
+interface; Menlo, JetBrains Mono, IBM Plex Mono and Fira Code for code. A
+family that is missing on this Mac falls back to the system font.
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `id` | String | *(ignored)* | Ignored on import; a new UUID is generated automatically. |
-| `name` | String | `"Custom Theme"` | Display name shown in the theme gallery. |
-| `version` | String | `"1.0"` | Version string for the theme. |
-| `author` | String | `"User"` | Author name shown below the theme name. |
-| `createdAt` | String (ISO 8601) | *(now)* | Creation timestamp. Overwritten on import. |
-| `updatedAt` | String (ISO 8601) | *(now)* | Last update timestamp. Overwritten on import. |
+## Files
 
----
-
-## colors
-
-All values are hex color strings.
-
-| Field | Default (Dark) | Description |
-|---|---|---|
-| `primaryText` | `"#f9fafb"` | Main text color. |
-| `secondaryText` | `"#a1a1aa"` | Secondary/muted text. |
-| `tertiaryText` | `"#8b8b94"` | Tertiary/hint text. |
-| `primaryBackground` | `"#0f0f10"` | Main window background. |
-| `secondaryBackground` | `"#18181b"` | Elevated surface background. |
-| `tertiaryBackground` | `"#27272a"` | Highest elevation background. |
-| `sidebarBackground` | `"#141416"` | Sidebar background. |
-| `sidebarSelectedBackground` | `"#2a2a2e"` | Selected sidebar item background. |
-| `accentColor` | `"#60a5fa"` | Primary accent color (links, buttons, highlights). |
-| `accentColorLight` | `"#93c5fd"` | Lighter accent variant for hover/active states. |
-| `primaryBorder` | `"#3f3f46"` | Primary border color. |
-| `secondaryBorder` | `"#52525b"` | Secondary/decorative border color. |
-| `focusBorder` | `"#60a5fa"` | Border color for focused elements. |
-| `successColor` | `"#22c55e"` | Success/positive state color. |
-| `warningColor` | `"#fbbf24"` | Warning state color. |
-| `errorColor` | `"#f87171"` | Error/destructive state color. |
-| `infoColor` | `"#60a5fa"` | Informational state color. |
-| `cardBackground` | `"#18181b"` | Card/panel background. |
-| `cardBorder` | `"#3f3f46"` | Card/panel border. |
-| `buttonBackground` | `"#18181b"` | Button background. |
-| `buttonBorder` | `"#3f3f46"` | Button border. |
-| `inputBackground` | `"#18181b"` | Text input background. |
-| `inputBorder` | `"#52525b"` | Text input border. |
-| `glassTintOverlay` | `"#00000030"` | Glass tint overlay color (with alpha). |
-| `codeBlockBackground` | `"#00000059"` | Code block background (with alpha). |
-| `shadowColor` | `"#000000"` | Shadow base color. |
-| `selectionColor` | `"#3b82f680"` | Text selection highlight (with alpha). |
-| `cursorColor` | `"#3b82f6"` | Text cursor color. |
-| `placeholderText` | `"#a1a1aa"` | *(optional)* Placeholder text color. |
-
----
-
-## background
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `type` | String | `"solid"` | **Required.** One of: `"solid"`, `"gradient"`, `"image"`. |
-| `solidColor` | String? | `nil` | Hex color for solid backgrounds. Falls back to `colors.primaryBackground` if `nil`. |
-| `gradientColors` | [String]? | `nil` | Array of hex colors for gradient backgrounds. |
-| `gradientAngle` | Double? | `nil` | Gradient angle in degrees. |
-| `imageData` | String? | `nil` | Base64-encoded image data for image backgrounds. |
-| `imageFit` | String? | `nil` | One of: `"fill"`, `"fit"`, `"stretch"`, `"tile"`. |
-| `imageOpacity` | Double? | `nil` | Image opacity (0.0 - 1.0). |
-| `overlayColor` | String? | `nil` | Hex color overlaid on top of the background. |
-| `overlayOpacity` | Double? | `nil` | Overlay opacity (0.0 - 1.0). |
-
----
-
-## glass
-
-Controls the macOS glass/vibrancy effect.
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | Bool | `true` | Whether the glass effect is active. Set to `false` for solid backgrounds. |
-| `material` | String | `"hudWindow"` | macOS material type. See valid values below. |
-| `blurRadius` | Double | `30` | Blur intensity. |
-| `opacityPrimary` | Double | `0.10` | Opacity for primary glass surfaces. |
-| `opacitySecondary` | Double | `0.08` | Opacity for secondary glass surfaces. |
-| `opacityTertiary` | Double | `0.05` | Opacity for tertiary glass surfaces. |
-| `tintColor` | String? | `nil` | Optional hex tint color applied over glass. |
-| `tintOpacity` | Double? | `nil` | Tint strength (0.0 - 1.0). |
-| `edgeLight` | String | `"#ffffff33"` | Edge highlight color (hex with alpha). |
-| `edgeLightWidth` | Double? | `nil` | Edge highlight width in points. |
-| `windowBackingOpacity` | Double | `0.55` | Window backing opacity (0.0 - 1.0). |
-
-### Valid `glass.material` values
-
-These correspond to macOS `NSVisualEffectView.Material`:
-
-| Value | Description |
-|---|---|
-| `"titlebar"` | Title bar material. |
-| `"selection"` | Selection material. |
-| `"menu"` | Menu material. |
-| `"popover"` | Popover material. |
-| `"sidebar"` | Sidebar material. |
-| `"headerView"` | Header view material. |
-| `"sheet"` | Sheet material. |
-| `"windowBackground"` | Window background material. |
-| `"hudWindow"` | HUD window material (default). |
-| `"fullScreenUI"` | Full screen UI material. |
-| `"toolTip"` | Tooltip material. |
-| `"contentBackground"` | Content background material. |
-| `"underWindowBackground"` | Under-window background material. |
-| `"underPageBackground"` | Under-page background material. |
-
----
-
-## typography
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `primaryFont` | String | `"SF Pro"` | Primary UI font family. |
-| `monoFont` | String | `"SF Mono"` | Monospace font for code. |
-| `titleSize` | Double | `28` | Title text size in points. |
-| `headingSize` | Double | `18` | Heading text size. |
-| `bodySize` | Double | `14` | Body text size. |
-| `captionSize` | Double | `12` | Caption text size. |
-| `codeSize` | Double | `13` | Code/monospace text size. |
-
----
-
-## animationConfig
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `durationQuick` | Double | `0.2` | Quick animation duration (seconds). |
-| `durationMedium` | Double | `0.3` | Medium animation duration. |
-| `durationSlow` | Double | `0.4` | Slow animation duration. |
-| `springResponse` | Double | `0.4` | Spring animation response time. |
-| `springDamping` | Double | `0.8` | Spring animation damping fraction (0.0 - 1.0). |
-
----
-
-## shadows
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `shadowOpacity` | Double | `0.3` | Base shadow opacity. |
-| `cardShadowRadius` | Double | `12` | Card shadow blur radius. |
-| `cardShadowRadiusHover` | Double | `20` | Card shadow blur radius on hover. |
-| `cardShadowY` | Double | `4` | Card shadow vertical offset. |
-| `cardShadowYHover` | Double | `8` | Card shadow vertical offset on hover. |
-
----
-
-## messages
-
-Optional section -- defaults are used if omitted.
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `bubbleCornerRadius` | Double | `20` | Message bubble corner radius. |
-| `userBubbleOpacity` | Double | `0.3` | User message bubble background opacity. |
-| `assistantBubbleOpacity` | Double | `0.85` | Assistant message bubble background opacity. |
-| `userBubbleColor` | String? | `nil` | Override hex color for user bubbles. Uses `accentColor` if `nil`. |
-| `assistantBubbleColor` | String? | `nil` | Override hex color for assistant bubbles. Uses `secondaryBackground` if `nil`. |
-| `borderWidth` | Double | `0.5` | Message bubble border width. |
-| `showEdgeLight` | Bool | `true` | Whether to show edge light effect on bubbles. |
-
----
-
-## borders
-
-Optional section -- defaults are used if omitted.
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `defaultWidth` | Double | `1.0` | Default border width for UI elements. |
-| `cardCornerRadius` | Double | `12` | Corner radius for card-style elements. |
-| `inputCornerRadius` | Double | `8` | Corner radius for input fields. |
-| `borderOpacity` | Double | `0.3` | Default border opacity applied to border colors. |
-
----
-
-## library
-
-Optional section managed by the Theme Library view. Imports and shares may rewrite it so the UI can distinguish local, imported, and shared themes.
-
-| Field | Type | Description |
-|---|---|---|
-| `source` | String | One of `"local"`, `"imported"`, `"shared"`, or `"builtIn"`. Built-in presets ignore this field. |
-| `importedAt` | String? (ISO 8601) | When Osaurus imported the theme from a file or shared ID. |
-| `sharedAt` | String? (ISO 8601) | When Osaurus last marked the theme as shared. |
-| `remoteHash` | String? | 64-character shared theme ID when installed or uploaded through the theme sharing service. |
-| `remoteURL` | String? | Public theme server URL for the shared theme ID. |
-| `sourceDetail` | String? | Human-readable source note such as the imported filename. |
-
-Theme sharing canonicalization strips `library`, local UUIDs, and local timestamps before hashing so the same theme JSON does not get a different shared ID simply because it was imported on another machine.
-
----
-
-## Minimal Example
-
-A minimal dark theme with just the required fields:
+Themes live in `~/.osaurus/themes/library/<id>.json`. **Show Themes Folder**
+opens it. Files edited in another app reload when Osaurus regains focus.
+**Import Theme…** and **Export…** read and write the same format; an imported
+theme whose id is already taken gets a new one.
 
 ```json
 {
-  "metadata": {
-    "id": "anything",
-    "name": "My Theme",
-    "version": "1.0",
-    "author": "Your Name",
-    "createdAt": "2026-01-01T00:00:00Z",
-    "updatedAt": "2026-01-01T00:00:00Z"
+  "appearance": "both",
+  "author": "",
+  "createdAt": "2026-11-16T12:00:00Z",
+  "id": "0E1C4B7A-5F3E-4D0B-9C51-2B7A0F6E8D21",
+  "name": "Reading Room",
+  "overrides": {
+    "tokens": {
+      "color.text.link": { "light": "#0B5F8A", "dark": "#6CC4F0" },
+      "type.chatBody": { "light": { "size": 17, "lineHeight": 26 }, "dark": { "size": 17, "lineHeight": 26 } }
+    }
   },
-  "colors": {
-    "primaryText": "#f9fafb",
-    "secondaryText": "#a1a1aa",
-    "tertiaryText": "#8b8b94",
-    "primaryBackground": "#0f0f10",
-    "secondaryBackground": "#18181b",
-    "tertiaryBackground": "#27272a",
-    "sidebarBackground": "#141416",
-    "sidebarSelectedBackground": "#2a2a2e",
-    "accentColor": "#60a5fa",
-    "accentColorLight": "#93c5fd",
-    "primaryBorder": "#3f3f46",
-    "secondaryBorder": "#52525b",
-    "focusBorder": "#60a5fa",
-    "successColor": "#22c55e",
-    "warningColor": "#fbbf24",
-    "errorColor": "#f87171",
-    "infoColor": "#60a5fa",
-    "cardBackground": "#18181b",
-    "cardBorder": "#3f3f46",
-    "buttonBackground": "#18181b",
-    "buttonBorder": "#3f3f46",
-    "inputBackground": "#18181b",
-    "inputBorder": "#52525b",
-    "glassTintOverlay": "#00000030",
-    "codeBlockBackground": "#00000059",
-    "shadowColor": "#000000",
-    "selectionColor": "#3b82f680",
-    "cursorColor": "#3b82f6"
+  "preferences": {
+    "accent": { "swatch": "blue" },
+    "contrast": "standard",
+    "corners": "rounded",
+    "readability": {
+      "codeFont": "system",
+      "largerControls": false,
+      "lineSpacing": "relaxed",
+      "readingSize": "large",
+      "strongerOutlines": false,
+      "uiFont": "Atkinson Hyperlegible"
+    },
+    "tone": "cool",
+    "transparency": "frosted"
   },
-  "background": {
-    "type": "solid"
-  },
-  "glass": {
-    "enabled": true,
-    "material": "hudWindow",
-    "blurRadius": 30,
-    "opacityPrimary": 0.10,
-    "opacitySecondary": 0.08,
-    "opacityTertiary": 0.05,
-    "edgeLight": "#ffffff33",
-    "windowBackingOpacity": 0.55
-  },
-  "typography": {
-    "primaryFont": "SF Pro",
-    "monoFont": "SF Mono",
-    "titleSize": 28,
-    "headingSize": 18,
-    "bodySize": 14,
-    "captionSize": 12,
-    "codeSize": 13
-  },
-  "animationConfig": {
-    "durationQuick": 0.2,
-    "durationMedium": 0.3,
-    "durationSlow": 0.4,
-    "springResponse": 0.4,
-    "springDamping": 0.8
-  },
-  "shadows": {
-    "shadowOpacity": 0.3,
-    "cardShadowRadius": 12,
-    "cardShadowRadiusHover": 20,
-    "cardShadowY": 4,
-    "cardShadowYHover": 8
-  },
-  "isBuiltIn": false,
-  "isDark": true
+  "schemaVersion": 1,
+  "updatedAt": "2026-11-16T12:00:00Z"
 }
 ```
+
+- `preferences.accent` is `{ "swatch": "teal" | "blue" | "violet" | "rose" | "amber" | "green" | "graphite" }`
+  or `{ "custom": "#RRGGBB" }`.
+- `codeHighlightTheme` (optional) names the syntax highlighting theme for code
+  blocks. `messages` (optional) has `showInlineAvatar` and `showAgentName`.
+- Unknown keys are rejected so typos surface instead of silently doing
+  nothing. A file with a newer `schemaVersion` is refused.
+
+## JSON overrides
+
+**Edit JSON…** opens the theme file in a validating editor. `overrides.tokens`
+sets design-library tokens directly, per mode (`light`, `dark`, or both).
+Overrides win over the editor choices; **Reset to Preferences** removes them.
+
+| Tokens                                              | Values                                      |
+| --------------------------------------------------- | ------------------------------------------- |
+| `color.*` (except `color.status.*`, `color.data.*`) | `#RRGGBB` or `#RRGGBBAA`                    |
+| `material.window.tint`, `.fallback`                 | color                                       |
+| `material.window.tintOpacity`                       | 0 to 1                                      |
+| `material.window.nativeMaterial`, `.blending`       | one of the library's choices                |
+| `font.family.ui`, `font.family.code`                | a font family name, or `system`             |
+| `type.*`                                            | `{ "size", "lineHeight", "weight" }`; size 11 to 32 (12 minimum for body and caption styles), line height 1.1 to 1.8 × size, weight 100 to 900 |
+| `stroke.default`, `stroke.focus`                    | 0.5 to 4                                    |
+| `radius.*`                                          | 0 to 20 (`radius.pill` keeps its shape)     |
+| `size.control.defaultHeight`, `.compactHeight`      | 24 to 48                                    |
+| `size.row.minimumHeight`                            | 24 to 56                                    |
+| `size.chat.avatar`                                  | 16 to 40                                    |
+| `motion.duration.*`                                 | 0 to 0.6 seconds                            |
+| `motion.spring`                                     | response 0 to 0.6, damping 0.1 to 1         |
+| `motion.easing`                                     | `linear`, `easeIn`, `easeOut`, `easeInOut`  |
+
+Out-of-range numbers are clamped with a warning. Wrong types, unknown tokens
+and malformed colors are errors, reported with their line number, and the file
+is not saved until they are fixed. Status and data-visualization colors are
+not overridable so warnings and charts read the same in every theme.
+
+A theme whose overrides bring text or controls below the contrast targets
+still loads, but its card shows a **Low contrast** badge and the editor lists
+each failing pair.
+
+## Upgrading from Classic
+
+Classic custom themes convert once on upgrade (`ClassicThemeMigrator`), keeping
+their ids. Tone and accent are matched from the theme's colors; fonts, text
+sizes, corner roundness, border width, motion, code highlighting and message
+avatar settings carry over. The theme that was active stays active. Classic's
+built-in Light, Dark, Osaurus Light, Osaurus Dark and Neon map to the Osaurus
+theme in the matching appearance; Nord, Paper and Terminal map to the presets of
+the same name. The Classic files stay where they were.
+
+## Where it lives in code
+
+- `Models/Theme/ThemeDocument.swift`: the file format.
+- `Models/Theme/ThemePresets.swift`: the built-in themes.
+- `Models/Theme/ThemeLibraryStore.swift`: the library on disk.
+- `Models/Theme/Generator/ThemeGenerator.swift`: tones, the accent solver,
+  high contrast and readability.
+- `Models/Theme/Generator/ThemeTokenPolicy.swift`: JSON validation and ranges.
+- `Models/Theme/Generator/ThemeCompiler.swift`: document to design snapshot,
+  plus the contrast report.
+- `Models/Theme/ClassicThemeMigrator.swift`: Classic conversion.
+- `Views/Settings/ThemesView.swift`, `ThemeEditorSheet.swift`: the UI.
+- `Views/DesignSystem/SettingsThemeKit.swift`: the kit pieces it is built from.

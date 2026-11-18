@@ -2,13 +2,14 @@
 //  DetachedPhoneRuns.swift
 //  osaurus
 //
-//  Runs the owner's paired phone starts keep going when its connection drops
-//  (docs/MOBILE_PROTOCOL.md §6.4). iOS suspends an app moments after it
-//  leaves the screen, and a run cancelled with its socket threw the reply
-//  away. A run the phone names with `osaurus_run_id` records every SSE frame
-//  it writes, so the phone can come back to `GET /runs/{id}/events?after=N`,
-//  replay what it missed and follow the rest live. Stopping it is explicit
-//  (`POST /runs/{id}/stop`), no longer the socket closing.
+//  Runs an owner HTTP client starts keep going when its connection drops
+//  (docs/MOBILE_PROTOCOL.md §6.4, written for the iPhone's HTTP client, kept
+//  for one release beside Sync). A run the client names with `osaurus_run_id`
+//  records every SSE frame it writes, so the client can come back to
+//  `GET /runs/{id}/events?after=N`, replay what it missed and follow the rest
+//  live. Stopping it is explicit (`POST /runs/{id}/stop`), not the socket
+//  closing. Deprecated with the rest of the phone HTTP API; see
+//  docs/SYNC.md, "Deprecated".
 //
 
 import Foundation
@@ -156,6 +157,15 @@ final class DetachedPhoneRuns: @unchecked Sendable {
     private var runs: [String: DetachedPhoneRun] = [:]
 
     /// A phone's run id: its own UUID, or anything short and plain.
+    /// The registry key for a run named by a non-owner caller (a workspace
+    /// teammate or invite-link peer): scoped to their access key so one
+    /// caller can neither follow nor stop another's run. The owner's runs
+    /// keep the bare id.
+    static func scopedId(_ id: String, keyNonce: String?) -> String {
+        guard let keyNonce, !keyNonce.isEmpty else { return id }
+        return "k.\(keyNonce).\(id)"
+    }
+
     static func isValidId(_ id: String) -> Bool {
         !id.isEmpty && id.count <= 128
             && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }

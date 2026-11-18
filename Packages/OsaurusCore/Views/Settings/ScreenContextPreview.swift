@@ -43,7 +43,7 @@ struct ScreenContextPreview: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             header
             content
         }
@@ -55,8 +55,8 @@ struct ScreenContextPreview: View {
     private var header: some View {
         HStack {
             Text(L("Preview"))
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
             Spacer()
             refreshButton
         }
@@ -64,16 +64,16 @@ struct ScreenContextPreview: View {
 
     private var refreshButton: some View {
         Button(action: refresh) {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11))
+                    .glyphSize(.footnote)
                 Text(L("Refresh"))
-                    .font(.system(size: 12, weight: .medium))
+                    .font(SettingsFont.compactLabel)
             }
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(roundedSurface(fill: theme.tertiaryBackground, stroke: theme.inputBorder, cornerRadius: 6))
+            .foregroundColor(theme.text.secondary)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s6)
+            .background(roundedSurface(fill: theme.surface.hover, stroke: theme.border.strong, cornerRadius: theme.radius.medium))
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(!isAccessibilityGranted || isLoading)
@@ -84,8 +84,8 @@ struct ScreenContextPreview: View {
         if !isAccessibilityGranted {
             hint(accessibilityHint)
         } else if isLoading {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner()
                 hint("Reading the screen…")
             }
         } else if let snapshot {
@@ -105,13 +105,13 @@ struct ScreenContextPreview: View {
     private func snapshotScroll(_ text: String) -> some View {
         let scroll = ScrollView {
             Text(text)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.secondary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
+                .padding(theme.space.s8)
         }
-        .background(roundedSurface(fill: theme.inputBackground, stroke: theme.inputBorder, cornerRadius: 8))
+        .background(roundedSurface(fill: theme.surface.raised, stroke: theme.border.default, cornerRadius: theme.radius.medium))
 
         if let previewHeight {
             scroll.frame(height: previewHeight)
@@ -123,20 +123,20 @@ struct ScreenContextPreview: View {
     @ViewBuilder
     private var privacyNote: some View {
         if PrivacyFilterStore.snapshot().enabled {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: theme.space.s8) {
                 Image(systemName: "lock.shield")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.successColor)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 2) {
+                    .glyphSize(.footnote)
+                    .foregroundColor(theme.status.success.foreground)
+                    .padding(.top, theme.space.s2)
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(L("The Privacy Filter scrubs this before it reaches a cloud model."))
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let count = maskedCount, count > 0 {
                         Text(maskedCountText(count))
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.warningColor)
+                            .font(SettingsFont.smallLabel)
+                            .foregroundColor(theme.status.warning.foreground)
                     }
                 }
             }
@@ -147,8 +147,8 @@ struct ScreenContextPreview: View {
 
     private func hint(_ text: String) -> some View {
         Text(LocalizedStringKey(text), bundle: .module)
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -157,7 +157,7 @@ struct ScreenContextPreview: View {
             .fill(fill)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(stroke, lineWidth: 1)
+                    .stroke(stroke, lineWidth: theme.stroke.default)
             )
     }
 

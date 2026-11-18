@@ -150,10 +150,13 @@ enum SearchHTML {
     }
 
     /// Detects anti-bot interstitials and other useless responses (e.g. very
-    /// small bodies that only contain a captcha shell).
+    /// small bodies that only contain a captcha shell). Only the page's
+    /// visible markup counts: scripts carry words like "captcha" on ordinary
+    /// pages (MediaWiki's `wgConfirmEditCaptcha…` config on every Wikipedia
+    /// article, Brave's localized "Switch to traditional captcha" string).
     static func isLikelyChallengePage(_ html: String, treatShortAsChallenge: Bool = true) -> Bool {
         if treatShortAsChallenge && html.count < 2048 { return true }
-        let lc = html.lowercased()
+        let lc = stripBlocks(html, tags: ["script", "style", "template"]).lowercased()
         if lc.contains("captcha") || lc.contains("just a moment") || lc.contains("checking your browser") {
             return true
         }

@@ -53,6 +53,17 @@ struct ClarifyPromptOverlay: View {
     }
 }
 
+extension ClarifyPromptOverlay {
+    @MainActor static func inspectionCard(mode: Int, report: @escaping (String) -> Void) -> some View {
+        ClarifyPromptCard(
+            state: ClarifyPromptState(question: "Choose a local sample to review. **No agent is running.**",
+                options: mode == 0 ? [] : ["Colors", "Typography", "Geometry with a longer option label"],
+                allowMultiple: mode == 2, onSubmit: report),
+            onCancel: { report("Local sample cancelled") }, onSubmitted: {}
+        )
+    }
+}
+
 // MARK: - Mode
 
 /// Which interaction mode the card is rendering. Derived from
@@ -89,11 +100,8 @@ private struct ClarifyPromptCard: View {
     @State private var freeFormAnswer: String = ""
     @State private var selectedOptions: Set<String> = []
     @State private var isInputFocused: Bool = false
-    @State private var isComposing: Bool = false
-    @Environment(\.theme) private var theme
-    /// Settings ▸ Chat ▸ Check Spelling While Typing, applied live.
-    @AppStorage(ComposerSpellCheckSetting.defaultsKey)
-    private var spellCheckEnabled: Bool = ComposerSpellCheckSetting.defaultValue
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
 
     private var mode: ClarifyMode {
         ClarifyMode(options: state.options, allowMultiple: state.allowMultiple)
@@ -101,17 +109,6 @@ private struct ClarifyPromptCard: View {
 
     private var canSubmitFreeForm: Bool {
         !freeFormAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var inputFontSize: CGFloat { CGFloat(theme.bodySize) - 1 }
-
-    /// Cap the free-form editor at ~4 lines (matching the previous
-    /// `lineLimit(1...4)`); beyond that it scrolls.
-    private var inputMaxHeight: CGFloat {
-        let font = NSFont.systemFont(ofSize: inputFontSize)
-        let lineHeight = font.ascender - font.descender + font.leading
-        // 4 lines + the text view's vertical container insets (2pt × 2).
-        return ceil(lineHeight * 4) + 4
     }
 
     private var canSubmitMultiSelect: Bool {
@@ -129,6 +126,7 @@ private struct ClarifyPromptCard: View {
             bodyContent: { chipStrip },
             inputRow: { inputRow }
         )
+        .environment(\.theme, theme)
         .onAppear { autoFocusIfNeeded() }
     }
 
@@ -197,111 +195,30 @@ private struct ClarifyPromptCard: View {
                     ? "Pick one or more above."
                     : "\(selectedOptions.count) selected"
             )
-            .font(theme.font(size: CGFloat(theme.captionSize)))
-            .foregroundColor(theme.tertiaryText)
+            .promptText(.caption, fallback: .caption, theme: theme)
+            .foregroundColor(theme.text.tertiary)
             Spacer()
             Button(action: submitMultiSelect) {
                 Text(localized: "Submit")
-                    .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .semibold))
-                    .foregroundColor(canSubmitMultiSelect ? .white : theme.tertiaryText)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(
-                        Capsule()
-                            .fill(
-                                canSubmitMultiSelect
-                                    ? theme.accentColor
-                                    : theme.tertiaryBackground
-                            )
-                    )
             }
             .keyboardShortcut(.defaultAction)
-            .buttonStyle(.plain)
+            .assignedSettingsButtonStyle(.primary, size: .compact)
             .disabled(!canSubmitMultiSelect)
             .pointingHandCursor()
         }
     }
 
     private var freeFormInputRow: some View {
-        HStack(spacing: 10) {
-            freeFormTextField
-            submitArrowButton
-        }
-    }
-
-    /// NSTextView-backed editor so the chat input conventions hold:
-    /// Enter submits, Shift+Enter inserts a newline, Esc cancels the
-    /// prompt. The previous SwiftUI `TextField(axis: .vertical)` had
-    /// its own Return semantics that didn't match the main composer.
-    private var freeFormTextField: some View {
-        EditableTextView(
+        // Different placeholder when chips exist: signals the input is an
+        // alternate path ("type instead") rather than the only path.
+        PromptReplyField(
             text: $freeFormAnswer,
-            fontSize: inputFontSize,
-            textColor: theme.primaryText,
-            cursorColor: theme.accentColor,
+            placeholder: mode.hasChips ? "Or type a custom answer…" : "Type your answer…",
+            canSubmit: canSubmitFreeForm,
             isFocused: $isInputFocused,
-            isComposing: $isComposing,
-            maxHeight: inputMaxHeight,
-            spellCheckEnabled: spellCheckEnabled,
-            onCommit: { submitFreeForm() },
-            onShiftCommit: nil,  // Shift+Enter → newline
-            onEscape: {
-                onCancel()
-                return true
-            }
+            onSubmit: submitFreeForm,
+            onEscape: onCancel
         )
-        // Pin to the intrinsic height (1 line empty → ~4 lines, then
-        // scrolls via the text view's own cap). The representable is
-        // height-flexible and the overlay proposes the full window, so
-        // without this the field balloons to fill the card; an outer
-        // `.frame(maxHeight:)` would instead adopt the cap height and
-        // vertically center the smaller editor inside it.
-        .fixedSize(horizontal: false, vertical: true)
-        // EditableTextView carries a 6pt/2pt internal container inset;
-        // pad the remainder so the visual frame matches the old 12/9.
-        .padding(.horizontal, 6)
-        .padding(.vertical, 7)
-        .overlay(alignment: .topLeading) {
-            if freeFormAnswer.isEmpty {
-                // Different placeholder when chips exist: signals
-                // the input is an alternate path ("type instead")
-                // rather than the only path.
-                Text(
-                    mode.hasChips ? "Or type a custom answer…" : "Type your answer…",
-                    bundle: .module
-                )
-                .font(theme.font(size: inputFontSize, weight: .regular))
-                .foregroundColor(theme.placeholderText)
-                .padding(.leading, 12)
-                .padding(.top, 9)
-                .allowsHitTesting(false)
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.tertiaryBackground.opacity(0.4))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-        )
-    }
-
-    private var submitArrowButton: some View {
-        Button(action: submitFreeForm) {
-            Image(systemName: "arrow.up")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(canSubmitFreeForm ? .white : theme.tertiaryText)
-                .frame(width: 32, height: 32)
-                .background(
-                    Circle()
-                        .fill(canSubmitFreeForm ? theme.accentColor : theme.tertiaryBackground)
-                )
-        }
-        .keyboardShortcut(.defaultAction)
-        .buttonStyle(.plain)
-        .disabled(!canSubmitFreeForm)
-        .pointingHandCursor()
     }
 
     // MARK: - Submission
@@ -332,71 +249,23 @@ private struct ClarifyPromptCard: View {
 /// page" into ellipses. A real flow layout gives every label the room
 /// it needs.
 private struct FlowChips: View {
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
     let options: [String]
     let selected: Set<String>
     let allowMultiple: Bool
     let onTap: (String) -> Void
 
     var body: some View {
-        ChipFlowLayout(spacing: 8, lineSpacing: 8) {
+        ChipFlowLayout(spacing: PromptInspectionStyle.metric("gap", theme.space.s8, theme), lineSpacing: PromptInspectionStyle.metric("gap", theme.space.s8, theme)) {
             ForEach(options, id: \.self) { option in
-                OptionChip(
-                    label: option,
-                    isSelected: selected.contains(option),
-                    showsCheckmark: allowMultiple,
-                    action: { onTap(option) }
-                )
+                FilterChip(
+                    option,
+                    icon: allowMultiple ? (selected.contains(option) ? "checkmark.circle.fill" : "circle") : nil,
+                    isSelected: selected.contains(option)
+                ) { onTap(option) }
             }
         }
-    }
-}
-
-/// One chip in the flow strip. Extracted so `FlowChips` stays a tiny
-/// loop and the visual recipe lives in one place.
-private struct OptionChip: View {
-    let label: String
-    let isSelected: Bool
-    let showsCheckmark: Bool
-    let action: () -> Void
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if showsCheckmark {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                }
-                Text(label)
-                    .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .medium))
-                    .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(
-                        isSelected
-                            ? theme.accentColor.opacity(theme.isDark ? 0.22 : 0.14)
-                            : theme.tertiaryBackground.opacity(0.45)
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(
-                        isSelected
-                            ? theme.accentColor.opacity(0.55)
-                            : theme.primaryBorder.opacity(0.18),
-                        lineWidth: 1
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
     }
 }
 

@@ -1,0 +1,22 @@
+{
+  "id": "architect.mail-tool-step",
+  "domain": "architect",
+  "label": "architect \u2022 mail digest with a tool step",
+  "query": "Build a workflow that lists my Mail mailboxes and the unread messages in my inbox, then writes a three-line summary of what is waiting. Use a tool step for each Mail read. Don't test it, since it would read my real mail; just offer to save it.",
+  "notes": "Live report (Raptor 0.7): the Architect saw `mail_mailboxes` in the `workflow_draft` `tools` list, called it directly, and the refusal ended the turn. Pins that the Mail reads land as `tool` nodes, and that a save proposal follows, so a direct `mail_*` call (now a correctable `tool_not_found`) cannot end the chat. Direct calls still show in the failed-calls INFO line.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 16,
+      "nodeKinds": [
+        "tool",
+        "inference"
+      ],
+      "requiredCalls": [
+        "workflow_draft"
+      ],
+      "requireTestRun": false,
+      "requireProposeSave": true
+    }
+  }
+}

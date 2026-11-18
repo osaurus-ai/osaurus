@@ -34,13 +34,12 @@ struct AgentSharedWithSection: View {
     }
 
     var body: some View {
-        AgentDetailSection(
-            title: L("Shared with"),
-            icon: "person.2.fill",
-            subtitle: sharedWorkspaces.isEmpty ? nil : "\(sharedWorkspaces.count)",
-            trailing: {
+        SettingsSection(
+            title: "Shared with",
+            caption: sharedWorkspaces.isEmpty ? nil : "\(sharedWorkspaces.count)",
+            accessory: {
                 if !shareableWorkspaces.isEmpty {
-                    Menu {
+                    SettingsMenuButton(.secondary, "Share to workspace…", icon: "plus", size: .compact) {
                         ForEach(shareableWorkspaces) { workspace in
                             Button {
                                 RemoteAgentWorkspaceAttribution.shareAgent(agent.id, toWorkspace: workspace.id)
@@ -48,50 +47,39 @@ struct AgentSharedWithSection: View {
                                 Text(workspace.name)
                             }
                         }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 10.5, weight: .semibold))
-                            Text("Share to workspace…", bundle: .module)
-                        }
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .buttonStyle(SecondaryButtonStyle(size: .compact))
                 }
             }
         ) {
             if !OsaurusRouter.isEnabled {
-                AgentSectionEmptyState(
-                    icon: "rectangle.3.group",
+                SettingsEmptyState(
+                    inline: "rectangle.3.group",
                     title: "Workspaces need Osaurus Router",
-                    hint: "Turn on Router in Settings to share this agent with a workspace.",
-                    actionLabel: "Open Router settings",
-                    action: {
-                        ManagementStateManager.shared.selectedTab = .settings
+                    hint: "Turn on Osaurus Router in Wallet & Credits to share this agent with a workspace.",
+                    action: SettingsEmptyState.Action(title: L("Open Wallet & Credits"), icon: "") {
+                        ManagementStateManager.shared.selectedTab = .credits
                     }
                 )
             } else if sharedWorkspaces.isEmpty {
-                AgentSectionEmptyState(
-                    icon: "person.2",
+                SettingsEmptyState(
+                    inline: "person.2",
                     title: "Not shared with any workspace",
                     hint: shareableWorkspaces.isEmpty
                         ? "Join or create a workspace, then share this agent from its Shared Agents tab."
                         : "Teammates in a workspace can chat with this agent while it runs on this Mac."
                 )
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(sharedWorkspaces) { workspace in
                         workspaceRow(workspace)
                     }
                 }
                 Text(
-                    "Teammates reach this agent through its relay tunnel. Turning the relay off cuts them off; unshare it here before deleting the agent.",
+                    "Teammates reach this agent through its remote access. Turning remote access off cuts them off; unshare it here before deleting the agent.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -102,29 +90,29 @@ struct AgentSharedWithSection: View {
             rosterStore.agent(forAddress: addr, workspaceId: workspace.id)?.displayName
         }
         let isBusy = address.map { workspacesService.isBusy("agent.\($0.lowercased())") } ?? false
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s10) {
             AgentAvatarView(
                 mascotId: nil,
                 name: workspace.name,
-                tint: agentColorFor(workspace.name),
+                tint: theme.dataInk(seed: workspace.name),
                 diameter: 28,
                 monogramFontSize: 12,
                 borderWidth: 1.5
             )
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(workspace.name)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                     if let role = workspace.typedRole {
-                        CapsuleBadge(role.displayName, tint: theme.secondaryText, style: .tag)
+                        StatusChip(role.displayName, tint: theme.text.secondary)
                     }
                 }
                 if let sharedAs, sharedAs != agent.name {
                     Text(String(format: L("shared as “%@”"), sharedAs))
-                        .font(.system(size: 10.5))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
             }
@@ -134,20 +122,17 @@ struct AgentSharedWithSection: View {
             } label: {
                 Text("Open workspace", bundle: .module)
             }
-            .buttonStyle(SecondaryButtonStyle(size: .compact))
+            .assignedSettingsButtonStyle(.secondary, size: .compact)
             Button {
                 confirmUnshare(from: workspace)
             } label: {
                 Text("Unshare", bundle: .module)
             }
-            .buttonStyle(DestructiveButtonStyle(isLoading: isBusy, size: .compact))
+            .assignedSettingsButtonStyle(.destructive, isLoading: isBusy, size: .compact)
             .disabled(isBusy)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground.opacity(0.5))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     private func confirmUnshare(from workspace: OsaurusRouterWorkspaceSummary) {

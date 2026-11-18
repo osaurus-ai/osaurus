@@ -367,10 +367,12 @@ struct AgentDelegationDispatcherTests {
                 modelId: worker.defaultModel, isLocal: true, providerName: nil), state: .runnable)
         ])
 
+        // A custom launcher: the Orchestrator itself never holds spawn tools.
         let snapshot = AgentConfigSnapshot(
-            agentId: Agent.defaultId, toolsDisabled: false, memoryDisabled: true,
+            agentId: UUID(), toolsDisabled: false, memoryDisabled: true,
             autonomousConfig: nil, toolMode: .auto, model: nil, manualToolNames: nil,
-            systemPrompt: "", dbEnabled: false
+            systemPrompt: "", dbEnabled: false,
+            spawnDelegationEnabled: true, spawnableAgentIDs: [worker.id]
         )
         let spawnNames = Set(SubagentCapabilityRegistry.spawn.toolNames)
 
@@ -407,9 +409,11 @@ struct AgentDelegationDispatcherTests {
         #expect(!delegatedNames.contains("clarify"), "a delegated child must not carry clarify")
 
         // CAPABILITY SURFACE CONTRACT: exactly the two structural strips
-        // above — everything else the target agent sees in direct chat, the
+        // above, plus the folder picker every windowless source drops —
+        // everything else the target agent sees in direct chat, the
         // delegated child sees too (the child IS the agent).
-        let expected = directNames.subtracting(spawnNames).subtracting(["clarify"])
+        let expected = directNames.subtracting(spawnNames)
+            .subtracting(["clarify", PromptWorkingFolderTool.toolName])
         #expect(
             delegatedNames == expected,
             "delegated surface must be direct-chat minus spawn+clarify; missing: \(expected.subtracting(delegatedNames)), extra: \(delegatedNames.subtracting(expected))"

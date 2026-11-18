@@ -3,9 +3,12 @@
 //  osaurus
 //
 //  Session-scoped File Changes pane of the chat inspector (see
-//  `ChatInspectorPanel`, which owns the rail chrome and lens bar). The
-//  header row carries the "N files changed · M changes" summary and Revert
-//  All; the row under it the Timeline | Files chips. Timeline lists every change set
+//  `ChatInspectorPanel`, the card that holds it). The header carries
+//  "File Changes" over the "N files changed · M changes" summary, with
+//  Revert All in its overflow menu; under it the Timeline | Files tabs,
+//  each with its count. Row actions show on hover (and in each row's
+//  context menu), so the list reads calm until you point at a row. The list sizes to its content up to `maxListHeight`, so a
+//  short history makes a short card. Timeline lists every change set
 //  (one per tool call, plus reverts) with its files and diffs, revertible
 //  per set or rolled back to any point; Files shows the net state of each
 //  touched path, revertible per file. Every revert
@@ -37,8 +40,12 @@ struct FileChangesPanel: View {
     /// First line of the user's request that produced `turnId`, for the
     /// Timeline's turn headers. Nil when the transcript can't be resolved.
     var userPrompt: (UUID) -> String? = { _ in nil }
+    /// Tallest the list may grow before it scrolls; nil fills the height
+    /// the host gives it.
+    var maxListHeight: CGFloat? = nil
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     enum Tab: Hashable { case timeline, files }
 
@@ -64,17 +71,19 @@ struct FileChangesPanel: View {
     @State private var expandedSets: Set<UUID> = []
     @State private var pendingRevert: PendingRevert?
     @State private var toast: Toast?
+    @State private var listContentHeight: CGFloat = 0
 
     private var journal: FileChangeJournal { .shared }
 
     /// Nothing recorded for this chat (or no chat at all): the pane is one
-    /// empty state under the lens bar, no summary or chips to filter nothing.
+    /// empty state under the title, no summary or switcher over nothing.
     private var isEmpty: Bool {
         sessionId == nil || (!isLoading && sets.isEmpty)
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
+            titleRow
             if isEmpty {
                 SidebarEmptyState(
                     icon: "checkmark.circle",
@@ -84,16 +93,21 @@ struct FileChangesPanel: View {
             } else if isLoading && sets.isEmpty {
                 // First load: keep the pane quiet rather than flashing a
                 // "0 files changed" header before the journal answers.
-                Color.clear.frame(maxHeight: .infinity)
+                Color.clear.frame(height: theme.space.s48)
             } else {
-                headerRow
-                viewChips
+                viewPicker
+                ThemeHairlineDivider()
                 if hasActiveJob { activeJobBanner }
-                content
-                    .frame(maxHeight: .infinity)
+                if let maxListHeight {
+                    content.frame(height: min(max(listContentHeight, CGFloat(theme.space.s48)), maxListHeight))
+                } else {
+                    content.frame(maxHeight: .infinity)
+                }
             }
             if let toast { toastView(toast) }
         }
+        .environment(\.theme, theme)
+        .background(theme.surface.raised)
         .task(id: sessionId) { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: .fileChangesDidChange)) { note in
             let changed = note.userInfo?["sessionId"] as? String
@@ -114,76 +128,121 @@ struct FileChangesPanel: View {
         )
     }
 
-    // MARK: - Header and chips rows
+    // MARK: - Header and tabs
 
-    /// Mirror of the History pane's header: the "N files changed · M
-    /// changes" summary where History shows its scope label, Revert All —
-    /// the one action over the whole chat — where History has New Chat and
-    /// Import.
-    private var headerRow: some View {
-        SidebarHeaderRow(summary: summaryLine) {
-            if !net.isEmpty {
-                SidebarHeaderIconButton(
-                    icon: "arrow.uturn.backward",
-                    help: "Revert All",
-                    tint: theme.errorColor,
-                    label: "Revert All"
-                ) {
-                    Task { await requestRevert(.all) }
+    /// Title over the summary, and the overflow menu holding Revert All
+    /// (the one action over the whole chat, so it stays out of the way).
+    private var titleRow: some View {
+        HStack(alignment: .center, spacing: theme.space.s8) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                Text("File Changes", bundle: .module)
+                    .textStyle(.label, weight: 600)
+                    .foregroundStyle(theme.text.primary)
+                    .lineLimit(1)
+                if !isEmpty, !sets.isEmpty {
+                    Text(summaryLine)
+                        .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
+                        .foregroundStyle(theme.text.tertiary)
+                        .lineLimit(1)
                 }
-                .disabled(isBusy || hasActiveJob)
-                .accessibilityHint(Text("Asks for confirmation and lists every file first", bundle: .module))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: theme.space.s8)
+            if !net.isEmpty {
+                Menu {
+                    Button(role: .destructive) {
+                        Task { await requestRevert(.all) }
+                    } label: {
+                        Label(L("Revert All"), systemImage: "arrow.uturn.backward")
+                    }
+                    .disabled(isBusy || hasActiveJob)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .glyphSize(.caption, weight: .semibold)
+                        .foregroundStyle(theme.text.secondary)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .localizedHelp("More")
+                .accessibilityLabel(Text("More", bundle: .module))
             }
         }
+        .padding(.leading, theme.space.s16)
+        .padding(.trailing, theme.space.s12)
+        .padding(.top, theme.space.s12)
+        .padding(.bottom, theme.space.s8)
     }
 
-    /// Timeline | Files as chips (not a second lens bar — they are two
-    /// views of this pane, one level below the rail's lenses). Sits where
-    /// the History pane has its search + Filter row, with the same insets.
-    private var viewChips: some View {
-        HStack(spacing: 6) {
-            SidebarFilterChip(
-                label: "Timeline",
-                icon: "clock",
-                isOn: tab == .timeline,
-                help: "Every change in order, with the files and differences it touched"
-            ) {
-                tab = .timeline
-            }
-            SidebarFilterChip(
-                label: "Files",
-                icon: "doc.on.doc",
-                isOn: tab == .files,
-                help: "Where each file stands now, compared to before this chat"
-            ) {
-                tab = .files
-            }
-            Spacer(minLength: 0)
+    /// Timeline | Files on one quiet track, each with its count.
+    private var viewPicker: some View {
+        HStack(spacing: theme.space.s2) {
+            tabButton(.timeline, title: L("Timeline"), count: changeCount)
+            tabButton(.files, title: L("Files"), count: net.count)
         }
-        // The History pane's search row is 28pt tall; match it so the
-        // list starts at the same y on both panes.
-        .frame(minHeight: 28)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
+        .padding(theme.space.s2)
+        .background(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous).fill(theme.surface.subtle))
+        .padding(.horizontal, theme.space.s12)
+        .padding(.bottom, theme.space.s12)
+    }
+
+    private func tabButton(_ value: Tab, title: String, count: Int) -> some View {
+        let selected = tab == value
+        return Button {
+            withAnimation(theme.motion.quick) { tab = value }
+        } label: {
+            HStack(spacing: theme.space.s6) {
+                Text(verbatim: title)
+                    .componentInspectionText(38, role: .label, fallback: .footnote, weight: selected ? 600 : 500, theme: theme)
+                if count > 0 {
+                    Text(verbatim: "\(count)")
+                        .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
+                        .monospacedDigit()
+                        .foregroundStyle(theme.text.tertiary)
+                }
+            }
+            .foregroundStyle(selected ? theme.text.primary : theme.text.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, theme.space.s4)
+            .background {
+                if selected {
+                    RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
+                        .fill(theme.surface.raised)
+                        .themeElevation(theme.elevation.raised)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var changeCount: Int {
+        sets.filter { $0.origin != .userRevert }.count
     }
 
     private var summaryLine: String {
         let files = net.count
         let changes = sets.filter { $0.origin != .userRevert }.count
-        return L("\(files) files changed") + " · " + L("\(changes) changes")
+        return (files == 1 ? L("1 file changed") : L("\(files) files changed")) + " · "
+            + (changes == 1 ? L("1 change") : L("\(changes) changes"))
     }
 
     private var activeJobBanner: some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
+        HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
+            SettingsSpinner()
             Text("The chat is still running a command — revert is paused until it finishes.", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
+                .foregroundColor(theme.text.secondary)
             Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(theme.tertiaryBackground.opacity(0.5))
+        }.catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingY")
+        .background(theme.surface.hover)
     }
 
     // MARK: - Content
@@ -191,13 +250,14 @@ struct FileChangesPanel: View {
     private var content: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: theme.space.s0) {
                     switch tab {
                     case .timeline: timeline
                     case .files: files
                     }
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.content.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.content.paddingY")
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listContentHeight = $0 }
             }
             .onAppear { scrollToFocus(proxy) }
             .onChange(of: focusSetId) { _, _ in scrollToFocus(proxy) }
@@ -231,32 +291,31 @@ struct FileChangesPanel: View {
     }
 
     private func turnHeader(_ set: FileChangeSet) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(set.createdAt.formatted(date: .abbreviated, time: .shortened))
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-                .textCase(.uppercase)
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            Text(set.createdAt.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
+                .componentInspectionText(38, role: .caption, fallback: .micro, weight: 600, theme: theme)
+                .foregroundColor(theme.text.tertiary)
             if let prompt = set.turnId.flatMap(userPrompt), !prompt.isEmpty {
                 Text(L("You: \(prompt)"))
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .help(Text(prompt))
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 10)
-        .padding(.bottom, 4)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.turnHeader.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.turnHeader.paddingX")
+        .padding(.top, theme.space.s12)
+        .padding(.bottom, theme.space.s4)
     }
 
     @ViewBuilder
     private var files: some View {
         if net.isEmpty {
             Text("Every file is back to how it was before this chat.", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .padding(14)
+                .componentInspectionText(38, role: .caption, fallback: .caption, theme: theme)
+                .foregroundColor(theme.text.secondary)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.files.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s14, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.files.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.files.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.files.padding.vertical")
         } else {
             ForEach(net) { change in
                 NetFileRow(
@@ -264,7 +323,6 @@ struct FileChangesPanel: View {
                     actionsDisabled: isBusy || hasActiveJob,
                     onRevert: { Task { await requestRevert(.file(change.key)) } }
                 )
-                Divider().opacity(0.4).padding(.leading, 14)
             }
         }
     }
@@ -272,40 +330,37 @@ struct FileChangesPanel: View {
     // MARK: - Toast
 
     private func toastView(_ toast: Toast) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.toastView.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
             Image(systemName: toast.isWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(toast.isWarning ? theme.warningColor : theme.successColor)
-                .padding(.top, 1)
+                .glyphSize(.caption)
+                .foregroundColor(toast.isWarning ? theme.status.warning.foreground : theme.status.success.foreground)
+                .padding(.top, theme.space.s2)
             Text(toast.message)
-                .font(.system(size: 11))
-                .foregroundColor(theme.primaryText)
+                .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(toast.isWarning ? nil : 3)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Spacer(minLength: 6)
             if let undo = toast.undoSetId {
-                Button {
+                SettingsButton(.secondary, "Undo", size: .compact) {
                     Task { await requestRevert(.set(undo)) }
-                } label: {
-                    Text("Undo", bundle: .module).font(.system(size: 11, weight: .semibold))
                 }
-                .buttonStyle(PanelPillButtonStyle(tint: theme.accentColor))
                 .disabled(isBusy)
                 .help(Text("Put the reverted files back the way they were", bundle: .module))
             }
             Button {
                 self.toast = nil
             } label: {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                Image(systemName: "xmark").glyphSize(.tiny, weight: .semibold)
             }
             .buttonStyle(.plain)
-            .foregroundColor(theme.tertiaryText)
+            .foregroundColor(theme.text.tertiary)
             .accessibilityLabel(Text("Dismiss", bundle: .module))
-        }
-        .padding(10)
-        .background(theme.tertiaryBackground)
-        .overlay(alignment: .top) { Divider().opacity(0.5) }
+        }.catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.toastView.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.toastView.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.toastView.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.toastView.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.toastView.padding.vertical")
+        .background(theme.surface.hover)
+        .overlay(alignment: .top) { ThemeHairlineDivider() }
         .accessibilityElement(children: .contain)
         .task(id: toast.id) {
             // Warnings stay until dismissed so nothing is missed.
@@ -326,7 +381,7 @@ struct FileChangesPanel: View {
         case .rollback: return L("Roll back to this point?")
         case .set, .file:
             let n = pending.preview.items.count
-            return L("Revert \(n) files?")
+            return n == 1 ? L("Revert 1 file?") : L("Revert \(n) files?")
         }
     }
 
@@ -355,7 +410,7 @@ struct FileChangesPanel: View {
                 switch pending.scope {
                 case .all: title = L("Revert All")
                 case .rollback: title = L("Roll Back")
-                case .set, .file: title = L("Revert \(others) files")
+                case .set, .file: title = others == 1 ? L("Revert 1 file") : L("Revert \(others) files")
                 }
             }
             buttons.append(.primary(title) { Task { await perform(pending.scope, force: false) } })
@@ -403,7 +458,7 @@ struct FileChangesPanel: View {
     private func scrollToFocus(_ proxy: ScrollViewProxy) {
         guard let id = focusSetId else { return }
         DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .top) }
+            withAnimation(theme.motion.quick) { proxy.scrollTo(id, anchor: .top) }
         }
     }
 
@@ -447,7 +502,7 @@ struct FileChangesPanel: View {
         if let blocked = summary.blockedReason {
             return Toast(message: blocked, undoSetId: nil, isWarning: true)
         }
-        var parts = [L("Reverted \(summary.restored) files.")]
+        var parts = [summary.restored == 1 ? L("Reverted 1 file.") : L("Reverted \(summary.restored) files.")]
         if summary.conflicted > 0 {
             parts.append(L("\(summary.conflicted) left untouched because they were edited since."))
         }
@@ -467,42 +522,43 @@ struct FileChangesPanel: View {
 private struct RevertOutcomeList: View {
     let pending: FileChangesPanel.PendingRevert
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     private static let maxRows = 12
 
     var body: some View {
         let items = pending.preview.items
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s4, theme))) {
             ForEach(items.prefix(Self.maxRows)) { item in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s6, theme))) {
                     Image(systemName: icon(item))
-                        .font(.system(size: 10, weight: .semibold))
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(color(item))
                         .frame(width: 12)
                     Text(item.key.shortDisplayPath)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.primaryText)
+                        .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .help(Text(item.key.hostURL.path))
                     Spacer(minLength: 4)
                     Text(outcome(item))
-                        .font(.system(size: 10.5))
+                        .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
                         .foregroundColor(color(item))
                         .lineLimit(1)
-                }
+                }.catalogLayoutTarget("component.library.38.elements.layout.revertOutcomeList.body.horizontalGap")
                 .accessibilityElement(children: .combine)
             }
             if items.count > Self.maxRows {
                 Text(L("and \(items.count - Self.maxRows) more"))
-                    .font(.system(size: 10.5))
-                    .foregroundColor(theme.tertiaryText)
+                    .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
+                    .foregroundColor(theme.text.tertiary)
             }
-        }
-        .padding(10)
+        }.catalogLayoutTarget("component.library.38.elements.layout.revertOutcomeList.body.verticalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.revertOutcomeList.body.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.revertOutcomeList.body.padding.vertical")
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(theme.inputBackground))
+        .background(RoundedRectangle(cornerRadius: theme.radius.medium).fill(theme.surface.raised))
     }
 
     private func outcome(_ item: FileRevertPreviewItem) -> String {
@@ -526,10 +582,10 @@ private struct RevertOutcomeList: View {
     }
 
     private func color(_ item: FileRevertPreviewItem) -> Color {
-        if item.isConflict || item.isUnrestorable { return theme.warningColor }
-        if item.target == nil { return theme.errorColor }
-        if item.expected == nil { return theme.successColor }
-        return theme.secondaryText
+        if item.isConflict || item.isUnrestorable { return theme.status.warning.foreground }
+        if item.target == nil { return theme.status.error.foreground }
+        if item.expected == nil { return theme.status.success.foreground }
+        return theme.text.secondary
     }
 }
 
@@ -546,98 +602,109 @@ private struct ChangeSetRow: View {
     let onRollback: () -> Void
 
     @State private var isHovered = false
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     private var isRevert: Bool { changeSet.origin == .userRevert }
     private var canAct: Bool { changeSet.isRevertible && changeSet.status != .reverted }
     private var canRollBack: Bool { !isLatest && !isRevert && changeSet.status != .untracked }
+    private var headerInset: CGFloat {
+        theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.paddingX", inheriting: theme.space.s12)
+    }
+    private var headerItemGap: CGFloat {
+        theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.horizontalGap2", inheriting: theme.space.s8)
+    }
+    private var detailsInset: CGFloat { headerInset + 26 + 2 * headerItemGap }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
             if isExpanded {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     if let note = changeSet.note, !isRevert {
                         Text(note)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.warningColor)
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 6)
+                            .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
+                            .foregroundColor(theme.status.warning.foreground)
+                            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.body.paddingX", inheriting: theme.space.s0)).catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.body.paddingX")
                     }
                     ForEach(changeSet.entries.sorted { $0.ordinal < $1.ordinal }) { entry in
                         EntryRow(entry: entry)
                     }
                     if canRollBack {
-                        Button(action: onRollback) {
-                            Label(L("Roll Back to Before This"), systemImage: "clock.arrow.circlepath")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .buttonStyle(PanelPillButtonStyle(tint: theme.secondaryText))
+                        SettingsButton(
+                            .secondary, "Roll Back to Before This", icon: "clock.arrow.circlepath", size: .compact,
+                            action: onRollback)
                         .disabled(actionsDisabled)
                         .help(Text("Undo this change and every change made after it", bundle: .module))
-                        .padding(.leading, 38)
-                        .padding(.top, 6)
+                        .padding(.top, theme.space.s4)
                     }
                 }
-                .padding(.bottom, 8)
+                .padding(.leading, detailsInset)
+                .padding(.trailing, headerInset)
+                .padding(.bottom, theme.space.s12)
             }
         }
         .background(
-            (isFocused ? theme.accentColor.opacity(0.08) : isHovered ? theme.tertiaryBackground.opacity(0.4) : .clear)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .fill(isFocused ? theme.surface.selected : isHovered ? theme.surface.hover : .clear)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .strokeBorder(isFocused ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke)
+                .allowsHitTesting(false)
+        )
+        .padding(.horizontal, theme.space.s6)
         .onHover { isHovered = $0 }
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
             Button(action: onToggle) {
-                HStack(spacing: 8) {
+                HStack(spacing: headerItemGap) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.tiny, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .frame(width: 10)
                     Image(systemName: icon)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(isRevert ? theme.accentColor : theme.secondaryText)
+                        .glyphSize(.footnote, weight: .medium)
+                        .foregroundColor(isRevert ? theme.text.primary : theme.text.secondary)
                         .frame(width: 16)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
+                        HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.horizontalGap3", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s6, theme))) {
                             Text(changeSet.displayTitle)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(changeSet.status == .reverted ? theme.secondaryText : theme.primaryText)
-                                .strikethrough(changeSet.status == .reverted && !isRevert, color: theme.tertiaryText)
+                                .componentInspectionText(38, role: .bodyEmphasis, fallback: .caption, weight: 600, theme: theme)
+                                .foregroundColor(
+                                    changeSet.status == .reverted ? theme.text.secondary : theme.text.primary
+                                )
+                                .strikethrough(changeSet.status == .reverted && !isRevert, color: theme.text.tertiary)
                                 .lineLimit(1)
-                            statusPill
-                        }
+                            statusPill.fixedSize()
+                        }.catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.header.horizontalGap3")
                         Text(fileSummary)
-                            .font(.system(size: 10.5))
-                            .foregroundColor(theme.tertiaryText)
+                            .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
                     Spacer(minLength: 0)
-                }
+                }.catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.header.horizontalGap2")
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(Text(accessibilityTitle))
             .accessibilityHint(Text(isExpanded ? L("Collapse") : L("Expand to see files and differences")))
             if canAct {
-                Button(action: onRevert) {
-                    Text(isRevert ? "Undo" : "Revert", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(PanelPillButtonStyle(tint: theme.accentColor))
+                SettingsButton(.secondary, isRevert ? "Undo" : "Revert", size: .compact, action: onRevert)
                 .disabled(actionsDisabled)
-                .opacity(isHovered || isFocused ? 1 : 0.7)
+                .opacity(isHovered || isFocused ? 1 : 0)
                 .help(Text(isRevert ? L("Put this change back") : L("Restore these files to how they were before this change")))
                 .accessibilityLabel(Text(isRevert ? L("Undo This Revert") : L("Revert This Change")))
             }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .contextMenu {
+        }.catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.header.horizontalGap")
+        .padding(.horizontal, headerInset).catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.header.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.paddingY", inheriting: theme.space.s8)).catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.header.paddingY")
+        .assignedContextMenu {
             Button(action: onRevert) {
                 Label(isRevert ? L("Undo This Revert") : L("Revert This Change"), systemImage: "arrow.uturn.backward")
             }
@@ -681,11 +748,11 @@ private struct ChangeSetRow: View {
     private var statusPill: some View {
         switch changeSet.status {
         case .reverted where !isRevert:
-            PanelStatusPill(text: L("Reverted"), color: theme.secondaryText)
+            StatusChip(L("Reverted"))
         case .partiallyReverted:
-            PanelStatusPill(text: L("Partly reverted"), color: theme.warningColor)
+            StatusChip(L("Partly reverted"), tone: .warning)
         case .untracked:
-            PanelStatusPill(text: L("Not tracked"), color: theme.warningColor)
+            StatusChip(L("Not tracked"), tone: .warning)
         default:
             EmptyView()
         }
@@ -705,36 +772,37 @@ private struct EntryRow: View {
     let entry: FileChangeEntry
 
     @State private var isExpanded = false
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.entryRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s4, theme))) {
             Button {
                 if entry.entryType != .directory { isExpanded.toggle() }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.entryRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s6, theme))) {
                     Image(systemName: entry.entryType == .directory ? "folder" : kindIcon)
-                        .font(.system(size: 10, weight: .semibold))
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(kindColor(entry.kind, theme))
                         .frame(width: 14)
                     Text(entry.pathKey.shortDisplayPath)
-                        .font(.system(size: 11.5))
-                        .foregroundColor(entry.state == .reverted ? theme.tertiaryText : theme.primaryText)
+                        .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
+                        .foregroundColor(entry.state == .reverted ? theme.text.tertiary : theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if let from = entry.fromPath {
                         Text("← \(from)")
-                            .font(.system(size: 10.5))
-                            .foregroundColor(theme.tertiaryText)
+                            .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 4)
                     if entry.state == .reverted {
-                        PanelStatusPill(text: L("Reverted"), color: theme.secondaryText)
+                        StatusChip(L("Reverted"))
                     } else if entry.state == .conflicted {
-                        PanelStatusPill(text: L("Edited since"), color: theme.warningColor)
+                        StatusChip(L("Edited since"), tone: .warning)
                     }
-                }
+                }.catalogLayoutTarget("component.library.38.elements.layout.entryRow.body.horizontalGap")
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -744,10 +812,8 @@ private struct EntryRow: View {
             if isExpanded {
                 FileDiffPanelView(key: entry.pathKey, before: entry.before, after: entry.after)
             }
-        }
-        .padding(.leading, 38)
-        .padding(.trailing, 14)
-        .padding(.vertical, 3)
+        }.catalogLayoutTarget("component.library.38.elements.layout.entryRow.body.verticalGap")
+        .padding(.vertical, theme.space.s2)
     }
 
     private var kindIcon: String {
@@ -776,57 +842,64 @@ private struct NetFileRow: View {
 
     @State private var isExpanded = false
     @State private var isHovered = false
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s6, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
                 Button {
                     if change.entryType != .directory { isExpanded.toggle() }
                 } label: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
+                            .glyphSize(.tiny, weight: .semibold)
+                            .foregroundColor(theme.text.tertiary)
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                             .frame(width: 10)
                             .opacity(change.entryType == .directory ? 0 : 1)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(change.key.filename)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
-                                    .lineLimit(1)
-                                PanelStatusPill(text: kindLabel, color: kindColor(change.kind, theme))
-                            }
-                            Text(change.key.shortDisplayPath)
-                                .font(.system(size: 10.5))
-                                .foregroundColor(theme.tertiaryText)
+                        Image(systemName: kindIcon)
+                            .glyphSize(.tiny, weight: .bold)
+                            .foregroundColor(kindColor(change.kind, theme))
+                            .frame(width: 18, height: 18)
+                            .background(Circle().fill(kindWash(change.kind, theme)))
+                            .help(Text(kindLabel))
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
+                            Text(change.key.filename)
+                                .componentInspectionText(38, role: .bodyEmphasis, fallback: .caption, weight: 600, theme: theme)
+                                .foregroundColor(theme.text.primary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+                            let folder = (change.key.shortDisplayPath as NSString).deletingLastPathComponent
+                            if !folder.isEmpty {
+                                Text(folder)
+                                    .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
+                                    .foregroundColor(theme.text.tertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
                         }
                         Spacer(minLength: 0)
-                    }
+                    }.catalogLayoutTarget("component.library.38.elements.layout.netFileRow.body.horizontalGap2")
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("\(kindLabel): \(change.key.shortDisplayPath)"))
                 .accessibilityHint(Text(isExpanded ? L("Collapse") : L("Shows what changed in this file")))
-                if change.latest != nil {
-                    HeaderActionButton(icon: "folder", help: "Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([change.key.hostURL])
+                HStack(spacing: theme.space.s0) {
+                    if change.latest != nil {
+                        SidebarHeaderIconButton(icon: "folder", help: "Reveal in Finder", size: 12) {
+                            NSWorkspace.shared.activateFileViewerSelecting([change.key.hostURL])
+                        }
+                        .accessibilityLabel(Text("Reveal in Finder", bundle: .module))
                     }
-                    .opacity(isHovered ? 1 : 0.5)
+                    SidebarHeaderIconButton(icon: "arrow.uturn.backward", help: "Return this file to how it was before this chat", size: 12, action: onRevert)
+                        .disabled(actionsDisabled)
+                        .accessibilityLabel(Text("Revert File", bundle: .module))
                 }
-                Button(action: onRevert) {
-                    Text("Revert File", bundle: .module).font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(PanelPillButtonStyle(tint: theme.accentColor))
-                .disabled(actionsDisabled)
-                .opacity(isHovered ? 1 : 0.7)
-                .help(Text("Return this file to how it was before this chat", bundle: .module))
-            }
-            .contextMenu {
+                .opacity(isHovered ? 1 : 0)
+            }.catalogLayoutTarget("component.library.38.elements.layout.netFileRow.body.horizontalGap")
+            .assignedContextMenu {
                 Button(action: onRevert) {
                     Label(L("Revert File"), systemImage: "arrow.uturn.backward")
                 }
@@ -841,18 +914,22 @@ private struct NetFileRow: View {
             }
             if isExpanded {
                 FileDiffPanelView(key: change.key, before: change.original, after: change.latest)
-                    .padding(.leading, 18)
+                    .padding(.leading, theme.space.s16)
             }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(isHovered ? theme.tertiaryBackground.opacity(0.4) : .clear)
+        }.catalogLayoutTarget("component.library.38.elements.layout.netFileRow.body.verticalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.netFileRow.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.paddingY", inheriting: theme.space.s8)).catalogLayoutTarget("component.library.38.elements.layout.netFileRow.body.paddingY")
+        .background(
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .fill(isHovered ? theme.surface.hover : .clear)
+        )
+        .padding(.horizontal, theme.space.s6)
         .onHover { isHovered = $0 }
         .help(Text(hoverHelp))
     }
 
     private var hoverHelp: String {
-        let changes = L("\(change.setIds.count) changes")
+        let changes = change.setIds.count == 1 ? L("1 change") : L("\(change.setIds.count) changes")
         let last = L("last by \(FileChangeSet.displayName(forTool: change.lastTool))")
         return change.key.hostURL.path + "\n" + changes + " · " + last
     }
@@ -862,6 +939,14 @@ private struct NetFileRow: View {
         case .created: return L("Created")
         case .modified: return L("Modified")
         case .deleted: return L("Deleted")
+        }
+    }
+
+    private var kindIcon: String {
+        switch change.kind {
+        case .created: return "plus"
+        case .modified: return "pencil"
+        case .deleted: return "minus"
         }
     }
 }
@@ -876,34 +961,35 @@ struct FileDiffPanelView: View {
     let after: FilePathState?
 
     @State private var content: FileDiffContent?
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             if let content {
                 if let caption = content.caption {
                     Text(caption)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.top, 6)
+                        .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
+                        .foregroundColor(theme.text.tertiary)
+                        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.paddingX")
+                        .padding(.top, theme.space.s6)
                 }
                 bodyView(content)
                 openBar(content)
             } else {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
+                HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
+                    SettingsSpinner()
                     Text("Loading diff…", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .padding(10)
+                        .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
+                        .foregroundColor(theme.text.tertiary)
+                }.catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.horizontalGap")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.padding.vertical")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(theme.inputBackground))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(RoundedRectangle(cornerRadius: theme.radius.medium).fill(theme.surface.raised))
+        .overlay(RoundedRectangle(cornerRadius: theme.radius.medium).stroke(theme.border.default, lineWidth: theme.stroke.default))
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium))
         .task(id: "\(key.displayPath)|\(before?.signature ?? "-")|\(after?.signature ?? "-")") {
             content = await FileDiffEngine.diff(key: key, before: before, after: after)
         }
@@ -915,11 +1001,11 @@ struct FileDiffPanelView: View {
         case .text(let diff):
             DiffLinesView(diff: diff)
         case .image:
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.bodyView.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
                 DiffImageSide(url: content.beforeURL, label: L("Before"))
                 DiffImageSide(url: content.afterURL, label: L("After"))
-            }
-            .padding(8)
+            }.catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.bodyView.horizontalGap")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.vertical")
         case .binary:
             notice(L("Binary file · \(sizeText(content.beforeSize)) → \(sizeText(content.afterSize))"))
         case .directory:
@@ -933,15 +1019,15 @@ struct FileDiffPanelView: View {
 
     private func notice(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .padding(10)
+            .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
+            .foregroundColor(theme.text.tertiary)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.notice.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.notice.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.notice.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.notice.padding.vertical")
     }
 
     @ViewBuilder
     private func openBar(_ content: FileDiffContent) -> some View {
         if content.beforeURL != nil || content.afterURL != nil {
-            HStack(spacing: 12) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.openBar.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s12, theme))) {
                 if let url = content.beforeURL {
                     openButton(L("Open before"), url)
                 }
@@ -949,10 +1035,10 @@ struct FileDiffPanelView: View {
                     openButton(L("Open after"), url)
                 }
                 Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .overlay(alignment: .top) { Divider().opacity(0.5) }
+            }.catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.openBar.horizontalGap")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingY")
+            .overlay(alignment: .top) { ThemeHairlineDivider() }
         }
     }
 
@@ -961,10 +1047,10 @@ struct FileDiffPanelView: View {
             NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration())
         } label: {
             Label(title, systemImage: "arrow.up.right.square")
-                .font(.system(size: 10.5, weight: .medium))
+                .componentInspectionText(38, role: .caption, fallback: .micro, weight: 500, theme: theme)
         }
         .buttonStyle(.plain)
-        .foregroundColor(theme.accentColor)
+        .foregroundColor(theme.text.link)
     }
 
     private func sizeText(_ size: Int64?) -> String {
@@ -981,13 +1067,14 @@ private struct DiffImageSide: View {
 
     @State private var image: NSImage?
     @State private var failed = false
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.diffImageSide.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s4, theme))) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+                .componentInspectionText(38, role: .caption, fallback: .micro, weight: 600, theme: theme)
+                .foregroundColor(theme.text.tertiary)
             if let image {
                 Image(nsImage: image)
                     .resizable()
@@ -995,11 +1082,11 @@ private struct DiffImageSide: View {
                     .frame(maxHeight: 140)
                     .accessibilityLabel(Text(label))
             } else if url == nil || failed {
-                Text("—").foregroundColor(theme.tertiaryText).frame(height: 40)
+                Text("—").foregroundColor(theme.text.tertiary).frame(height: 40)
             } else {
-                ProgressView().controlSize(.small).frame(height: 40)
+                SettingsSpinner().frame(height: 40)
             }
-        }
+        }.catalogLayoutTarget("component.library.38.elements.layout.diffImageSide.body.verticalGap")
         .frame(maxWidth: .infinity)
         .task(id: url) {
             image = nil
@@ -1016,50 +1103,61 @@ private struct DiffImageSide: View {
 struct DiffLinesView: View {
     let diff: FileDiff
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     private static let maxRows = 400
 
     var body: some View {
         let highlighted = FileDiffEngine.wordHighlights(for: Array(diff.lines.prefix(Self.maxRows)))
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             if diff.addedCount > 0 || diff.removedCount > 0 {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s6, theme))) {
                     if diff.addedCount > 0 {
-                        Text(verbatim: "+\(diff.addedCount)").foregroundColor(theme.successColor)
+                        Text(verbatim: "+\(diff.addedCount)").foregroundColor(theme.status.success.foreground)
                     }
                     if diff.removedCount > 0 {
-                        Text(verbatim: "−\(diff.removedCount)").foregroundColor(theme.errorColor)
+                        Text(verbatim: "−\(diff.removedCount)").foregroundColor(theme.status.error.foreground)
                     }
                     Spacer()
-                }
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .accessibilityLabel(Text(L("\(diff.addedCount) lines added") + ", " + L("\(diff.removedCount) lines removed")))
+                }.catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.horizontalGap")
+                .componentInspectionText(38, role: .code, fallback: .micro, weight: 500, family: .code, theme: theme)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.paddingX")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.paddingY")
+                .accessibilityLabel(
+                    Text(
+                        (diff.addedCount == 1 ? L("1 line added") : L("\(diff.addedCount) lines added")) + ", "
+                            + (diff.removedCount == 1 ? L("1 line removed") : L("\(diff.removedCount) lines removed"))))
             }
             ForEach(Array(diff.lines.prefix(Self.maxRows).enumerated()), id: \.offset) { index, line in
                 row(line, ranges: highlighted[index] ?? [])
             }
             if diff.lines.count > Self.maxRows || diff.truncated {
                 Text("Showing the first changes only — open the file to see everything.", bundle: .module)
-                    .font(.system(size: 10.5))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(8)
+                    .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
+                    .foregroundColor(theme.text.tertiary)
+                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.padding.vertical")
             }
         }
-        .padding(.bottom, 4)
+        .padding(.bottom, theme.space.s4)
     }
 
     private func row(_ line: FileDiff.Line, ranges: [Range<String.Index>]) -> some View {
-        HStack(spacing: 0) {
-            Rectangle().fill(bar(line.kind)).frame(width: 3)
+        HStack(spacing: theme.space.s0) {
+            Rectangle().fill(bar(line.kind)).frame(width: 2)
+            Text(verbatim: line.kind == .added ? "+" : line.kind == .removed ? "−" : "")
+                .componentInspectionText(38, role: .code, fallback: .micro, family: .code, theme: theme)
+                .foregroundColor(bar(line.kind))
+                .frame(width: theme.space.s16, alignment: .trailing)
             Text(attributed(line, ranges: ranges))
-                .font(.system(size: 10.5, design: .monospaced))
-                .foregroundColor(line.kind == .meta ? theme.tertiaryText : line.kind == .context ? theme.secondaryText : theme.primaryText)
+                .componentInspectionText(38, role: .code, fallback: .micro, family: .code, theme: theme)
+                .foregroundColor(
+                    line.kind == .meta
+                        ? theme.text.tertiary : line.kind == .context ? theme.text.secondary : theme.text.primary
+                )
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 1)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.row.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.row.paddingX")
+                .padding(.vertical, theme.space.s2)
                 .textSelection(.enabled)
         }
         .background(fill(line.kind))
@@ -1070,30 +1168,32 @@ struct DiffLinesView: View {
         let text = line.text.isEmpty ? " " : line.text
         var out = AttributedString(text)
         guard !ranges.isEmpty else { return out }
-        let strong = (line.kind == .added ? theme.successColor : theme.errorColor).opacity(0.35)
+        let strong = (line.kind == .added ? theme.status.success.foreground : theme.status.error.foreground).opacity(
+            0.35
+        )
         for range in ranges {
             guard let lower = AttributedString.Index(range.lowerBound, within: out),
                 let upper = AttributedString.Index(range.upperBound, within: out)
             else { continue }
             out[lower..<upper].backgroundColor = strong
-            out[lower..<upper].font = .system(size: 10.5, weight: .semibold, design: .monospaced)
+            out[lower..<upper].font = theme.font(for: theme.scaledTextStyle(.code))
         }
         return out
     }
 
     private func bar(_ kind: FileDiff.LineKind) -> Color {
         switch kind {
-        case .added: return theme.successColor.opacity(0.6)
-        case .removed: return theme.errorColor.opacity(0.6)
+        case .added: return theme.status.success.foreground
+        case .removed: return theme.status.error.foreground
         case .context, .meta: return .clear
         }
     }
 
     private func fill(_ kind: FileDiff.LineKind) -> Color {
         switch kind {
-        case .added: return theme.successColor.opacity(0.14)
-        case .removed: return theme.errorColor.opacity(0.14)
-        case .meta: return theme.tertiaryBackground.opacity(0.4)
+        case .added: return theme.status.success.background
+        case .removed: return theme.status.error.background
+        case .meta: return theme.surface.hover
         case .context: return .clear
         }
     }
@@ -1103,37 +1203,143 @@ struct DiffLinesView: View {
 
 private func kindColor(_ kind: FileChangeEntryKind, _ theme: ThemeProtocol) -> Color {
     switch kind {
-    case .created: return theme.successColor
-    case .modified: return theme.accentColor
-    case .deleted: return theme.errorColor
+    case .created: return theme.status.success.foreground
+    case .modified: return theme.status.info.foreground
+    case .deleted: return theme.status.error.foreground
     }
 }
 
-struct PanelStatusPill: View {
-    let text: String
-    let color: Color
+private func kindWash(_ kind: FileChangeEntryKind, _ theme: ThemeProtocol) -> Color {
+    switch kind {
+    case .created: return theme.status.success.background
+    case .modified: return theme.status.info.background
+    case .deleted: return theme.status.error.background
+    }
+}
+
+/// Journal display values only: no journal write, revert or rollback is performed.
+@MainActor @ViewBuilder func inspectorFileContextRow(_ kind: Int, disabled: Bool, action: @escaping (String) -> Void) -> some View {
+    let setID = UUID()
+    let before = FilePathState(type: .file, signature: "local-before", size: 10)
+    let after = FilePathState(type: .file, signature: "local-after", size: 12)
+    if kind == 5 {
+        ChangeSetRow(changeSet: FileChangeSet(id: setID, sessionId: "local-menu", toolName: "file_edit", origin: .agent, entries: [FileChangeEntry(setId: setID, sessionId: "local-menu", rootKind: .hostFolder, rootId: "/tmp/osaurus-menu-check", path: "menu-sample.txt", kind: .modified, before: before, after: after, ordinal: 0)]), isExpanded: false, isFocused: false, isLatest: false, actionsDisabled: disabled, onToggle: { action("Change disclosure") }, onRevert: { action("Revert callback only") }, onRollback: { action("Rollback callback only") })
+    } else {
+        NetFileRow(change: FileNetChange(key: FilePathKey(rootKind: .hostFolder, rootId: "/tmp/osaurus-menu-check", path: "menu-sample.txt"), original: before, latest: after, setIds: [setID], lastChangedAt: Date(), lastTool: "file_edit"), actionsDisabled: disabled, onRevert: { action("Revert file callback only") })
+    }
+}
+
+#if OSAURUS_DESIGN_INSPECTOR
+/// Original history rows and confirmation outcomes, with local display metadata.
+/// No journal is mounted and no file/revert operation is performed.
+struct InspectorFileHistoryVerification: View {
+    @Environment(\.theme) private var theme
+    @State private var mode: Variant = .files
+    @State private var collapsed = true
+    @State private var expanded: Set<FileChangeSetStatus> = [.applied]
+    private let states: [FileChangeSetStatus] = [.applied, .reverted, .partiallyReverted, .untracked]
+    private enum Variant: String, CaseIterable {
+        case files = "File changes panel · current files"
+        case history = "File changes panel · history"
+        case outcomes = "File changes panel · revert outcomes"
+        case streaming = "Chat · streaming diff"
+        case collapsed = "Chat · collapsed diff"
+        case expanded = "Chat · expanded diff"
+    }
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.12)))
+        VStack(alignment: .leading, spacing: theme.space.s16) {
+            Picker("Used in", selection: $mode) {
+                ForEach(Variant.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .onChange(of: mode) { _, value in collapsed = value != .expanded }
+            switch mode {
+            case .files: currentFiles
+            case .history: history
+            case .outcomes: outcomes
+            case .streaming, .collapsed, .expanded:
+                InspectorNativeDiffDisplay(diff: diff, collapsed: $collapsed)
+            }
+            Text("Preview only. Revert actions are simulated.")
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
+        }
+    }
+
+    private var currentFiles: some View {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
+            ForEach(0..<3) { index in
+                let state = FilePathState(type: .file, signature: "local-\(index)", size: 12)
+                NetFileRow(change: FileNetChange(key: .init(rootKind: .hostFolder, rootId: "/private/tmp/Project",
+                    path: ["Sources/new-file.swift", "Sources/edited-file.swift", "Docs/removed-file.md"][index]),
+                    original: index == 0 ? nil : state, latest: index == 2 ? nil : state, setIds: [UUID()],
+                    lastChangedAt: Date(), lastTool: "file_edit"), actionsDisabled: false, onRevert: {})
+            }
+        }
+    }
+
+    private var history: some View {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
+            ForEach(states, id: \.self) { status in
+                ChangeSetRow(changeSet: FileChangeSet(sessionId: "inspector-display", toolName: "file_edit", origin: .agent,
+                    status: status, note: status == .untracked ? "No earlier version was saved." : nil,
+                    entries: [.init(setId: UUID(), sessionId: "inspector-display", rootKind: .hostFolder, rootId: "/private/tmp/Project",
+                        path: "Sources", kind: .created, before: nil, after: .init(type: .directory, signature: "dir"),
+                        state: status == .reverted ? .reverted : .applied, ordinal: 0)]), isExpanded: expanded.contains(status),
+                    isFocused: status == .applied, isLatest: false, actionsDisabled: false,
+                    onToggle: {
+                        if expanded.contains(status) { expanded.remove(status) }
+                        else { expanded.insert(status) }
+                    }, onRevert: {}, onRollback: {})
+            }
+        }
+    }
+
+    private var outcomes: some View {
+        let file = FilePathState(type: .file, signature: "inspector", size: 12)
+        return RevertOutcomeList(pending: .init(scope: .all, preview: .init(items: [
+            .init(key: .init(rootKind: .hostFolder, rootId: "/private/tmp/Project", path: "new-file.swift"), target: nil,
+                expected: file, isConflict: false, isUnrestorable: false),
+            .init(key: .init(rootKind: .hostFolder, rootId: "/private/tmp/Project", path: "removed-file.md"), target: file,
+                expected: nil, isConflict: false, isUnrestorable: false),
+            .init(key: .init(rootKind: .hostFolder, rootId: "/private/tmp/Project", path: "edited-file.swift"), target: file,
+                expected: file, isConflict: false, isUnrestorable: false),
+            .init(key: .init(rootKind: .hostFolder, rootId: "/private/tmp/Project", path: "conflict.txt"), target: nil,
+                expected: nil, isConflict: true, isUnrestorable: false),
+            .init(key: .init(rootKind: .hostFolder, rootId: "/private/tmp/Project", path: "unrestorable.txt"), target: nil,
+                expected: nil, isConflict: false, isUnrestorable: true)])))
+    }
+
+    private var diff: FileDiff {
+        let patch = """
+            @@ -1,4 +1,5 @@
+             struct Settings {
+            -    let retryLimit = 2
+            +    let retryLimit = 3
+            +    let timeout = 30
+                 let loggingEnabled = true
+             }
+            """
+        var result = FileDiff.fromUnifiedDiff(patch, path: "Sources/Settings.swift", isPreview: mode != .collapsed)
+        result.isStreamingPreview = mode == .streaming
+        return result
     }
 }
 
-struct PanelPillButtonStyle: ButtonStyle {
-    let tint: Color
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundColor(tint)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(tint.opacity(configuration.isPressed ? 0.22 : 0.12)))
-            .opacity(isEnabled ? 1 : 0.45)
-            .contentShape(Capsule())
+private struct InspectorNativeDiffDisplay: NSViewRepresentable {
+    let diff: FileDiff
+    @Binding var collapsed: Bool
+    @Environment(\.theme) private var theme
+    func makeNSView(context: Context) -> NativeFileDiffView { NativeFileDiffView() }
+    func updateNSView(_ view: NativeFileDiffView, context: Context) {
+        defer { view.updateCatalogInspection(context.environment.nativeCatalogInspection, selection: context.environment.nativeCatalogSelection) };
+        view.onToggleCollapse = { collapsed.toggle() }
+        view.configure(diff: diff, collapsed: collapsed, width: view.bounds.width > 1 ? view.bounds.width : 500, theme: theme)
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NativeFileDiffView, context: Context) -> CGSize? {
+        let width = proposal.width ?? 760
+        nsView.configure(diff: diff, collapsed: collapsed, width: width, theme: theme)
+        return CGSize(width: width, height: nsView.measuredCardHeight(cardWidth: width))
     }
 }
+#endif

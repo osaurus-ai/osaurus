@@ -11,13 +11,13 @@ Osaurus runs a local HTTP server so other apps, scripts, and SDKs can use your m
 ## Basics
 
 - Default base URL: `http://127.0.0.1:1337`. The port and network exposure are changed only in the Server tab of the Settings UI (the chat assistant cannot change them); changing port/exposure restarts the server.
-- List models: `GET /v1/models` — only downloaded models appear.
-- Chat: `POST /v1/chat/completions` (SSE streaming with `stream: true`). Also `POST /v1/responses` (Open Responses), `/anthropic/v1/messages`, and Ollama's `/api/chat`.
+- List models: `GET /v1/models` — the models exposed in Server → Exposed Models: downloaded local models, connected remote provider models, and `foundation` (Apple's on-device model) when available.
+- Chat: `POST /v1/chat/completions` (SSE streaming with `stream: true`). Also `POST /v1/responses` (Open Responses), Anthropic's `POST /v1/messages`, and Ollama's `/api/chat`.
 - OpenAI SDK: set `base_url="http://127.0.0.1:1337/v1"` and any placeholder key (e.g. `"osaurus"`) on loopback; use a real access key from the Server tab if network exposure is on.
 
 ## Requiring a key from this Mac
 
-By default, callers on this Mac need no key. Turning on Settings → Server → Settings → Authentication → **Require Access Key for Local Admin Routes** changes that for the routes that read chats, drive agents, run tools, or rewrite configuration: `/sessions`, `/agents` (and everything under them), `/mcp/*`, `/admin/config/*` and `/admin/import/*`, with or without the `/v1` prefix.
+By default, callers on this Mac need no key. Turning on Settings → Server → Server Settings → Authentication → **Require Access Key for Local Admin Routes** changes that for the routes that read chats, drive agents, run tools, or rewrite configuration: `/sessions`, `/agents` (and everything under them), `/attention`, `/conversations/*`, `/devices/*`, `/mcp/*`, `/admin/config/*` and `/admin/import/*`, with or without the `/v1` prefix.
 
 - Without a valid access key (`Authorization: Bearer osk-v1…`) these return `401`. Inference and model routes (`/v1/chat/completions`, `/v1/models`, …) are unaffected.
 - A request carrying a browser `Origin` header is refused with `403` (`browser_origin_refused`), key or not, unless that origin is listed by name in **Allowed Origins (CORS)**; `*` does not count. A listed origin still needs a key.
@@ -32,23 +32,23 @@ OpenAI's Codex CLI can run against your local models. Settings → Server → Ov
 - Codex only speaks the Responses API (`wire_api = "responses"`), so requests land on `POST /v1/responses`.
 - With network exposure off, Codex on the same Mac needs no key. With it on, the generated block adds `env_key = "OSAURUS_API_KEY"`; create an access key and export that variable in the shell running Codex.
 - If `config.toml` already defines `model_providers.osaurus` by hand, the write is refused rather than duplicated; remove the manual table first.
-- The profile's `model_context_window` is what the server actually keeps: the model's context length, capped by **KV Retention Override** under Settings… (⌘,) → Server → Settings → Cache. A blank override uses the Memory Safety profile. Codex compacts the thread against it.
+- The profile's `model_context_window` is what the server actually keeps: the model's context length, capped by **KV Retention Override** under Settings… (⌘,) → Server → Server Settings → Cache. A blank override uses the Memory Safety profile. Codex compacts the thread against it.
 - Each Codex thread is its own conversation for the on-disk prompt cache (its `prompt_cache_key` becomes the session id), so resuming a thread reuses its cached prefix.
 - To resume a non-interactive run, put the profile before the subcommand: `codex exec --profile osaurus resume --last "…"`. Placed after `resume` the flag is rejected, and without it Codex uses OpenAI instead of Osaurus.
 
 ## Two ways to run tools
 
 - `POST /v1/chat/completions` is strict OpenAI semantics: Osaurus returns `tool_calls` and your client executes them. No Osaurus memory or skills are injected.
-- `POST /agents/{id}/run` runs a full server-side agent loop (what in-app chat uses): the agent executes its own tools, with memory and context, capped at 30 iterations.
-- Dangerous tools (`file_write`, `file_edit`, `shell_run`, `git_commit`, …) are denied to external HTTP callers by default.
+- `POST /agents/{id}/run` runs a full server-side agent loop (what in-app chat uses): the agent executes its own tools, with memory and context. Tool iterations follow Settings → Chat → Advanced → Max Tool Attempts (30 by default, up to 120).
+- Dangerous tools (`file_write`, `file_edit`, `shell_run`, `git_commit`, …) are denied to external HTTP callers by default. An authenticated remote run (Secure Channel, agent-scoped key) of an agent with a working folder gets `file_read`, `file_write` and `file_edit` confined to that folder.
 
 ## Sessions and caching
 
-Pass an optional `session_id` to group turns; KV-cache reuse is automatic. Prefix caching, paged KV, and the on-disk cache are configured in Settings → Server (cache changes unload loaded models to take effect); they are not part of the declarative configuration document.
+Pass an optional `session_id` to group turns; KV-cache reuse is automatic. Prefix caching, paged KV, and the on-disk cache are configured in Settings → Server → Server Settings → Cache (cache changes unload loaded models to take effect); they are not part of the declarative configuration document.
 
 ## Server settings you can change
 
-Port, network exposure, Sampling Defaults (temperature / top-p / top-k / max tokens — leave unset to use each model's own defaults), continuous batching, concurrent sequences, and cache toggles. The Server tab includes an API explorer; Insights shows live request/response traffic.
+Port, network exposure, Sampling Defaults (temperature / top-p / top-k / max tokens — leave unset to use each model's own defaults), continuous batching, concurrent sequences, and cache toggles, all in Server → Server Settings. Server → **API Reference** lists every endpoint with copyable examples; Insights shows live request/response traffic.
 
 ## MCP surface
 

@@ -1,0 +1,38 @@
+{
+  "id": "firstrun.typed-calendar-today",
+  "domain": "orchestrator",
+  "label": "first run • typed: what's on my calendar today goes to Planner",
+  "query": "What's on my calendar today?",
+  "notes": "Routing on, with the day-one team (Planner, Courier, Keeper, Scout) created from the bundled templates in a scratch folder, as a fresh install has it. The reporter's first question. Planner owns Calendar, so the Orchestrator calls `run_workflow` with \"Planner\" instead of saying it has no tools.",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Planner"
+          }
+        }
+      ],
+      "maxIterations": 6,
+      "rubric": [
+        "Answers the request, or names the specific thing the user has to fix (a permission, an account, or a setting). Does NOT say it lacks the tools or connections to help, and shows no raw tool or reasoning markers."
+      ]
+    }
+  }
+}

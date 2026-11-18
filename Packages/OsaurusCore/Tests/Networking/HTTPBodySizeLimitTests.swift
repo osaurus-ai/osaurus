@@ -60,20 +60,20 @@ struct HTTPBodySizeLimitTests {
         #expect(status != 413)
     }
 
-    // MARK: - Tighter /pair limit
+    // MARK: - Tighter pairing limit
 
     @Test
-    func pairOverPairingLimit_returns413_evenWhenUnderGenericLimit() async throws {
+    func pairInviteOverPairingLimit_returns413_evenWhenUnderGenericLimit() async throws {
         var config = ServerConfiguration.default
         config.maxRequestBodyBytes = 32 * 1024 * 1024
         config.maxPairingBodyBytes = 256
         let server = try await startBodyLimitServer(config: config)
         defer { Task { await server.shutdown() } }
 
-        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/pair")!)
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/pair-invite")!)
         request.httpMethod = "POST"
         // 1 KiB body — well under the 32 MiB generic cap, but well over the
-        // 256-byte /pair cap.
+        // 256-byte pairing cap.
         request.httpBody = Data(repeating: 0x42, count: 1024)
         request.setValue("1024", forHTTPHeaderField: "Content-Length")
 
@@ -82,6 +82,62 @@ struct HTTPBodySizeLimitTests {
         let body = String(decoding: data, as: UTF8.self)
         #expect(status == 413)
         #expect(body.contains("payload_too_large"))
+    }
+}
+
+@Suite("Retired LAN pairing routes")
+struct RetiredPairRoutesTests {
+    private func response(_ method: String, _ path: String, body: Data? = nil, on server: BodyLimitTestServer)
+        async throws -> (status: Int, body: String)
+    {
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)\(path)")!)
+        request.httpMethod = method
+        request.httpBody = body
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        return ((resp as? HTTPURLResponse)?.statusCode ?? -1, String(decoding: data, as: UTF8.self))
+    }
+
+    private func status(_ method: String, _ path: String, body: Data? = nil, on server: BodyLimitTestServer)
+        async throws -> Int
+    {
+        try await response(method, path, body: body, on: server).status
+    }
+
+    @Test
+    func theAgentPairingRoutesAreGone() async throws {
+        let server = try await startBodyLimitServer(config: .default, trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+
+        #expect(try await status("GET", "/pair/challenge", on: server) == 404)
+        #expect(try await status("POST", "/pair", body: Data("{}".utf8), on: server) == 404)
+    }
+
+    /// Once an iPhone joined Sync, an older iPhone app calling them without a
+    /// key is told to update, before the auth gate.
+    @Test
+    func olderIPhoneAppsAreToldToUpdateOnceRetired() async throws {
+        let server = try await startBodyLimitServer(config: .default, trustLoopback: false, pairingRetired: true)
+        defer { Task { await server.shutdown() } }
+
+        for (method, path) in [("GET", "/pair/hello"), ("POST", "/pair/code"), ("POST", "/pair/confirm"), ("POST", "/pair/unpair")] {
+            let reply = try await response(method, path, body: method == "POST" ? Data("{}".utf8) : nil, on: server)
+            #expect(reply.status == 410, "\(path)")
+            #expect(reply.body.contains(#""error":"update_required""#), "\(path)")
+        }
+    }
+
+    /// Until then the 6-digit pairing works as on upstream main: the pairing
+    /// steps are public and unpairing needs the phone's key.
+    @Test
+    func theSixDigitPairingAnswersUntilRetired() async throws {
+        let server = try await startBodyLimitServer(config: .default, trustLoopback: false, pairingRetired: false)
+        defer { Task { await server.shutdown() } }
+
+        for path in ["/pair/code", "/pair/confirm"] {
+            let reply = try await response("POST", path, body: Data("{}".utf8), on: server)
+            #expect(reply.status != 410 && reply.status != 401 && reply.status != 404, "\(path): \(reply.status)")
+        }
+        #expect(try await status("POST", "/pair/unpair", body: Data("{}".utf8), on: server) == 401)
     }
 }
 
@@ -103,7 +159,11 @@ private struct BodyLimitTestServer {
     }
 }
 
-private func startBodyLimitServer(config: ServerConfiguration) async throws -> BodyLimitTestServer {
+private func startBodyLimitServer(
+    config: ServerConfiguration,
+    trustLoopback: Bool = false,
+    pairingRetired: Bool = true
+) async throws -> BodyLimitTestServer {
     let lease = await HTTPServerTestLock.shared.acquire()
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     do {
@@ -119,7 +179,8 @@ private func startBodyLimitServer(config: ServerConfiguration) async throws -> B
                             eventLoop: channel.eventLoop,
                             // trustLoopback false so the auth gate would normally
                             // run — proves the size guard fires *before* it.
-                            trustLoopback: false
+                            trustLoopback: trustLoopback,
+                            pairingRetiredProvider: { pairingRetired }
                         )
                     )
                 }

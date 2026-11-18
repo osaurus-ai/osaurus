@@ -107,6 +107,12 @@ enum ServerConfigurationStore {
         save(configuration)
     }
 
+    static func updateActiveThemeId(_ id: UUID?) {
+        var configuration = load() ?? ServerConfiguration.default
+        configuration.activeThemeId = id
+        save(configuration)
+    }
+
     static func updateFontSizeMultiplier(_ multiplier: Double) {
         var configuration = load() ?? ServerConfiguration.default
         configuration.fontSizeMultiplier = ServerConfiguration.clampedFontSizeMultiplier(multiplier)

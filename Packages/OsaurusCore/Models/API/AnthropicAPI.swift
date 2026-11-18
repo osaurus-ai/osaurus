@@ -35,14 +35,21 @@ struct AnthropicMessagesRequest: Codable, Sendable {
     /// `enable_thinking` does on chat completions; `adaptive` or no field keeps the model default.
     /// The budget is accepted for wire compatibility; local models do not cap thinking by tokens.
     var thinking: AnthropicThinkingConfig? = nil
-    /// `{"effort": "low" | "medium" | "high" | "xhigh" | "max"}`. Effort lives here, not inside
+    /// `{"effort": "low" | "medium" | "high" | "xhigh" | "max"}` and native structured output
+    /// (`format: json_schema`, workflow inference nodes only). Effort lives here, not inside
     /// `thinking`. Omitted when nil so the model applies its own default effort.
     var output_config: AnthropicOutputConfig? = nil
 }
 
-/// Anthropic `output_config` request field. Unknown keys (e.g. `format`) are ignored on decode.
+/// Anthropic `output_config` request field. Unknown keys are ignored on decode.
 struct AnthropicOutputConfig: Codable, Sendable, Equatable {
     var effort: String? = nil
+    var format: AnthropicOutputFormat? = nil
+}
+
+struct AnthropicOutputFormat: Codable, Sendable, Equatable {
+    let type: String
+    let schema: JSONValue
 }
 
 /// `{"type": "ephemeral", "ttl": "1h"?}` cache-control marker. Only

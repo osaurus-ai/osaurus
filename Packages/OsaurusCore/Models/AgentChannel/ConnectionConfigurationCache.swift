@@ -11,16 +11,16 @@
 //  for all five files on every debounced signal parked the main thread for
 //  seconds under I/O contention (Sentry APPLE-MACOS-3C5). The stores are the
 //  only writers of these files, so `save` keeps the cache coherent; entries
-//  are keyed by file URL so switching `overrideDirectory` (tests) never
-//  serves a value from another directory.
+//  are keyed by file URL so each account's file caches separately and
+//  switching `overrideDirectory` (tests) never serves a value from another
+//  directory.
 //
 
 import Foundation
 
 final class ConnectionConfigurationCache<Value>: @unchecked Sendable {
     private let lock = NSLock()
-    private var url: URL?
-    private var value: Value?
+    private var values: [URL: Value] = [:]
 
     init() {}
 
@@ -29,7 +29,7 @@ final class ConnectionConfigurationCache<Value>: @unchecked Sendable {
     /// other readers on the lock itself.
     func value(for url: URL, load: () -> Value) -> Value {
         lock.lock()
-        if self.url == url, let value {
+        if let value = values[url] {
             lock.unlock()
             return value
         }
@@ -43,16 +43,21 @@ final class ConnectionConfigurationCache<Value>: @unchecked Sendable {
     /// Record the value just persisted at `url`.
     func store(_ value: Value, for url: URL) {
         lock.lock()
-        self.url = url
-        self.value = value
+        values[url] = value
         lock.unlock()
     }
 
-    /// Drop the cached value so the next read hits disk.
+    /// Drop the cached value for a file that was deleted.
+    func remove(for url: URL) {
+        lock.lock()
+        values[url] = nil
+        lock.unlock()
+    }
+
+    /// Drop every cached value so the next read hits disk.
     func reset() {
         lock.lock()
-        url = nil
-        value = nil
+        values.removeAll()
         lock.unlock()
     }
 }

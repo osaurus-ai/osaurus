@@ -62,16 +62,27 @@ public actor KnowledgeSearchService {
         TextSimilarity.deterministicUUID(from: "knowledge:\(collectionId):\(relPath):\(chunkIndex)")
     }
 
-    private static func storageDir(for collectionId: String) -> URL {
+    private static func storageDir(
+        for collectionId: String,
+        indexDirectoryName: String = EmbeddingService.indexDirectoryName
+    ) -> URL {
         guard let uuid = UUID(uuidString: collectionId) else {
             return OsaurusPaths.knowledge()
-                .appendingPathComponent("vectura", isDirectory: true)
+                .appendingPathComponent(indexDirectoryName, isDirectory: true)
                 .appendingPathComponent(collectionId, isDirectory: true)
         }
-        return OsaurusPaths.knowledgeVecturaDirectory(for: uuid)
+        return OsaurusPaths.knowledgeVecturaDirectory(for: uuid, indexDirectoryName: indexDirectoryName)
+    }
+
+    /// A collection's index directory under every embedding profile used on this Mac.
+    private static func allProfileStorageDirs(for collectionId: String) -> [URL] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: OsaurusPaths.knowledge().path)) ?? []
+        return names.filter { $0 == "vectura" || $0.hasPrefix("vectura-") }
+            .map { storageDir(for: collectionId, indexDirectoryName: $0) }
     }
 
     private func ensureVectorDB(for collectionId: String) async -> VecturaKit? {
+        guard EmbeddingService.vectorIndexesAvailable else { return nil }
         if let existing = vectorDBs[collectionId] { return existing }
 
         let storageDir = Self.storageDir(for: collectionId)
@@ -126,6 +137,13 @@ public actor KnowledgeSearchService {
             }
             return false
         }
+        guard EmbeddingService.vectorIndexesAvailable else {
+            if logSkipped {
+                KnowledgeLogger.search.warning(
+                    "Skipping VecturaKit \(operation); embedding model unavailable, using FTS fallback")
+            }
+            return false
+        }
 
         let residentModels = await ModelRuntime.shared.cachedModelSummaries()
         guard residentModels.isEmpty else {
@@ -166,7 +184,7 @@ public actor KnowledgeSearchService {
         }
         let id = Self.vectorId(collectionId: hit.collectionId, relPath: hit.relPath, chunkIndex: hit.chunkIndex)
         let text = hit.headingPath.isEmpty ? hit.content : hit.headingPath + "\n" + hit.content
-        _ = try await MediaActivityLogger.$embeddingPurpose.withValue("knowledge_index") {
+        _ = try await MediaActivityLogger.withEmbedding(purpose: "knowledge_index", role: .document) {
             try await db.addDocument(text: text, id: id)
         }
         chunkKeyMap[id.uuidString] = (hit.collectionId, hit.relPath, hit.chunkIndex)
@@ -194,7 +212,9 @@ public actor KnowledgeSearchService {
             try? await db.reset()
         }
         chunkKeyMap = chunkKeyMap.filter { $0.value.collectionId != collectionId }
-        try? FileManager.default.removeItem(at: Self.storageDir(for: collectionId))
+        for directory in Self.allProfileStorageDirs(for: collectionId) {
+            try? FileManager.default.removeItem(at: directory)
+        }
     }
 
     /// Discard and regenerate a collection's vectors from the SQLite
@@ -241,7 +261,7 @@ public actor KnowledgeSearchService {
                 do {
                     KnowledgeDebugLog.log("service.search", "db.search START (embeds query + ANN) collection=\(collectionId)")
                     let tVec = KnowledgeDebugLog.now()
-                    let results = try await MediaActivityLogger.$embeddingPurpose.withValue("knowledge_search") {
+                    let results = try await MediaActivityLogger.withEmbedding(purpose: "knowledge_search", role: .query) {
                         try await db.search(
                             query: .text(query),
                             numResults: fetchCount,

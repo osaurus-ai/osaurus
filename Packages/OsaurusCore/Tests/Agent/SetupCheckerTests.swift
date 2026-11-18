@@ -53,6 +53,33 @@ struct SetupCheckerTests {
         #expect(report.blocking.first?.kind == .workingFolder)
     }
 
+    /// Keeper waiting on Downloads is asked for it in place; any other gap
+    /// goes to the full setup card, which keeps its buttons.
+    @Test
+    func aTeammateWaitingOnlyOnDownloads_isAskedForTheFolder() throws {
+        let downloads = try #require(FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first)
+        var keeper = agent()
+        keeper.sourceTemplateID = Teammate.keeper.templateID
+        keeper.workingFolderPath = downloads.path
+        keeper.workingFolderBookmark = nil
+        let report = SetupChecker.check(keeper, environment: env())
+        #expect(AgentSetupPromptCoordinator.waitingFolder(in: report, for: keeper) == downloads.standardizedFileURL.path)
+
+        var custom = keeper
+        custom.sourceTemplateID = nil
+        #expect(AgentSetupPromptCoordinator.waitingFolder(in: report, for: custom) == nil, "not a teammate")
+
+        var elsewhere = keeper
+        elsewhere.workingFolderPath = "/Users/someone/Projects/app"
+        let elsewhereReport = SetupChecker.check(elsewhere, environment: env())
+        #expect(AgentSetupPromptCoordinator.waitingFolder(in: elsewhereReport, for: elsewhere) == nil)
+
+        var alsoNeedsAModel = keeper
+        alsoNeedsAModel.defaultModel = "qwen3-coder-next-mlx"
+        let both = SetupChecker.check(alsoNeedsAModel, environment: env())
+        #expect(AgentSetupPromptCoordinator.waitingFolder(in: both, for: alsoNeedsAModel) == nil)
+    }
+
     @Test
     func staleBookmark_blocks_andResolvingBookmarkDoesNot() {
         var a = agent()
@@ -188,5 +215,21 @@ struct AgentSetupTemplateGroupTests {
             to: agent, groups: [.mcpServer("Underwriting")],
             available: [.mcpServer("Underwriting"): ["uw_case_get", "uw_apps_list"]])
         #expect(updated.manualToolNames == ["uw_case_get"])
+    }
+
+    @Test
+    func canBind_onlyModelsThatCanRunTheSlot() {
+        var e = SetupChecker.Environment(
+            registeredToolNames: [],
+            modelCatalog: ConfigModelReference.Catalog(
+                localModelIds: ["mlx-community/Qwen3-4bit", "foundation"], providers: []),
+            isPermissionGranted: { _ in true }, bookmarkResolves: { _ in true }, knowledgeCollectionExists: { _ in true })
+        e.structuredOutput = { id, _ -> StructuredOutputSupport in
+            id == "foundation" ? .supported : .unsupported("no constrained decoding")
+        }
+        let slot = ModelRequirement(slot: "main")
+        #expect(SetupChecker.canBind("foundation", to: slot, environment: e))
+        #expect(!SetupChecker.canBind("mlx-community/Qwen3-4bit", to: slot, environment: e), "can't enforce a schema")
+        #expect(!SetupChecker.canBind("not-installed/model", to: slot, environment: e), "doesn't resolve here")
     }
 }

@@ -4,6 +4,21 @@ import os
 /// Enforces explicit API tool choice against the whole completed response.
 /// It never alters prompts, schemas, sampling, call names or arguments.
 enum ResponsesToolChoiceContract {
+    /// Measured work remains real even when the response violates tool choice.
+    /// Keep only usage on the error, never dispatchable calls or a success event.
+    struct RejectedCompletionUsage: Sendable {
+        let inputTokens: Int?
+        let outputTokens: Int?
+    }
+
+    private static let rejectedUsageKey = "com.osaurus.toolChoice.rejectedCompletionUsage"
+
+    static func rejectedCompletionUsage(in error: Error) -> RejectedCompletionUsage? {
+        let error = error as NSError
+        guard error.domain == "OsaurusToolChoice" else { return nil }
+        return error.userInfo[rejectedUsageKey] as? RejectedCompletionUsage
+    }
+
     static func failure(_ message: String) -> NSError {
         NSError(domain: "OsaurusToolChoice", code: 422, userInfo: [NSLocalizedDescriptionKey: message])
     }
@@ -139,6 +154,8 @@ enum ResponsesToolChoiceContract {
                             let original = error as NSError
                             var info = original.userInfo
                             info["response_id"] = response.responseID
+                            info[rejectedUsageKey] = RejectedCompletionUsage(
+                                inputTokens: response.inputTokenCount, outputTokens: response.tokenCount)
                             throw NSError(domain: original.domain, code: original.code, userInfo: info)
                         }
                         completed.withLock { $0 = true }

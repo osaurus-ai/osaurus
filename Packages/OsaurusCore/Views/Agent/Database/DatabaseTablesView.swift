@@ -20,7 +20,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct DatabaseTablesView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let agentId: UUID
     /// Table to focus. Set by the workspace when a deep-link carries a
@@ -90,12 +92,12 @@ struct DatabaseTablesView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .overlay {
             if isDropTargeted {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(theme.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6]))
-                    .padding(6)
+                RoundedRectangle(cornerRadius: theme.radius.medium)
+                    .strokeBorder(theme.border.focus, style: StrokeStyle(lineWidth: theme.stroke.focus, dash: [6]))
+                    .padding(.horizontal, theme.space.s6).padding(.vertical, theme.space.s6)
                     .allowsHitTesting(false)
             }
         }
@@ -197,83 +199,87 @@ struct DatabaseTablesView: View {
 
     @ViewBuilder
     private var tableList: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             HStack {
                 Text("Tables", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                     .tracking(0.5)
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
                 Spacer()
                 Button {
                     Task { await loadTables(applyFocus: false) }
                 } label: {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 11))
+                    Image(systemName: "arrow.clockwise").glyphSize(.footnote)
                 }
                 .buttonStyle(.borderless)
                 .localizedHelp("Refresh the table list")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            Divider().foregroundColor(theme.primaryBorder)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s8)
+            Divider().foregroundColor(theme.border.subtle)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
+                LazyVStack(alignment: .leading, spacing: theme.space.s2) {
                     ForEach(userTables, id: \.name) { table in
                         tableListRow(table, isSystem: false)
                     }
                     if !systemTables.isEmpty {
                         Text("System (managed by Osaurus)", bundle: .module)
-                            .font(.system(size: 9, weight: .bold))
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
                             .tracking(0.5)
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.horizontal, 14)
-                            .padding(.top, 16)
-                            .padding(.bottom, 4)
+                            .foregroundColor(theme.text.tertiary)
+                            .padding(.horizontal, theme.space.s12)
+                            .padding(.top, theme.space.s16)
+                            .padding(.bottom, theme.space.s4)
                         ForEach(systemTables, id: \.name) { table in
                             tableListRow(table, isSystem: true)
                         }
                     }
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 6)
+                .padding(.horizontal, theme.space.s6)
+                .padding(.vertical, theme.space.s6)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(theme.secondaryBackground.opacity(0.25))
+        .background(theme.surface.hover)
     }
 
     @ViewBuilder
     private func tableListRow(_ table: AgentTableSchema, isSystem: Bool) -> some View {
-        let isSelected = selectedTable == table.name
-        Button {
+        Self.renderTableListRow(table, isSystem: isSystem, isSelected: selectedTable == table.name, theme: theme) {
             selectedTable = table.name
-        } label: {
-            HStack(alignment: .center, spacing: 8) {
+        }
+    }
+
+    /// One renderer for the real table list and its read-only inspector display.
+    @ViewBuilder
+    fileprivate static func renderTableListRow(_ table: AgentTableSchema, isSystem: Bool, isSelected: Bool, theme: any ThemeProtocol, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: theme.space.s8) {
                 Image(systemName: isSystem ? "gearshape" : "tablecells")
-                    .font(.system(size: 11))
+                    .glyphSize(.footnote)
                     .foregroundColor(
-                        isSelected ? theme.accentColor : (isSystem ? theme.tertiaryText : theme.secondaryText)
+                        isSelected
+                            ? theme.action.primary.default.background
+                            : (isSystem ? theme.text.tertiary : theme.text.secondary)
                     )
                     .frame(width: 14)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(table.name)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .componentInspectionText(53, role: .code, fallback: .caption, weight: isSelected ? 600 : 500, family: .code, theme: theme)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text("\(table.rowCount) \(table.rowCount == 1 ? L("row") : L("rows"))")
-                        .font(.system(size: 9))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(isSelected ? theme.accentColor.opacity(0.12) : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7))
+            .settingsChrome(isSelected ? .selected : nil)
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
@@ -285,9 +291,9 @@ struct DatabaseTablesView: View {
     @ViewBuilder
     private var detailPane: some View {
         if let table = selectedTableSchema {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 detailHeader(table)
-                Divider().foregroundColor(theme.primaryBorder)
+                Divider().foregroundColor(theme.border.subtle)
                 if let actionError {
                     errorBanner(actionError)
                 }
@@ -303,99 +309,89 @@ struct DatabaseTablesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
-            DatabaseEmptyState(
-                systemImage: "arrow.left",
+            SettingsEmptyState(
+                inline: "arrow.left",
                 title: "Pick a table to see what's inside.",
-                subtitle: "Choose one of this agent's tables from the list on the left.",
-                actionTitle: nil,
-                actionSystemImage: nil,
-                action: nil,
-                theme: theme
+                hint: "Choose one of this agent's tables from the list on the left."
             )
+            .frame(maxHeight: .infinity)
         }
     }
 
     @ViewBuilder
     private func detailHeader(_ table: AgentTableSchema) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 // Long table names must truncate (middle, so the
                 // distinguishing suffix survives) rather than push the
                 // Rows/Columns switch out of the pane.
                 Text(table.name)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.mono)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if selectedTableIsSystem {
-                    Text("read-only", bundle: .module)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(theme.tertiaryBackground))
+                    StatusChip(L("read-only"), tone: .neutral)
                         .fixedSize()
                 }
                 Spacer(minLength: 8)
-                Picker("", selection: $viewMode) {
-                    ForEach(TableViewMode.allCases) { mode in
-                        Text(verbatim: mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                AssignedBaseSegmentedPicker(
+                    selection: $viewMode,
+                    options: TableViewMode.allCases.map { .init($0, $0.label, verbatim: true) },
+                    size: .compact
+                )
                 .fixedSize()
                 .localizedHelp("Switch between the table's rows and its column layout.")
             }
             if !table.purpose.isEmpty {
                 Text(table.purpose)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(2)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(theme.secondaryBackground.opacity(0.4))
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s8)
+        .background(theme.surface.hover)
     }
 
     // MARK: - Rows pane
 
     @ViewBuilder
     private func rowsPane(_ table: AgentTableSchema) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             rowsControlBar
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-            Divider().foregroundColor(theme.primaryBorder)
+                .padding(.horizontal, theme.space.s16)
+                .padding(.vertical, theme.space.s8)
+            Divider().foregroundColor(theme.border.subtle)
             if !dataTipDismissed && !browser.rows.isEmpty {
                 dataTipCaption
             }
             if browser.isLoadingFirstPage {
                 HStack {
-                    ProgressView()
+                    SettingsSpinner(size: .large)
                     Text("Loading rows…", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                 }
-                .padding(24)
+                .padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
                 Spacer(minLength: 0)
             } else if let error = browser.loadError {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     Label(localized: "Couldn't load rows", systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.red)
+                        .componentInspectionText(53, role: .label, fallback: .label, weight: 600, theme: theme)
+                        .foregroundColor(theme.status.error.foreground)
                     Text(error)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                 }
-                .padding(24)
+                .padding(.horizontal, theme.space.s24).padding(.vertical, theme.space.s24)
                 Spacer(minLength: 0)
             } else if browser.rows.isEmpty {
                 noRowsEmptyState
             } else {
                 grid
-                Divider().foregroundColor(theme.primaryBorder)
+                Divider().foregroundColor(theme.border.subtle)
                 rowsFooter
             }
         }
@@ -403,16 +399,14 @@ struct DatabaseTablesView: View {
 
     @ViewBuilder
     private var rowsControlBar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Picker("", selection: $filterMode) {
-                    ForEach(DataFilterMode.allCases) { mode in
-                        Text(verbatim: mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
+        HStack(spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
+                AssignedBaseSegmentedPicker(
+                    selection: $filterMode,
+                    options: DataFilterMode.allCases.map { .init($0, $0.label, verbatim: true) },
+                    size: .compact
+                )
                 .fixedSize()
-                .labelsHidden()
                 filterHelpButton
             }
             .fixedSize(horizontal: true, vertical: false)
@@ -426,11 +420,9 @@ struct DatabaseTablesView: View {
                     showBulkDeleteConfirm = true
                 } label: {
                     Label(localized: "Delete \(selectedRowKeys.count)", systemImage: "trash")
-                        .font(.system(size: 11, weight: .medium))
+                        .componentInspectionText(53, role: .caption, fallback: .footnote, weight: 500, theme: theme)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(.red)
+                .assignedSettingsButtonStyle(.destructive, size: .compact)
                 .fixedSize()
             }
             // Icon-only actions keep the bar within the pane's minimum
@@ -468,24 +460,11 @@ struct DatabaseTablesView: View {
         systemImage: String,
         isBusy: Bool,
         disabled: Bool,
-        help: LocalizedStringKey,
+        help: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Group {
-                if isBusy {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 11, weight: .medium))
-                }
-            }
-            .frame(width: 16, height: 14)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .disabled(disabled)
-        .help(Text(help, bundle: .module))
+        SettingsIconButton(systemImage, isLoading: isBusy, help: help, size: .compact, action: action)
+            .disabled(disabled)
     }
 
     /// `?` button next to the filter picker. Opens a small popover
@@ -497,29 +476,29 @@ struct DatabaseTablesView: View {
             showFilterHelp.toggle()
         } label: {
             Image(systemName: "questionmark.circle")
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(.caption)
+                .foregroundColor(theme.text.tertiary)
         }
         .buttonStyle(.plain)
         .localizedHelp("What do these filters mean?")
         .popover(isPresented: $showFilterHelp, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 Text(localized: "Filters")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 ForEach(DataFilterMode.allCases) { mode in
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(verbatim: mode.label)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                            .foregroundColor(theme.text.primary)
                         Text(verbatim: mode.helpDescription)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
-            .padding(14)
+            .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
             .frame(width: 260)
         }
     }
@@ -528,81 +507,58 @@ struct DatabaseTablesView: View {
     /// the grid (Open button, checkbox selection, dimmed deleted rows).
     @ViewBuilder
     private var dataTipCaption: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "lightbulb")
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(.micro)
+                .foregroundColor(theme.text.tertiary)
             Text(
                 "Double-click a row (or press ↗) to open it · check rows to delete several at once · deleted rows are dimmed.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             Spacer(minLength: 0)
-            Button {
-                dataTipDismissed = true
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(.plain)
-            .localizedHelp("Hide this tip")
+            SettingsIconButton("xmark", help: "Hide this tip", size: .compact) { dataTipDismissed = true }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(theme.secondaryBackground.opacity(0.5))
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s6)
+        .background(theme.surface.subtle)
     }
 
     @ViewBuilder
     private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 10))
-                .foregroundColor(.red)
+                .glyphSize(.micro)
+                .foregroundColor(theme.status.error.foreground)
             Text(verbatim: message)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .lineLimit(2)
             Spacer(minLength: 0)
-            Button {
-                actionError = nil
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(.plain)
+            SettingsIconButton("xmark", help: "Dismiss", size: .compact) { actionError = nil }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(Color.red.opacity(0.08))
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s6)
+        .background(theme.status.error.background)
     }
 
     /// Thin info banner shown after a successful import.
     @ViewBuilder
     private func importSummaryBanner(_ summary: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "checkmark.circle")
-                .font(.system(size: 10))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(.micro)
+                .foregroundColor(theme.text.link)
             Text(verbatim: summary)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
             Spacer(minLength: 0)
-            Button {
-                importSummary = nil
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(.plain)
-            .localizedHelp("Dismiss")
+            SettingsIconButton("xmark", help: "Dismiss", size: .compact) { importSummary = nil }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(theme.accentColor.opacity(0.08))
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s6)
+        .background(theme.status.info.background)
     }
 
     // MARK: - Grid
@@ -691,28 +647,28 @@ struct DatabaseTablesView: View {
 
     @ViewBuilder
     private var rowsFooter: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             if let total = browser.totalCount {
                 Text("Showing \(browser.rows.count) of \(total) \(total == 1 ? L("row") : L("rows"))")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                    .foregroundColor(theme.text.secondary)
             } else {
                 Text("Showing \(browser.rows.count) \(browser.rows.count == 1 ? L("row") : L("rows"))")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                    .foregroundColor(theme.text.secondary)
             }
             if browser.isLoadingMore {
-                ProgressView().controlSize(.mini)
+                SettingsSpinner(size: .mini)
                 Text("Loading more…", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             } else if browser.hasMore {
                 Button {
                     browser.loadMoreIfNeeded()
                 } label: {
                     Text("Load more", bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                        .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(.plain)
                 .pointingHandCursor()
@@ -721,24 +677,23 @@ struct DatabaseTablesView: View {
             Spacer(minLength: 8)
             if !selectedRowKeys.isEmpty {
                 Text("\(selectedRowKeys.count) selected")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                    .foregroundColor(theme.text.link)
             }
             if canSelectRows {
                 Toggle(isOn: allLoadedSelectedBinding) {
                     Text("Select all", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.secondary)
                 }
-                .toggleStyle(.checkbox)
-                .controlSize(.small)
+                .settingsCheckbox()
                 .fixedSize()
                 .localizedHelp("Select every row loaded so far (\(browser.rows.count))")
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-        .background(theme.secondaryBackground.opacity(0.4))
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s8)
+        .background(theme.surface.hover)
     }
 
     @ViewBuilder
@@ -747,26 +702,21 @@ struct DatabaseTablesView: View {
         Group {
             switch filterMode {
             case .deleted:
-                DatabaseEmptyState(
-                    systemImage: "trash.slash",
-                    title: "No deleted rows in `\(tableLabel)`.",
-                    subtitle: "Rows the agent (or you) deleted would appear here, ready to restore.",
-                    actionTitle: nil,
-                    actionSystemImage: nil,
-                    action: nil,
-                    theme: theme
+                SettingsEmptyState(
+                    inline: "trash.slash",
+                    title: L("No deleted rows in `\(tableLabel)`."),
+                    hint: "Rows the agent (or you) deleted would appear here, ready to restore."
                 )
+                .frame(maxHeight: .infinity)
             case .live, .all:
-                DatabaseEmptyState(
-                    systemImage: "tray",
-                    title: "No rows in `\(tableLabel)` yet.",
-                    subtitle:
-                        "The agent adds rows when it has something to remember. You can also ask it directly in chat, or import a file.",
-                    actionTitle: "Import a file…",
-                    actionSystemImage: "square.and.arrow.down",
-                    action: selectedTableIsSystem ? nil : { presentImportPanel() },
-                    theme: theme
+                SettingsEmptyState(
+                    inline: "tray",
+                    title: L("No rows in `\(tableLabel)` yet."),
+                    hint: "The agent adds rows when it has something to remember. You can also ask it directly in chat, or import a file.",
+                    action: selectedTableIsSystem
+                        ? nil : SettingsEmptyState.Action(title: L("Import a file…"), icon: "square.and.arrow.down", handler: { presentImportPanel() })
                 )
+                .frame(maxHeight: .infinity)
             }
         }
     }
@@ -776,75 +726,73 @@ struct DatabaseTablesView: View {
     @ViewBuilder
     private func structurePane(_ table: AgentTableSchema) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     Text("Columns", bundle: .module)
-                        .font(.system(size: 11, weight: .bold))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                         .tracking(0.5)
-                        .foregroundColor(theme.tertiaryText)
+                        .foregroundColor(theme.text.tertiary)
                     ForEach(table.columns, id: \.name) { column in
-                        HStack(spacing: 8) {
+                        HStack(spacing: theme.space.s8) {
                             Text(column.name)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.primaryText)
+                                .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.primary)
                             Text(column.type)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.tertiaryText)
+                                .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.tertiary)
                             if column.primaryKey {
-                                Text(localized: "PK").font(.system(size: 9, weight: .bold))
-                                    .foregroundColor(theme.accentColor)
+                                Text(localized: "PK").catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                                    .foregroundColor(theme.text.link)
                             }
                             if !column.nullable {
-                                Text(localized: "NOT NULL").font(.system(size: 9))
-                                    .foregroundColor(theme.tertiaryText)
+                                Text(localized: "NOT NULL").catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                                    .foregroundColor(theme.text.tertiary)
                             }
                             Spacer()
                         }
                     }
                 }
-                .padding(12)
+                .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.inputBackground))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
+                .settingsChrome(.subtle)
 
                 if !table.indexes.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
                         Text("Indexes", bundle: .module)
-                            .font(.system(size: 11, weight: .bold))
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                             .tracking(0.5)
-                            .foregroundColor(theme.tertiaryText)
+                            .foregroundColor(theme.text.tertiary)
                         ForEach(table.indexes, id: \.name) { index in
-                            HStack(spacing: 8) {
+                            HStack(spacing: theme.space.s8) {
                                 Image(systemName: "list.bullet.indent")
-                                    .foregroundColor(theme.tertiaryText)
+                                    .foregroundColor(theme.text.tertiary)
                                 Text(index.name)
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                    .foregroundColor(theme.tertiaryText)
+                                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                                    .foregroundColor(theme.text.tertiary)
                                 Text("(\(index.columns.joined(separator: ", ")))")
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundColor(theme.tertiaryText)
+                                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                                    .foregroundColor(theme.text.tertiary)
                                 if index.unique {
-                                    Text(localized: "UNIQUE").font(.system(size: 9, weight: .bold))
-                                        .foregroundColor(theme.tertiaryText)
+                                    Text(localized: "UNIQUE").catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                                        .foregroundColor(theme.text.tertiary)
                                 }
                                 Spacer()
                             }
                         }
                     }
-                    .padding(12)
+                    .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.inputBackground))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
+                    .settingsChrome(.subtle)
                 }
 
                 Text(
                     "The agent designs this layout itself with the `db_create_table` tool. Ask it in chat if you want new columns.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
             }
-            .padding(16)
+            .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -853,29 +801,26 @@ struct DatabaseTablesView: View {
 
     @ViewBuilder
     private var noTablesEmptyState: some View {
-        DatabaseEmptyState(
-            systemImage: "tablecells.badge.ellipsis",
+        SettingsEmptyState(
+            inline: "tablecells.badge.ellipsis",
             title: "This agent hasn't stored anything yet.",
-            subtitle:
-                "Ask the agent in chat to remember something — it will create the tables it needs, and you can browse them here. You can also import a CSV or JSON file to start a table yourself.",
-            actionTitle: "Import a file…",
-            actionSystemImage: "square.and.arrow.down",
-            action: { presentImportPanel() },
-            theme: theme
+            hint: "Ask the agent in chat to remember something — it will create the tables it needs, and you can browse them here. You can also import a CSV or JSON file to start a table yourself.",
+            action: SettingsEmptyState.Action(title: L("Import a file…"), icon: "square.and.arrow.down", handler: { presentImportPanel() })
         )
+        .frame(maxHeight: .infinity)
     }
 
     @ViewBuilder
     private func schemaErrorState(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Label(localized: "Couldn't open the database", systemImage: "exclamationmark.triangle")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.red)
+                .componentInspectionText(53, role: .label, fallback: .label, weight: 600, theme: theme)
+                .foregroundColor(theme.status.error.foreground)
             Text(message)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                .foregroundColor(theme.text.tertiary)
         }
-        .padding(24)
+        .padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -1193,3 +1138,19 @@ struct DatabaseTablesView: View {
         }
     }
 }
+
+#if OSAURUS_DESIGN_INSPECTOR
+struct InspectorDatabaseTableNames: View {
+    @Environment(\.theme) private var inheritedTheme
+    @State private var selected = "local_notes"
+    private var theme: any ThemeProtocol { inheritedTheme }
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            Text("Table list · sample data")
+            ForEach(["local_notes", "local_history"], id: \.self) { name in
+                DatabaseTablesView.renderTableListRow(.init(name: name, purpose: "Local display", columns: [], indexes: [], rowCount: 3, lastWriteAt: nil), isSystem: false, isSelected: selected == name, theme: theme) { selected = name }
+            }
+        }.environment(\.theme, theme)
+    }
+}
+#endif

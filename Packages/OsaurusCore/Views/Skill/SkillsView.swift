@@ -12,10 +12,11 @@ import UniformTypeIdentifiers
 // MARK: - Skills View
 
 struct SkillsView: View {
+    @ObservedObject private var badgeStore = ManagementBadgeStore.shared
     @ObservedObject private var themeManager = ThemeManager.shared
     private var skillManager = SkillManager.shared
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     @State private var isCreating = false
     @State private var editingSkill: Skill?
@@ -67,16 +68,14 @@ struct SkillsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Header
             headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
+                .settingsHeaderEntrance(hasAppeared: hasAppeared)
 
             // Progress bar
             if showProgress {
-                ProgressView()
-                    .progressViewStyle(LinearProgressViewStyle())
-                    .frame(height: 2)
+                SettingsProgressBar(value: nil, height: 2)
                     .transition(.opacity)
             } else {
                 Spacer().frame(height: 2)
@@ -93,8 +92,8 @@ struct SkillsView: View {
                 } else if skillManager.skills.isEmpty && !skillManager.isRefreshing {
                     SettingsEmptyState(
                         icon: "sparkles",
-                        title: L("Create Your First Skill"),
-                        subtitle: L("Skills are reusable workflows that every custom agent can use automatically."),
+                        title: "Create Your First Skill",
+                        subtitle: "Skills are reusable instructions that every custom agent can use automatically.",
                         examples: [
                             .init(
                                 icon: "magnifyingglass",
@@ -117,37 +116,37 @@ struct SkillsView: View {
                     )
                 } else {
                     ScrollView {
-                        LazyVStack(spacing: 12) {
+                        LazyVStack(alignment: .leading, spacing: theme.space.s8) {
                             availabilityHint
 
                             let shown = filteredSkills
                             if shown.isEmpty {
                                 emptyState
-                            }
-
-                            ForEach(Array(shown.enumerated()), id: \.element.id) { index, skill in
-                                SkillRow(
-                                    skill: skill,
-                                    animationDelay: Double(index) * 0.03,
-                                    hasAppeared: hasAppeared,
-                                    onEdit: {
-                                        editingSkill = skill
-                                    },
-                                    onExport: {
-                                        exportingSkill = skill
-                                    },
-                                    onDelete: {
-                                        Task { @MainActor in
-                                            isProcessing = true
-                                            defer { isProcessing = false }
-                                            await skillManager.delete(id: skill.id)
-                                            showToast(L("Deleted \"\(skill.name)\""))
-                                        }
+                            } else {
+                                SettingsGroup {
+                                    ForEach(shown) { skill in
+                                        SkillRow(
+                                            skill: skill,
+                                            onEdit: {
+                                                editingSkill = skill
+                                            },
+                                            onExport: {
+                                                exportingSkill = skill
+                                            },
+                                            onDelete: {
+                                                Task { @MainActor in
+                                                    isProcessing = true
+                                                    defer { isProcessing = false }
+                                                    await skillManager.delete(id: skill.id)
+                                                    showToast(L("Deleted \"\(skill.name)\""))
+                                                }
+                                            }
+                                        )
                                     }
-                                )
+                                }
                             }
                         }
-                        .padding(24)
+                        .settingsPageInsets()
                     }
                     .opacity(hasAppeared ? 1 : 0)
                 }
@@ -158,14 +157,14 @@ struct SkillsView: View {
                         Spacer()
                         ThemedToastView(toast.text, type: toast.isError ? .error : .success)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .padding(.bottom, 20)
+                            .padding(.bottom, theme.space.s16)
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
         .sheet(isPresented: $isCreating) {
             SkillEditorSheet(
                 mode: .create,
@@ -259,13 +258,13 @@ struct SkillsView: View {
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 2_500_000_000)  // 2.5 seconds
                     if isProcessing || skillManager.isRefreshing {
-                        withAnimation(.easeIn(duration: 0.2)) {
+                        withAnimation(theme.motion.quick) {
                             showProgress = true
                         }
                     }
                 }
             } else {
-                withAnimation(.easeOut(duration: 0.2)) {
+                withAnimation(theme.motion.quick) {
                     showProgress = false
                 }
             }
@@ -273,7 +272,7 @@ struct SkillsView: View {
         .onAppear {
             Task { @MainActor in
                 await skillManager.refresh()
-                withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
+                withAnimation(theme.motion.standard.delay(0.05)) {
                     hasAppeared = true
                 }
             }
@@ -400,104 +399,82 @@ struct SkillsView: View {
     /// One-line explanation of the library contract: no toggles, no per-agent
     /// assignment — everything installed is available to custom agents.
     private var availabilityHint: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "info.circle")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(.footnote, weight: .medium)
+                .foregroundColor(theme.text.link)
             Text(
-                "Skills are automatically available to every custom agent and load only when relevant. Type /skill-name in chat to use one explicitly.",
+                "A skill loads only when it is relevant. Type /skill-name in chat to use one explicitly.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.accentColor.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.accentColor.opacity(0.15), lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.selected)
     }
 
     // MARK: - Empty State
 
     @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: searchText.isEmpty ? "sparkles" : "magnifyingglass")
-                .font(.system(size: 28, weight: .light))
-                .foregroundColor(theme.tertiaryText)
-            if !searchText.isEmpty {
-                Text("No skills match \"\(searchText)\"", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-            } else if selectedTab == .custom {
-                Text("No skills of your own yet — create or import one", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-            } else {
-                Text("No skills here", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
+        SettingsEmptyState(
+            inline: searchText.isEmpty ? "sparkles" : "magnifyingglass",
+            title: searchText.isEmpty
+                ? (selectedTab == .custom ? "No skills of your own yet — create or import one" : "No skills here")
+                : L("No skills match \"\(searchText)\"")
+        )
+        .padding(.vertical, theme.settingsSectionGap)
     }
 
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithTabs(
-            title: L("Skills"),
-            subtitle: L("Reusable workflows, automatically available to every custom agent")
-        ) {
-            HeaderIconButton("arrow.clockwise", isLoading: skillManager.isRefreshing, help: "Refresh skills") {
-                Task { @MainActor in
-                    await skillManager.refresh()
+        SettingsPageHeader(
+            title: "Skills",
+            subtitle: "Reusable instructions, automatically available to every custom agent",
+            count: badgeStore.headerCount(for: .skills),
+            onRefresh: { Task { @MainActor in await skillManager.refresh() } },
+            refreshHelp: "Refresh skills",
+            isRefreshing: skillManager.isRefreshing,
+            primary: {
+                SettingsMenuButton(.primary, "Add Skill", icon: "plus") {
+                    Button(action: { isCreating = true }) {
+                        Label(L("Create Skill"), systemImage: "plus")
+                    }
+                    Button(action: { importSkill() }) {
+                        Label(L("Import Skill"), systemImage: "square.and.arrow.down")
+                    }
+                    Button(action: { showGitHubImport = true }) {
+                        Label(L("Import Claude plugin from GitHub"), systemImage: "link.badge.plus")
+                    }
                 }
+                .disabled(isProcessing || skillManager.isRefreshing)
+            },
+            toolbar: {
+                SettingsTabsRow(
+                    selection: $selectedTab,
+                    counts: tabCounts,
+                    searchText: $searchText,
+                    searchPlaceholder: "Search skills"
+                )
             }
-
-            HeaderIconButton("square.and.arrow.down", help: "Import skill") {
-                importSkill()
-            }
-            .disabled(isProcessing || skillManager.isRefreshing)
-
-            HeaderIconButton("link.badge.plus", help: "Import Claude plugin from GitHub") {
-                showGitHubImport = true
-            }
-            .disabled(isProcessing || skillManager.isRefreshing)
-
-            HeaderPrimaryButton("Create Skill", icon: "plus") {
-                isCreating = true
-            }
-            .disabled(isProcessing || skillManager.isRefreshing)
-        } tabsRow: {
-            HeaderTabsRow(
-                selection: $selectedTab,
-                counts: tabCounts,
-                searchText: $searchText,
-                searchPlaceholder: "Search skills"
-            )
-        }
+        )
     }
 
     // MARK: - Toast Helper
 
     @MainActor
     private func showToast(_ message: String, isError: Bool = false) {
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             toastMessage = (message, isError)
         }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64((isError ? 3.5 : 2.5) * 1_000_000_000))
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 toastMessage = nil
             }
         }
@@ -507,16 +484,15 @@ struct SkillsView: View {
 // MARK: - Skill Row
 
 private struct SkillRow: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let skill: Skill
-    let animationDelay: Double
-    let hasAppeared: Bool
     let onEdit: () -> Void
     let onExport: () -> Void
     let onDelete: () -> Void
 
-    @State private var isHovered = false
     @State private var isExpanded = false
     @State private var showDeleteConfirm = false
 
@@ -529,280 +505,58 @@ private struct SkillRow: View {
         return L("Plugin")
     }
 
-    private var skillColor: Color {
-        let hue = Double(abs(skill.name.hashValue % 360)) / 360.0
-        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
-    }
+    private var skillColor: Color { theme.dataInk(seed: skill.name) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Main row content
-            HStack(spacing: 12) {
-                // Skill icon
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(skillColor.opacity(0.1))
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(skillColor)
-                }
-                .frame(width: 36, height: 36)
-
-                // Skill info and expand button combined
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            LibraryRow(
+                title: skill.name,
+                subtitle: skill.description.isEmpty ? L("No description") : skill.description,
+                action: {
+                    withAnimation(theme.motion.springAnimation) {
                         isExpanded.toggle()
                     }
-                }) {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                Text(skill.name)
-                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                    .foregroundColor(theme.primaryText)
-
-                                if skill.isBuiltIn {
-                                    Text("Built-in", bundle: .module)
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundColor(theme.secondaryText)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(theme.tertiaryBackground)
-                                        )
-                                } else if skill.isFromPlugin {
-                                    HStack(spacing: 3) {
-                                        Image(systemName: "puzzlepiece.extension")
-                                            .font(.system(size: 8))
-                                        Text(pluginDisplayName)
-                                            .font(.system(size: 9, weight: .medium))
-                                    }
-                                    .foregroundColor(theme.accentColor)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(
-                                        Capsule()
-                                            .fill(theme.accentColor.opacity(0.1))
-                                    )
-                                }
-
-                                if let category = skill.category {
-                                    Text(category)
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundColor(skillColor)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(skillColor.opacity(0.1))
-                                        )
-                                }
-                            }
-
-                            Text(skill.description.isEmpty ? "No description" : skill.description)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.secondaryText)
-                                .lineLimit(1)
-                        }
-
-                        Spacer()
-
-                        // Instructions preview badge
-                        HStack(spacing: 4) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 10))
-                            Text(
-                                skill.instructions.count == 1
-                                    ? L("1 character")
-                                    : L("\(skill.instructions.count) characters")
-                            )
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(theme.tertiaryBackground))
-
-                        // Chevron
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(PlainButtonStyle())
-            }
+            ) {
+                SettingsIconTile(icon: "sparkles", size: 32, tint: skillColor)
+            } badges: {
+                if skill.isBuiltIn {
+                    StatusChip(L("Built-in"), tone: .neutral)
+                } else if skill.isFromPlugin {
+                    StatusChip(pluginDisplayName, tone: .accent, icon: "puzzlepiece.extension")
+                }
+                if let category = skill.category {
+                    StatusChip(category, tint: skillColor)
+                }
+            } trailing: {
+                Text(
+                    skill.instructions.count == 1
+                        ? L("1 character")
+                        : L("\(skill.instructions.count) characters")
+                )
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
+                .lineLimit(1)
 
-            // Expanded content
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 12) {
+                SettingsChevron()
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            } menu: {
+                Button(skill.isBuiltIn || skill.isFromPlugin ? L("View") : L("Edit"), action: onEdit)
+                if !skill.isFromPlugin {
+                    Button(L("Export"), action: onExport)
+                }
+                if !skill.isBuiltIn && !skill.isFromPlugin {
                     Divider()
-                        .padding(.vertical, 4)
-
-                    // Instructions preview
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Instructions", bundle: .module)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-
-                            Spacer()
-
-                            if let author = skill.author {
-                                Label(author, systemImage: "person")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-
-                            Label {
-                                Text("v\(skill.version)", bundle: .module)
-                            } icon: {
-                                Image(systemName: "tag")
-                            }
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
-
-                            if skill.hasAssociatedFiles {
-                                Label {
-                                    Text(
-                                        skill.totalFileCount == 1
-                                            ? L("1 file")
-                                            : L("\(skill.totalFileCount) files")
-                                    )
-                                } icon: {
-                                    Image(systemName: "folder")
-                                }
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.tertiaryText)
-                            }
-                        }
-
-                        ScrollView {
-                            Text(skill.instructions)
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundColor(theme.primaryText)
-                                .lineSpacing(4)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                        .frame(maxHeight: 180)
-                        .padding(12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                    }
-
-                    // Action buttons
-                    HStack(spacing: 8) {
-                        if !skill.isFromPlugin {
-                            Button(action: onEdit) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: skill.isBuiltIn ? "eye" : "pencil")
-                                        .font(.system(size: 10))
-                                    Text(LocalizedStringKey(skill.isBuiltIn ? "View" : "Edit"), bundle: .module)
-                                        .font(.system(size: 11, weight: .medium))
-                                }
-                                .foregroundColor(theme.accentColor)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.accentColor.opacity(0.1))
-                                )
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        } else {
-                            // View-only button for plugin skills
-                            Button(action: onEdit) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "eye")
-                                        .font(.system(size: 10))
-                                    Text("View", bundle: .module)
-                                        .font(.system(size: 11, weight: .medium))
-                                }
-                                .foregroundColor(theme.accentColor)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.accentColor.opacity(0.1))
-                                )
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-
-                        if !skill.isFromPlugin {
-                            Button(action: onExport) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "square.and.arrow.up")
-                                        .font(.system(size: 10))
-                                    Text("Export", bundle: .module)
-                                        .font(.system(size: 11, weight: .medium))
-                                }
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.tertiaryBackground)
-                                )
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-
-                        Spacer()
-
-                        if skill.isFromPlugin {
-                            // Plugin skills are removed by uninstalling their plugin
-                            HStack(spacing: 4) {
-                                Image(systemName: "info.circle")
-                                    .font(.system(size: 10))
-                                Text("Managed by its plugin — uninstall in Plugins to remove", bundle: .module)
-                                    .font(.system(size: 10, weight: .medium))
-                            }
-                            .foregroundColor(theme.tertiaryText)
-                        }
-
-                        if !skill.isBuiltIn && !skill.isFromPlugin {
-                            Button(action: { showDeleteConfirm = true }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "trash")
-                                        .font(.system(size: 10))
-                                    Text("Delete", bundle: .module)
-                                        .font(.system(size: 11, weight: .medium))
-                                }
-                                .foregroundColor(theme.errorColor)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.errorColor.opacity(0.1))
-                                )
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
+                    Button(L("Delete"), role: .destructive) { showDeleteConfirm = true }
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            if isExpanded {
+                expandedContent
+                    .padding(.leading, 32 + theme.space.s12)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity)
-        .background(cardBackground)
-        .animation(.easeOut(duration: 0.15), value: isHovered)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 10)
-        .animation(.easeOut(duration: 0.25).delay(animationDelay), value: hasAppeared)
         .themedAlert(
             L("Delete Skill"),
             isPresented: $showDeleteConfirm,
@@ -812,22 +566,43 @@ private struct SkillRow: View {
         )
     }
 
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isHovered ? theme.accentColor.opacity(0.2) : theme.cardBorder,
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: Color.black.opacity(isHovered ? 0.08 : 0.04),
-                radius: isHovered ? 12 : 6,
-                x: 0,
-                y: isHovered ? 4 : 2
-            )
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            LibraryStatRow(stats: metaStats)
+
+            ScrollView {
+                Text(skill.instructions)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.primary)
+                    .lineSpacing(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 180)
+            .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+            .settingsChrome(.control)
+
+            if skill.isFromPlugin {
+                SettingsRowDescription(text: "Managed by its plugin — uninstall in Plugins to remove")
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
+            }
+        }
+        .padding(.bottom, theme.space.s6)
+    }
+
+    private var metaStats: [LibraryStat] {
+        var stats: [LibraryStat] = [LibraryStat(icon: "tag", text: L("v\(skill.version)"))]
+        if let author = skill.author {
+            stats.append(LibraryStat(icon: "person", text: author))
+        }
+        if skill.hasAssociatedFiles {
+            stats.append(
+                LibraryStat(
+                    icon: "folder",
+                    text: skill.totalFileCount == 1 ? L("1 file") : L("\(skill.totalFileCount) files")))
+        }
+        return stats
     }
 }
 

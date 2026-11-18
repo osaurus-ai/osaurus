@@ -3,10 +3,10 @@
 //  osaurus
 //
 //  Per-source-IP rate limiting for the unauthenticated pairing endpoints
-//  (`GET /pair/challenge`, `POST /pair`). Without this an attacker on the LAN
-//  could spam approval prompts on the advertiser's Mac or brute the challenge
-//  store. A short cooldown is applied after a denial so a rejected device
-//  cannot immediately retry in a tight loop.
+//  (`/pair-invite`, `/secure/session`) and webhook proofs. Without this an
+//  attacker could mint challenges or probe invites in a tight loop. A short
+//  cooldown is applied after a failed proof or a denial so a rejected caller
+//  cannot immediately retry.
 //
 
 import Foundation

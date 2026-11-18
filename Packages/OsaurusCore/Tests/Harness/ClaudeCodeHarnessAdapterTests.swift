@@ -113,7 +113,7 @@ struct ClaudeCodeHarnessAdapterTests {
         #expect(value(after: "--permission-mode", in: args) == "dontAsk")
         #expect(value(after: "--allowedTools", in: args) == "Read,Grep,Glob")
         #expect(!args.contains("--mcp-config"))
-        #expect(!args.contains("--tools"))
+        #expect(value(after: "--tools", in: args) == "Read,Grep,Glob,TodoWrite")
     }
 
     @Test func writesAreScopedToTheWorkingFolderAndShellIsOptIn() throws {
@@ -157,7 +157,17 @@ struct ClaudeCodeHarnessAdapterTests {
             #expect(!hidden.contains(tool))
         }
         #expect(Set(hidden).isDisjoint(with: allowed))
-        #expect(!args.contains("--tools"), "permission-free built-ins like TodoWrite stay available")
+
+        // `--disallowedTools` alone leaves newer built-ins (ListAgents,
+        // SendMessage, Cron*) visible, so the visible set is an allow list.
+        let visible = Set(try #require(value(after: "--tools", in: args)).split(separator: ",").map(String.init))
+        #expect(visible.contains("TodoWrite"), "permission-free built-ins stay available")
+        #expect(visible.isDisjoint(with: hidden))
+        for tool in ["Task", "ListAgents", "SendMessage", "WebFetch"] {
+            #expect(!visible.contains(tool))
+        }
+        #expect(visible.contains("Bash") == allowShell)
+        #expect(visible.contains("Write") == allowWrites)
     }
 
     /// Claude matches `Edit(...)` against real paths. Foundation's
@@ -350,6 +360,98 @@ struct ClaudeCodeHarnessAdapterTests {
         #expect(note.lowercased().contains("server"))
     }
 
+    // MARK: - Architect
+
+    /// The Architect's job is the draft, so its run sees exactly its Osaurus
+    /// tools and no built-ins, whatever its Claude Code options say.
+    @Test(arguments: [ClaudeCodeAgentConfig.default, ClaudeCodeAgentConfig(
+        mode: .textOnly, allowWrites: true, allowShell: true, allowOsaurusTools: false)])
+    func architectSeesOnlyItsDraftTools(config: ClaudeCodeAgentConfig) throws {
+        let directory = try HarnessFixtures.temporaryDirectory("claude-architect")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (plan, context) = try plan(
+            config,
+            systemPrompt: "You are the Architect.",
+            cliPath: "/Apps/osaurus",
+            serverReachable: true,
+            agentId: Agent.architectId,
+            in: directory
+        )
+        defer { cleanup(plan) }
+        let args = plan.spec.arguments
+
+        #expect(value(after: "--permission-mode", in: args) == "dontAsk")
+        #expect(value(after: "--tools", in: args) == "")
+        #expect(!args.contains("--disallowedTools"))
+        let allowed = Set(try #require(value(after: "--allowedTools", in: args)).split(separator: ",").map(String.init))
+        #expect(allowed == Set(HarnessGrantStore.architectToolNames.map { "mcp__osaurus__\($0)" }))
+        #expect(allowed.contains("mcp__osaurus__workflow_draft"))
+        #expect(allowed.contains("mcp__osaurus__workflow_propose_save"))
+        #expect(!allowed.contains("mcp__osaurus__clarify"), "clarify needs the native chat UI")
+
+        let mcpPath = try #require(value(after: "--mcp-config", in: args))
+        let root = HarnessFixtures.json(try Data(contentsOf: URL(fileURLWithPath: mcpPath)))
+        let server = try #require((root["mcpServers"] as? [String: Any])?["osaurus"] as? [String: Any])
+        #expect((server["env"] as? [String: String])?[HarnessGrantStore.environmentKey] == "osh_token")
+
+        let adapter = ClaudeCodeHarnessAdapter(runtime: runtime)
+        #expect(adapter.tokenToolScope(context: context) == HarnessGrantStore.architectToolNames)
+        #expect(!adapter.tokenAllowsConfigWrites(context: context))
+    }
+
+    @Test func architectWithoutTheServerSaysItCannotBuild() throws {
+        let directory = try HarnessFixtures.temporaryDirectory("claude-architect-down")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (plan, _) = try plan(
+            cliPath: "/Apps/osaurus",
+            serverReachable: false,
+            agentId: Agent.architectId,
+            in: directory
+        )
+        defer { cleanup(plan) }
+        let args = plan.spec.arguments
+
+        #expect(value(after: "--tools", in: args) == "")
+        #expect(!args.contains("--mcp-config"))
+        #expect(!args.contains("--allowedTools"))
+        let promptPath = try #require(value(after: "--append-system-prompt-file", in: args))
+        let note = try String(contentsOfFile: promptPath, encoding: .utf8)
+        #expect(note.contains("workflow tools are NOT connected"))
+        #expect(note.lowercased().contains("server"))
+    }
+
+    /// Long `workflow_test` runs go through MCP; the CLI's default tool
+    /// timeout would cut them off.
+    @Test func mcpToolTimeoutIsRaisedUnlessTheRuntimeSetsIt() throws {
+        let directory = try HarnessFixtures.temporaryDirectory("claude-mcp-timeout")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (defaultPlan, _) = try plan(in: directory)
+        let custom = HarnessRuntime(name: "Claude", kind: .claudeCode, environment: ["MCP_TOOL_TIMEOUT": "1000"])
+        let (customPlan, _) = try plan(runtime: custom, in: directory)
+        defer { [defaultPlan, customPlan].forEach(cleanup) }
+
+        #expect(defaultPlan.spec.environment["MCP_TOOL_TIMEOUT"] == "900000")
+        #expect(customPlan.spec.environment["MCP_TOOL_TIMEOUT"] == "1000")
+    }
+
+    @Test func promptSnapshotIsTurnedOffOnlyWhenTheCLIHasTheFlag() throws {
+        let directory = try HarnessFixtures.temporaryDirectory("claude-snapshot")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let adapter = ClaudeCodeHarnessAdapter(runtime: runtime)
+        let old = HarnessFixtures.context(runtime: runtime, workingDirectory: directory, sessionMode: .forceNew)
+        let new = HarnessFixtures.context(
+            runtime: runtime,
+            workingDirectory: directory,
+            sessionMode: .forceNew,
+            claudeCodeFeatures: ClaudeCodeCLIFeatures(systemPromptSnapshot: true)
+        )
+
+        #expect(!(try adapter.launchPlan(context: old, token: nil)).spec.arguments.contains("--system-prompt-snapshot"))
+        #expect(value(after: "--system-prompt-snapshot", in: try adapter.launchPlan(context: new, token: nil).spec.arguments) == "off")
+        #expect(ClaudeCodeCLIFeatures.parse(help: "  --system-prompt-snapshot <mode>  ...").systemPromptSnapshot)
+        #expect(!ClaudeCodeCLIFeatures.parse(help: "  --system-prompt <prompt>  ...").systemPromptSnapshot)
+    }
+
     @Test func environmentKeepsTheSubscriptionAndTheContract() throws {
         let directory = try HarnessFixtures.temporaryDirectory("claude-env")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -452,6 +554,68 @@ struct ClaudeCodeHarnessAdapterTests {
         #expect(ClaudeCodeConfiguration.permissionDeniedMessage(tool: "Bash").contains("Allow shell commands"))
         #expect(ClaudeCodeConfiguration.permissionDeniedMessage(tool: "Write").contains("Allow file changes"))
         #expect(!ClaudeCodeConfiguration.permissionDeniedMessage(tool: "WebFetch").contains("Allow"))
+    }
+
+    /// Text from CLI 2.1.308 for a tool `dontAsk` refuses.
+    @Test func the2_1_308DenialTextIsRecognized() {
+        #expect(
+            ClaudeCodeStreamDecoder.isPermissionDenial(
+                "Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomplish this goal, e.g. using head instead of cat. But you *should not* attempt to work around this denial in malicious ways."
+            )
+        )
+    }
+
+    /// A call to a hidden or nonexistent tool says so instead of the generic
+    /// "the remote agent reported this tool call failed".
+    @Test func aCallToAMissingToolSaysItDoesNotExist() {
+        let codec = ClaudeCodeHarnessCodec(runtimeName: "Claude Code")
+        let (events, _) = HarnessFixtures.decodeAll(codec, [
+            #"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_09","name":"WebFetch","input":{}}}}"#,
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"tool_use_id":"toolu_09","content":"<tool_use_error>Error: No such tool available: WebFetch</tool_use_error>"}]}}"#,
+        ])
+        #expect(
+            events.contains(
+                .toolFinished(
+                    callId: "toolu_09",
+                    name: "WebFetch",
+                    isError: true,
+                    message: ClaudeCodeConfiguration.unavailableToolMessage(tool: "WebFetch")
+                )
+            )
+        )
+    }
+
+    @Test func osaurusToolCardsShowTheBareName() {
+        let codec = ClaudeCodeHarnessCodec(runtimeName: "Claude Code")
+        let (events, _) = HarnessFixtures.decodeAll(codec, [
+            #"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_05","name":"mcp__osaurus__workflow_draft","input":{}}}}"#,
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","is_error":false,"tool_use_id":"toolu_05","content":"ok"}]}}"#,
+        ])
+        #expect(events.contains(.toolStarted(callId: "toolu_05", name: "workflow_draft")))
+        #expect(!events.contains { "\($0)".contains("mcp__osaurus__") })
+    }
+
+    /// A permission prompt nobody can answer would hang the turn; it is
+    /// denied, and any other host question is refused.
+    @Test func controlRequestsAreAnsweredSoTheTurnNeverHangs() throws {
+        let codec = ClaudeCodeHarnessCodec(runtimeName: "Claude Code")
+        let (events, replies) = HarnessFixtures.decodeAll(codec, [
+            #"{"type":"control_request","request_id":"req_1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#,
+            #"{"type":"control_request","request_id":"req_2","request":{"subtype":"hook_callback"}}"#,
+        ])
+        #expect(events.isEmpty)
+        #expect(replies.count == 2)
+
+        let deny = HarnessFixtures.json(replies[0])
+        #expect(deny["type"] as? String == "control_response")
+        let denyResponse = try #require(deny["response"] as? [String: Any])
+        #expect(denyResponse["subtype"] as? String == "success")
+        #expect(denyResponse["request_id"] as? String == "req_1")
+        #expect((denyResponse["response"] as? [String: Any])?["behavior"] as? String == "deny")
+
+        let refuse = try #require(HarnessFixtures.json(replies[1])["response"] as? [String: Any])
+        #expect(refuse["subtype"] as? String == "error")
+        #expect(refuse["request_id"] as? String == "req_2")
     }
 
     @Test func anErrorResultFailsTheTurnTyped() {

@@ -52,9 +52,10 @@ final class WorkspaceAgentConnectService: ObservableObject {
     /// When each agent was last auto-attempted (lowercased address), for the
     /// retry cooldown.
     private var lastAutoAttempt: [String: Date] = [:]
-    /// Minimum spacing between automatic attempts for one agent. The detail
-    /// view polls presence every 30 s; retrying a host that just failed on
-    /// every poll would only spam an offline Mac.
+    /// Minimum spacing between automatic attempts for one agent, and the
+    /// delay before retrying a failed key refresh. Roster applies arrive on
+    /// every sync snapshot; this only stops back-to-back attempts within one
+    /// burst. An agent the roster reports offline is never auto-attempted.
     nonisolated static let autoConnectRetryInterval: TimeInterval = 2
     /// Minimum spacing between full sweeps (Workspaces tab open).
     nonisolated static let sweepInterval: TimeInterval = 300
@@ -465,9 +466,12 @@ final class WorkspaceAgentConnectService: ObservableObject {
         }
         // 1. Router mints the membership attestation (wallet-signed request).
         let minted = try await client.workspaceAttestation(id: workspaceId)
-        let attestationExpiresAt = WorkspaceMembershipAttestation
-            .unverifiedPayload(token: minted.attestation)
-            .map { Date(timeIntervalSince1970: TimeInterval($0.exp)) }
+        let mintedPayload = WorkspaceMembershipAttestation.unverifiedPayload(token: minted.attestation)
+        if mintedPayload?.workspaceSuspended == true {
+            throw ConnectFailure(
+                message: L("This workspace's plan isn't active, so shared agents are unavailable."))
+        }
+        let attestationExpiresAt = mintedPayload.map { Date(timeIntervalSince1970: TimeInterval($0.exp)) }
 
         let addressLower = agentAddress.lowercased()
         guard let endpoint = URL(string: "https://\(addressLower).agent.osaurus.ai/pair-invite")

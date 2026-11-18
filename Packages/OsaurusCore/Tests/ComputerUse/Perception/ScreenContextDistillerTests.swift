@@ -913,6 +913,61 @@ final class ScreenContextDistillerTests: XCTestCase {
         XCTAssertFalse(text.contains("Viewing:"))
     }
 
+    /// Regression (APPLE-MACOS-3PM): AX can report absurd frames that
+    /// `safeInt` saturates to `Int.max` / `Int.min`. The status-bar scan must
+    /// skip them instead of overflowing `Int` and trapping, while sane status
+    /// items still surface.
+    func testStatusBarSignalsIgnoreSaturatedCoordinates() async {
+        let driver = editorDriver(
+            app: "Cursor",
+            bundleId: "com.todesktop.cursor",
+            title: "ScreenContextDistiller.swift — osaurus",
+            windowW: 1600,
+            windowH: 1000,
+            elements: [
+                CUElement(id: "hugeY", role: "statictext", value: "bogus", windowId: 1, x: 10, y: .max, w: 50, h: 18),
+                CUElement(id: "minY", role: "statictext", value: "bogus2", windowId: 1, x: 12, y: .min, w: 50, h: 18),
+                CUElement(id: "branch", role: "statictext", value: "main*", windowId: 1, x: 20, y: 980, w: 50, h: 18),
+            ]
+        )
+
+        let snap = await ScreenContextDistiller().capture(
+            using: driver,
+            selfPid: selfPid,
+            selfBundleId: selfBundleId,
+            preferredPid: nil
+        )
+
+        XCTAssertTrue(snap.statusSignals.contains("main*"))
+        XCTAssertFalse(snap.statusSignals.contains("bogus"))
+        XCTAssertFalse(snap.statusSignals.contains("bogus2"))
+    }
+
+    /// An out-of-range focused-window height must not reach the band math
+    /// (`window.y + window.h`, `window.h * 6`), which would overflow for a
+    /// saturated value; the scan bails out instead.
+    func testStatusBarSignalsIgnoreSaturatedWindowHeight() async {
+        let driver = editorDriver(
+            app: "Cursor",
+            bundleId: "com.todesktop.cursor",
+            title: "ScreenContextDistiller.swift — osaurus",
+            windowW: 1600,
+            windowH: 2_000_000,
+            elements: [
+                CUElement(id: "branch", role: "statictext", value: "main*", windowId: 1, x: 20, y: 980, w: 50, h: 18)
+            ]
+        )
+
+        let snap = await ScreenContextDistiller().capture(
+            using: driver,
+            selfPid: selfPid,
+            selfBundleId: selfBundleId,
+            preferredPid: nil
+        )
+
+        XCTAssertTrue(snap.statusSignals.isEmpty)
+    }
+
     /// A chat shell (Slack) encodes the active channel in the window title, so
     /// `Active: channel #…` surfaces even when the messages are virtualized.
     func testChatTitleSurfacesActiveChannel() async {

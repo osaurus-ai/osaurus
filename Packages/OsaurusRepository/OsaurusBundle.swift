@@ -168,6 +168,8 @@ public struct OsaurusBundleManifest: Codable, Sendable, Equatable {
     public var agents: [AgentReference]
     /// Manifest key (`BundleSetting.key`) -> value.
     public var settings: [String: BundleSettingValue]
+    /// What the bundle asks of first-run onboarding.
+    public var onboarding: BundleOnboarding?
 
     enum CodingKeys: String, CodingKey {
         case format
@@ -179,6 +181,7 @@ public struct OsaurusBundleManifest: Codable, Sendable, Equatable {
         case harnessRuntimes = "harness_runtimes"
         case agents
         case settings
+        case onboarding
     }
 
     public init(from decoder: Decoder) throws {
@@ -196,11 +199,31 @@ public struct OsaurusBundleManifest: Codable, Sendable, Equatable {
         harnessRuntimes = try c.decodeIfPresent([HarnessRuntimeReference].self, forKey: .harnessRuntimes) ?? []
         agents = try c.decodeIfPresent([AgentReference].self, forKey: .agents) ?? []
         settings = try c.decodeIfPresent([String: BundleSettingValue].self, forKey: .settings) ?? [:]
+        onboarding = try c.decodeIfPresent(BundleOnboarding.ManifestEntry.self, forKey: .onboarding)?.value
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(format, forKey: .format)
+        try c.encode(formatVersion, forKey: .formatVersion)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(version, forKey: .version)
+        try c.encodeIfPresent(description, forKey: .description)
+        try c.encodeIfPresent(publisher, forKey: .publisher)
+        try c.encodeIfPresent(minOsaurusVersion, forKey: .minOsaurusVersion)
+        try c.encode(skills, forKey: .skills)
+        try c.encode(mcpServers, forKey: .mcpServers)
+        try c.encode(harnessRuntimes, forKey: .harnessRuntimes)
+        try c.encode(agents, forKey: .agents)
+        try c.encode(settings, forKey: .settings)
+        try c.encodeIfPresent(onboarding.map(BundleOnboarding.ManifestEntry.init), forKey: .onboarding)
     }
 
     static let allowedKeys: Set<String> = [
         "format", "format_version", "id", "name", "version", "description", "publisher",
         "min_osaurus_version", "skills", "mcp_servers", "harness_runtimes", "agents", "settings",
+        "onboarding",
     ]
     static let allowedSettingKeys = Set(BundleSetting.all.map(\.key))
     static let allowedPublisherKeys: Set<String> = ["name", "url", "email"]
@@ -417,6 +440,14 @@ extension OsaurusBundle {
                 issues.append("settings: must be an object, like {\"require_local_access_key\": true}.")
             }
         }
+        if let onboarding = rawRoot["onboarding"] {
+            if let object = onboarding as? [String: Any] {
+                issues += unknownKeys(
+                    in: object, allowed: BundleOnboarding.allowedManifestKeys, at: "onboarding")
+            } else {
+                issues.append("onboarding: must be an object, like {\"skip\": true, \"exclude_teammates\": [\"keeper\"]}.")
+            }
+        }
 
         let manifest: OsaurusBundleManifest
         do {
@@ -449,9 +480,11 @@ extension OsaurusBundle {
         }
         if manifest.skills.isEmpty && manifest.mcpServers.isEmpty && manifest.agents.isEmpty
             && manifest.harnessRuntimes.isEmpty && manifest.settings.isEmpty
+            && (manifest.onboarding?.isEmpty ?? true)
         {
-            issues.append("The bundle lists no agents, skills, MCP servers, harness runtimes or settings.")
+            issues.append("The bundle lists no agents, skills, MCP servers, harness runtimes, settings or onboarding.")
         }
+        issues += manifest.onboarding?.problems() ?? []
         for (key, value) in manifest.settings.sorted(by: { $0.key < $1.key }) {
             if let setting = BundleSetting.named(key), setting.key == key {
                 issues += setting.problems(with: value)
@@ -676,7 +709,7 @@ extension OsaurusBundle {
             {
                 warnings.append(
                     "agents[\(name)].runtime: \"\(harness)\" is not in this bundle; it must already be "
-                        + "registered on this Mac (Agents → Runtimes), or the agent will not install.")
+                        + "registered on this Mac (Settings → Runtimes), or the agent will not install.")
             }
             agents.append(agent)
         }
@@ -701,13 +734,13 @@ extension OsaurusBundle {
 
     private static func unknownKeys(in object: [String: Any], allowed: Set<String>, at label: String) -> [String] {
         object.keys.sorted().filter { !allowed.contains($0) }.map { key in
-            let hint = allowed.min { distance($0, key) < distance($1, key) }
-            let suggestion = hint.flatMap { distance($0, key) <= 3 ? " Did you mean `\($0)`?" : nil } ?? ""
+            let hint = allowed.min { editDistance($0, key) < editDistance($1, key) }
+            let suggestion = hint.flatMap { editDistance($0, key) <= 3 ? " Did you mean `\($0)`?" : nil } ?? ""
             return "\(label): unknown key `\(key)`.\(suggestion)"
         }
     }
 
-    private static func distance(_ a: String, _ b: String) -> Int {
+    static func editDistance(_ a: String, _ b: String) -> Int {
         let a = Array(a), b = Array(b)
         if a.isEmpty { return b.count }
         if b.isEmpty { return a.count }

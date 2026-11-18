@@ -2,20 +2,18 @@
 //  ChatHistoryDatabase.swift
 //  osaurus
 //
-//  SQLite-backed chat history. One row per session + one row per turn,
-//  with indices on (agent_id), (source), (source_plugin_id, external_session_key)
-//  for fast sidebar queries and plugin-side find-or-create.
+//  The pre-sync chat history, kept as a read-only import source. Chats live
+//  in `SyncConversationStore`; this database is only opened to import the
+//  old sessions (`SyncLegacyImporter`), to copy legacy sandbox and file-change
+//  rows (`FileChangeJournal`), and to remove a chat's old row when the chat
+//  is deleted. Nothing writes sessions or turns here any more.
 //
-//  Mirrors the MemoryDatabase / PluginDatabase pattern: WAL pragma,
-//  serial dispatch queue, versioned migrations via PRAGMA user_version,
-//  and a real prepared-statement LRU cache (`PreparedStatementCache`).
-//
-//  All on-disk storage is encrypted via the vendored SQLCipher target
-//  (`OsaurusSQLCipher`). The data-encryption key comes from
-//  `StorageKeyManager`. In-memory test DBs are opened plaintext.
+//  The migrations stay: an older backup still has to reach the current
+//  schema before it can be read. Encrypted with SQLCipher
+//  (`OsaurusSQLCipher`) under the `StorageKeyManager` key; in-memory test
+//  databases are plaintext.
 //
 
-import CryptoKit
 import Foundation
 import OsaurusSQLCipher
 
@@ -51,12 +49,6 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private let openFlagLock = NSLock()
     private var openFlag = false
 
-    /// Posted (on no particular thread) after `open()` completes
-    /// successfully. Lets deferred main-thread readers reload once the
-    /// background prewarm lands instead of blocking on the open.
-    public static let didOpenNotification = Notification.Name(
-        "ai.osaurus.chatHistory.databaseDidOpen")
-
     /// Non-blocking `isOpen`. May lag an in-flight `open()` by design.
     public var isOpenNonBlocking: Bool {
         openFlagLock.lock()
@@ -81,7 +73,6 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         // re-encrypting databases so we can't open a half-rekeyed
         // file with the wrong key. No-op fast path otherwise.
         StorageMutationGate.blockingAwaitNotMutating()
-        var didOpenNow = false
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.chatHistory())
@@ -89,7 +80,6 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                 try openConnection()
                 try runMigrations()
                 setOpenFlag(true)
-                didOpenNow = true
             } catch {
                 // Report initial connection/key/pragma failures as well as
                 // migration failures so the recovery UI can offer Retry.
@@ -113,9 +103,6 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             }
         }
         OsaurusDatabaseHandle.register(maintenanceHandle)
-        if didOpenNow {
-            NotificationCenter.default.post(name: Self.didOpenNotification, object: nil)
-        }
     }
 
     private lazy var maintenanceHandle = OsaurusDatabaseHandle(
@@ -174,15 +161,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// Highest schema version this build knows how to produce.
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 24
+    static let latestSchemaVersion = 26
 
     /// Forward-compatibility invariant. Every chat-history migration is
     /// **additive** — it only `ADD COLUMN`s, `CREATE INDEX`es, or `CREATE
     /// TABLE`s; it never drops, renames, or re-types an existing column, and
     /// never changes the meaning of one this build already reads. That means a
     /// DB stamped by a *newer* build is still safe for this build to open: the
-    /// extra columns are simply ignored on read, and left NULL/default on the
-    /// writes this build issues (which always name their columns explicitly).
+    /// extra columns are simply ignored on read.
     ///
     /// Because of that invariant we **open version-ahead databases instead of
     /// refusing them**. Hard-refusing (the old behavior) is what turned a
@@ -206,7 +192,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         let current = try getSchemaVersion()
         // Always replay the idempotent ladder. Version numbers are claimed
         // independently on parallel branches, so a store stamped 15 *or* 17
-        // may still lack a column this build's INSERT names. The old
+        // may still lack a column this build's SELECTs name. The old
         // version-gated path skipped earlier steps once the stamp was past
         // them — field report / #2736: `user_version = 15` with `project_id`
         // but no `shared_artifacts`, every save throwing `failedToPrepare`.
@@ -223,7 +209,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             migrateToV1, migrateToV2, migrateToV3, migrateToV4, migrateToV5, migrateToV6,
             migrateToV7, migrateToV8, migrateToV9, migrateToV10, migrateToV11, migrateToV12,
             migrateToV13, migrateToV14, migrateToV15, migrateToV16, migrateToV17,
-            migrateToV18, migrateToV19, migrateToV20, migrateToV21, migrateToV22, migrateToV23, migrateToV24,
+            migrateToV18, migrateToV19, migrateToV20, migrateToV21, migrateToV22, migrateToV23,
+            migrateToV24, migrateToV25, migrateToV26,
         ]
     }
 
@@ -249,15 +236,15 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
-    /// Columns named by `upsertSessionSQL` / `insertTurnSQL` (and the
-    /// matching SELECTs). If a future write adds a column without a
-    /// matching `addColumnIfMissing` step, `open()` fails closed instead
-    /// of succeeding and then dropping every save.
+    /// Columns the reads and the importer depend on, including the ones only
+    /// older builds wrote. If one is missing after the ladder, `open()` fails
+    /// closed instead of succeeding and then returning half-read rows.
     private static let requiredSessionColumns = [
         "id", "title", "created_at", "updated_at", "selected_model", "agent_id",
         "source", "source_plugin_id", "external_session_key", "dispatch_task_id",
         "archived", "capabilities", "folder_bookmark", "folder_path", "pinned",
-        "project_id", "workspace_context", "remote_agent_address", "conversation_summary",
+        "project_id", "workspace_context", "remote_agent_address", "parked_workflow_runs",
+        "automation_kind", "conversation_summary",
     ]
     private static let requiredTurnColumns = [
         "id", "session_id", "seq", "role", "content", "attachments", "shared_artifacts",
@@ -584,31 +571,52 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         try setSchemaVersion(21)
     }
 
-    /// v22: native provider state is part of the conversation, not a display
+    /// v22: `parked_workflow_runs` — JSON `[ParkedWorkflowCall]`, the
+    /// workflow calls a Work Mode task was waiting on when it was saved, so
+    /// a chat reopened after a relaunch picks up its (resumed) runs.
+    /// Nullable; legacy rows wait on nothing.
+    private func migrateToV22() throws {
+        try addColumnIfMissing("sessions", "parked_workflow_runs", "TEXT")
+        try setSchemaVersion(22)
+    }
+
+    /// v23: `automation_kind` — the trigger kind (`EventSourceKind` raw) of
+    /// an `.automation` session. Nullable; legacy rows keep their specific
+    /// `source`.
+    private func migrateToV23() throws {
+        try addColumnIfMissing("sessions", "automation_kind", "TEXT")
+        try setSchemaVersion(23)
+    }
+
+    /// v24: native provider state is part of the conversation, not a display
     /// projection. Nullable columns keep legacy chats readable without
     /// inventing IDs, signatures, opaque payloads or token measurements.
-    private func migrateToV22() throws {
+    /// Upstream stamps these columns as v22; the ladder replays every step,
+    /// so a store from either numbering ends up with all of them.
+    private func migrateToV24() throws {
         try addColumnIfMissing("turns", "reasoning_item_id", "TEXT")
         try addColumnIfMissing("turns", "reasoning_encrypted", "TEXT")
         try addColumnIfMissing("turns", "responses_output_items", "TEXT")
         try addColumnIfMissing("turns", "anthropic_thinking_blocks", "TEXT")
         try addColumnIfMissing("turns", "input_token_count", "INTEGER")
         try addColumnIfMissing("turns", "cached_input_token_count", "INTEGER")
-        try setSchemaVersion(22)
-    }
-
-    /// v23: request controls belong to the user turn, surviving retry/relaunch.
-    private func migrateToV23() throws {
-        try addColumnIfMissing("turns", "turn_generation_controls", "TEXT")
-        try setSchemaVersion(23)
-    }
-
-    /// INVARIANT: the accepted summary is persisted with its session, in the same
-    /// transaction as its covered turns. Otherwise relaunch restores the full
-    /// prompt and silently discards the context compaction the user just ran.
-    private func migrateToV24() throws {
-        try addColumnIfMissing("sessions", "conversation_summary", "TEXT")
         try setSchemaVersion(24)
+    }
+
+    /// v25: request controls belong to the user turn, surviving retry/relaunch.
+    /// Upstream stamps this column as v23; the ladder replays every step.
+    private func migrateToV25() throws {
+        try addColumnIfMissing("turns", "turn_generation_controls", "TEXT")
+        try setSchemaVersion(25)
+    }
+
+    /// v26: `conversation_summary` — the accepted compaction summary, JSON
+    /// `ConversationSummary`. Upstream stamps this column as v24; the ladder
+    /// replays every step. Read on import so a compacted chat keeps its
+    /// summary instead of restoring the full prompt.
+    private func migrateToV26() throws {
+        try addColumnIfMissing("sessions", "conversation_summary", "TEXT")
+        try setSchemaVersion(26)
     }
 
     /// v20: git-like file history. One `file_change_sets` row per mutating
@@ -674,245 +682,6 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     // MARK: - Public API: sessions
 
-    /// Insert or replace the session row and incrementally upsert its
-    /// turns. Compared to the pre-encryption implementation that did
-    /// `DELETE all + INSERT all` on every save, this:
-    ///
-    /// - spills any large attachment payloads to the encrypted blob
-    ///   store before writing rows;
-    /// - reads the existing `(id, content_hash)` set inside the same
-    ///   transaction;
-    /// - issues `INSERT OR REPLACE` only for new / changed turns;
-    /// - issues `DELETE` only for turns that disappeared;
-    /// - leaves untouched turns alone (no row churn, no WAL pages).
-    public func saveSession(_ session: ChatSessionData) throws {
-        let preparedSession = sessionWithSpilledAttachments(session)
-
-        try inTransaction { _ in
-            try self.upsertSessionRow(preparedSession)
-            try self.upsertTurnsIncrementally(
-                sessionId: preparedSession.id,
-                turns: preparedSession.turns
-            )
-            try self.transactionalStep(
-                "UPDATE sessions SET turn_count = ?1, updated_at = ?2 WHERE id = ?3"
-            ) { stmt in
-                sqlite3_bind_int(stmt, 1, Int32(preparedSession.turns.count))
-                sqlite3_bind_double(stmt, 2, preparedSession.updatedAt.timeIntervalSince1970)
-                Self.bindText(stmt, index: 3, value: preparedSession.id.uuidString)
-            }
-        }
-    }
-
-    /// Fire-and-forget variant of `saveSession`. Performs the same incremental
-    /// write, but hops onto the database's serial queue with `async` and
-    /// returns immediately instead of blocking the caller on `queue.sync`.
-    ///
-    /// Callers on the main actor (run cleanup, session persistence) were paying
-    /// the full encode + transaction cost synchronously; on a large
-    /// conversation that can exceed the 3s app-hang watchdog. Ordering is
-    /// preserved because the queue is FIFO, so a later read/save still observes
-    /// this write. Errors are logged rather than thrown since there is no
-    /// caller left to handle them.
-    /// `onDropped` fires (on the database queue) when the write found the
-    /// database closed at dequeue time — the enqueue-time `ensureOpen` check
-    /// races key rotation, and silently losing the write here is how a
-    /// freshly created session could vanish from the sidebar for good.
-    /// Callers use it to requeue the snapshot as a deferred save.
-    public func saveSessionAsync(
-        _ session: ChatSessionData,
-        onSaved: (@Sendable () -> Void)? = nil,
-        onDropped: (@Sendable (ChatSessionData) -> Void)? = nil
-    ) {
-        queue.async { [weak self] in
-            guard let self, self.db != nil else {
-                onDropped?(session)
-                return
-            }
-            let prepared = self.sessionWithSpilledAttachments(session)
-            do {
-                try self.executeRaw("BEGIN TRANSACTION")
-                try self.upsertSessionRow(prepared)
-                try self.upsertTurnsIncrementally(
-                    sessionId: prepared.id,
-                    turns: prepared.turns
-                )
-                try self.transactionalStep(
-                    "UPDATE sessions SET turn_count = ?1, updated_at = ?2 WHERE id = ?3"
-                ) { stmt in
-                    sqlite3_bind_int(stmt, 1, Int32(prepared.turns.count))
-                    sqlite3_bind_double(stmt, 2, prepared.updatedAt.timeIntervalSince1970)
-                    Self.bindText(stmt, index: 3, value: prepared.id.uuidString)
-                }
-                try self.executeRaw("COMMIT")
-                onSaved?()
-            } catch {
-                try? self.executeRaw("ROLLBACK")
-                print("[ChatHistoryDatabase] async saveSession failed for \(prepared.id): \(error)")
-                onDropped?(session)
-            }
-        }
-    }
-
-    /// Update ONLY a session's title, off the caller's thread. Exists for the
-    /// auto-title path, whose in-memory `ChatSessionData` may be a
-    /// metadata-only copy (empty `turns`) from `loadAllMetadata` — routing it
-    /// through `saveSessionAsync` would let `upsertTurnsIncrementally` treat
-    /// the empty array as truth and delete every turn row. A targeted UPDATE
-    /// cannot touch turns, and deliberately leaves `updated_at` alone so the
-    /// rename never reorders the recency list.
-    /// When `updatedAt` is non-nil the row's recency is bumped too (the
-    /// explicit user rename path); leaving it nil preserves ordering (the
-    /// auto-title path).
-    public func updateSessionTitleAsync(id: UUID, title: String, updatedAt: Date? = nil) {
-        queue.async { [weak self] in
-            guard let self, self.db != nil else { return }
-            do {
-                try self.executeRaw("BEGIN TRANSACTION")
-                if let updatedAt {
-                    try self.transactionalStep(
-                        "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3"
-                    ) { stmt in
-                        Self.bindText(stmt, index: 1, value: title)
-                        sqlite3_bind_double(stmt, 2, updatedAt.timeIntervalSince1970)
-                        Self.bindText(stmt, index: 3, value: id.uuidString)
-                    }
-                } else {
-                    try self.transactionalStep(
-                        "UPDATE sessions SET title = ?1 WHERE id = ?2"
-                    ) { stmt in
-                        Self.bindText(stmt, index: 1, value: title)
-                        Self.bindText(stmt, index: 2, value: id.uuidString)
-                    }
-                }
-                try self.executeRaw("COMMIT")
-            } catch {
-                try? self.executeRaw("ROLLBACK")
-                print("[ChatHistoryDatabase] async title update failed for \(id): \(error)")
-            }
-        }
-    }
-
-    /// Update ONLY a session's project membership, off the caller's thread.
-    /// Targeted for the same reason as `updateSessionTitleAsync`: the caller's
-    /// in-memory copy may be metadata-only, and a full save would delete the
-    /// conversation's turn rows. Leaves `updated_at` alone so moving a chat
-    /// into a project never reorders the recency list.
-    public func updateSessionProjectAsync(id: UUID, projectId: UUID?) {
-        queue.async { [weak self] in
-            guard let self, self.db != nil else { return }
-            do {
-                try self.executeRaw("BEGIN TRANSACTION")
-                try self.transactionalStep(
-                    "UPDATE sessions SET project_id = ?1 WHERE id = ?2"
-                ) { stmt in
-                    Self.bindText(stmt, index: 1, value: projectId?.uuidString)
-                    Self.bindText(stmt, index: 2, value: id.uuidString)
-                }
-                try self.executeRaw("COMMIT")
-            } catch {
-                try? self.executeRaw("ROLLBACK")
-                print("[ChatHistoryDatabase] async project update failed for \(id): \(error)")
-            }
-        }
-    }
-
-    /// Detach every session from `projectId`, off the caller's thread.
-    /// Used when a project is deleted so its chats fall back to "no project".
-    public func clearProjectAsync(projectId: UUID) {
-        queue.async { [weak self] in
-            guard let self, self.db != nil else { return }
-            do {
-                try self.executeRaw("BEGIN TRANSACTION")
-                try self.transactionalStep(
-                    "UPDATE sessions SET project_id = NULL WHERE project_id = ?1"
-                ) { stmt in
-                    Self.bindText(stmt, index: 1, value: projectId.uuidString)
-                }
-                try self.executeRaw("COMMIT")
-            } catch {
-                try? self.executeRaw("ROLLBACK")
-                print("[ChatHistoryDatabase] async project clear failed for \(projectId): \(error)")
-            }
-        }
-    }
-
-    /// Targeted async UPDATE of a session's `archived` flag. Same rationale
-    /// as `updateSessionTitleAsync`: the sidebar's in-memory session copy is
-    /// metadata-only, so a full `saveSession` would delete every turn row,
-    /// and the synchronous write path can stall the main thread. Leaves
-    /// `updated_at` alone so archiving never reorders the recency list.
-    public func updateSessionArchivedAsync(id: UUID, archived: Bool) {
-        updateSessionFlagAsync(id: id, column: "archived", value: archived)
-    }
-
-    /// Targeted async UPDATE of a session's `pinned` flag (see
-    /// `updateSessionArchivedAsync`).
-    public func updateSessionPinnedAsync(id: UUID, pinned: Bool) {
-        updateSessionFlagAsync(id: id, column: "pinned", value: pinned)
-    }
-
-    /// `column` must be a compile-time constant from the two callers above —
-    /// never interpolate caller-provided strings into SQL.
-    private func updateSessionFlagAsync(id: UUID, column: String, value: Bool) {
-        queue.async { [weak self] in
-            guard let self, self.db != nil else { return }
-            do {
-                try self.executeRaw("BEGIN TRANSACTION")
-                try self.transactionalStep(
-                    "UPDATE sessions SET \(column) = ?1 WHERE id = ?2"
-                ) { stmt in
-                    sqlite3_bind_int(stmt, 1, value ? 1 : 0)
-                    Self.bindText(stmt, index: 2, value: id.uuidString)
-                }
-                try self.executeRaw("COMMIT")
-            } catch {
-                try? self.executeRaw("ROLLBACK")
-                print("[ChatHistoryDatabase] async \(column) update failed for \(id): \(error)")
-            }
-        }
-    }
-
-    /// Returns a copy of `session` with every turn's attachment array
-    /// passed through `AttachmentBlobStore.spillIfNeeded`.
-    private func sessionWithSpilledAttachments(_ session: ChatSessionData) -> ChatSessionData {
-        var copy = session
-        copy.turns = session.turns.map { turn in
-            var t = turn
-            t.attachments = AttachmentBlobStore.spillIfNeeded(turn.attachments)
-            return t
-        }
-        return copy
-    }
-
-    /// Append a single turn to an existing session and bump turn_count.
-    public func appendTurn(sessionId: UUID, turn: ChatTurnData) throws {
-        try inTransaction { _ in
-            // Resolve next seq (max+1) atomically with the insert.
-            var nextSeq: Int = 0
-            try self.transactionalQuery(
-                "SELECT COALESCE(MAX(seq) + 1, 0) FROM turns WHERE session_id = ?1",
-                bind: { stmt in Self.bindText(stmt, index: 1, value: sessionId.uuidString) },
-                process: { stmt in
-                    if sqlite3_step(stmt) == SQLITE_ROW {
-                        nextSeq = Int(sqlite3_column_int(stmt, 0))
-                    }
-                }
-            )
-
-            try self.transactionalStep(Self.insertTurnSQL) { stmt in
-                Self.bindTurn(stmt, sessionId: sessionId, seq: nextSeq, turn: turn)
-            }
-
-            try self.transactionalStep(
-                "UPDATE sessions SET turn_count = turn_count + 1, updated_at = ?1 WHERE id = ?2"
-            ) { stmt in
-                sqlite3_bind_double(stmt, 1, Date().timeIntervalSince1970)
-                Self.bindText(stmt, index: 2, value: sessionId.uuidString)
-            }
-        }
-    }
-
     /// Load a session by id, including its turns in seq order. Returns
     /// nil if not found. Both the session row and its turns are
     /// fetched inside one `queue.sync` block so the main actor only
@@ -960,31 +729,11 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     /// Load all session rows (no turns) ordered by updated_at DESC.
     public func loadAllMetadata() -> [ChatSessionData] {
-        loadMetadataInternal(filter: nil)
-    }
-
-    /// Load metadata filtered by agent and/or source. nil ⇒ no constraint.
-    public func loadMetadata(forAgent agentId: UUID?, source: SessionSource?) -> [ChatSessionData] {
-        loadMetadataInternal(filter: (agentId: agentId, source: source))
-    }
-
-    /// Session rows (no turns) for the given ids, in one statement. Ids
-    /// without a row are simply absent from the result; order is not
-    /// guaranteed. Used to build hibernated tab stand-ins without reading
-    /// whole transcripts.
-    public func loadMetadata(ids: [UUID]) -> [ChatSessionData] {
-        guard !ids.isEmpty else { return [] }
         var sessions: [ChatSessionData] = []
-        let placeholders = (1...ids.count).map { "?\($0)" }.joined(separator: ",")
-        let sql = Self.baseSessionSelectSQL + " WHERE id IN (\(placeholders))"
         do {
             try prepareAndExecute(
-                sql,
-                bind: { stmt in
-                    for (offset, id) in ids.enumerated() {
-                        Self.bindText(stmt, index: offset + 1, value: id.uuidString)
-                    }
-                },
+                Self.baseSessionSelectSQL + " ORDER BY updated_at DESC",
+                bind: { _ in },
                 process: { stmt in
                     while sqlite3_step(stmt) == SQLITE_ROW {
                         sessions.append(Self.readSession(stmt, turns: []))
@@ -992,180 +741,28 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                 }
             )
         } catch {
-            print("[ChatHistoryDatabase] loadMetadata(ids:) failed: \(error)")
+            print("[ChatHistoryDatabase] loadAllMetadata failed: \(error)")
         }
         return sessions
     }
 
-    /// Aggregated turn counts keyed by session id.
-    ///
-    /// Reads the maintained `turn_count` column on `sessions` rather than
-    /// `COUNT(*) FROM turns GROUP BY ...` because (a) turn_count is updated
-    /// in-transaction by `saveSession` / `appendTurn`, and (b) the alternative
-    /// would scan every turn row even when the caller only needs five rows.
-    ///
-    /// `agentId == nil` returns counts for every session — matches the
-    /// "Default agent shows all sessions" rule used elsewhere.
-    public func turnCounts(forAgent agentId: UUID?) -> [UUID: Int] {
-        var counts: [UUID: Int] = [:]
-        let sql: String
-        if agentId != nil {
-            sql = "SELECT id, turn_count FROM sessions WHERE agent_id = ?1"
-        } else {
-            sql = "SELECT id, turn_count FROM sessions"
-        }
-        do {
-            try prepareAndExecute(
-                sql,
-                bind: { stmt in
-                    if let agentId {
-                        Self.bindText(stmt, index: 1, value: agentId.uuidString)
-                    }
-                },
-                process: { stmt in
-                    while sqlite3_step(stmt) == SQLITE_ROW {
-                        let idStr = String(cString: sqlite3_column_text(stmt, 0))
-                        let count = Int(sqlite3_column_int(stmt, 1))
-                        if let uuid = UUID(uuidString: idStr) {
-                            counts[uuid] = count
-                        }
-                    }
-                }
-            )
-        } catch {
-            print("[ChatHistoryDatabase] turnCounts failed: \(error)")
-        }
-        return counts
-    }
-
-    /// Session ids whose message bodies contain `text` as a substring
-    /// (case-insensitive for ASCII, SQLite `LIKE` semantics). Backs the
-    /// sidebar's full-text conversation search; title/metadata matching
-    /// happens separately in memory. A plain scan over `turns.content` —
-    /// there is no FTS index, but local history is small and the scan works
-    /// unchanged under SQLCipher.
-    public func sessionIds(withContentContaining text: String) -> Set<UUID> {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-        // Escape LIKE wildcards so a literal % or _ in the query matches
-        // literally instead of exploding the scan.
-        let escaped =
-            trimmed
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "%", with: "\\%")
-            .replacingOccurrences(of: "_", with: "\\_")
+    /// Ids of sessions with no turn rows.
+    public func emptySessionIds() -> Set<UUID> {
         var ids: Set<UUID> = []
-        let sql = "SELECT DISTINCT session_id FROM turns WHERE content LIKE ?1 ESCAPE '\\'"
         do {
             try prepareAndExecute(
-                sql,
-                bind: { stmt in
-                    Self.bindText(stmt, index: 1, value: "%\(escaped)%")
-                },
+                "SELECT id FROM sessions WHERE NOT EXISTS (SELECT 1 FROM turns WHERE turns.session_id = sessions.id)",
+                bind: { _ in },
                 process: { stmt in
                     while sqlite3_step(stmt) == SQLITE_ROW {
-                        guard let cString = sqlite3_column_text(stmt, 0) else { continue }
-                        if let uuid = UUID(uuidString: String(cString: cString)) {
-                            ids.insert(uuid)
-                        }
+                        if let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))) { ids.insert(id) }
                     }
                 }
             )
         } catch {
-            print("[ChatHistoryDatabase] sessionIds(withContentContaining:) failed: \(error)")
+            print("[ChatHistoryDatabase] emptySessionIds failed: \(error)")
         }
         return ids
-    }
-
-    /// Find an existing session by `(source, external_session_key)`,
-    /// optionally constrained to `agentId`. Used by HTTP / scheduler / watcher
-    /// dispatch paths where there's no plugin id to scope by. Returns the
-    /// most-recently-updated match (turns NOT loaded).
-    public func findSession(
-        source: SessionSource,
-        externalKey: String,
-        agentId: UUID?
-    ) -> ChatSessionData? {
-        var sessions: [ChatSessionData] = []
-        let sql: String
-        let bindAgent = agentId != nil
-        if bindAgent {
-            sql =
-                Self.baseSessionSelectSQL + """
-                     WHERE source = ?1 AND external_session_key = ?2 AND agent_id = ?3
-                     ORDER BY updated_at DESC LIMIT 1
-                    """
-        } else {
-            sql =
-                Self.baseSessionSelectSQL + """
-                     WHERE source = ?1 AND external_session_key = ?2 AND agent_id IS NULL
-                     ORDER BY updated_at DESC LIMIT 1
-                    """
-        }
-        do {
-            try prepareAndExecute(
-                sql,
-                bind: { stmt in
-                    Self.bindText(stmt, index: 1, value: source.rawValue)
-                    Self.bindText(stmt, index: 2, value: externalKey)
-                    if let agentId { Self.bindText(stmt, index: 3, value: agentId.uuidString) }
-                },
-                process: { stmt in
-                    while sqlite3_step(stmt) == SQLITE_ROW {
-                        sessions.append(Self.readSession(stmt, turns: []))
-                    }
-                }
-            )
-        } catch {
-            print("[ChatHistoryDatabase] findSession(source:) failed: \(error)")
-            return nil
-        }
-        return sessions.first
-    }
-
-    /// Find an existing session by `(source_plugin_id, external_session_key)`,
-    /// optionally constrained to `agentId`. Returns the most-recently-updated
-    /// match (turns NOT loaded — call `loadSession(id:)` to hydrate).
-    public func findSession(
-        pluginId: String,
-        externalKey: String,
-        agentId: UUID?
-    ) -> ChatSessionData? {
-        var sessions: [ChatSessionData] = []
-        let sql: String
-        let bindAgent = agentId != nil
-        if bindAgent {
-            sql =
-                Self.baseSessionSelectSQL + """
-                     WHERE source_plugin_id = ?1 AND external_session_key = ?2 AND agent_id = ?3
-                     ORDER BY updated_at DESC LIMIT 1
-                    """
-        } else {
-            sql =
-                Self.baseSessionSelectSQL + """
-                     WHERE source_plugin_id = ?1 AND external_session_key = ?2 AND agent_id IS NULL
-                     ORDER BY updated_at DESC LIMIT 1
-                    """
-        }
-        do {
-            try prepareAndExecute(
-                sql,
-                bind: { stmt in
-                    Self.bindText(stmt, index: 1, value: pluginId)
-                    Self.bindText(stmt, index: 2, value: externalKey)
-                    if let agentId { Self.bindText(stmt, index: 3, value: agentId.uuidString) }
-                },
-                process: { stmt in
-                    while sqlite3_step(stmt) == SQLITE_ROW {
-                        sessions.append(Self.readSession(stmt, turns: []))
-                    }
-                }
-            )
-        } catch {
-            print("[ChatHistoryDatabase] findSession failed: \(error)")
-            return nil
-        }
-        return sessions.first
     }
 
     public func deleteSession(id: UUID) throws {
@@ -1173,61 +770,6 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             subsystem: "chat-history-db", operation: "delete-session"
         ) {
             try queue.sync { try deleteSessionOnQueue(id: id) }
-        }
-    }
-
-    /// Delete a batch of sessions off the caller's thread. Same semantics as
-    /// `deleteSession(id:)` per id (blob GC, sandbox-change cascade), but
-    /// tuned for bulk: the whole batch runs behind one `queue.async` hop so
-    /// it never parks the caller, all row deletes share one transaction
-    /// (hundreds of per-session autocommits are hundreds of fsyncs — one
-    /// commit shrinks both the wall clock and the window in which
-    /// main-thread readers park behind this queue), and blob GC probes each
-    /// unique hash once against the surviving rows after the commit instead
-    /// of once per session (the `LIKE` probe scans `turns`).
-    ///
-    /// The batch is all-or-nothing: on error the transaction rolls back and
-    /// `onDropped` fires (on the database queue) with every id so the caller
-    /// can requeue them — the in-memory list was already cleared, and
-    /// silently losing the deletes would resurrect the sessions on next
-    /// launch. `onDropped` also fires when the database was closed at
-    /// dequeue time (the enqueue-time `ensureOpen` check races key
-    /// rotation). `completion` always fires (also on the database queue)
-    /// once the batch is finished.
-    public func deleteSessionsAsync(
-        ids: [UUID],
-        onDropped: (@Sendable ([UUID]) -> Void)? = nil,
-        completion: (@Sendable () -> Void)? = nil
-    ) {
-        guard !ids.isEmpty else {
-            completion?()
-            return
-        }
-        queue.async { [weak self] in
-            defer { completion?() }
-            guard let self, self.db != nil else {
-                onDropped?(ids)
-                return
-            }
-            var ownedRefs: Set<String> = []
-            do {
-                try self.executeRaw("BEGIN TRANSACTION")
-                for id in ids {
-                    try self.collectAttachmentRefsOnQueue(sessionId: id, into: &ownedRefs)
-                    try self.deleteSessionRowsOnQueue(id: id)
-                }
-                try self.executeRaw("COMMIT")
-            } catch {
-                try? self.executeRaw("ROLLBACK")
-                print("[ChatHistoryDatabase] async session batch delete failed: \(error)")
-                onDropped?(ids)
-                return
-            }
-            // Best-effort GC after the commit: each unique hash is re-checked
-            // against the surviving rows; anything still referenced stays.
-            for hash in ownedRefs where !self.isBlobReferencedOnQueue(hash) {
-                AttachmentBlobStore.delete(hash)
-            }
         }
     }
 
@@ -1295,58 +837,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
-    // MARK: - Public API: sandbox changes
-
-    /// Insert or update one legacy net sandbox-workspace change row (read
-    /// once by `FileChangeJournal`'s import, then deleted). Guarantees at
-    /// most one row per (session, agent, root, path) even when two rows
-    /// disagree on the row id.
-    public func upsertSandboxChange(_ change: SandboxWorkspaceChange) throws {
-        try inTransaction { _ in
-            try self.transactionalStep(
-                """
-                DELETE FROM sandbox_changes
-                WHERE id = ?1
-                   OR (session_id = ?2 AND agent_name = ?3 AND root = ?4 AND relative_path = ?5)
-                """
-            ) { stmt in
-                Self.bindText(stmt, index: 1, value: change.id.uuidString)
-                Self.bindText(stmt, index: 2, value: change.sessionId)
-                Self.bindText(stmt, index: 3, value: change.agentName)
-                Self.bindText(stmt, index: 4, value: change.root.rawValue)
-                Self.bindText(stmt, index: 5, value: change.relativePath)
-            }
-            try self.transactionalStep(
-                """
-                INSERT INTO sandbox_changes
-                    (id, session_id, agent_name, root, relative_path, entry_type,
-                     kind, state, baseline_signature, current_signature, source_tool,
-                     first_changed_at, last_changed_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-                """
-            ) { stmt in
-                Self.bindText(stmt, index: 1, value: change.id.uuidString)
-                Self.bindText(stmt, index: 2, value: change.sessionId)
-                Self.bindText(stmt, index: 3, value: change.agentName)
-                Self.bindText(stmt, index: 4, value: change.root.rawValue)
-                Self.bindText(stmt, index: 5, value: change.relativePath)
-                Self.bindText(stmt, index: 6, value: change.entryType.rawValue)
-                Self.bindText(stmt, index: 7, value: change.kind.rawValue)
-                Self.bindText(stmt, index: 8, value: change.state.rawValue)
-                Self.bindText(stmt, index: 9, value: change.baselineSignature)
-                Self.bindText(stmt, index: 10, value: change.currentSignature)
-                Self.bindText(stmt, index: 11, value: change.sourceTool)
-                sqlite3_bind_double(stmt, 12, change.firstChangedAt.timeIntervalSince1970)
-                sqlite3_bind_double(stmt, 13, change.lastChangedAt.timeIntervalSince1970)
-            }
-        }
-    }
-
-    public func deleteSandboxChange(id: UUID) throws {
-        _ = try executeUpdate("DELETE FROM sandbox_changes WHERE id = ?1") { stmt in
-            Self.bindText(stmt, index: 1, value: id.uuidString)
-        }
-    }
+    // MARK: - Legacy sandbox changes
 
     public func deleteSandboxChanges(sessionId: String) throws {
         _ = try executeUpdate("DELETE FROM sandbox_changes WHERE session_id = ?1") { stmt in
@@ -1427,375 +918,33 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         return ids
     }
 
-    // MARK: - Public API: file history
+    // MARK: - Legacy file history
 
-    /// Insert or fully replace one change set and its entries. The set is
-    /// the unit of durability: entries never exist without their set.
-    public func upsertFileChangeSet(_ set: FileChangeSet) throws {
-        try inTransaction { _ in
-            try self.transactionalStep("DELETE FROM file_change_entries WHERE set_id = ?1") { stmt in
-                Self.bindText(stmt, index: 1, value: set.id.uuidString)
-            }
-            try self.transactionalStep("DELETE FROM file_change_sets WHERE id = ?1") { stmt in
-                Self.bindText(stmt, index: 1, value: set.id.uuidString)
-            }
-            try self.transactionalStep(
-                """
-                INSERT INTO file_change_sets
-                    (id, session_id, tool_name, tool_call_id, turn_id, origin, status,
-                     reverts_set_id, note, created_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                """
-            ) { stmt in
-                Self.bindText(stmt, index: 1, value: set.id.uuidString)
-                Self.bindText(stmt, index: 2, value: set.sessionId)
-                Self.bindText(stmt, index: 3, value: set.toolName)
-                Self.bindText(stmt, index: 4, value: set.toolCallId)
-                Self.bindText(stmt, index: 5, value: set.turnId?.uuidString)
-                Self.bindText(stmt, index: 6, value: set.origin.rawValue)
-                Self.bindText(stmt, index: 7, value: set.status.rawValue)
-                Self.bindText(stmt, index: 8, value: set.revertsSetId?.uuidString)
-                Self.bindText(stmt, index: 9, value: set.note)
-                sqlite3_bind_double(stmt, 10, set.createdAt.timeIntervalSince1970)
-            }
-            for entry in set.entries {
-                try self.transactionalStep(
-                    """
-                    INSERT INTO file_change_entries
-                        (id, set_id, session_id, ordinal, root_kind, root_id, path, from_path,
-                         kind, state, before_type, before_sig, before_mode, before_size,
-                         after_type, after_sig, after_mode, after_size)
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                            ?15, ?16, ?17, ?18)
-                    """
-                ) { stmt in
-                    Self.bindText(stmt, index: 1, value: entry.id.uuidString)
-                    Self.bindText(stmt, index: 2, value: set.id.uuidString)
-                    Self.bindText(stmt, index: 3, value: set.sessionId)
-                    sqlite3_bind_int64(stmt, 4, Int64(entry.ordinal))
-                    Self.bindText(stmt, index: 5, value: entry.rootKind.rawValue)
-                    Self.bindText(stmt, index: 6, value: entry.rootId)
-                    Self.bindText(stmt, index: 7, value: entry.path)
-                    Self.bindText(stmt, index: 8, value: entry.fromPath)
-                    Self.bindText(stmt, index: 9, value: entry.kind.rawValue)
-                    Self.bindText(stmt, index: 10, value: entry.state.rawValue)
-                    Self.bindPathState(stmt, startIndex: 11, state: entry.before)
-                    Self.bindPathState(stmt, startIndex: 15, state: entry.after)
-                }
-            }
-        }
-    }
-
-    private static func bindPathState(_ stmt: OpaquePointer, startIndex: Int, state: FilePathState?) {
-        Self.bindText(stmt, index: startIndex, value: state?.type.rawValue)
-        Self.bindText(stmt, index: startIndex + 1, value: state?.signature)
-        Self.bindNullableInt(stmt, index: startIndex + 2, value: state?.mode)
-        Self.bindNullableInt(stmt, index: startIndex + 3, value: state.map { Int($0.size) })
-    }
-
-    private static func readPathState(_ stmt: OpaquePointer, startIndex: Int32) -> FilePathState? {
-        guard let typeText = sqlite3_column_text(stmt, startIndex),
-            let type = SandboxChangeEntryType(rawValue: String(cString: typeText)),
-            let sigText = sqlite3_column_text(stmt, startIndex + 1)
-        else { return nil }
-        let mode: Int? =
-            sqlite3_column_type(stmt, startIndex + 2) == SQLITE_NULL
-            ? nil : Int(sqlite3_column_int64(stmt, startIndex + 2))
-        return FilePathState(
-            type: type,
-            signature: String(cString: sigText),
-            mode: mode,
-            size: sqlite3_column_int64(stmt, startIndex + 3)
-        )
-    }
-
-    /// Every change set of a session (oldest first) with its entries.
-    public func loadFileChangeSets(sessionId: String) -> [FileChangeSet] {
-        var sets: [FileChangeSet] = []
-        var index: [UUID: Int] = [:]
-        do {
-            try prepareAndExecute(
-                """
-                SELECT id, session_id, tool_name, tool_call_id, turn_id, origin, status,
-                       reverts_set_id, note, created_at
-                FROM file_change_sets WHERE session_id = ?1 ORDER BY created_at ASC
-                """,
-                bind: { stmt in Self.bindText(stmt, index: 1, value: sessionId) },
-                process: { stmt in
-                    while sqlite3_step(stmt) == SQLITE_ROW {
-                        guard
-                            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))),
-                            let origin = FileChangeOrigin(
-                                rawValue: String(cString: sqlite3_column_text(stmt, 5))),
-                            let status = FileChangeSetStatus(
-                                rawValue: String(cString: sqlite3_column_text(stmt, 6)))
-                        else { continue }
-                        index[id] = sets.count
-                        sets.append(
-                            FileChangeSet(
-                                id: id,
-                                sessionId: String(cString: sqlite3_column_text(stmt, 1)),
-                                toolName: String(cString: sqlite3_column_text(stmt, 2)),
-                                toolCallId: sqlite3_column_text(stmt, 3).map { String(cString: $0) },
-                                turnId: sqlite3_column_text(stmt, 4).flatMap {
-                                    UUID(uuidString: String(cString: $0))
-                                },
-                                origin: origin,
-                                status: status,
-                                revertsSetId: sqlite3_column_text(stmt, 7).flatMap {
-                                    UUID(uuidString: String(cString: $0))
-                                },
-                                note: sqlite3_column_text(stmt, 8).map { String(cString: $0) },
-                                createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 9))
-                            )
-                        )
-                    }
-                }
-            )
-            try prepareAndExecute(
-                """
-                SELECT id, set_id, session_id, ordinal, root_kind, root_id, path, from_path,
-                       kind, state, before_type, before_sig, before_mode, before_size,
-                       after_type, after_sig, after_mode, after_size
-                FROM file_change_entries WHERE session_id = ?1 ORDER BY ordinal ASC
-                """,
-                bind: { stmt in Self.bindText(stmt, index: 1, value: sessionId) },
-                process: { stmt in
-                    while sqlite3_step(stmt) == SQLITE_ROW {
-                        guard
-                            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))),
-                            let setId = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 1))),
-                            let setIndex = index[setId],
-                            let rootKind = SandboxWorkspaceRootKind(
-                                rawValue: String(cString: sqlite3_column_text(stmt, 4))),
-                            let kind = FileChangeEntryKind(
-                                rawValue: String(cString: sqlite3_column_text(stmt, 8))),
-                            let state = FileChangeEntryState(
-                                rawValue: String(cString: sqlite3_column_text(stmt, 9)))
-                        else { continue }
-                        sets[setIndex].entries.append(
-                            FileChangeEntry(
-                                id: id,
-                                setId: setId,
-                                sessionId: String(cString: sqlite3_column_text(stmt, 2)),
-                                rootKind: rootKind,
-                                rootId: String(cString: sqlite3_column_text(stmt, 5)),
-                                path: String(cString: sqlite3_column_text(stmt, 6)),
-                                fromPath: sqlite3_column_text(stmt, 7).map { String(cString: $0) },
-                                kind: kind,
-                                before: Self.readPathState(stmt, startIndex: 10),
-                                after: Self.readPathState(stmt, startIndex: 14),
-                                state: state,
-                                ordinal: Int(sqlite3_column_int64(stmt, 3))
-                            )
-                        )
-                    }
-                }
-            )
-        } catch {
-            print("[ChatHistoryDatabase] loadFileChangeSets failed: \(error)")
-        }
-        return sets
-    }
-
-    public func deleteFileChangeSets(ids: [UUID]) throws {
-        guard !ids.isEmpty else { return }
-        try inTransaction { _ in
-            for id in ids {
-                try self.transactionalStep("DELETE FROM file_change_entries WHERE set_id = ?1") { stmt in
-                    Self.bindText(stmt, index: 1, value: id.uuidString)
-                }
-                try self.transactionalStep("DELETE FROM file_change_sets WHERE id = ?1") { stmt in
-                    Self.bindText(stmt, index: 1, value: id.uuidString)
-                }
-            }
-        }
-    }
-
-    public func deleteFileChanges(sessionId: String) throws {
-        try inTransaction { _ in
-            try self.transactionalStep("DELETE FROM file_change_entries WHERE session_id = ?1") { stmt in
-                Self.bindText(stmt, index: 1, value: sessionId)
-            }
-            try self.transactionalStep("DELETE FROM file_change_sets WHERE session_id = ?1") { stmt in
-                Self.bindText(stmt, index: 1, value: sessionId)
-            }
-        }
-    }
-
-    public func fileChangeSessionId(forSetId id: String) -> String? {
-        fileChangeSessionId(where: "id", equals: id)
-    }
-
-    public func fileChangeSessionId(forToolCallId toolCallId: String) -> String? {
-        fileChangeSessionId(where: "tool_call_id", equals: toolCallId)
-    }
-
-    public func fileChangeSessionId(forTurnId turnId: String) -> String? {
-        fileChangeSessionId(where: "turn_id", equals: turnId)
-    }
-
-    private func fileChangeSessionId(where column: String, equals value: String) -> String? {
-        var found: String?
+    /// Sessions with file history in this database. File history now lives in
+    /// `FileHistoryDatabase`; these rows are read once to copy them over.
+    func legacyFileChangeSessionIds() -> [String] {
+        var ids: [String] = []
         try? prepareAndExecute(
-            "SELECT session_id FROM file_change_sets WHERE \(column) = ?1 LIMIT 1",
-            bind: { stmt in Self.bindText(stmt, index: 1, value: value) },
-            process: { stmt in
-                if sqlite3_step(stmt) == SQLITE_ROW {
-                    found = String(cString: sqlite3_column_text(stmt, 0))
-                }
-            }
-        )
-        return found
-    }
-
-    /// Per-session summary for the sidebar: count of paths whose latest
-    /// recorded state differs from their state before the session first
-    /// touched them, plus the number of sets. One pass over the minimal
-    /// columns, ordered so first/last per path fall out of a linear scan.
-    public func fileChangeSessionSummaries() -> [String: FileChangeSessionSummary] {
-        struct PathNet { var first: String?; var last: String? }
-        var perSession: [String: [String: PathNet]] = [:]
-        var setCounts: [String: Int] = [:]
-        try? prepareAndExecute(
-            """
-            SELECT e.session_id, e.root_kind, e.root_id, e.path, e.before_sig, e.after_sig
-            FROM file_change_entries e JOIN file_change_sets s ON s.id = e.set_id
-            ORDER BY s.created_at ASC, e.ordinal ASC
-            """,
+            "SELECT DISTINCT session_id FROM file_change_sets",
             bind: { _ in },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    let session = String(cString: sqlite3_column_text(stmt, 0))
-                    let key =
-                        String(cString: sqlite3_column_text(stmt, 1)) + "|"
-                        + String(cString: sqlite3_column_text(stmt, 2)) + "|"
-                        + String(cString: sqlite3_column_text(stmt, 3))
-                    let before = sqlite3_column_text(stmt, 4).map { String(cString: $0) }
-                    let after = sqlite3_column_text(stmt, 5).map { String(cString: $0) }
-                    if var net = perSession[session]?[key] {
-                        net.last = after
-                        perSession[session]?[key] = net
-                    } else {
-                        perSession[session, default: [:]][key] = PathNet(first: before, last: after)
-                    }
+                    ids.append(String(cString: sqlite3_column_text(stmt, 0)))
                 }
             }
         )
-        try? prepareAndExecute(
-            "SELECT session_id, COUNT(*) FROM file_change_sets GROUP BY session_id",
-            bind: { _ in },
-            process: { stmt in
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    setCounts[String(cString: sqlite3_column_text(stmt, 0))] = Int(
-                        sqlite3_column_int64(stmt, 1))
-                }
-            }
-        )
-        var result: [String: FileChangeSessionSummary] = [:]
-        for (session, count) in setCounts {
-            let outstanding = perSession[session]?.values.filter { $0.first != $0.last }.count ?? 0
-            result[session] = FileChangeSessionSummary(outstandingFiles: outstanding, setCount: count)
+        return ids
+    }
+
+    func legacyFileChangeSets(sessionId: String) throws -> [FileChangeSet] {
+        try FileHistoryDatabase.readSets(sessionId: sessionId) { sql, bind, process in
+            try prepareAndExecute(sql, bind: bind, process: process)
         }
-        return result
     }
 
-    /// Every signature any entry references (object-store GC roots), with
-    /// the entry count so a caller can tell "no history" from a query that
-    /// returned nothing. Throws instead of returning a partial set: GC
-    /// treats the result as the complete root set, so an error here must
-    /// never look like an empty history.
-    public func fileChangeReferencedSignatures() throws -> (signatures: Set<String>, entryCount: Int) {
-        var sigs: Set<String> = []
-        var count = 0
-        try prepareAndExecute(
-            "SELECT before_sig, after_sig FROM file_change_entries",
-            bind: { _ in },
-            process: { stmt in
-                var rc = sqlite3_step(stmt)
-                while rc == SQLITE_ROW {
-                    count += 1
-                    if let b = sqlite3_column_text(stmt, 0) { sigs.insert(String(cString: b)) }
-                    if let a = sqlite3_column_text(stmt, 1) { sigs.insert(String(cString: a)) }
-                    rc = sqlite3_step(stmt)
-                }
-                if rc != SQLITE_DONE {
-                    throw ChatHistoryDatabaseError.failedToExecute(
-                        "file_change_entries scan stopped early (sqlite \(rc))")
-                }
-            }
-        )
-        return (sigs, count)
-    }
-
-    /// Distinct roots any remaining entry lives under (shadow pruning).
-    public func fileChangeReferencedRoots() throws -> [(kind: SandboxWorkspaceRootKind, rootId: String)] {
-        var roots: [(SandboxWorkspaceRootKind, String)] = []
-        try prepareAndExecute(
-            "SELECT DISTINCT root_kind, root_id FROM file_change_entries",
-            bind: { _ in },
-            process: { stmt in
-                var rc = sqlite3_step(stmt)
-                while rc == SQLITE_ROW {
-                    if let kind = SandboxWorkspaceRootKind(rawValue: String(cString: sqlite3_column_text(stmt, 0))) {
-                        roots.append((kind, String(cString: sqlite3_column_text(stmt, 1))))
-                    }
-                    rc = sqlite3_step(stmt)
-                }
-                if rc != SQLITE_DONE {
-                    throw ChatHistoryDatabaseError.failedToExecute("file_change_entries root scan stopped early (sqlite \(rc))")
-                }
-            }
-        )
-        return roots.map { (kind: $0.0, rootId: $0.1) }
-    }
-
-    /// All sets, oldest first (retention). Minimal columns.
-    public func fileChangeSetIndex() -> [(id: UUID, sessionId: String, createdAt: Date)] {
-        var rows: [(UUID, String, Date)] = []
-        try? prepareAndExecute(
-            "SELECT id, session_id, created_at FROM file_change_sets ORDER BY created_at ASC",
-            bind: { _ in },
-            process: { stmt in
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    guard let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0)))
-                    else { continue }
-                    rows.append(
-                        (
-                            id, String(cString: sqlite3_column_text(stmt, 1)),
-                            Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))
-                        ))
-                }
-            }
-        )
-        return rows.map { (id: $0.0, sessionId: $0.1, createdAt: $0.2) }
-    }
-
-    /// Returns true when at least one turn (in any session) still
-    /// carries a JSON attachment ref to `hash`. Uses a `LIKE` probe
-    /// because attachments live as JSON inside the TEXT column. The
-    /// hash is hex-32 so collisions in `LIKE` are not a concern.
-    private func isBlobReferenced(_ hash: String) -> Bool {
-        var found = false
-        do {
-            try prepareAndExecute(
-                "SELECT 1 FROM turns WHERE attachments LIKE ?1 LIMIT 1",
-                bind: { stmt in
-                    let pattern = "%\"hash\":\"\(hash)\"%"
-                    Self.bindText(stmt, index: 1, value: pattern)
-                },
-                process: { stmt in
-                    if sqlite3_step(stmt) == SQLITE_ROW { found = true }
-                }
-            )
-        } catch {
-            return true  // be conservative: never delete on error
-        }
-        return found
-    }
-
-    /// `isBlobReferenced` variant for callers already on `queue` (a nested
-    /// `queue.sync` would deadlock the serial queue).
+    /// Whether any surviving turn still references blob `hash`. Runs on
+    /// `queue`. A `LIKE` probe, because attachments live as JSON in a TEXT
+    /// column; the hash is hex, so `LIKE` collisions are not a concern.
     private func isBlobReferencedOnQueue(_ hash: String) -> Bool {
         var found = false
         do {
@@ -1815,367 +964,18 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         return found
     }
 
-    // MARK: - Internals: rows + turns
-
-    private func upsertSessionRow(_ session: ChatSessionData) throws {
-        try transactionalStep(Self.upsertSessionSQL) { stmt in
-            Self.bindText(stmt, index: 1, value: session.id.uuidString)
-            Self.bindText(stmt, index: 2, value: session.title)
-            sqlite3_bind_double(stmt, 3, session.createdAt.timeIntervalSince1970)
-            sqlite3_bind_double(stmt, 4, session.updatedAt.timeIntervalSince1970)
-            Self.bindText(stmt, index: 5, value: session.selectedModel)
-            Self.bindText(stmt, index: 6, value: session.agentId?.uuidString)
-            Self.bindText(stmt, index: 7, value: session.source.rawValue)
-            Self.bindText(stmt, index: 8, value: session.sourcePluginId)
-            Self.bindText(stmt, index: 9, value: session.externalSessionKey)
-            Self.bindText(stmt, index: 10, value: session.dispatchTaskId?.uuidString)
-            sqlite3_bind_int(stmt, 11, session.archived ? 1 : 0)
-            Self.bindText(stmt, index: 12, value: SessionCapability.encode(session.capabilities))
-            Self.bindBlob(stmt, index: 13, value: session.folderBookmark)
-            Self.bindText(stmt, index: 14, value: session.folderPath)
-            sqlite3_bind_int(stmt, 15, session.pinned ? 1 : 0)
-            Self.bindText(stmt, index: 16, value: session.projectId?.uuidString)
-            Self.bindText(stmt, index: 17, value: session.workspace?.encodedJSON())
-            Self.bindText(stmt, index: 18, value: session.workspace?.agentAddress)
-            Self.bindText(stmt, index: 19, value: session.conversationSummary.flatMap(Self.encodeJSON))
-        }
-    }
-
-    /// Diff-based turn upsert. Reads the existing
-    /// `(turn_id, content_hash, seq)` set for the session, then
-    /// issues only the row-level mutations that actually changed:
-    ///
-    /// - new turn id          → INSERT OR REPLACE
-    /// - existing id, changed → INSERT OR REPLACE (with new seq)
-    /// - existing id, same    → no write (just verify seq matches)
-    /// - id no longer present → DELETE
-    ///
-    /// `content_hash` is computed over the canonical wire form of the
-    /// turn so attachment spillover and tool-result mutations both
-    /// invalidate it correctly.
-    fileprivate func upsertTurnsIncrementally(sessionId: UUID, turns: [ChatTurnData]) throws {
-        // Existing rows for this session.
-        var existing: [String: (hash: String, seq: Int)] = [:]
-        try transactionalQuery(
-            "SELECT id, content_hash, seq FROM turns WHERE session_id = ?1",
-            bind: { stmt in Self.bindText(stmt, index: 1, value: sessionId.uuidString) },
-            process: { stmt in
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    let id = String(cString: sqlite3_column_text(stmt, 0))
-                    let hash =
-                        sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
-                    let seq = Int(sqlite3_column_int(stmt, 2))
-                    existing[id] = (hash, seq)
-                }
-            }
-        )
-
-        let seenIds = Set(turns.map { $0.id.uuidString })
-
-        // Delete removed turns FIRST so their (session_id, seq) slots
-        // are free before we insert the new ordering. Otherwise a
-        // re-save that shrinks or reshuffles the conversation hits
-        // the UNIQUE(session_id, seq) constraint when the new turn
-        // tries to reuse a still-occupied seq.
-        let removedIds = Set(existing.keys).subtracting(seenIds)
-        for id in removedIds {
-            try transactionalStep("DELETE FROM turns WHERE id = ?1 AND session_id = ?2") { stmt in
-                Self.bindText(stmt, index: 1, value: id)
-                Self.bindText(stmt, index: 2, value: sessionId.uuidString)
-            }
-        }
-
-        // Pre-pass: any kept turn whose new seq differs from its
-        // current seq gets parked at a temporary negative seq. This
-        // dodges the (session_id, seq) UNIQUE constraint when two
-        // kept turns swap positions (final seq of A == old seq of B).
-        // Negative seqs are never produced by the normal write path.
-        var parked: [String: Int] = [:]  // id → original seq
-        for (idx, turn) in turns.enumerated() {
-            let id = turn.id.uuidString
-            if let prior = existing[id], prior.seq != idx {
-                let parkSeq = -((parked.count) + 1)
-                try transactionalStep(
-                    "UPDATE turns SET seq = ?1 WHERE id = ?2 AND session_id = ?3"
-                ) { stmt in
-                    sqlite3_bind_int(stmt, 1, Int32(parkSeq))
-                    Self.bindText(stmt, index: 2, value: id)
-                    Self.bindText(stmt, index: 3, value: sessionId.uuidString)
-                }
-                parked[id] = prior.seq
-            }
-        }
-
-        for (idx, turn) in turns.enumerated() {
-            let id = turn.id.uuidString
-            let newHash = Self.contentHash(for: turn)
-            // Skip rewriting unchanged turns (same id, same hash, same seq).
-            if let prior = existing[id], prior.hash == newHash, prior.seq == idx, parked[id] == nil {
-                continue
-            }
-            try transactionalStep(Self.insertTurnSQL) { stmt in
-                Self.bindTurn(
-                    stmt,
-                    sessionId: sessionId,
-                    seq: idx,
-                    turn: turn,
-                    contentHash: newHash
-                )
-            }
-        }
-    }
-
-    /// Canonical SHA-256 over the persisted shape of a turn — used by
-    /// `upsertTurnsIncrementally` to skip writes when nothing changed.
-    /// Hashes role + content + thinking + JSON-encoded attachments and shared
-    /// artifacts, tool calls, tool call id, and tool results, in a stable order
-    /// that matches the column binding order.
-    static func contentHash(for turn: ChatTurnData) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        var hasher = SHA256()
-        hasher.update(data: Data(turn.role.rawValue.utf8))
-        hasher.update(data: Data(turn.content.utf8))
-        hasher.update(data: Data(turn.thinking.utf8))
-        if let attachments = try? encoder.encode(turn.attachments) {
-            hasher.update(data: attachments)
-        }
-        if let sharedArtifacts = try? encoder.encode(turn.sharedArtifacts) {
-            hasher.update(data: sharedArtifacts)
-        }
-        if let calls = turn.toolCalls.flatMap({ try? encoder.encode($0) }) {
-            hasher.update(data: calls)
-        }
-        if let cid = turn.toolCallId {
-            hasher.update(data: Data(cid.utf8))
-        }
-        if let results = try? encoder.encode(turn.toolResults) {
-            hasher.update(data: results)
-        }
-        if !turn.toolCallDurations.isEmpty, let durations = try? encoder.encode(turn.toolCallDurations) {
-            hasher.update(data: durations)
-        }
-        // A step log lands with (or just after) its tool result; hash it so
-        // the incremental upsert writes the row that now carries it.
-        if !turn.toolCallLogs.isEmpty, let logs = try? encoder.encode(turn.toolCallLogs) {
-            hasher.update(data: logs)
-        }
-        if let thinkingDuration = turn.thinkingDuration {
-            hasher.update(data: Data(String(thinkingDuration).utf8))
-        }
-        // The frozen injected block is stamped at send time, which can be
-        // after the row's first save; hash it so that write is not skipped.
-        if let injected = turn.injectedContextPrefix {
-            hasher.update(data: Data(injected.utf8))
-        }
-        // Timing fields are part of the hash so that a turn whose
-        // `completedAt` / token-count lands after the initial save still
-        // triggers `upsertTurnsIncrementally` to write the updated row.
-        if let created = turn.createdAt {
-            hasher.update(data: Data(String(created.timeIntervalSince1970).utf8))
-        }
-        if let completed = turn.completedAt {
-            hasher.update(data: Data(String(completed.timeIntervalSince1970).utf8))
-        }
-        if let tokens = turn.generationTokenCount {
-            hasher.update(data: Data(String(tokens).utf8))
-        }
-        if let ttft = turn.timeToFirstToken {
-            hasher.update(data: Data(String(ttft).utf8))
-        }
-        if let rate = turn.generationTokensPerSecond {
-            hasher.update(data: Data("generation_rate:\(rate)".utf8))
-        }
-        if let loadSeconds = turn.modelLoadSeconds {
-            hasher.update(data: Data("model_load:\(loadSeconds)".utf8))
-        }
-        if let lastOutputAt = turn.lastOutputAt {
-            hasher.update(data: Data("last_output:\(lastOutputAt.timeIntervalSince1970)".utf8))
-        }
-        if let requestedAt = turn.requestedAt {
-            hasher.update(data: Data("requested_at:\(requestedAt.timeIntervalSince1970)".utf8))
-        }
-        if let stopReason = turn.terminalStopReason {
-            hasher.update(data: Data(stopReason.utf8))
-        }
-        if turn.modelContextExcluded {
-            hasher.update(data: Data([UInt8(1)]))
-        }
-        // Billing can land after the initial empty-turn save (the summary frame
-        // often trails the content), so it must be part of the hash or the
-        // incremental upsert would skip writing the row.
-        if let billing = turn.routerBilling, let encoded = try? encoder.encode(billing) {
-            hasher.update(data: encoded)
-        }
-        if let controls = turn.generationControls, let encoded = try? encoder.encode(controls) {
-            hasher.update(data: Data("turn_generation_controls:".utf8))
-            hasher.update(data: encoded)
-        }
-        // Native state can arrive after the visible answer's first save.
-        // Hash an explicitly keyed envelope so a carrier-only change cannot
-        // be skipped, and absent versus reported-zero usage stay distinct.
-        struct NativeState: Encodable {
-            let reasoningItemId: String?
-            let reasoningEncrypted: String?
-            let responsesOutputItems: [JSONValue]
-            let anthropicThinkingBlocks: [JSONValue]
-            let inputTokenCount: Int?
-            let cachedInputTokenCount: Int?
-        }
-        if let native = try? encoder.encode(NativeState(
-            reasoningItemId: turn.reasoningItemId, reasoningEncrypted: turn.reasoningEncrypted,
-            responsesOutputItems: turn.responsesOutputItems, anthropicThinkingBlocks: turn.anthropicThinkingBlocks,
-            inputTokenCount: turn.inputTokenCount, cachedInputTokenCount: turn.cachedInputTokenCount)) {
-            hasher.update(data: native)
-        }
-        let digest = hasher.finalize()
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func loadTurns(sessionId: UUID) throws -> [ChatTurnData] {
-        var turns: [ChatTurnData] = []
-        try prepareAndExecute(
-            Self.selectTurnsSQL,
-            bind: { stmt in Self.bindText(stmt, index: 1, value: sessionId.uuidString) },
-            process: { stmt in
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    if let turn = Self.readTurn(stmt) {
-                        turns.append(turn)
-                    }
-                }
-            }
-        )
-        return turns
-    }
-
-    private func loadMetadataInternal(
-        filter: (agentId: UUID?, source: SessionSource?)?
-    ) -> [ChatSessionData] {
-        var sessions: [ChatSessionData] = []
-        var sql = Self.baseSessionSelectSQL
-        var clauses: [String] = []
-        var bindings: [(Int32, String)] = []  // 1-indexed bind
-        var nextIdx: Int32 = 1
-        if let agentId = filter?.agentId {
-            clauses.append("agent_id = ?\(nextIdx)")
-            bindings.append((nextIdx, agentId.uuidString))
-            nextIdx += 1
-        }
-        if let source = filter?.source {
-            clauses.append("source = ?\(nextIdx)")
-            bindings.append((nextIdx, source.rawValue))
-            nextIdx += 1
-        }
-        if !clauses.isEmpty {
-            sql += " WHERE " + clauses.joined(separator: " AND ")
-        }
-        sql += " ORDER BY updated_at DESC"
-
-        do {
-            try prepareAndExecute(
-                sql,
-                bind: { stmt in
-                    for (idx, value) in bindings {
-                        Self.bindText(stmt, index: Int(idx), value: value)
-                    }
-                },
-                process: { stmt in
-                    while sqlite3_step(stmt) == SQLITE_ROW {
-                        sessions.append(Self.readSession(stmt, turns: []))
-                    }
-                }
-            )
-        } catch {
-            print("[ChatHistoryDatabase] loadMetadata failed: \(error)")
-        }
-        return sessions
-    }
-
     // MARK: - SQL constants
 
     private static let baseSessionSelectSQL = """
         SELECT id, title, created_at, updated_at, selected_model, agent_id,
                source, source_plugin_id, external_session_key, dispatch_task_id,
                archived, capabilities, folder_bookmark, folder_path, pinned,
-               project_id, workspace_context, conversation_summary
+               project_id, workspace_context, parked_workflow_runs, automation_kind,
+               conversation_summary
         FROM sessions
         """
 
     private static let selectSessionSQL = baseSessionSelectSQL + " WHERE id = ?1"
-
-    private static let upsertSessionSQL = """
-        INSERT INTO sessions
-            (id, title, created_at, updated_at, selected_model, agent_id,
-             source, source_plugin_id, external_session_key, dispatch_task_id,
-             archived, capabilities, folder_bookmark, folder_path, pinned,
-             project_id, workspace_context, remote_agent_address, conversation_summary)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
-        ON CONFLICT(id) DO UPDATE SET
-            title                = excluded.title,
-            updated_at           = excluded.updated_at,
-            selected_model       = excluded.selected_model,
-            agent_id             = excluded.agent_id,
-            source               = excluded.source,
-            source_plugin_id     = excluded.source_plugin_id,
-            external_session_key = excluded.external_session_key,
-            dispatch_task_id     = excluded.dispatch_task_id,
-            archived             = excluded.archived,
-            capabilities         = excluded.capabilities,
-            folder_bookmark      = excluded.folder_bookmark,
-            folder_path          = excluded.folder_path,
-            pinned               = excluded.pinned,
-            project_id           = excluded.project_id,
-            workspace_context    = excluded.workspace_context,
-            remote_agent_address = excluded.remote_agent_address,
-            conversation_summary = excluded.conversation_summary
-        """
-
-    private static let insertTurnSQL = """
-        INSERT INTO turns
-            (id, session_id, seq, role, content, attachments, shared_artifacts,
-             tool_calls, tool_call_id, tool_results, thinking, content_hash,
-             created_at, completed_at, generation_token_count, time_to_first_token,
-             tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
-             model_context_excluded, tool_call_logs, injected_context_prefix,
-             generation_tokens_per_second, model_load_seconds, last_output_at, requested_at,
-             reasoning_item_id, reasoning_encrypted, responses_output_items, anthropic_thinking_blocks,
-             input_token_count, cached_input_token_count, turn_generation_controls)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34)
-        ON CONFLICT(id) DO UPDATE SET
-            session_id             = excluded.session_id,
-            seq                    = excluded.seq,
-            role                   = excluded.role,
-            content                = excluded.content,
-            attachments            = excluded.attachments,
-            shared_artifacts       = excluded.shared_artifacts,
-            tool_calls             = excluded.tool_calls,
-            tool_call_id           = excluded.tool_call_id,
-            tool_results           = excluded.tool_results,
-            thinking               = excluded.thinking,
-            content_hash           = excluded.content_hash,
-            created_at             = excluded.created_at,
-            completed_at           = excluded.completed_at,
-            generation_token_count = excluded.generation_token_count,
-            time_to_first_token    = excluded.time_to_first_token,
-            tool_call_durations    = excluded.tool_call_durations,
-            thinking_duration      = excluded.thinking_duration,
-            router_billing         = excluded.router_billing,
-            terminal_stop_reason   = excluded.terminal_stop_reason,
-            model_context_excluded = excluded.model_context_excluded,
-            tool_call_logs         = excluded.tool_call_logs,
-            injected_context_prefix = excluded.injected_context_prefix,
-            generation_tokens_per_second = excluded.generation_tokens_per_second,
-            model_load_seconds = excluded.model_load_seconds,
-            last_output_at = excluded.last_output_at,
-            requested_at = excluded.requested_at,
-            reasoning_item_id = excluded.reasoning_item_id,
-            reasoning_encrypted = excluded.reasoning_encrypted,
-            responses_output_items = excluded.responses_output_items,
-            anthropic_thinking_blocks = excluded.anthropic_thinking_blocks,
-            input_token_count = excluded.input_token_count,
-            cached_input_token_count = excluded.cached_input_token_count,
-            turn_generation_controls = excluded.turn_generation_controls
-        """
 
     private static let selectTurnsSQL = """
         SELECT id, role, content, attachments, shared_artifacts,
@@ -2213,11 +1013,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         let folderPath = sqlite3_column_text(stmt, 13).map { String(cString: $0) }
         let pinned = sqlite3_column_int(stmt, 14) != 0
         let projectId = sqlite3_column_text(stmt, 15).map { String(cString: $0) }.flatMap { UUID(uuidString: $0) }
-        let summary: ConversationSummary? = sqlite3_column_text(stmt, 17)
-            .map { String(cString: $0) }
-            .flatMap(decodeJSON)
         let workspace = WorkspaceSessionContext.decode(
             json: sqlite3_column_text(stmt, 16).map { String(cString: $0) })
+        let parked = ParkedWorkflowCall.decode(json: sqlite3_column_text(stmt, 17).map { String(cString: $0) })
+        let automationKind = sqlite3_column_text(stmt, 18).map { String(cString: $0) }
+            .flatMap(EventSourceKind.init(rawValue:))
+        let summary: ConversationSummary? = sqlite3_column_text(stmt, 19)
+            .map { String(cString: $0) }
+            .flatMap(decodeJSON)
         return ChatSessionData(
             id: UUID(uuidString: idStr) ?? UUID(),
             title: title,
@@ -2227,6 +1030,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             turns: turns,
             agentId: agentId,
             source: source,
+            automationKind: automationKind,
             sourcePluginId: pluginId,
             externalSessionKey: externalKey,
             dispatchTaskId: dispatchId,
@@ -2237,7 +1041,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             folderPath: folderPath,
             conversationSummary: summary,
             projectId: projectId,
-            workspace: workspace
+            workspace: workspace,
+            parkedWorkflowRuns: parked
         )
     }
 
@@ -2343,78 +1148,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         return Int(sqlite3_column_int64(stmt, index))
     }
 
-    private static func bindTurn(
-        _ stmt: OpaquePointer,
-        sessionId: UUID,
-        seq: Int,
-        turn: ChatTurnData,
-        contentHash: String? = nil
-    ) {
-        bindText(stmt, index: 1, value: turn.id.uuidString)
-        bindText(stmt, index: 2, value: sessionId.uuidString)
-        sqlite3_bind_int(stmt, 3, Int32(seq))
-        bindText(stmt, index: 4, value: turn.role.rawValue)
-        bindText(stmt, index: 5, value: turn.content)
-        bindText(stmt, index: 6, value: encodeJSON(turn.attachments))
-        bindText(stmt, index: 7, value: turn.sharedArtifacts.isEmpty ? nil : encodeJSON(turn.sharedArtifacts))
-        bindText(stmt, index: 8, value: turn.toolCalls.flatMap(encodeJSON))
-        bindText(stmt, index: 9, value: turn.toolCallId)
-        bindText(stmt, index: 10, value: encodeJSON(turn.toolResults))
-        bindText(stmt, index: 11, value: turn.thinking)
-        bindText(stmt, index: 12, value: contentHash ?? Self.contentHash(for: turn))
-        bindNullableDouble(stmt, index: 13, value: turn.createdAt?.timeIntervalSince1970)
-        bindNullableDouble(stmt, index: 14, value: turn.completedAt?.timeIntervalSince1970)
-        bindNullableInt(stmt, index: 15, value: turn.generationTokenCount)
-        bindNullableDouble(stmt, index: 16, value: turn.timeToFirstToken)
-        bindText(stmt, index: 17, value: turn.toolCallDurations.isEmpty ? nil : encodeJSON(turn.toolCallDurations))
-        bindNullableDouble(stmt, index: 18, value: turn.thinkingDuration)
-        bindText(stmt, index: 19, value: turn.routerBilling.flatMap(encodeJSON))
-        bindText(stmt, index: 20, value: turn.terminalStopReason)
-        sqlite3_bind_int(stmt, 21, turn.modelContextExcluded ? 1 : 0)
-        bindText(stmt, index: 22, value: turn.toolCallLogs.isEmpty ? nil : encodeJSON(turn.toolCallLogs))
-        bindText(stmt, index: 23, value: turn.injectedContextPrefix)
-        bindNullableDouble(stmt, index: 24, value: turn.generationTokensPerSecond)
-        bindNullableDouble(stmt, index: 25, value: turn.modelLoadSeconds)
-        bindNullableDouble(stmt, index: 26, value: turn.lastOutputAt?.timeIntervalSince1970)
-        bindNullableDouble(stmt, index: 27, value: turn.requestedAt?.timeIntervalSince1970)
-        bindText(stmt, index: 28, value: turn.reasoningItemId)
-        bindText(stmt, index: 29, value: turn.reasoningEncrypted)
-        bindText(stmt, index: 30, value: turn.responsesOutputItems.isEmpty ? nil : encodeJSON(turn.responsesOutputItems))
-        bindText(stmt, index: 31, value: turn.anthropicThinkingBlocks.isEmpty ? nil : encodeJSON(turn.anthropicThinkingBlocks))
-        bindNullableInt(stmt, index: 32, value: turn.inputTokenCount)
-        bindNullableInt(stmt, index: 33, value: turn.cachedInputTokenCount)
-        bindText(stmt, index: 34, value: turn.generationControls.flatMap(encodeJSON))
-    }
-
-    static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {
-        if let value {
-            sqlite3_bind_double(stmt, Int32(index), value)
-        } else {
-            sqlite3_bind_null(stmt, Int32(index))
-        }
-    }
-
-    static func bindNullableInt(_ stmt: OpaquePointer, index: Int, value: Int?) {
-        if let value {
-            sqlite3_bind_int64(stmt, Int32(index), Int64(value))
-        } else {
-            sqlite3_bind_null(stmt, Int32(index))
-        }
-    }
-
     // MARK: - JSON helpers
-
-    private static func encodeJSON<T: Encodable>(_ value: T) -> String? {
-        do {
-            let data = try JSONEncoder().encode(value)
-            return String(data: data, encoding: .utf8)
-        } catch {
-            // Surface instead of silently persisting NULL (which would drop
-            // tool_calls / attachments without a trace).
-            PersistenceHealth.shared.recordChatEncodeFailure("\(T.self): \(error.localizedDescription)")
-            return nil
-        }
-    }
 
     private static func decodeJSON<T: Decodable>(_ json: String) -> T? {
         guard let data = json.data(using: .utf8) else {
@@ -2530,29 +1264,6 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             success = sqlite3_step(stmt) == SQLITE_DONE
         }
         return success
-    }
-
-    private func inTransaction<T>(_ operation: (OpaquePointer) throws -> T) throws -> T {
-        try MainThreadOperationLedger.shared.withMainThreadOperation(
-            subsystem: "chat-history-db", operation: "transaction"
-        ) {
-            try inTransactionOnQueue(operation)
-        }
-    }
-
-    private func inTransactionOnQueue<T>(_ operation: (OpaquePointer) throws -> T) throws -> T {
-        try queue.sync {
-            guard let connection = db else { throw ChatHistoryDatabaseError.notOpen }
-            try executeRaw("BEGIN TRANSACTION")
-            do {
-                let result = try operation(connection)
-                try executeRaw("COMMIT")
-                return result
-            } catch {
-                try? executeRaw("ROLLBACK")
-                throw error
-            }
-        }
     }
 
     /// Prepare/bind/step/finalize inside an already-open transaction.

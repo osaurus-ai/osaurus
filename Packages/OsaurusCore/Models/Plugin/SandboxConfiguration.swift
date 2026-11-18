@@ -13,12 +13,11 @@ import Foundation
 public struct SandboxConfiguration: Codable, Sendable, Equatable {
     public var cpus: Int
     public var memoryGB: Int
-    /// "outbound" (default, unrestricted NAT), "proxy" (host-only vmnet +
-    /// filtering egress proxy, domains in `allowedDomains`), or "none".
+    /// Legacy VM-wide network switch, kept so older files decode. Unused:
+    /// each boot composes the network from the pod members' own Sandbox
+    /// settings (`SandboxEgressPolicy.podNetwork(for:)`).
     public var network: String
-    /// Egress domain allowlist for `network == "proxy"`. Mirrors the
-    /// provisioning agent's `sandboxAllowedDomains` at boot the same way
-    /// `network` mirrors `sandboxNetworkEnabled`.
+    /// Legacy, unused; see `network`.
     public var allowedDomains: [String]?
     public var autoStart: Bool
     /// True once the user has completed initial sandbox setup at least once.
@@ -55,19 +54,46 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
     /// rebuild at runtime. `nil` for installs that pre-date this field —
     /// treated as a mismatch so the first boot after upgrade is cold.
     public var lastRuntimeFormatVersion: String?
-    /// Staged-rollout flag for per-agent copy-on-write rootfs environments.
-    /// `false` (default) keeps today's single shared mutable `rootfs.ext4`.
-    /// `true` boots the VM from the provisioning agent's own CoW clone of
-    /// the immutable base template (`SandboxRootfsTemplateStore`), giving
-    /// each agent persistent system-package state without sharing a
-    /// globally mutable root filesystem. Rollback is turning this off —
-    /// the shared-rootfs path is untouched.
-    public var perAgentEnvironments: Bool
-    /// LRU bound on retained per-agent environment clones. Least recently
-    /// used clones beyond this are evicted after each successful boot (they
-    /// re-clone from the template on next use). Only meaningful when
-    /// `perAgentEnvironments` is on.
+    /// Rootfs format (`SandboxRuntimeAssets.rootfsFormatVersion`) of the
+    /// last successful boot; with the image digest, the warm-restart key.
+    /// `nil` for installs that pre-date the split: their
+    /// `lastRuntimeFormatVersion` was the rootfs key then, so it stands in.
+    public var lastRootfsFormatVersion: String?
+    /// Agents kept warm: how many agents and workflows get a container in
+    /// the sandbox pod at once. Each container is cheap (tens of MB of
+    /// host memory for a light workload); the VM's Memory is the real cap.
     public var maxAgentEnvironments: Int
+    /// Environment clones (an agent's or workflow's rootfs with its apk
+    /// packages) kept on disk. Least recently used clones beyond this are
+    /// evicted after each successful boot and re-cloned on next use. Never
+    /// below `maxAgentEnvironments`.
+    public var maxRetainedEnvironments: Int
+    /// Minutes the VM may run with no work before it stops; 0 = never.
+    public var idleShutdownMinutes: Int
+
+    /// The pre-split default for `maxAgentEnvironments`. A file written
+    /// before `maxRetainedEnvironments` existed with this value was never
+    /// changed by the user, so it moves to the RAM-scaled default.
+    static let legacyDefaultContainersPerBoot = 3
+    public static let defaultRetainedEnvironments = 16
+    public static let retainedEnvironmentsRange = 1 ... 64
+
+    /// Containers per boot scaled to this Mac's memory.
+    public static func defaultContainersPerBoot(
+        physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory
+    ) -> Int {
+        let gib = physicalMemory / (1 << 30)
+        switch gib {
+        case ..<16: return 4
+        case ..<32: return 6
+        default: return 8
+        }
+    }
+
+    /// Clones actually kept: never fewer than the containers one boot uses.
+    public var effectiveRetainedEnvironments: Int {
+        Swift.max(maxRetainedEnvironments, maxAgentEnvironments, 1)
+    }
 
     public static let `default` = SandboxConfiguration(
         cpus: 2,
@@ -80,8 +106,8 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         lastBootDurations: nil,
         lastBootedImageDigest: nil,
         lastRuntimeFormatVersion: nil,
-        perAgentEnvironments: false,
-        maxAgentEnvironments: 3
+        lastRootfsFormatVersion: nil,
+        maxAgentEnvironments: defaultContainersPerBoot()
     )
 
     public init(
@@ -95,8 +121,10 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         lastBootDurations: [String: Double]? = nil,
         lastBootedImageDigest: String? = nil,
         lastRuntimeFormatVersion: String? = nil,
-        perAgentEnvironments: Bool = false,
-        maxAgentEnvironments: Int = 3
+        lastRootfsFormatVersion: String? = nil,
+        maxAgentEnvironments: Int = SandboxConfiguration.defaultContainersPerBoot(),
+        maxRetainedEnvironments: Int = SandboxConfiguration.defaultRetainedEnvironments,
+        idleShutdownMinutes: Int = 0
     ) {
         self.cpus = cpus
         self.memoryGB = memoryGB
@@ -108,8 +136,10 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         self.lastBootDurations = lastBootDurations
         self.lastBootedImageDigest = lastBootedImageDigest
         self.lastRuntimeFormatVersion = lastRuntimeFormatVersion
-        self.perAgentEnvironments = perAgentEnvironments
+        self.lastRootfsFormatVersion = lastRootfsFormatVersion
         self.maxAgentEnvironments = maxAgentEnvironments
+        self.maxRetainedEnvironments = maxRetainedEnvironments
+        self.idleShutdownMinutes = idleShutdownMinutes
     }
 
     public init(from decoder: Decoder) throws {
@@ -128,10 +158,17 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
             try container.decodeIfPresent(String.self, forKey: .lastBootedImageDigest)
         lastRuntimeFormatVersion =
             try container.decodeIfPresent(String.self, forKey: .lastRuntimeFormatVersion)
-        perAgentEnvironments =
-            try container.decodeIfPresent(Bool.self, forKey: .perAgentEnvironments) ?? false
-        maxAgentEnvironments =
-            try container.decodeIfPresent(Int.self, forKey: .maxAgentEnvironments) ?? 3
+        lastRootfsFormatVersion =
+            try container.decodeIfPresent(String.self, forKey: .lastRootfsFormatVersion)
+        let retained = try container.decodeIfPresent(Int.self, forKey: .maxRetainedEnvironments)
+        let containers = try container.decodeIfPresent(Int.self, forKey: .maxAgentEnvironments)
+        if let containers, !(retained == nil && containers == Self.legacyDefaultContainersPerBoot) {
+            maxAgentEnvironments = containers
+        } else {
+            maxAgentEnvironments = Self.defaultContainersPerBoot()
+        }
+        maxRetainedEnvironments = retained ?? Self.defaultRetainedEnvironments
+        idleShutdownMinutes = try container.decodeIfPresent(Int.self, forKey: .idleShutdownMinutes) ?? 0
     }
 }
 
@@ -141,6 +178,13 @@ public struct SandboxConfigurationStore {
     private static var configURL: URL {
         OsaurusPaths.sandboxConfigFile()
     }
+
+    /// Sandbox fields Osaurus Classic drops when it saves `sandbox.json`.
+    static let classicUnknownFields: [ClassicResaveRecovery.FieldPath] = [
+        ["lastRootfsFormatVersion"],
+        ["maxRetainedEnvironments"],
+        ["idleShutdownMinutes"],
+    ]
 
     /// Lock-guarded in-memory cache. `SandboxView` is destroyed and
     /// rebuilt every time the user clicks the Sandbox sidebar tab
@@ -188,6 +232,7 @@ public struct SandboxConfigurationStore {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             do {
                 let data = try encoder.encode(config)
+                ClassicResaveRecovery.recordWrite(data, to: url)
                 try data.write(to: url, options: .atomic)
             } catch {
                 NSLog("[SandboxConfig] Failed to save: \(error)")
@@ -206,11 +251,18 @@ public struct SandboxConfigurationStore {
     private static let writeQueue = DispatchQueue(
         label: "com.osaurus.sandboxconfig.write", qos: .utility)
 
+    static func resetCacheForTests() {
+        cacheLock.lock()
+        cachedValue = nil
+        cacheLock.unlock()
+    }
+
     private static func readFromDisk() -> SandboxConfiguration {
         guard let data = try? Data(contentsOf: configURL) else {
             return .default
         }
-        return (try? JSONDecoder().decode(SandboxConfiguration.self, from: data)) ?? .default
+        let restored = ClassicResaveRecovery.restoring(data, at: configURL, fields: classicUnknownFields)
+        return (try? JSONDecoder().decode(SandboxConfiguration.self, from: restored)) ?? .default
     }
 }
 
@@ -259,15 +311,62 @@ public enum ContainerStatus: Sendable, Equatable {
 // MARK: - Exec Result
 
 public struct ContainerExecResult: Sendable {
+    /// Bytes of each stream an exec collects in app memory. Far above any
+    /// model-facing cap, so file reads through exec stay whole; past it the
+    /// rest is dropped and `outputTruncated` is set.
+    public static let collectedStreamCapBytes = 32 << 20
+
     public let stdout: String
     public let stderr: String
     public let exitCode: Int32
+    /// Some output passed `collectedStreamCapBytes` and was dropped. A caller
+    /// that needs the exact bytes (reading a file to edit it) must refuse.
+    public let outputTruncated: Bool
 
     public var succeeded: Bool { exitCode == 0 }
 
-    public init(stdout: String, stderr: String, exitCode: Int32) {
+    public init(stdout: String, stderr: String, exitCode: Int32, outputTruncated: Bool = false) {
         self.stdout = stdout
         self.stderr = stderr
         self.exitCode = exitCode
+        self.outputTruncated = outputTruncated
+    }
+
+    /// The result with each secret value replaced in both streams.
+    func scrubbed(_ secrets: [String: String]) -> ContainerExecResult {
+        guard !secrets.isEmpty else { return self }
+        return ContainerExecResult(
+            stdout: SecretScrubber.scrub(stdout, secrets: secrets),
+            stderr: SecretScrubber.scrub(stderr, secrets: secrets),
+            exitCode: exitCode, outputTruncated: outputTruncated)
+    }
+}
+
+/// An exec stream's in-memory copy, bounded so a process that prints
+/// forever can't grow the app without limit.
+struct ExecOutputCapture {
+    let cap: Int
+    private(set) var buffer = Data()
+    private(set) var truncated = false
+
+    init(cap: Int = ContainerExecResult.collectedStreamCapBytes) {
+        self.cap = cap
+    }
+
+    mutating func append(_ data: Data) {
+        let room = cap - buffer.count
+        if data.count <= room {
+            buffer.append(data)
+        } else {
+            if room > 0 { buffer.append(data.prefix(room)) }
+            truncated = true
+        }
+    }
+
+    /// UTF-8 text of the capture. A cut can split a multi-byte sequence, so
+    /// a truncated capture decodes leniently.
+    var string: String {
+        if let text = String(data: buffer, encoding: .utf8) { return text }
+        return truncated ? String(decoding: buffer, as: UTF8.self) : ""
     }
 }

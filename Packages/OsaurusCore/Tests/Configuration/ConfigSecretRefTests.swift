@@ -299,31 +299,39 @@ struct ConfigSecretRefApplyTests {
 
     @Test
     func mcpSecretEnvRef_reportsKeychainUnavailabilityHonestly() async throws {
-        // MCPProviderKeychain goes to the real Keychain (no in-memory test
-        // store), so the expected apply status depends on the launch mode:
-        // under OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS the documented contract
-        // is server registered + needs-user-action (never a silent fake
-        // success); with a live Keychain (CI's xcodebuild lane) the secret
-        // stores and the row completes. Both modes must keep the secret
-        // value out of every message and export.
+        // A failed Keychain write registers the server and asks the user to
+        // enter the secret (never a silent fake success); a working store
+        // completes the row. Both keep the secret value out of every message
+        // and export.
         let secret = "mcp-secret-\(UUID().uuidString.prefix(8))"
         mergeSecretRefTestEnv(["MCP_PROBE_TOKEN": secret])
 
-        let name = "Stdio Secret Probe \(UUID().uuidString.prefix(6))"
-        var entry = MCPServerEntry(name: name)
-        entry.transport = "stdio"
-        entry.command = "/usr/bin/true"
-        entry.enabled = false
-        entry.secretEnvRefs = ["API_TOKEN": "env:MCP_PROBE_TOKEN"]
-        let results = await Self.apply { $0.mcpServers = [entry] }
-
-        let result = results.first { $0.section == "mcp_servers" && $0.target == name }
-        if KeychainQueryHelpers.disablesKeychainForProcess {
-            #expect(result?.status == .needsUserAction, "\(results)")
-            #expect(result?.message?.contains("API_TOKEN") == true)
-        } else {
-            #expect(result?.status == .done, "\(results)")
+        func entry(_ name: String) -> MCPServerEntry {
+            var entry = MCPServerEntry(name: name)
+            entry.transport = "stdio"
+            entry.command = "/usr/bin/true"
+            entry.enabled = false
+            entry.secretEnvRefs = ["API_TOKEN": "env:MCP_PROBE_TOKEN"]
+            return entry
         }
+
+        let failing = CredentialStore.makeIsolated()
+        failing.failsSecretWritesForTesting = true
+        let failedName = "Stdio Secret Probe \(UUID().uuidString.prefix(6))"
+        let failedResults = await CredentialStore.$taskLocalStore.withValue(failing) {
+            await Self.apply { $0.mcpServers = [entry(failedName)] }
+        }
+        let failed = failedResults.first { $0.section == "mcp_servers" && $0.target == failedName }
+        #expect(failed?.status == .needsUserAction, "\(failedResults)")
+        #expect(failed?.message?.contains("API_TOKEN") == true)
+        #expect(failed?.message?.contains(secret) != true)
+
+        let name = "Stdio Secret Probe \(UUID().uuidString.prefix(6))"
+        let results = await CredentialStore.$taskLocalStore.withValue(CredentialStore.makeIsolated()) {
+            await Self.apply { $0.mcpServers = [entry(name)] }
+        }
+        let result = results.first { $0.section == "mcp_servers" && $0.target == name }
+        #expect(result?.status == .done, "\(results)")
         #expect(result?.message?.contains(secret) != true)
 
         // The secret env key left the plain env and never exports a value.
@@ -333,9 +341,14 @@ struct ConfigSecretRefApplyTests {
         let yaml = try ConfigYAML.encode(ConfigExporter.export())
         #expect(!yaml.contains(secret))
 
-        // Cleanup: prune the probe server away.
-        let others = (ConfigExporter.export().mcpServers ?? []).filter { $0.name != name }
-        _ = await Self.apply(prune: true) { $0.mcpServers = others }
+        // Cleanup: remove only the probe servers; a prune would also tear
+        // down providers other suites have connected.
+        await MainActor.run {
+            let manager = MCPProviderManager.shared
+            for provider in manager.configuration.providers where [name, failedName].contains(provider.name) {
+                manager.removeProvider(id: provider.id)
+            }
+        }
     }
 
     @Test

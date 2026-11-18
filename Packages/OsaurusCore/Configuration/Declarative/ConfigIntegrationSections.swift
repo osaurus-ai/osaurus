@@ -67,8 +67,10 @@ public struct KnowledgeCollectionEntry: Codable, Equatable, Sendable {
 
 // MARK: - Channels
 
-/// Channel routing policy: the global write kill switch plus the non-secret
-/// per-platform slices (allowlists, write/read policy, inbound dispatch).
+/// Channels: the global write kill switch plus, per platform, what it
+/// receives (allowlists), who answers (`routing`) and what it may send
+/// (`write_*`, `posting`). n8n and custom HTTP connections carry their
+/// routing under `connections`.
 public struct ChannelsSection: Codable, Equatable, Sendable {
     /// Global kill switch over every channel send. Re-enabling is HIGH RISK.
     public var writeEnabled: Bool?
@@ -77,12 +79,28 @@ public struct ChannelsSection: Codable, Equatable, Sendable {
     public var telegram: ChannelPlatformSection?
     public var imessage: ChannelPlatformSection?
     public var whatsapp: ChannelPlatformSection?
+    /// Mail accounts are added in Settings; rooms are `<account id>/<mailbox>`
+    /// and senders are addresses or `@domain`.
+    public var email: ChannelPlatformSection?
+    /// Routing for n8n / custom HTTP connections (created in Settings).
+    public var connections: [ChannelConnectionEntry]?
 
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case writeEnabled = "write_enabled"
-        case discord, slack, telegram, imessage, whatsapp
+        case discord, slack, telegram, imessage, whatsapp, email, connections
+    }
+}
+
+/// Routing for one n8n / custom HTTP connection, matched by `connection`
+/// (its name or id).
+public struct ChannelConnectionEntry: Codable, Equatable, Sendable {
+    public var connection: String
+    public var routing: [ChannelRoutingRuleEntry]?
+
+    public init(connection: String) {
+        self.connection = connection
     }
 }
 
@@ -104,11 +122,10 @@ public struct ChannelPlatformSection: Equatable, Sendable {
     public var writeAllowlist: [String]?
     /// Sender ids/handles whose messages are processed. Replaces the list.
     public var senderAllowlist: [String]?
-    /// Inbound dispatch: route incoming messages to an agent.
+    /// Legacy input only (`inbound_*`, `require_mention`, `continue_threads`,
+    /// `auto_reply_enabled`): translated into the platform's default
+    /// `events:` entry before planning and never exported.
     public var inboundEnabled: Bool?
-    /// CUSTOM agent name receiving unrouted inbound messages (channel
-    /// dispatch never targets the Default agent); explicit null clears it.
-    /// Per-room routes stay in Settings.
     public var inboundAgent: ConfigField<String> = .absent
     public var requireMention: Bool?
     public var continueThreads: Bool?
@@ -120,8 +137,27 @@ public struct ChannelPlatformSection: Equatable, Sendable {
     /// Write-only secret reference for the Slack app-level (Socket Mode)
     /// token. Slack only.
     public var appTokenRef: String?
+    /// Who answers messages here: one rule per channel automation.
+    public var routing: [ChannelRoutingRuleEntry]?
+    /// Which agents may post here on their own, and how.
+    public var posting: [ChannelPostingEntry]?
+    /// Set on an `accounts` entry: the account's connection id, e.g.
+    /// `discord-<id>`, `slack-<team>` or `email-<mail account id>`.
+    public var id: String?
+    /// The platform's other accounts (extra bots, workspaces, mail
+    /// accounts), each with the same policy and routing fields. Accounts
+    /// with tokens are added in Settings; only Email accounts can be added
+    /// here, for mail accounts that already exist.
+    public var accounts: [ChannelPlatformSection]?
 
     public init() {}
+
+    /// Any key that changes the platform's connection policy (as opposed to
+    /// `routing` / `posting`, which live in automations and bindings).
+    var hasPolicyKeys: Bool {
+        writeEnabled != nil || defaultReadLimit != nil || spaceAllowlist != nil || readAllowlist != nil
+            || writeAllowlist != nil || senderAllowlist != nil || botTokenRef != nil || appTokenRef != nil
+    }
 }
 
 extension ChannelPlatformSection: Codable {
@@ -139,6 +175,7 @@ extension ChannelPlatformSection: Codable {
         case autoReplyEnabled = "auto_reply_enabled"
         case botTokenRef = "bot_token_ref"
         case appTokenRef = "app_token_ref"
+        case routing, posting, id, accounts
     }
 
     public init(from decoder: Decoder) throws {
@@ -156,6 +193,10 @@ extension ChannelPlatformSection: Codable {
         autoReplyEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoReplyEnabled)
         botTokenRef = try c.decodeIfPresent(String.self, forKey: .botTokenRef)
         appTokenRef = try c.decodeIfPresent(String.self, forKey: .appTokenRef)
+        routing = try c.decodeIfPresent([ChannelRoutingRuleEntry].self, forKey: .routing)
+        posting = try c.decodeIfPresent([ChannelPostingEntry].self, forKey: .posting)
+        id = try c.decodeIfPresent(String.self, forKey: .id)
+        accounts = try c.decodeIfPresent([ChannelPlatformSection].self, forKey: .accounts)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -173,28 +214,40 @@ extension ChannelPlatformSection: Codable {
         try c.encodeIfPresent(autoReplyEnabled, forKey: .autoReplyEnabled)
         try c.encodeIfPresent(botTokenRef, forKey: .botTokenRef)
         try c.encodeIfPresent(appTokenRef, forKey: .appTokenRef)
+        try c.encodeIfPresent(routing, forKey: .routing)
+        try c.encodeIfPresent(posting, forKey: .posting)
+        try c.encodeIfPresent(id, forKey: .id)
+        try c.encodeIfPresent(accounts, forKey: .accounts)
     }
 }
 
-/// The five native platforms, in canonical document order, with the
+/// The native platforms, in canonical document order, with the
 /// accessors the exporter/planner/applier iterate.
 enum ConfigChannelPlatform: String, CaseIterable {
-    case discord, slack, telegram, imessage, whatsapp
+    case discord, slack, telegram, imessage, whatsapp, email
 
     /// Platforms whose config carries a space (guild/team) allowlist.
     var hasSpaceAllowlist: Bool {
         switch self {
         case .discord, .slack: return true
-        case .telegram, .imessage, .whatsapp: return false
+        case .telegram, .imessage, .whatsapp, .email: return false
         }
     }
 
+    /// Email replies in every watched mailbox once sending is on, so it
+    /// has no separate write list.
+    var hasWriteAllowlist: Bool { self != .email }
+
+    /// Platforms where agents may post on their own (not only reply).
+    var supportsPosting: Bool { self != .email }
+
     /// Platforms whose credential is a single bot token that `bot_token_ref`
-    /// can store. iMessage needs no token; WhatsApp links interactively.
+    /// can store. iMessage needs no token; WhatsApp links interactively;
+    /// Email uses the mail accounts' own sign-in.
     var supportsBotTokenRef: Bool {
         switch self {
         case .discord, .slack, .telegram: return true
-        case .imessage, .whatsapp: return false
+        case .imessage, .whatsapp, .email: return false
         }
     }
 
@@ -208,7 +261,7 @@ enum ConfigChannelPlatform: String, CaseIterable {
         case .discord: return DiscordCredentialStore.saveBotToken(token)
         case .slack: return SlackCredentialStore.saveBotToken(token)
         case .telegram: return TelegramCredentialStore.saveBotToken(token)
-        case .imessage, .whatsapp: return false
+        case .imessage, .whatsapp, .email: return false
         }
     }
 
@@ -224,6 +277,7 @@ enum ConfigChannelPlatform: String, CaseIterable {
         case .telegram: return channels.telegram
         case .imessage: return channels.imessage
         case .whatsapp: return channels.whatsapp
+        case .email: return channels.email
         }
     }
 
@@ -234,6 +288,50 @@ enum ConfigChannelPlatform: String, CaseIterable {
         case .telegram: channels.telegram = section
         case .imessage: channels.imessage = section
         case .whatsapp: channels.whatsapp = section
+        case .email: channels.email = section
         }
+    }
+}
+
+/// One account a `channels` document edits: the platform section itself
+/// (the primary account) or one of its `accounts` entries.
+struct ConfigChannelTarget {
+    let platform: ConfigChannelPlatform
+    let connectionId: String
+    let section: ChannelPlatformSection
+    /// Document path, e.g. `channels.slack` or `channels.slack.accounts[slack-t123]`.
+    let path: String
+    let isPrimary: Bool
+
+    /// Plan / apply target name: `slack` or `slack slack-t123`.
+    var label: String { isPrimary ? platform.rawValue : "\(platform.rawValue) \(connectionId)" }
+}
+
+extension ConfigChannelPlatform {
+    /// The primary section and every `accounts` entry with an id.
+    func targets(in channels: ChannelsSection) -> [ConfigChannelTarget] {
+        guard let section = section(in: channels) else { return [] }
+        let base = "channels.\(rawValue)"
+        var out = [
+            ConfigChannelTarget(
+                platform: self, connectionId: primaryConnectionId, section: section, path: base, isPrimary: true)
+        ]
+        for account in section.accounts ?? [] {
+            guard let raw = account.id?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+                continue
+            }
+            let id = AgentChannelConnection.normalizedId(raw).lowercased()
+            guard id != primaryConnectionId else { continue }
+            out.append(
+                ConfigChannelTarget(
+                    platform: self, connectionId: id, section: account, path: "\(base).accounts[\(raw)]",
+                    isPrimary: false))
+        }
+        return out
+    }
+
+    static func targets(in channels: ChannelsSection?) -> [ConfigChannelTarget] {
+        guard let channels else { return [] }
+        return allCases.flatMap { $0.targets(in: channels) }
     }
 }

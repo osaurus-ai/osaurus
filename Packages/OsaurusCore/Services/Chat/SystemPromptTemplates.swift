@@ -63,7 +63,7 @@ public enum SystemPromptTemplates {
     public static let agentLoopGuidance = """
         ## Agent loop
 
-        - Always answer the user in plain text once the requested work is complete. Todo is advisory progress metadata and never overrides a final response.
+        - Always answer the user in plain text once the requested work is complete.\(todoAdvisorySentence)
         - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it only after a task or checkbox actually changes. Never repeat an unchanged checklist or mark verification done before running it. Before the final answer, if task status changed since the last todo call, re-send the full checklist once with every actually finished item checked through the tool, not as prose. Then answer exactly once and stop; unchecked items remain visible but never keep the turn open. Skip direct/single-step work.
         - `complete(summary)` — OPTIONAL early closure for honestly blocked `todo` work. A fully checked todo needs no complete call: answer the user normally and stop. Invoke complete only as a structured tool call; never type `complete(...)` into the answer.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
@@ -86,32 +86,38 @@ public enum SystemPromptTemplates {
     public static let agentLoopGuidanceCompact = """
         ## Agent loop
 
-        - Answer the user in plain text once the requested work is complete. Todo is advisory and never overrides a final response.
+        - Answer the user in plain text once the requested work is complete.\(todoAdvisorySentenceCompact)
         - `todo(markdown)` — OPTIONAL for 3+ steps: create once and re-send only after an actual task or checkbox change. Never repeat it unchanged or check verification before running it. Before the final answer, send one last tool update if status changed; do not print the checklist as prose. Then answer once and stop. Unchecked items never keep the turn open. Skip direct/single-step work.
         - `complete(summary)` — OPTIONAL early closure for blocked `todo` work. For success, check every box, answer normally, and stop. Invoke it as a tool only; never print `complete(...)` in the answer.
         - `clarify(question)` — last resort; a fully specified task is not ambiguous, just do it. Ask ONE question only when the user asks or a required input is missing/contradictory with no sensible default.
         - `share_artifact(path | content+filename)` — hands the user a file to keep (image, chart, document, code file); a `path` file MUST exist first. Text asked for in chat (answer, poem, message) goes in your reply, never an artifact. Sandbox: save under home, not `/tmp`.
         """
 
-    /// Agent-loop guidance for the resolved schema: the `share_artifact`
-    /// bullet is emitted only when that tool actually resolved — the
-    /// orchestrator surface deliberately excludes it (workers deliver
-    /// artifacts), and a bullet naming an uncallable tool is the
-    /// recitation-loop trap `defaultPersona` documents. Both flags are
+    private static let todoAdvisorySentence =
+        " Todo is advisory progress metadata and never overrides a final response."
+    private static let todoAdvisorySentenceCompact = " Todo is advisory and never overrides a final response."
+
+    /// Agent-loop guidance for the resolved schema: each tool's bullet is
+    /// emitted only when that tool actually resolved. The Orchestrator
+    /// carries `clarify` but not `todo`, `complete` or `share_artifact`
+    /// (workers do that work), and a bullet naming an uncallable tool is the
+    /// recitation-loop trap `defaultPersona` documents. The schema is
     /// session-constant, so the choice is KV-cache safe. Line-filtering the
     /// canonical statics (rather than duplicating them) keeps one source of
     /// truth for the bullet text.
-    public static func agentLoopGuidance(
-        compact: Bool,
-        includeShareArtifact: Bool
-    ) -> String {
+    public static func agentLoopGuidance(compact: Bool, toolNames: Set<String>) -> String {
         let base = compact ? agentLoopGuidanceCompact : agentLoopGuidance
-        guard !includeShareArtifact else { return base }
-        return
+        let missing = ["todo", "complete", "clarify", "share_artifact"].filter { !toolNames.contains($0) }
+        guard !missing.isEmpty else { return base }
+        var text =
             base
             .split(separator: "\n", omittingEmptySubsequences: false)
-            .filter { !$0.contains("`share_artifact(") }
+            .filter { line in !missing.contains { line.contains("`\($0)(") } }
             .joined(separator: "\n")
+        if missing.contains("todo") {
+            text = text.replacingOccurrences(of: compact ? todoAdvisorySentenceCompact : todoAdvisorySentence, with: "")
+        }
+        return text
     }
 
     // MARK: - Time Context
@@ -488,7 +494,7 @@ public enum SystemPromptTemplates {
 
         \(pluginDependenciesBullet)
         - `secrets`: names whose values come from Keychain — registration fails up front if a declared secret has no value yet.
-        - `permissions.network`: comma-separated API hostnames the scripts reach (`outbound` / `none` / malformed → `none`). `permissions.inference` is forced to `false`.
+        - `permissions.network`: comma-separated API hostnames the scripts reach (`outbound` / `none` / malformed → `none`). `permissions.inference` is not honored; host inference follows the agent's own setting.
         4. **Write the scripts.** Parameters arrive as `$PARAM_{NAME}` (uppercased) env vars, secrets as `$NAME` env vars; print JSON to stdout, errors to stderr, exit non-zero on failure.
         5. **Register and verify.** Call `sandbox_plugin_register(plugin_id: "{service}")` — it installs deps, runs setup, and makes the tools available immediately (and persists them). Call one to confirm; on failure read stderr, fix, and re-register. Then tell the user what's now available.
 
@@ -1070,6 +1076,52 @@ public enum SystemPromptTemplates {
     /// own description the affordance. Editing a grant or a collection's
     /// name/summary re-renders the block (a one-time cached-prefix bust),
     /// matching the other config-driven sections.
+    /// Entries the Team section lists before pointing at `status`.
+    static let orchestratorTeamLimit = 12
+    static let orchestratorTeamSummaryLimit = 240
+
+    /// The Orchestrator's Team section: who `run_workflow` can hand a task
+    /// to, the user's agents first. Nil when there is nothing to run.
+    public static func orchestratorTeam(_ team: OrchestratorTeam) -> String? {
+        guard !team.isEmpty else { return nil }
+        var lines: [String] = ["## Team", ""]
+        lines.append(
+            "`run_workflow` runs these by name. Send a request to the one whose description covers it.")
+        var remaining = orchestratorTeamLimit
+        func appendGroup(_ title: String, _ docs: [RoutableWorkflowDoc]) {
+            guard !docs.isEmpty, remaining > 0 else { return }
+            lines.append("")
+            lines.append(title)
+            for doc in docs.prefix(remaining) {
+                let firstLine = doc.summary.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+                var summary = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                if summary.count > orchestratorTeamSummaryLimit {
+                    let cut = summary.prefix(orchestratorTeamSummaryLimit - 1)
+                    let word = cut.lastIndex(of: " ").map { cut[..<$0] } ?? cut
+                    summary = word.trimmingCharacters(in: .punctuationCharacters.union(.whitespaces)) + "…"
+                }
+                lines.append(summary.isEmpty ? "- **\(doc.name)**" : "- **\(doc.name)** — \(summary)")
+            }
+            remaining -= min(remaining, docs.count)
+        }
+        appendGroup("The user's agents (input `task`: the user's message):", team.agents)
+        appendGroup("Built-in workers (input `task`: the user's message):", team.workers)
+        appendGroup("Installed workflows (`status` shows each one's inputs):", team.workflows)
+        let total = team.agents.count + team.workers.count + team.workflows.count
+        if total > orchestratorTeamLimit {
+            lines.append("")
+            lines.append("…and \(total - orchestratorTeamLimit) more; `status` lists them all.")
+        }
+        if team.agents.isEmpty {
+            lines.append("")
+            lines.append(
+                "The user has no agents of their own yet, so nothing here reads their calendar, reminders, "
+                    + "mail, or notes. For a request that needs one of those, say so: Create starter agents "
+                    + "(Settings → Agents → Delegation) adds them, or `configurator_handoff` can set one up.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     public static func knowledgeGuidance(
         collections: [KnowledgeGrantDescriptor]
     ) -> String {
@@ -1812,13 +1864,16 @@ public enum SystemPromptTemplates {
             "**Path:** \(folder.rootPath.path)",
         ]
         if let truncation = treeTruncationLine(for: folder) { lines.append(truncation) }
+        let canChange = !toolNames.isDisjoint(with: ["file_write", "file_edit", "shell_run"])
         lines += [
-            "Native execution is trusted for this workspace. Writes are confined to this folder and temporary directories. Use relative paths.",
+            canChange
+                ? "Native execution is trusted for this workspace. Writes are confined to this folder and temporary directories. Use relative paths."
+                : "This folder is read-only here. Use relative paths.",
             "Use the workspace tools to complete requested work now; do not only describe or promise it.",
             batchReadLine,
         ]
-        if folder.projectType != .unknown { lines.append(runnableCodeCheckLine) }
-        lines.append(folderDocumentFormatsLine)
+        if folder.projectType != .unknown, toolNames.contains("shell_run") { lines.append(runnableCodeCheckLine) }
+        lines.append(toolNames.contains("file_write") ? folderDocumentFormatsLine : folderDocumentReadFormatsLine)
         if toolNames.contains("share_artifact") { lines.append(folderShareArtifactLine) }
         if toolNames.contains("redact_file") { lines.append(folderRedactionLine) }
         var section = lines.joined(separator: "\n")
@@ -1856,6 +1911,10 @@ public enum SystemPromptTemplates {
         + "(and lists directories); `file_write` renders `.xlsx` from CSV/JSON rows and `.docx`/`.pdf` from "
         + "Markdown or HTML (passed as `content`, or read from a workspace text file via `source_path`) — "
         + "no converter, library check, or generator script is needed."
+
+    static let folderDocumentReadFormatsLine =
+        "`file_read` opens PDF, Word, PowerPoint, Excel, and images natively (and lists directories); "
+        + "no converter or library check is needed."
 
     /// One-line restatement of the path-arg rule. Each `file_*` tool's
     /// description carries the per-arg detail; this lives in the prompt

@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.team-settings",
+  "domain": "onboarding",
+  "label": "onboarding • the five teammate templates ship their day-one settings",
+  "query": "team_settings",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "team_settings"
+    }
+  }
+}

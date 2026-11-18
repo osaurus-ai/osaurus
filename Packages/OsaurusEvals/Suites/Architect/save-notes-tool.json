@@ -1,0 +1,22 @@
+{
+  "id": "architect.save-notes-tool",
+  "domain": "architect",
+  "label": "architect \u2022 save notes with a tool step",
+  "query": "Build a workflow whose input is a title and some notes, and that saves the notes as a Markdown file named after the title in the working folder. Use a tool step to write the file, with no model step. Test it with a short note, then offer to save it.",
+  "notes": "Tool-only workflow. Pins that the Architect finds `file_write` with `workflow_draft` action `tools`, builds a `tool` node whose arguments bind the input, and that the test run writes the file in the run folder.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 16,
+      "nodeKinds": [
+        "tool"
+      ],
+      "inputKeys": [
+        "title",
+        "notes"
+      ],
+      "requireTestRun": true,
+      "requireProposeSave": true
+    }
+  }
+}

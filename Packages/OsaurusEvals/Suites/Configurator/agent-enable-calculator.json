@@ -1,0 +1,22 @@
+{
+  "id": "configurator.agent-enable-calculator",
+  "domain": "configurator",
+  "label": "configurator • turn on the calculator for an existing agent",
+  "query": "My agent \"Eval Budget Agent\" keeps getting totals wrong — let it use the calculator.",
+  "notes": "Single-key capability change on a seeded agent: an apply that carries `calculator_enabled` (merge semantics change only the provided key). The Configurator must map the plain-language ask to the declarative toggle via the manifest / catalog.",
+  "fixtures": {
+    "seedAgents": [
+      { "id": "7d3b9e21-4c6a-4f8e-9a15-2b8c0d6e4f71", "name": "Eval Budget Agent" }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_config"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "calculator_enabled" } }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

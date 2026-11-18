@@ -37,10 +37,15 @@ struct IMessageSettingsView: View {
     @State private var ignoreSelfMessages: Bool = true
     @State private var advancedActionsEnabled: Bool = false
     @State private var enabledAdvancedActions: Set<IMessageConnectionConfiguration.AdvancedAction> = []
-    @State private var inboundDispatchEnabled = false
-    @State private var inboundTarget: AgentDispatchTarget?
-    @State private var inboundRoutes: [AgentChannelDispatchRoute] = []
-    @State private var inboundAutoReplyEnabled = false
+    /// Incoming messages are handled by the events that listen to this
+    /// channel; these read them so readiness checks stay honest.
+    private var channelEvents: [OsaurusEvent] {
+        EventManager.shared.events(kind: .imessage, connectionId: AgentChannelConnection.nativeIMessageConnectionId).filter(\.isEnabled)
+    }
+    private var inboundDispatchEnabled: Bool { !channelEvents.isEmpty }
+    private var inboundAutoReplyEnabled: Bool {
+        channelEvents.contains { $0.reply.replies(for: $0.action.kind) }
+    }
     @State private var statusMessage: String?
     @State private var statusDetails: [String] = []
     @State private var statusIsError = false
@@ -85,10 +90,6 @@ struct IMessageSettingsView: View {
         var ignoreSelfMessages: Bool
         var advancedActionsEnabled: Bool
         var enabledAdvancedActions: Set<IMessageConnectionConfiguration.AdvancedAction>
-        var inboundDispatchEnabled: Bool
-        var inboundTarget: AgentDispatchTarget?
-        var inboundRoutes: [AgentChannelDispatchRoute]
-        var inboundAutoReplyEnabled: Bool
     }
 
     private var currentDraft: DraftSnapshot {
@@ -104,11 +105,7 @@ struct IMessageSettingsView: View {
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             ignoreSelfMessages: ignoreSelfMessages,
             advancedActionsEnabled: advancedActionsEnabled,
-            enabledAdvancedActions: enabledAdvancedActions,
-            inboundDispatchEnabled: inboundDispatchEnabled,
-            inboundTarget: inboundTarget,
-            inboundRoutes: inboundRoutes,
-            inboundAutoReplyEnabled: inboundAutoReplyEnabled
+            enabledAdvancedActions: enabledAdvancedActions
         )
     }
 
@@ -123,14 +120,16 @@ struct IMessageSettingsView: View {
             sectionStatus: sectionStatus(for:),
             onBack: onBack
         ) { sectionId in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 switch AgentChannelProviderSetupSection(rawValue: sectionId) {
                 case .connect:
                     connectSectionContent
-                case .access:
+                case .receiving:
                     accessSectionContent
-                case .behavior:
-                    behaviorSectionContent
+                case .routing:
+                    routingSectionContent
+                case .sending:
+                    sendingSectionContent
                 case .verify, nil:
                     stepVerifySection
                 }
@@ -224,13 +223,15 @@ struct IMessageSettingsView: View {
             return (diagnostics?.fullDiskAccess ?? false)
                 && receivePollingEnabled
                 && receiveStorageEnabled
-        case .access:
+        case .receiving:
             if isSendOnlySetup {
                 return !parseIds(writableChatIdsText).isEmpty
             }
             return !parseIds(readableChatIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
-        case .behavior:
-            return (inboundDispatchEnabled && (inboundTarget != nil || !inboundRoutes.isEmpty)) || writeEnabled
+        case .routing:
+            return inboundDispatchEnabled
+        case .sending:
+            return writeEnabled
         case .verify:
             return verifySucceeded
         case nil:
@@ -246,13 +247,13 @@ struct IMessageSettingsView: View {
     // MARK: - Connect
 
     private var connectSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             Text(
                 "iMessage runs entirely on this Mac: Osaurus reads the Messages database and sends through Messages.app using a pinned, integrity-verified helper. No account token or server is involved.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
             if legacyMessagesPluginInstalled {
@@ -260,9 +261,7 @@ struct IMessageSettingsView: View {
             }
 
             helperStatusSection
-            SettingsDivider()
             permissionsSection
-            SettingsDivider()
             stepReceiveSection
         }
     }
@@ -273,26 +272,26 @@ struct IMessageSettingsView: View {
                 "The legacy “osaurus.messages” plugin is still installed. It is superseded — its tools no longer load, and the built-in Messages tools (Agents → Abilities → Tools → Messages) send through their own path that does not use these allowlists. Uninstall the plugin from Settings… (⌘,) → Tools & MCP → Plugins to clear this notice.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.warningColor)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.status.warning.foreground)
             .fixedSize(horizontal: false, vertical: true)
         } icon: {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(theme.warningColor)
+                .foregroundColor(theme.status.warning.foreground)
         }
     }
 
     private var helperStatusSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Messages helper"))
 
             helperRow
             if case .failed(let message) = helperInstallState.phase {
                 Text(message)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.errorColor)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.status.error.foreground)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 23)
+                    .padding(.leading, theme.space.s24)
             }
             signedInRow
         }
@@ -300,18 +299,18 @@ struct IMessageSettingsView: View {
 
     private var helperRow: some View {
         let helperVerified = diagnostics?.helperVerified ?? false
-        return HStack(alignment: .top, spacing: 10) {
+        return HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: helperIconName)
-                .font(.system(size: 13))
+                .glyphSize(.label)
                 .foregroundColor(helperIconColor)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
+                .padding(.top, theme.space.s2)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(L("Integrity-verified helper"))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(helperDetailText)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
@@ -342,18 +341,18 @@ struct IMessageSettingsView: View {
                 "Osaurus can't verify this automatically — make sure Messages.app is signed in with your Apple Account on this Mac."
             )
         }
-        return HStack(alignment: .top, spacing: 10) {
+        return HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: signedIn == true ? "checkmark.circle.fill" : "info.circle")
-                .font(.system(size: 13))
-                .foregroundColor(signedIn == true ? theme.successColor : theme.tertiaryText)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
+                .glyphSize(.label)
+                .foregroundColor(signedIn == true ? theme.status.success.foreground : theme.text.tertiary)
+                .padding(.top, theme.space.s2)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(L("Signed in to Messages"))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(detail)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
@@ -388,9 +387,9 @@ struct IMessageSettingsView: View {
 
     private var helperIconColor: Color {
         switch diagnostics?.helperState {
-        case "verified", "dev_override": return theme.successColor
-        case "digest_mismatch", "unpinned": return theme.warningColor
-        default: return theme.tertiaryText
+        case "verified", "dev_override": return theme.status.success.foreground
+        case "digest_mismatch", "unpinned": return theme.status.warning.foreground
+        default: return theme.text.tertiary
         }
     }
 
@@ -447,7 +446,7 @@ struct IMessageSettingsView: View {
     }
 
     private var permissionsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("macOS permissions"))
 
             permissionRow(
@@ -463,18 +462,18 @@ struct IMessageSettingsView: View {
 
     private func permissionRow(_ permission: SystemPermission, detail: String) -> some View {
         let granted = SystemPermissionService.shared.cachedIsGranted(permission)
-        return HStack(alignment: .top, spacing: 10) {
+        return HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: granted ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 13))
-                .foregroundColor(granted ? theme.successColor : theme.tertiaryText)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
+                .glyphSize(.label)
+                .foregroundColor(granted ? theme.status.success.foreground : theme.text.tertiary)
+                .padding(.top, theme.space.s2)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(permission.displayName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(detail)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
@@ -500,19 +499,19 @@ struct IMessageSettingsView: View {
     }
 
     private var stepReceiveSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Turn on receiving"))
 
             SettingsToggle(
-                title: L("Receive Messages"),
+                title: "Receive Messages",
                 description: L(
                     "Osaurus checks the Messages database for new messages in readable chats while the app runs."
                 ),
-                isOn: $receivePollingEnabled.animation(.easeOut(duration: 0.2))
+                isOn: $receivePollingEnabled.animation(theme.motion.quick)
             )
             SettingsToggle(
-                title: L("Store Incoming Messages"),
-                description: L("Keep authorized iMessages in the local inbox so agents can read and search them."),
+                title: "Store Incoming Messages",
+                description: "Keep authorized iMessages in the local inbox so agents can read and search them.",
                 isOn: $receiveStorageEnabled
             )
 
@@ -524,8 +523,8 @@ struct IMessageSettingsView: View {
                         )
                         : L("Receiving is off: agents will not see new iMessages and no agent can reply.")
                 )
-                .font(.system(size: 11))
-                .foregroundColor(writeEnabled ? theme.tertiaryText : theme.warningColor)
+                .textStyle(.footnote)
+                .foregroundColor(writeEnabled ? theme.text.tertiary : theme.status.warning.foreground)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -534,8 +533,8 @@ struct IMessageSettingsView: View {
                     "Keep receiving enabled in only one copy of Osaurus on this Mac. A second running instance (for example a development build next to the installed app) watches the same Messages database and would reply independently, causing duplicate answers.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -544,28 +543,28 @@ struct IMessageSettingsView: View {
     // MARK: - Access
 
     private var accessSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             stepAccessSection
-            SettingsDivider()
+            receiveOptionsSection
             advancedSection
         }
     }
 
     private var stepAccessSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Choose chats and people"))
 
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(discoveredChats.isEmpty ? L("Load recent Messages chats") : L("Messages chats loaded"))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                     Text(
                         "Requires the verified helper and Full Disk Access. Chats are listed from this Mac's Messages database; nothing leaves the machine.",
                         bundle: .module
                     )
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
                 AgentChannelSheetActionButton(
@@ -585,8 +584,8 @@ struct IMessageSettingsView: View {
                 "Read lets agents see a chat, Write lets them post there, and the sender allowlist marks whose messages are handled. Manual IDs are under Advanced.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             senderPickerSection
@@ -601,16 +600,16 @@ struct IMessageSettingsView: View {
     /// of chats marked Read (plus handles derived from direct-chat GUIDs and
     /// anything already allowlisted). Manual entry lives under Advanced.
     private var senderPickerSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text("Authorized senders", bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
             Text(
                 "Only messages from allowed people are handled — required for receive. Manual handles are under Advanced.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             if senderCandidates.isEmpty {
@@ -618,21 +617,21 @@ struct IMessageSettingsView: View {
                     "Mark a chat as Read above to choose its people here, or add handles under Advanced.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             } else {
                 let allowed = Set(parseIds(senderAllowlistText))
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(senderCandidates, id: \.self) { handle in
-                        HStack(spacing: 9) {
+                        HStack(spacing: theme.space.s8) {
                             Image(systemName: "person.crop.circle")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(theme.secondaryText)
+                                .glyphSize(.footnote, weight: .semibold)
+                                .foregroundColor(theme.text.secondary)
                                 .frame(width: 20)
                             Text(handle)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.primaryText)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.primary)
                                 .lineLimit(1)
                             Spacer(minLength: 6)
                             AgentChannelSelectorToggle(
@@ -642,17 +641,13 @@ struct IMessageSettingsView: View {
                                 senderAllowlistText = toggledIdText(senderAllowlistText, id: handle)
                             }
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, theme.space.s8)
+                        .padding(.vertical, theme.space.s8)
                         if handle != senderCandidates.last {
-                            SettingsDivider()
                         }
                     }
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.tertiaryBackground.opacity(0.4))
-                )
+                .settingsChrome(.inset)
             }
         }
     }
@@ -674,17 +669,17 @@ struct IMessageSettingsView: View {
     /// The most common setup trap: chats are selected but the sender
     /// allowlist is empty, so receiving silently never starts.
     private var missingSendersWarning: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
-                .foregroundColor(theme.warningColor)
-                .padding(.top, 1)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.status.warning.foreground)
+                .padding(.top, theme.space.s2)
             Text(
                 "Receiving stays off until you add at least one authorized sender.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.warningColor)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.status.warning.foreground)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -720,15 +715,15 @@ struct IMessageSettingsView: View {
             },
             isSelected: { $0.isSelected }
         )
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Recent Chats", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 Text("\(discoveredChats.count) found")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             AgentChannelSelectorSearchField(
@@ -749,20 +744,20 @@ struct IMessageSettingsView: View {
         _ chat: DiscoveredChat,
         access: AgentChannelReadWriteSelection
     ) -> some View {
-        HStack(spacing: 9) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: chat.kind == "group" ? "person.3.fill" : "person.crop.circle.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundColor(theme.text.secondary)
                 .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(chat.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                 Text(chat.id)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(1)
             }
 
@@ -775,19 +770,19 @@ struct IMessageSettingsView: View {
                 writableChatIdsText = toggledIdText(writableChatIdsText, id: chat.id)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
     }
 
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Text(
                     "Manual IDs are a fallback for chats not returned by discovery. Use the chat GUID (e.g. iMessage;-;+15551234567) or a direct handle.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
 
                 AgentChannelMultilineSettingsField(
                     title: L("Readable Chat IDs"),
@@ -801,20 +796,20 @@ struct IMessageSettingsView: View {
                     placeholder: L("+15551234567 or name@example.com — one per line"),
                     help: L("Only messages from these handles trigger inbound handling; required for receive.")
                 )
-                StyledSettingsTextField(
-                    label: L("Default Read Limit"),
+                SettingsTextFieldRow(
+                    label: "Default Read Limit",
                     text: $defaultReadLimit,
                     placeholder: "50",
-                    help: L("Default recent-message count for iMessage reads. Clamped to 1-100.")
+                    help: "Default recent-message count for iMessage reads. Clamped to 1-100."
                 )
-                StyledSettingsTextField(
-                    label: L("Poll Interval Seconds"),
+                SettingsTextFieldRow(
+                    label: "Poll Interval Seconds",
                     text: $pollIntervalSeconds,
                     placeholder: "3",
-                    help: L("How often Osaurus checks for new messages. Clamped to 1-60 seconds.")
+                    help: "How often Osaurus checks for new messages. Clamped to 1-60 seconds."
                 )
                 SettingsToggle(
-                    title: L("Ingest Attachments"),
+                    title: "Ingest Attachments",
                     description: L(
                         "Read inbound attachment metadata from the Messages attachment folder. Only files under the Messages attachment root are ever touched."
                     ),
@@ -826,50 +821,24 @@ struct IMessageSettingsView: View {
 
     // MARK: - Behavior
 
-    private var behaviorSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            stepDispatchSection
-            SettingsDivider()
+    private var routingSectionContent: some View {
+        ChannelRoutingSection(kind: .imessage, connectionId: AgentChannelConnection.nativeIMessageConnectionId)
+    }
+
+    private var sendingSectionContent: some View {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             sendingSection
-            SettingsDivider()
+            ChannelPostingSection(kind: .imessage, connectionId: AgentChannelConnection.nativeIMessageConnectionId)
             advancedActionsSection
         }
     }
 
-    private var stepDispatchSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AgentChannelSectionHeading(L("Reply to incoming messages"))
+    private var receiveOptionsSection: some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            AgentChannelSectionHeading(L("Incoming message options"))
 
             SettingsToggle(
-                title: L("Reply with an Agent"),
-                description: L(
-                    "Choose which agent answers allowlisted iMessages. Replies run in a private channel session; external-surface tool restrictions still apply."
-                ),
-                isOn: $inboundDispatchEnabled.animation(.easeOut(duration: 0.2))
-            )
-
-            if inboundDispatchEnabled {
-                AgentChannelDispatchRoutingEditor(
-                    roomNoun: L("chat"),
-                    rooms: routableRooms,
-                    defaultTarget: $inboundTarget,
-                    routes: $inboundRoutes
-                )
-                AgentChannelPluginPreloadOverflowNotice(agentId: inboundTarget?.localId)
-                SettingsToggle(
-                    title: L("Reply Automatically"),
-                    description: L(
-                        "Reply to the incoming iMessage with the selected agent's sanitized response. iMessage and global writes plus the write allowlist still apply."
-                    ),
-                    isOn: $inboundAutoReplyEnabled
-                )
-                if !inboundAutoReplyEnabled {
-                    AgentChannelAutoReplyOffNotice()
-                }
-            }
-
-            SettingsToggle(
-                title: L("Ignore Messages You Send"),
+                title: "Ignore Messages You Send",
                 description: L(
                     "Skip messages sent from this Mac's own account. Turn this off to test the full loop from a single machine by messaging yourself — the sender must still be in the authorized list, and automatic replies can loop if the agent answers itself."
                 ),
@@ -879,14 +848,14 @@ struct IMessageSettingsView: View {
     }
 
     private var sendingSection: some View {
-        SettingsSubsection(label: L("Sending")) {
-            VStack(alignment: .leading, spacing: 12) {
+        SettingsFieldRow(label: "Sending") {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 SettingsToggle(
-                    title: L("Allow Sending on iMessage"),
+                    title: "Allow Sending on iMessage",
                     description: L(
                         "Let agents post to write-allowlisted chats through Messages.app. Requires Messages Automation; the global Sending switch in Channels must also be on."
                     ),
-                    isOn: $writeEnabled.animation(.easeOut(duration: 0.2))
+                    isOn: $writeEnabled.animation(theme.motion.quick)
                 )
 
                 if writeEnabled {
@@ -903,29 +872,29 @@ struct IMessageSettingsView: View {
     }
 
     private var advancedActionsSection: some View {
-        SettingsSubsection(label: L("Advanced Actions (private API)")) {
-            VStack(alignment: .leading, spacing: 12) {
+        SettingsFieldRow(label: "Advanced Actions (private API)") {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Label {
                     Text(
                         "Editing, unsending, tapbacks, typing indicators, and attachment sends use Apple's private iMessage APIs. They only work after you disable System Integrity Protection and Library Validation on this Mac — a significant, system-wide security reduction. Osaurus never changes those protections; it only detects whether the bridge is active. Do this only on a dedicated machine.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.warning.foreground)
                     .fixedSize(horizontal: false, vertical: true)
                 } icon: {
                     Image(systemName: "exclamationmark.shield.fill")
-                        .foregroundColor(theme.warningColor)
+                        .foregroundColor(theme.status.warning.foreground)
                 }
 
                 securityDiagnosticsRows
 
                 SettingsToggle(
-                    title: L("Enable Advanced Actions"),
+                    title: "Enable Advanced Actions",
                     description: L(
                         "Master switch. Each action below must also be enabled individually, and every mutation still requires confirm_send."
                     ),
-                    isOn: $advancedActionsEnabled.animation(.easeOut(duration: 0.2))
+                    isOn: $advancedActionsEnabled.animation(theme.motion.quick)
                 )
 
                 if advancedActionsEnabled {
@@ -941,8 +910,8 @@ struct IMessageSettingsView: View {
                             "The private-API bridge is not active on this Mac right now, so these actions will fail until it is. Basic send/receive keeps working either way.",
                             bundle: .module
                         )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -953,7 +922,7 @@ struct IMessageSettingsView: View {
     /// Read-only SIP / Library Validation state. Detection only — there is
     /// deliberately no button here.
     private var securityDiagnosticsRows: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             securityRow(
                 title: L("System Integrity Protection"),
                 state: diagnostics?.sipEnabled,
@@ -981,14 +950,14 @@ struct IMessageSettingsView: View {
         enabledLabel: String,
         disabledLabel: String
     ) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.primary)
             Spacer(minLength: 6)
             Text(state == nil ? L("Unknown") : (state == true ? enabledLabel : disabledLabel))
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
         }
     }
 
@@ -1040,15 +1009,15 @@ struct IMessageSettingsView: View {
     // MARK: - Verify
 
     private var stepVerifySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Verify an incoming message"))
 
             Text(
                 "Changes save automatically, and receiving starts once Connect and Conversations are complete. Send yourself an iMessage from an authorized sender in a readable chat, then watch each stage appear here.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             AgentChannelTransportHealthView(
@@ -1079,9 +1048,6 @@ struct IMessageSettingsView: View {
         }
     }
 
-    private var routableRooms: [AgentChannelRoutableRoom] {
-        discoveredChats.map { AgentChannelRoutableRoom(id: $0.id, name: $0.name) }
-    }
 
     // MARK: - Load / save
 
@@ -1099,32 +1065,25 @@ struct IMessageSettingsView: View {
         ignoreSelfMessages = configuration.ignoreSelfMessages
         advancedActionsEnabled = configuration.advancedActionsEnabled
         enabledAdvancedActions = Set(configuration.enabledAdvancedActions)
-        inboundDispatchEnabled = configuration.inboundDispatch.enabled
-        inboundTarget = configuration.inboundDispatch.target
-        inboundRoutes = configuration.inboundDispatch.routes
-        inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
         // Arm autosave only after the stored configuration has hydrated the
         // draft, so hydration itself is never mistaken for an edit.
         lastSavedDraft = currentDraft
     }
 
     private func validationFailure() -> (message: String, section: AgentChannelProviderSetupSection)? {
-        if inboundDispatchEnabled, inboundTarget == nil, inboundRoutes.isEmpty {
-            return (
-                L("Choose an agent to reply, or add a rule for incoming iMessages."),
-                .behavior
-            )
-        }
         if inboundDispatchEnabled, inboundAutoReplyEnabled {
             guard writeEnabled else {
-                return (L("Enable iMessage sending before automatic channel replies."), .behavior)
+                return (L("Enable iMessage sending before automatic channel replies."), .sending)
             }
-            let readable = Set(parseIds(readableChatIdsText))
-            let writable = Set(parseIds(writableChatIdsText))
-            guard readable.isSubset(of: writable) else {
+            let missing = ChannelAgentRoster.autoReplyRoomsNotWritable(
+                ChannelAgentRoster.replyingRules(channelEvents),
+                readable: parseIds(readableChatIdsText), writable: parseIds(writableChatIdsText))
+            guard missing.isEmpty else {
                 return (
-                    L("Every readable iMessage chat must also be writable when automatic replies are enabled."),
-                    .access
+                    L(
+                        "Automatic replies need these iMessage chats to be writable: \(missing.joined(separator: ", ")). Make them writable, or set their routing rules to After approval."
+                    ),
+                    .receiving
                 )
             }
         }
@@ -1144,15 +1103,7 @@ struct IMessageSettingsView: View {
             pollIntervalSeconds: Int(pollIntervalSeconds) ?? 3,
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             advancedActionsEnabled: advancedActionsEnabled,
-            enabledAdvancedActions: Array(enabledAdvancedActions),
-            inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                enabled: inboundDispatchEnabled,
-                target: inboundTarget,
-                routes: inboundRoutes,
-                requireMention: false,
-                continueThreads: true,
-                autoReplyEnabled: inboundAutoReplyEnabled
-            )
+            enabledAdvancedActions: Array(enabledAdvancedActions)
         )
     }
 
@@ -1385,7 +1336,7 @@ struct IMessageSettingsView: View {
         statusIsError = isError
         if isError, let section {
             attentionSectionId = section.rawValue
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 selectedSectionId = section.rawValue
             }
         } else if !isError {

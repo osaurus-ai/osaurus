@@ -14,6 +14,7 @@ extension AgentManager {
         if agentId == Agent.defaultId {
             return DefaultAgentConfigurationStore.load().runtime ?? .builtIn
         }
+        if agentId == Agent.architectId { return ArchitectConfigurationStore.load().runtime ?? .builtIn }
         return agent(for: agentId)?.runtime ?? .builtIn
     }
 
@@ -47,6 +48,9 @@ extension AgentManager {
             config.runtime = stored
             DefaultAgentConfigurationStore.save(config)
             NotificationCenter.default.post(name: .agentUpdated, object: agentId)
+        } else if agentId == Agent.architectId {
+            guard ArchitectConfigurationStore.load().runtime != stored else { return }
+            ArchitectConfigurationStore.update { $0.runtime = stored }
         } else {
             guard var agent = agent(for: agentId), agent.runtime != stored else { return }
             agent.runtime = stored

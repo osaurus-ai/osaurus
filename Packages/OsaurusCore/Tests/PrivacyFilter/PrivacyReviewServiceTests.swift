@@ -11,8 +11,8 @@
 //      `cancel()` (no leaked suspensions).
 //    • `unregisterPresenter(_:)` takes a token and only drops *that*
 //      registration — a second window's presenter stays intact.
-//    • The global `alwaysApproveByDefault` config flag short-circuits
-//      review without touching the presenter.
+//    • A review goes to the window that owns its conversation, and
+//      falls back to the newest window for unowned scopes.
 //
 
 import Foundation
@@ -139,36 +139,100 @@ struct PrivacyReviewServiceTests {
         #expect(secondSaw != nil)
     }
 
-    // MARK: - alwaysApproveByDefault
+    // MARK: - Owner routing
 
-    /// The global config flag should short-circuit the sheet without
-    /// touching the presenter. Tests the `PrivacyFilterStore.snapshot()`
-    /// branch added to `review`.
-    @Test func alwaysApproveByDefault_shortCircuitsReview() async {
+    /// The window that owns the conversation presents its review even
+    /// when another window registered later, and the sheet starts on
+    /// the conversation's policy.
+    @Test func review_routesToOwningWindow() async {
         let guard_ = await acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
         defer { guard_.release() }
 
         let service = PrivacyReviewService.shared
-        var config = PrivacyFilterConfiguration()
-        config.alwaysApproveByDefault = true
-        PrivacyFilterStore.save(config)
-        defer { PrivacyFilterStore.save(PrivacyFilterConfiguration()) }
+        PrivacyFilterStore.save(PrivacyFilterConfiguration())
+        let scope = "owner-scope-\(UUID().uuidString)"
+        await SessionRedactionStore.shared.setPolicy(scope, .autoRedact)
+        defer { Task { await SessionRedactionStore.shared.invalidate(scope) } }
 
-        var presenterFired = false
-        let token = service.registerPresenter { _ in presenterFired = true }
+        var ownerSaw: RedactionReviewState?
+        var otherSaw: RedactionReviewState?
+        let owner = service.registerPresenter(owns: { $0 == scope }) { ownerSaw = $0 }
+        let other = service.registerPresenter { otherSaw = $0 }
+        defer {
+            service.unregisterPresenter(owner)
+            service.unregisterPresenter(other)
+        }
+
+        let detection = await Self.makeDetection("Dana")
+        let reviewTask = Task<PrivacyReviewOutcome, Never> {
+            await service.review(detections: [detection], sessionId: scope)
+        }
+        for _ in 0 ..< 10 where ownerSaw == nil { await Task.yield() }
+        reviewTask.cancel()
+        _ = await reviewTask.value
+
+        #expect(ownerSaw != nil)
+        #expect(otherSaw == nil)
+        #expect(ownerSaw?.policy == .autoRedact)
+    }
+
+    /// No window claims the scope (HTTP-style session id): the newest
+    /// registration presents, as before owner routing existed.
+    @Test func review_unownedScope_fallsBackToNewestWindow() async {
+        let guard_ = await acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
+        defer { guard_.release() }
+
+        let service = PrivacyReviewService.shared
+        PrivacyFilterStore.save(PrivacyFilterConfiguration())
+
+        var firstSaw: RedactionReviewState?
+        var secondSaw: RedactionReviewState?
+        let first = service.registerPresenter(owns: { $0 == "someone-else" }) { firstSaw = $0 }
+        let second = service.registerPresenter { secondSaw = $0 }
+        defer {
+            service.unregisterPresenter(first)
+            service.unregisterPresenter(second)
+        }
+
+        let detection = await Self.makeDetection("Eve")
+        let reviewTask = Task<PrivacyReviewOutcome, Never> {
+            await service.review(detections: [detection], sessionId: "unowned-\(UUID().uuidString)")
+        }
+        for _ in 0 ..< 10 where secondSaw == nil { await Task.yield() }
+        reviewTask.cancel()
+        _ = await reviewTask.value
+
+        #expect(firstSaw == nil)
+        #expect(secondSaw != nil)
+    }
+
+    /// While a review waits on the user, the chat it belongs to is waiting
+    /// on a person, not stuck; answering it ends that.
+    @Test func openReview_marksScopeAwaitingUntilAnswered() async {
+        let guard_ = await acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
+        defer { guard_.release() }
+
+        let service = PrivacyReviewService.shared
+        PrivacyFilterStore.save(PrivacyFilterConfiguration())
+        let scope = UUID().uuidString
+
+        var presented: RedactionReviewState?
+        let token = service.registerPresenter { presented = $0 }
         defer { service.unregisterPresenter(token) }
 
-        let detection = await Self.makeDetection("Carol")
-        let outcome = await service.review(
-            detections: [detection],
-            sessionId: "session-always-approve"
-        )
-        if case .approved(let entities) = outcome {
-            #expect(entities.count == 1)
-            #expect(entities.first?.original == "Carol")
-        } else {
-            Issue.record("Expected .approved, got \(outcome)")
+        let detection = await Self.makeDetection("Frank")
+        let reviewTask = Task<PrivacyReviewOutcome, Never> {
+            await service.review(detections: [detection], sessionId: scope)
         }
-        #expect(presenterFired == false)
+        for _ in 0 ..< 10 where presented == nil { await Task.yield() }
+
+        #expect(service.isAwaitingReview(scopeId: scope))
+        #expect(!service.isAwaitingReview(scopeId: "another-chat"))
+        #expect(RunProgressLoadingPhase.current(agentId: nil, sessionId: scope) == .privacyReview)
+
+        presented?.confirm()
+        _ = await reviewTask.value
+        for _ in 0 ..< 10 where service.isAwaitingReview(scopeId: scope) { await Task.yield() }
+        #expect(!service.isAwaitingReview(scopeId: scope))
     }
 }

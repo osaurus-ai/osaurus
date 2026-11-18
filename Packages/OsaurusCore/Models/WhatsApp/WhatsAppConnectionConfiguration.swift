@@ -41,7 +41,6 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
     /// always written inside the default media directory.
     var allowedAttachmentRoots: [String]
     var maxAttachmentBytes: Int
-    var inboundDispatch: AgentChannelInboundDispatchConfiguration
 
     enum CodingKeys: String, CodingKey {
         case readableChatIds
@@ -55,7 +54,6 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
         case attachmentIngestionEnabled
         case allowedAttachmentRoots
         case maxAttachmentBytes
-        case inboundDispatch
     }
 
     static let defaultMaxAttachmentBytes = 25 * 1_024 * 1_024
@@ -84,10 +82,7 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
         sendReadReceipts: Bool = false,
         attachmentIngestionEnabled: Bool = false,
         allowedAttachmentRoots: [String]? = nil,
-        maxAttachmentBytes: Int = WhatsAppConnectionConfiguration.defaultMaxAttachmentBytes,
-        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(
-            requireMention: false
-        )
+        maxAttachmentBytes: Int = WhatsAppConnectionConfiguration.defaultMaxAttachmentBytes
     ) {
         self.readableChatIds = Self.normalizedIds(readableChatIds)
         self.writableChatIds = Self.normalizedIds(writableChatIds)
@@ -102,7 +97,6 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
             allowedAttachmentRoots ?? Self.defaultAttachmentRoots
         )
         self.maxAttachmentBytes = Self.clampAttachmentBytes(maxAttachmentBytes)
-        self.inboundDispatch = inboundDispatch
     }
 
     init(from decoder: Decoder) throws {
@@ -126,11 +120,7 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
                 forKey: .allowedAttachmentRoots
             ),
             maxAttachmentBytes: try container.decodeIfPresent(Int.self, forKey: .maxAttachmentBytes)
-                ?? Self.defaultMaxAttachmentBytes,
-            inboundDispatch: try container.decodeIfPresent(
-                AgentChannelInboundDispatchConfiguration.self,
-                forKey: .inboundDispatch
-            ) ?? AgentChannelInboundDispatchConfiguration(requireMention: false)
+                ?? Self.defaultMaxAttachmentBytes
         )
     }
 
@@ -146,8 +136,7 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
             sendReadReceipts: sendReadReceipts,
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             allowedAttachmentRoots: allowedAttachmentRoots,
-            maxAttachmentBytes: maxAttachmentBytes,
-            inboundDispatch: inboundDispatch
+            maxAttachmentBytes: maxAttachmentBytes
         )
     }
 
@@ -277,7 +266,8 @@ enum WhatsAppConnectionConfigurationStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let normalized = configuration.normalized
-        try encoder.encode(normalized).write(to: url, options: [.atomic])
+        let data = try encoder.encode(normalized)
+        try LegacyInboundDispatchCarryOver.platformFile(data, replacing: url).write(to: url, options: [.atomic])
         cache.store(normalized, for: url)
     }
 

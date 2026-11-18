@@ -18,6 +18,9 @@ struct AgentSkillAllowListCard: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @State private var showingPicker = false
 
+    /// Matches the Auto-discover card above it.
+    private static let glyphTileSize: CGFloat = 26
+
     private var agent: Agent? { agentManager.agent(for: agentId) }
 
     private var installed: [Skill] {
@@ -39,23 +42,20 @@ struct AgentSkillAllowListCard: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             Image(systemName: "lightbulb")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(isLimited ? theme.accentColor : theme.secondaryText)
-                .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous).fill(
-                        isLimited ? theme.accentColor.opacity(0.12) : theme.inputBackground)
-                )
+                .glyphSize(.label, weight: .semibold)
+                .foregroundColor(isLimited ? theme.text.link : theme.text.secondary)
+                .frame(width: Self.glyphTileSize, height: Self.glyphTileSize)
+                .settingsChrome(isLimited ? .selected : .inset)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Limit to selected skills", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(summary)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .textStyle(.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -63,14 +63,9 @@ struct AgentSkillAllowListCard: View {
             Spacer()
 
             if isLimited {
-                Button {
+                SettingsButton(.tertiary, "Choose Skills…", size: .compact) {
                     showingPicker = true
-                } label: {
-                    Text("Choose Skills…", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.accentColor)
                 }
-                .buttonStyle(.plain)
                 .popover(isPresented: $showingPicker, arrowEdge: .bottom) {
                     picker
                 }
@@ -83,31 +78,23 @@ struct AgentSkillAllowListCard: View {
                     set: { setLimited($0) }
                 )
             )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
+            .settingsSwitch()
             .accessibilityLabel(Text("Limit to selected skills", bundle: .module))
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s12)
+        .settingsChrome(.surface)
         .settingsLandingAnchor("agents.skills")
     }
 
     private var picker: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             Text("Skills this agent can use", bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .padding(12)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
+                .padding(theme.space.s12)
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     ForEach(installed) { skill in
                         Toggle(
                             isOn: Binding(
@@ -115,50 +102,45 @@ struct AgentSkillAllowListCard: View {
                                 set: { setSkill(skill, allowed: $0) }
                             )
                         ) {
-                            VStack(alignment: .leading, spacing: 1) {
+                            VStack(alignment: .leading, spacing: theme.space.s2) {
                                 Text(skill.name)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.primaryText)
+                                    .font(SettingsFont.body)
+                                    .foregroundColor(theme.text.primary)
                                 if !skill.description.isEmpty {
                                     Text(skill.description)
-                                        .font(.system(size: 10))
-                                        .foregroundColor(theme.tertiaryText)
+                                        .textStyle(.footnote)
+                                        .foregroundColor(theme.text.tertiary)
                                         .lineLimit(1)
                                 }
                             }
                         }
-                        .toggleStyle(.checkbox)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
+                        .settingsCheckbox()
+                        .padding(.horizontal, theme.space.s12)
+                        .padding(.vertical, theme.space.s4)
                     }
                     ForEach(agent?.missingAllowListedSkills(in: installed) ?? [], id: \.self) { name in
-                        HStack(spacing: 6) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "exclamationmark.triangle")
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.warningColor)
+                                .glyphSize(.micro)
+                                .foregroundColor(theme.status.warning.foreground)
                             Text("\(name) — not installed", bundle: .module)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.secondaryText)
+                                .font(SettingsFont.body)
+                                .foregroundColor(theme.text.secondary)
                             Spacer()
-                            Button {
+                            SettingsIconButton("xmark", help: "Remove from the list", size: .compact) {
                                 removeEntry(name)
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(theme.tertiaryText)
                             }
-                            .buttonStyle(.plain)
-                            .localizedHelp("Remove from the list")
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, theme.space.s12)
+                        .padding(.vertical, theme.space.s4)
                     }
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, theme.space.s6)
             }
             .frame(maxHeight: 320)
         }
-        .frame(width: 320)
+        .frame(width: SettingsSheetWidth.compact)
+        .background(theme.surface.overlay)
     }
 
     // MARK: - Writes

@@ -92,7 +92,7 @@ final class ImageModelDownloadService: ObservableObject {
     /// Hidden marker written into each staged bundle recording the source HF
     /// repo id, so a later re-download knows where to fetch from (installed
     /// bundles otherwise only carry the local directory name).
-    private static let sourceMarkerName = ".osaurus-source"
+    private nonisolated static let sourceMarkerName = ".osaurus-source"
 
     /// Max files staged in parallel. A single HTTPS connection to the HF CDN is
     /// throttled well below a fast link, so serial per-file fetches leave most
@@ -118,19 +118,24 @@ final class ImageModelDownloadService: ObservableObject {
         return FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue
     }
 
-    /// Source HF repo a staged bundle was downloaded from. Reads the hidden
-    /// marker; falls back to a fetched- or curated-catalog entry with the same
-    /// id. `nil` when neither is known (e.g. an old imported bundle), in which
-    /// case re-download is unavailable and only delete is offered.
-    func sourceRepoId(for id: String) -> String? {
+    /// Source HF repo a staged bundle was downloaded from: the hidden marker's
+    /// value (`markedSourceRepoId`), else a fetched- or curated-catalog entry
+    /// with the same id. `nil` when neither is known (e.g. an old imported
+    /// bundle), in which case re-download is unavailable and only delete is
+    /// offered.
+    func sourceRepoId(for id: String, marked: String?) -> String? {
+        marked ?? (fetchedCatalog + Self.curatedCatalog).first { $0.id == id }?.repoId
+    }
+
+    /// The repo id recorded in a bundle's `.osaurus-source` marker. Disk
+    /// read, so callers on the main actor run it detached.
+    nonisolated static func markedSourceRepoId(for id: String) -> String? {
         let marker = ImageGenerationService.imageModelsRoot()
             .appendingPathComponent(id, isDirectory: true)
-            .appendingPathComponent(Self.sourceMarkerName)
-        if let raw = try? String(contentsOf: marker, encoding: .utf8) {
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return trimmed }
-        }
-        return (fetchedCatalog + Self.curatedCatalog).first { $0.id == id }?.repoId
+            .appendingPathComponent(sourceMarkerName)
+        guard let raw = try? String(contentsOf: marker, encoding: .utf8) else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// Best-effort total download size for a catalog repo, mirroring
@@ -171,6 +176,7 @@ final class ImageModelDownloadService: ObservableObject {
                 NotificationCenter.default.post(name: .localModelsChanged, object: nil)
             }
             await ModelPickerItemCache.shared.buildModelPickerItems()
+            await ModelPickerItemCache.shared.refreshLocalMediaModelItems()
         }
     }
 
@@ -194,10 +200,8 @@ final class ImageModelDownloadService: ObservableObject {
     /// Heuristic: does this HF repo look like a diffusers/mflux image bundle?
     /// Used by the global Import flow to route image repos here instead of the
     /// LLM path (which rejects them and would stage to the wrong directory).
-    /// Detects the diffusers layout — a top-level `model_index.json`, or a
-    /// `vae/` alongside a `transformer/`/`unet/` subdir — which mflux mirrors
-    /// preserve. Returns `false` on any listing failure so the caller falls
-    /// back to the existing LLM compatibility check.
+    /// Returns `false` on any listing failure so the caller falls back to the
+    /// existing LLM compatibility check.
     static func isImageRepo(_ repoId: String) async -> Bool {
         guard
             let files = await HuggingFaceService.shared.fetchMatchingFiles(
@@ -209,6 +213,10 @@ final class ImageModelDownloadService: ObservableObject {
         return isImageBundle(paths: files.map(\.path))
     }
 
+    /// The diffusers layout mflux mirrors preserve (a top-level
+    /// `model_index.json`, or a `vae/` alongside a `transformer/`/`unet/`
+    /// subdir), or a single-file `vae.safetensors` beside a
+    /// `transformer.safetensors` (SeedVR2).
     nonisolated static func isImageBundle(paths: [String]) -> Bool {
         let paths = paths.map { $0.lowercased() }
         let hasModelIndex = paths.contains { $0 == "model_index.json" }
@@ -217,7 +225,8 @@ final class ImageModelDownloadService: ObservableObject {
             path.hasPrefix("transformer/") || path.contains("/transformer/")
                 || path.hasPrefix("unet/") || path.contains("/unet/")
         }
-        return hasModelIndex || (hasVAE && hasTransformer)
+        let hasSingleFilePair = paths.contains("vae.safetensors") && paths.contains("transformer.safetensors")
+        return hasModelIndex || (hasVAE && hasTransformer) || hasSingleFilePair
     }
 
     /// Offer a linked bundle in Images without starting a download. Keep it
@@ -353,6 +362,7 @@ final class ImageModelDownloadService: ObservableObject {
             // bundle becomes selectable without a relaunch.
             NotificationCenter.default.post(name: .localModelsChanged, object: nil)
             await ModelPickerItemCache.shared.buildModelPickerItems()
+            await ModelPickerItemCache.shared.refreshLocalMediaModelItems()
         } catch is CancellationError {
             states[dirName] = .notStarted
             metrics[dirName] = nil
@@ -406,7 +416,9 @@ final class ImageModelDownloadService: ObservableObject {
             if complete { return (destination, true) }
             let recovered = try Self.recoverMisroutedFile(file, from: legacyRoot, to: destination)
             if recovered {
-                imageDownloadLog.info("Recovered verified image-model file from the managed model folder: \(expectedSize) bytes")
+                imageDownloadLog.info(
+                    "Recovered verified image-model file from the managed model folder: \(expectedSize) bytes"
+                )
             }
             return (destination, recovered)
         }

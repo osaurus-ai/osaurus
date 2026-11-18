@@ -2,9 +2,7 @@
 //  SystemStatusBar.swift
 //  osaurus
 //
-//  Compact RAM + storage status bar shared by the Models download view and
-//  the Image Generation download sub-tab. Extracted from `ModelDownloadView`
-//  so both surfaces render identical resource gauges.
+//  Compact RAM + storage status bar shown above the Local Models table.
 //
 
 import SwiftUI
@@ -14,7 +12,6 @@ import SwiftUI
 /// Compact bar showing available memory and storage with mini gauges.
 struct SystemStatusBar: View {
     @Environment(\.theme) private var theme
-
     let totalMemoryGB: Double
     let usedMemoryGB: Double
     let availableStorageGB: Double
@@ -23,39 +20,38 @@ struct SystemStatusBar: View {
     /// Formats a GB value as "512 GB" or "1.5 TB" once it crosses 1000 GB.
     private func formatCapacity(_ gigabytes: Double) -> String {
         if gigabytes >= 1000 {
-            return String(format: L("%.1f TB"), gigabytes / 1000)
+            return String(format: LCached("%.1f TB"), gigabytes / 1000)
         }
-        return String(format: L("%.0f GB"), gigabytes)
+        return String(format: LCached("%.0f GB"), gigabytes)
     }
 
     var body: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: theme.space.s20) {
             ResourceGauge(
-                label: L("RAM"),
+                label: LCached("RAM"),
                 icon: "memorychip",
                 usedFraction: totalMemoryGB > 0 ? usedMemoryGB / totalMemoryGB : 0,
                 detail: String(
-                    format: L("%@ free / %@"),
+                    format: LCached("%@ free / %@"),
                     formatCapacity(max(0, totalMemoryGB - usedMemoryGB)),
                     formatCapacity(totalMemoryGB)
                 )
             )
 
             ResourceGauge(
-                label: L("Storage"),
+                label: LCached("Storage"),
                 icon: DirectoryPickerService.shared.hasValidDirectory ? "externaldrive" : "internaldrive",
                 usedFraction: totalStorageGB > 0
                     ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,
                 detail: String(
-                    format: L("%@ free / %@"),
+                    format: LCached("%@ free / %@"),
                     formatCapacity(availableStorageGB),
                     formatCapacity(totalStorageGB)
                 )
             )
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 10)
-        .background(theme.secondaryBackground)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s8)
     }
 }
 
@@ -71,33 +67,33 @@ struct ResourceGauge: View {
     private var clampedFraction: Double { min(1.0, max(0, usedFraction)) }
 
     private var barColor: Color {
-        if clampedFraction < 0.7 { return theme.successColor }
-        if clampedFraction < 0.9 { return theme.warningColor }
-        return theme.errorColor
+        if clampedFraction < 0.7 { return theme.status.success.foreground }
+        if clampedFraction < 0.9 { return theme.status.warning.foreground }
+        return theme.status.error.foreground
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(.caption, weight: .medium)
+                .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s4) {
                     Text(label)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
                     Spacer()
                     Text(detail)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(SettingsFont.monoSmall)
                         .foregroundColor(barColor)
                 }
 
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(theme.tertiaryBackground)
-                        RoundedRectangle(cornerRadius: 2)
+                        RoundedRectangle(cornerRadius: theme.radius.small)
+                            .fill(theme.surface.hover)
+                        RoundedRectangle(cornerRadius: theme.radius.small)
                             .fill(barColor)
                             .frame(width: geometry.size.width * clampedFraction)
                     }

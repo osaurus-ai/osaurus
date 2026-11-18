@@ -323,31 +323,26 @@ struct DiagnosticWarningsTests {
         #expect(warnings.allSatisfy { !$0.contains("sandbox_install") })
     }
 
-    // MARK: - Combined-mode sandbox_exec host-path backstop
+    // MARK: - sandbox_exec on a Mac path
 
-    @Test func sandboxExecHostPath_redirectsToFileToolsInCombinedMode() {
-        // The one read surface that can't be path-routed: a raw
-        // `sandbox_exec cat /Users/...` still hits the sandbox, which has
-        // no copy of the host workspace. Combined mode redirects it.
-        ChatExecutionContext.$hostReadOnlyScope.withValue(
-            URL(fileURLWithPath: "/Users/me/project")
-        ) {
-            let hint = sandboxExecHostPathHint(
-                command: "cat /Users/me/Desktop/todo.md",
-                exitCode: 1,
-                stderr: "cat: /Users/me/Desktop/todo.md: No such file or directory"
-            )
-            #expect(hint?.contains("file_read") == true)
-            #expect(hint?.contains("host path outside the sandbox") == true)
-        }
-    }
-
-    @Test func sandboxExecHostPath_silentOutsideCombinedMode() {
-        // No host-read scope bound (plain sandbox mode) -> no redirect.
+    @Test func sandboxExecHostPath_saysTheSandboxCannotSeeTheMac() {
+        // `cat /Users/...` runs inside the VM, which has no copy of the
+        // Mac's files. No file tool in sandbox mode can reach it either.
         let hint = sandboxExecHostPathHint(
-            command: "cat /Users/me/Desktop/todo.md",
+            command: "cat '/Users/me/Desktop/todo.md'",
             exitCode: 1,
             stderr: "cat: /Users/me/Desktop/todo.md: No such file or directory"
+        )
+        #expect(hint?.contains("`/Users/me/Desktop/todo.md`") == true)
+        #expect(hint?.contains("Folder chip") == true)
+        #expect(hint?.contains("file_read") == false)
+    }
+
+    @Test func sandboxExecHostPath_silentWhenTheCommandSucceeded() {
+        let hint = sandboxExecHostPathHint(
+            command: "echo /Users/me/Desktop",
+            exitCode: 0,
+            stderr: ""
         )
         #expect(hint == nil)
     }
@@ -355,15 +350,11 @@ struct DiagnosticWarningsTests {
     @Test func sandboxExecHostPath_silentForLegitimateSandboxCommand() {
         // A normal sandbox command that happens to fail must not be nagged
         // with a host-path redirect.
-        ChatExecutionContext.$hostReadOnlyScope.withValue(
-            URL(fileURLWithPath: "/Users/me/project")
-        ) {
-            let hint = sandboxExecHostPathHint(
-                command: "cat /workspace/agents/me/notes.txt",
-                exitCode: 1,
-                stderr: "cat: notes.txt: No such file or directory"
-            )
-            #expect(hint == nil)
-        }
+        let hint = sandboxExecHostPathHint(
+            command: "cat /workspace/agents/me/notes.txt",
+            exitCode: 1,
+            stderr: "cat: notes.txt: No such file or directory"
+        )
+        #expect(hint == nil)
     }
 }

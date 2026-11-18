@@ -43,7 +43,6 @@ struct HTTPChannelInboundRouteTests {
             ),
             n8n: AgentChannelN8nConfiguration(
                 inboundVerification: AgentChannelN8nInboundVerification(method: .sharedSecretHeader),
-                inboundDispatch: AgentChannelInboundDispatchConfiguration(enabled: true, targetAgentId: agentId),
                 remoteTransportPolicy: policy
             )
         )

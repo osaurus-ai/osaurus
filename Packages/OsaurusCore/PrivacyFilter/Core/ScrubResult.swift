@@ -31,6 +31,9 @@ public struct DetectedEntity: Identifiable, Sendable {
     /// context for documents the user pasted in. Stored as
     /// immutable so the struct stays trivially `Sendable`.
     public let containingText: String?
+    /// Where the containing segment came from. Drives which review
+    /// setting applies and how the sheet groups the row.
+    public let origin: PrivacySegmentOrigin
 
     public init(
         id: UUID = UUID(),
@@ -39,7 +42,8 @@ public struct DetectedEntity: Identifiable, Sendable {
         range: Range<String.Index>,
         placeholder: Placeholder,
         approved: Bool = true,
-        containingText: String? = nil
+        containingText: String? = nil,
+        origin: PrivacySegmentOrigin = .userInput
     ) {
         self.id = id
         self.category = category
@@ -48,6 +52,7 @@ public struct DetectedEntity: Identifiable, Sendable {
         self.placeholder = placeholder
         self.approved = approved
         self.containingText = containingText
+        self.origin = origin
     }
 
     /// Copy-with-context helper for the pipeline: detection runs
@@ -56,7 +61,10 @@ public struct DetectedEntity: Identifiable, Sendable {
     /// before dedup. Kept here (rather than on the pipeline) so the
     /// invariant "containingText is set iff the producer had the
     /// segment in scope" lives next to the struct.
-    public func withContainingText(_ text: String) -> DetectedEntity {
+    public func withContainingText(
+        _ text: String,
+        origin: PrivacySegmentOrigin = .userInput
+    ) -> DetectedEntity {
         DetectedEntity(
             id: id,
             category: category,
@@ -64,9 +72,22 @@ public struct DetectedEntity: Identifiable, Sendable {
             range: range,
             placeholder: placeholder,
             approved: approved,
-            containingText: text
+            containingText: text,
+            origin: origin
         )
     }
+}
+
+/// Who wrote a scanned segment of the outbound request.
+public enum PrivacySegmentOrigin: Hashable, Sendable {
+    /// Text the user typed or attached (and any app text sent in the
+    /// user role).
+    case userInput
+    /// A tool's result, with the tool's name when it can be found.
+    case toolResult(String?)
+    /// The model's own text in the current turn: replies, reasoning and
+    /// tool-call arguments. The provider wrote it, so it already has it.
+    case modelOutput
 }
 
 extension DetectedEntity: Hashable {

@@ -56,18 +56,18 @@ struct CloudModelBrowserDialog: View {
             .filter(categoryFilter.includes)
         let canBrowse = providerManager.isOsaurusRouterEnabled && !providerManager.isOffline && !catalog.isEmpty
 
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             if canBrowse {
                 searchAndFilters(categories: categories)
                 if refreshFailed {
                     Text("Couldn't refresh. Showing the last available catalog.", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize)))
-                        .foregroundStyle(theme.secondaryText)
+                        .textStyle(.caption)
+                        .foregroundStyle(theme.text.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 12)
+                        .padding(.horizontal, theme.space.s16)
+                        .padding(.bottom, theme.space.s12)
                 }
                 Divider()
                 if results.isEmpty {
@@ -82,7 +82,7 @@ struct CloudModelBrowserDialog: View {
             footer(canBrowse: canBrowse, resultCount: results.count)
         }
         .frame(minWidth: 540, idealWidth: 640, maxWidth: 760, minHeight: 440, idealHeight: 600, maxHeight: 720)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .onExitCommand(perform: onDismiss)
         // Start in the dialog chrome instead of automatically editing search.
@@ -106,24 +106,19 @@ struct CloudModelBrowserDialog: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s16) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Osaurus Cloud", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.headingSize), weight: .semibold))
-                    .foregroundStyle(theme.primaryText)
+                    .textStyle(.heading)
+                    .foregroundStyle(theme.text.primary)
                     .accessibilityAddTraits(.isHeader)
                 Text("Select a model to use it now. Star it to keep it in your list.", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize)))
-                    .foregroundStyle(theme.tertiaryText)
+                    .textStyle(.caption)
+                    .foregroundStyle(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(CloudCloseButtonStyle())
+            SettingsIconButton("xmark", help: "Close", action: onDismiss)
             .accessibilityLabel(Text("Close", bundle: .module))
             .help(L("Close"))
             .focusable()
@@ -131,39 +126,44 @@ struct CloudModelBrowserDialog: View {
             .focusEffectDisabled(!keyboardNavigation)
             .keyboardShortcut(.cancelAction)
         }
-        .padding(20)
+        .padding(theme.space.s16)
+    }
+
+    private func filterPicker<Content: View>(_ label: LocalizedStringKey, @ViewBuilder picker: () -> Content) -> some View {
+        HStack(spacing: theme.space.s8) {
+            Text(label, bundle: .module)
+                .textStyle(.caption)
+                .foregroundColor(theme.text.secondary)
+            picker()
+                .accessibilityLabel(Text(label, bundle: .module))
+        }
     }
 
     private func searchAndFilters(categories: [CloudModelCategory]) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            TextField(L("Search model name or provider"), text: $searchText)
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.large)
-                .font(theme.font(size: CGFloat(theme.bodySize)))
+        VStack(alignment: .leading, spacing: theme.space.s16) {
+            SearchField(text: $searchText, placeholder: "Search model name or provider", fillsAvailableWidth: true)
                 .accessibilityLabel(Text("Search model name or provider", bundle: .module))
                 .focused($focusedControl, equals: .search)
-            HStack(spacing: 16) {
-                Picker(selection: $categoryFilter) {
-                    ForEach(categories) { category in
-                        Text(LocalizedStringKey(category.label), bundle: .module).tag(category)
+            HStack(spacing: theme.space.s16) {
+                filterPicker("Category") {
+                    SettingsMenuPicker(selection: $categoryFilter) {
+                        ForEach(categories) { category in
+                            Text(LocalizedStringKey(category.label), bundle: .module).tag(category)
+                        }
                     }
-                } label: {
-                    Text("Category", bundle: .module)
                 }
-                Picker(selection: $contextFilter) {
-                    ForEach(ModelPickerContextFilter.allCases) { filter in
-                        Text(LocalizedStringKey(filter.label), bundle: .module).tag(filter)
+                filterPicker("Context") {
+                    SettingsMenuPicker(selection: $contextFilter) {
+                        ForEach(ModelPickerContextFilter.allCases) { filter in
+                            Text(LocalizedStringKey(filter.label), bundle: .module).tag(filter)
+                        }
                     }
-                } label: {
-                    Text("Context", bundle: .module)
                 }
             }
-            .pickerStyle(.menu)
-            .font(theme.font(size: CGFloat(theme.captionSize)))
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 16)
-        .padding(.bottom, 24)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.top, theme.space.s16)
+        .padding(.bottom, theme.space.s24)
     }
 
     private func modelList(results: [ModelPickerItem]) -> some View {
@@ -219,12 +219,12 @@ struct CloudModelBrowserDialog: View {
     }
 
     private var searchEmptyState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             Text("No models match", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.bodySize), weight: .semibold))
+                .textStyle(.body, weight: 600)
             Text("Try another search or clear your filters.", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize)))
-                .foregroundStyle(theme.secondaryText)
+                .textStyle(.caption)
+                .foregroundStyle(theme.text.secondary)
             Button {
                 searchText = ""
                 contextFilter = .any
@@ -233,21 +233,20 @@ struct CloudModelBrowserDialog: View {
             } label: {
                 Text("Clear search and filters", bundle: .module)
             }
-            .buttonStyle(.bordered)
+            .assignedSettingsButtonStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
+        .padding(theme.space.s24)
     }
 
     private var catalogStatus: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             if !providerManager.isOsaurusRouterEnabled {
                 statusText("Osaurus Cloud is off", detail: "Open Credits to enable Osaurus Cloud.")
             } else if providerManager.isOffline {
                 statusText("You're offline", detail: "Connect to the internet to browse Cloud models.")
             } else if isRefreshing || providerState?.isConnecting == true {
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner()
                     .accessibilityLabel(Text("Loading Cloud models", bundle: .module))
                 statusText("Loading Cloud models…", detail: "The catalog will appear when the connection is ready.")
             } else if refreshFailed || providerState?.lastError != nil {
@@ -261,17 +260,17 @@ struct CloudModelBrowserDialog: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
+        .padding(theme.space.s24)
     }
 
     private func statusText(_ title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             Text(title, bundle: .module)
-                .font(theme.font(size: CGFloat(theme.bodySize), weight: .semibold))
-                .foregroundStyle(theme.primaryText)
+                .textStyle(.body, weight: 600)
+                .foregroundStyle(theme.text.primary)
             Text(detail, bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize)))
-                .foregroundStyle(theme.secondaryText)
+                .textStyle(.caption)
+                .foregroundStyle(theme.text.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -283,18 +282,15 @@ struct CloudModelBrowserDialog: View {
         } label: {
             Text("Try again", bundle: .module)
         }
-        .buttonStyle(.bordered)
+        .assignedSettingsButtonStyle(.secondary)
     }
 
     private func footer(canBrowse: Bool, resultCount: Int) -> some View {
-        HStack(spacing: 16) {
+        HStack(spacing: theme.space.s16) {
             Button(action: onManageCloud) {
                 Text("Manage Credits", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize)))
-                    .foregroundStyle(theme.secondaryText)
             }
-            .buttonStyle(CloudSecondaryButtonStyle())
-            .controlSize(.small)
+            .assignedSettingsButtonStyle(.secondary, size: .compact)
             .focusable()
             Spacer()
             if canBrowse {
@@ -305,13 +301,13 @@ struct CloudModelBrowserDialog: View {
                         Text("\(resultCount) models", bundle: .module)
                     }
                 }
-                .font(theme.font(size: CGFloat(theme.captionSize)))
-                .foregroundStyle(theme.secondaryText)
+                .textStyle(.caption)
+                .foregroundStyle(theme.text.secondary)
                 .monospacedDigit()
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s16)
     }
 
     private func refreshCatalog() async {
@@ -353,15 +349,15 @@ private struct CloudModelBrowserRow: View {
             isFavorite
             ? Text("Remove \(model.displayName) from favorites", bundle: .module)
             : Text("Add \(model.displayName) to favorites", bundle: .module)
-        return HStack(alignment: .center, spacing: 0) {
+        return HStack(alignment: .center, spacing: theme.space.s0) {
             Button {
                 onSelect()
             } label: {
                 modelRowLabel(model, isSelected: isSelected)
                     // Include the breathing room in the model's click target.
-                    .padding(.trailing, 12)
-                    .padding(.top, 12)
-                    .padding(.bottom, 14)
+                    .padding(.trailing, theme.space.s12)
+                    .padding(.top, theme.space.s12)
+                    .padding(.bottom, theme.space.s12)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -377,8 +373,8 @@ private struct CloudModelBrowserRow: View {
                 onToggleFavorite()
             } label: {
                 Image(systemName: isFavorite ? "star.fill" : "star")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isFavorite ? theme.accentColor : theme.secondaryText)
+                    .glyphSize(.body, weight: .medium)
+                    .foregroundStyle(isFavorite ? theme.text.link : theme.text.secondary)
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
@@ -394,10 +390,7 @@ private struct CloudModelBrowserRow: View {
             .accessibilityValue(isFavorite ? L("Saved") : L("Not saved"))
             .help(isFavorite ? L("Remove from favorites") : L("Add to favorites"))
         }
-        .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.primaryText.opacity(isSelected || isHovered ? 0.04 : 0))
-        }
+        .settingsChrome(isSelected || isHovered ? .hover : nil)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         // Keep separators at the row edge instead of an inner media or vision Label.
@@ -412,16 +405,16 @@ private struct CloudModelBrowserRow: View {
     }
 
     private func modelRowLabel(_ model: ModelPickerItem, isSelected: Bool) -> some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: theme.space.s12) {
             Image(systemName: "checkmark")
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                .glyphSize(.caption, weight: .semibold)
                 .frame(width: 16)
                 .opacity(isSelected ? 1 : 0)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s8) {
                     Text(model.displayName)
-                        .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
+                        .textStyle(.body, weight: 500)
                         .lineLimit(1)
                     if let category = CloudModelCategory.displayCategory(for: model) {
                         CloudCategoryTag(category: category)
@@ -430,15 +423,15 @@ private struct CloudModelBrowserRow: View {
                 }
                 if let price = modelPrice(model) {
                     Text(price)
-                        .font(theme.font(size: CGFloat(theme.captionSize)))
-                        .foregroundStyle(theme.tertiaryText)
+                        .textStyle(.caption)
+                        .foregroundStyle(theme.text.tertiary)
                         .lineLimit(1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .help(model.displayName)
         }
-        .foregroundStyle(theme.primaryText)
+        .foregroundStyle(theme.text.primary)
     }
 
     private func modelPrice(_ model: ModelPickerItem) -> String? {
@@ -451,45 +444,3 @@ private struct CloudModelBrowserRow: View {
 
 }
 
-/// Matches the chat attachment button's circular hover treatment. Keeping hover
-/// inside the style avoids rebuilding the Cloud catalog when Close is hovered.
-private struct CloudCloseButtonStyle: ButtonStyle {
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(isHovered ? theme.accentColor : theme.secondaryText)
-            .background {
-                ZStack {
-                    Circle()
-                        .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [theme.accentColor.opacity(0.1), .clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .opacity(isHovered ? 1 : 0)
-                }
-            }
-            .overlay {
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
-                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.5
-                    )
-            }
-            .contentShape(Circle())
-            .onHover { isHovered = $0 }
-    }
-}

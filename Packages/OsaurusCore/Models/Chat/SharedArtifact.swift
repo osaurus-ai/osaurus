@@ -254,6 +254,18 @@ extension SharedArtifact {
         case copyFailed(source: String, reason: String)
     }
 
+    /// The marker block a `share_artifact` result carries: the success envelope's `text`, or
+    /// the whole string for a legacy raw-marker result. `nil` for anything else (the tool's
+    /// own failure envelopes), which callers must pass through unchanged.
+    static func shareArtifactMarkerText(fromToolResult toolResult: String) -> String? {
+        if let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
+            let text = payload["text"] as? String
+        {
+            return text
+        }
+        return toolResult.contains(startMarker) ? toolResult : nil
+    }
+
     /// Extracts marker-delimited metadata and content lines from a tool result string.
     static func parseMarkers(from toolResult: String) -> ParsedMarkers? {
         guard let startRange = toolResult.range(of: startMarker),
@@ -663,24 +675,24 @@ extension SharedArtifact {
         executionMode: ExecutionMode
     ) -> String {
         let toolName = "share_artifact"
+        // A spawned helper can hold `share_artifact` without the file tools.
+        let canList = ChatExecutionContext.toolExecutionScope.map {
+            $0.permits("file_read") || $0.permits("file_search")
+        } ?? true
         let listingHint: String
         switch executionMode {
-        case .sandbox:
+        case .sandbox, .hostFolder:
             listingHint =
-                "Verify the file with `file_read`/`file_search`, "
-                + "or pass `content`+`filename` for inline data."
-        case .hostFolder:
-            listingHint =
-                "Verify the file with `file_read`/`file_search`, or pass `content`+`filename` "
-                + "for inline data."
+                canList
+                ? "Verify the file with `file_read`/`file_search`, or pass `content`+`filename` for inline data."
+                : "Pass `content`+`filename` for inline data."
         case .none:
             listingHint =
                 "Pass `content`+`filename` for inline data, or attach a working folder/sandbox first."
         }
 
         // Local helper prefixes every message with `share_artifact failed: `
-        // and fills in the always-the-same `tool` / `retryable` fields, so
-        // the per-case branches read at the level of the actual diagnostic.
+        // and fills in the `tool` field; `retryable` follows the kind.
         func fail(
             _ kind: ToolEnvelope.Kind,
             _ message: String,
@@ -692,8 +704,7 @@ extension SharedArtifact {
                 message: "share_artifact failed: \(message)",
                 field: field,
                 expected: expected,
-                tool: toolName,
-                retryable: true
+                tool: toolName
             )
         }
 
@@ -732,8 +743,9 @@ extension SharedArtifact {
                 ? "(no candidates resolved)"
                 : searchedLocations.joined(separator: ", ")
             return fail(
-                .executionError,
-                "file not found for `\(path)`. Searched: \(searchedSummary). \(listingHint)"
+                .notFound,
+                "file not found for `\(path)`. Searched: \(searchedSummary). \(listingHint)",
+                field: "path"
             )
         case .copyFailed(let source, let detail):
             return fail(
@@ -776,11 +788,12 @@ extension SharedArtifact {
             if relativePath.hasPrefix(containerHome + "/") {
                 relativePath = String(relativePath.dropFirst(containerHome.count + 1))
             } else if relativePath.hasPrefix("/workspace/") {
-                let stripped = String(relativePath.dropFirst("/workspace/".count))
-                if let resolved = resolveContainedPath(stripped, within: OsaurusPaths.containerWorkspace()) {
-                    return .candidate(resolved, attempted: [resolved.path])
-                }
-                return .rejected
+                // Only the agent's own home and `/workspace/shared` are in
+                // scope; another agent's home is never shareable.
+                guard let (root, relative) = SandboxAgentPathScope(agentName: agent).split(sandboxPath: relativePath),
+                    let resolved = resolveContainedPath(relative.isEmpty ? "." : relative, within: root)
+                else { return .rejected }
+                return .candidate(resolved, attempted: [resolved.path])
             }
             if relativePath.hasPrefix("./") {
                 relativePath = String(relativePath.dropFirst(2))

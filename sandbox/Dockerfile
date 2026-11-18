@@ -1,4 +1,5 @@
-FROM alpine:latest
+# Pinned by index digest so a rebuild only changes when this line does.
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 RUN mkdir -p /run /tmp
 
@@ -35,7 +36,15 @@ RUN apk add --no-cache \
     build-base cmake
 
 # Install Astral `uv` / `uvx` so stdio MCP servers shipped as
-# `uvx some-server` work out of the box. The installer auto-picks the
-# musl build for Alpine; `UV_INSTALL_DIR` lands the binaries on the
-# default PATH for the sandboxed agent user.
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+# `uvx some-server` work out of the box. A pinned release tarball,
+# checked against the release's published SHA-256 (the image is
+# linux/arm64 only), lands the binaries on the default PATH for the
+# sandboxed agent user.
+ARG UV_VERSION=0.13.6
+ARG UV_SHA256=819692e404d23e5aae6bc44c0e260f1f5492fd1910ab4693b2c650f926dbe800
+RUN set -eu; \
+    curl -fsSLo /tmp/uv.tar.gz "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-aarch64-unknown-linux-musl.tar.gz"; \
+    echo "${UV_SHA256}  /tmp/uv.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/uv.tar.gz -C /usr/local/bin --strip-components=1 uv-aarch64-unknown-linux-musl/uv uv-aarch64-unknown-linux-musl/uvx; \
+    rm /tmp/uv.tar.gz; \
+    uv --version

@@ -143,8 +143,16 @@ public enum ModelMediaCapabilities {
         fallbackSupportsImages: Bool,
         localModelType: String? = nil,
         localHasAudioTensors: Bool = false,
-        localCapabilities: Capabilities? = nil
+        localCapabilities: Capabilities? = nil,
+        harnessKind: HarnessKind? = nil
     ) -> Capabilities {
+        if let harnessKind {
+            // Both existing adapters forward HarnessUserMessage.images.
+            // An inactive built-in model must not gate that image channel.
+            switch harnessKind {
+            case .claudeCode, .piRPC: return .imageOnly
+            }
+        }
         if let localCapabilities { return localCapabilities }
         if localModelType != nil { return .textOnly }
         return Capabilities(supportsImage: fallbackSupportsImages, supportsVideo: false,
@@ -165,7 +173,8 @@ public enum ModelMediaCapabilities {
         localModelType: String? = nil,
         localHasAudioTensors: Bool = false,
         localCapabilities: Capabilities? = nil,
-        localImageEvidenceReason: String? = nil
+        localImageEvidenceReason: String? = nil,
+        harnessKind: HarnessKind? = nil
     ) -> Descriptor {
         let normalized = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let displayId = normalized.isEmpty ? "unspecified model" : normalized
@@ -174,10 +183,12 @@ public enum ModelMediaCapabilities {
             fallbackSupportsImages: fallbackSupportsImages,
             localModelType: localModelType,
             localHasAudioTensors: localHasAudioTensors,
-            localCapabilities: localCapabilities
+            localCapabilities: localCapabilities,
+            harnessKind: harnessKind
         )
-        let source = localCapabilities != nil || localModelType != nil
-            ? "installed bundle evidence" : "provider capability metadata"
+        let source = harnessKind != nil ? "external runtime image channel"
+            : localCapabilities != nil || localModelType != nil
+                ? "installed bundle evidence" : "provider capability metadata"
         let built = buildDescriptor(
             modelId: displayId,
             capabilities: capabilities,

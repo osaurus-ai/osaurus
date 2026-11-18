@@ -5,7 +5,7 @@
 //  First-run / progress dialog for LLM context compaction.
 //
 //  Shown as a sheet when compaction is triggered without a configured model
-//  (Settings → Chat → Compaction Model), and while an auto-triggered
+//  (Models → Model Defaults → Compaction Model), and while an auto-triggered
 //  pre-send compaction runs. Explains what compaction does, lets the user
 //  pick a model (remote allowed — remote calls pass through the Privacy
 //  Filter), and renders live progress from the service's phase states.
@@ -30,43 +30,43 @@ struct CompactionDialogView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
-            Divider().opacity(0.4)
+            ThemeHairlineDivider()
             content
-                .padding(.horizontal, 20)
-                .padding(.vertical, 18)
-            Divider().opacity(0.4)
+                .padding(.horizontal, theme.space.s20)
+                .padding(.vertical, theme.space.s16)
+            ThemeHairlineDivider()
             footer
         }
         .frame(width: 440)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.accentColor.opacity(0.14))
+                RoundedRectangle(cornerRadius: theme.radius.medium)
+                    .fill(theme.status.info.background)
                     .frame(width: 32, height: 32)
                 Image(systemName: "arrow.down.right.and.arrow.up.left")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(.label, weight: .semibold)
+                    .foregroundColor(theme.status.info.foreground)
             }
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Compact Conversation", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.label, weight: 600)
+                    .foregroundColor(theme.text.primary)
                 Text("Free up context without losing your chat", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .textStyle(.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, theme.space.s20)
+        .padding(.vertical, theme.space.s14)
     }
 
     // MARK: - Content
@@ -89,26 +89,26 @@ struct CompactionDialogView: View {
     }
 
     private var modelSelectionContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             Text(
                 "This conversation is close to the model's context limit. Osaurus can summarize the older messages with a model of your choice, so the chat can continue with full awareness of what happened — your visible transcript is never changed.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .textStyle(.caption)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Compaction model", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.footnote, weight: 600)
+                    .foregroundColor(theme.text.secondary)
                 modelPickerButton
                 Text(
-                    "Remote models pass through your Privacy Filter. You can change this anytime in Settings → Conversation → Advanced.",
+                    "Remote models pass through your Privacy Filter. You can change this anytime in Models → Model Defaults.",
                     bundle: .module
                 )
-                .font(.system(size: 10.5))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.micro)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -119,39 +119,39 @@ struct CompactionDialogView: View {
         return Button {
             showModelPicker.toggle()
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "cube.fill")
-                    .font(.system(size: 11, weight: .medium))
+                    .glyphSize(.footnote, weight: .medium)
                     .foregroundColor(
-                        selectedModelId == nil ? theme.tertiaryText : theme.accentColor)
+                        selectedModelId == nil ? theme.text.tertiary : theme.text.secondary)
                 if let currentItem {
                     Text(currentItem.displayName)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .textStyle(.label)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                 } else if let selectedModelId {
                     Text(verbatim: selectedModelId)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
+                        .textStyle(.bodySmall)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(1)
                 } else {
                     Text("Choose a model…", bundle: .module)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.placeholderText)
+                        .textStyle(.bodySmall)
+                        .foregroundColor(theme.text.placeholder)
                 }
                 Spacer()
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(.micro, weight: .medium)
+                    .foregroundColor(theme.text.tertiary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s10)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
+                RoundedRectangle(cornerRadius: theme.radius.medium)
+                    .fill(theme.surface.raised)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: theme.radius.medium)
+                            .stroke(theme.border.strong, lineWidth: theme.stroke.default)
                     )
             )
         }
@@ -167,47 +167,41 @@ struct CompactionDialogView: View {
     }
 
     private func progressContent(phase: ContextCompactionPhase) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.7)
-                    .frame(width: 14, height: 14)
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner(size: .mini)
                 Text(verbatim: phase.label)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.caption, weight: 500)
+                    .foregroundColor(theme.text.primary)
                     .contentTransition(.opacity)
                 Spacer(minLength: 0)
             }
-            ProgressView(value: phase.progressFraction)
-                .progressViewStyle(.linear)
-                .tint(theme.accentColor)
-                .animation(.easeOut(duration: 0.35), value: phase.progressFraction)
+            SettingsProgressBar(value: phase.progressFraction, tint: theme.status.info.foreground)
             Text(
                 "Older messages are being summarized. Your visible chat stays exactly as it is.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .textStyle(.footnote)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func completedContent(savedTokens: Int) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 18))
-                .foregroundColor(theme.successColor)
-            VStack(alignment: .leading, spacing: 2) {
+                .glyphSize(.large)
+                .foregroundColor(theme.status.success.foreground)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Conversation compacted", bundle: .module)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.caption, weight: 600)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     "About \(savedTokens.formatted()) tokens were reclaimed. A marker in the chat shows where the summary begins.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .textStyle(.footnote)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -215,27 +209,27 @@ struct CompactionDialogView: View {
     }
 
     private func failedContent(message: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 16))
-                .foregroundColor(theme.warningColor)
-            VStack(alignment: .leading, spacing: 2) {
+                .glyphSize(.medium)
+                .foregroundColor(theme.status.warning.foreground)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Compaction didn't finish", bundle: .module)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.caption, weight: 600)
+                    .foregroundColor(theme.text.primary)
                 Text(verbatim: message)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.footnote)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if session.hasPendingSendAfterCompaction {
                     Text(
                         "Your message hasn't been sent yet. Retry, or send it without a summary — older messages will be trimmed to fit instead.",
                         bundle: .module
                     )
-                    .font(.system(size: 10.5))
-                    .foregroundColor(theme.tertiaryText)
+                    .textStyle(.micro)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 4)
+                    .padding(.top, theme.space.s4)
                 }
             }
             Spacer(minLength: 0)
@@ -246,7 +240,7 @@ struct CompactionDialogView: View {
 
     @ViewBuilder
     private var footer: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Spacer(minLength: 0)
             switch session.compactionState {
             case .needsModelSelection, .idle:
@@ -256,7 +250,7 @@ struct CompactionDialogView: View {
                     Text("Not Now", bundle: .module)
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(theme.secondaryText)
+                .foregroundColor(theme.text.secondary)
                 .keyboardShortcut(.cancelAction)
 
                 Button {
@@ -265,17 +259,8 @@ struct CompactionDialogView: View {
                     }
                 } label: {
                     Text("Continue", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule().fill(
-                                selectedModelId == nil
-                                    ? theme.accentColor.opacity(0.35) : theme.accentColor)
-                        )
-                        .foregroundColor(.white)
                 }
-                .buttonStyle(.plain)
+                .assignedSettingsButtonStyle(.primary, size: .compact)
                 .disabled(selectedModelId == nil)
                 .keyboardShortcut(.defaultAction)
 
@@ -287,8 +272,7 @@ struct CompactionDialogView: View {
                 } label: {
                     Text("Hide", bundle: .module)
                 }
-                .buttonStyle(.plain)
-                .foregroundColor(theme.secondaryText)
+                .assignedSettingsButtonStyle(.tertiary, size: .compact)
                 .keyboardShortcut(.cancelAction)
 
             case .completed:
@@ -296,13 +280,8 @@ struct CompactionDialogView: View {
                     session.cancelCompactionDialog()
                 } label: {
                     Text("Done", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(theme.accentColor))
-                        .foregroundColor(.white)
                 }
-                .buttonStyle(.plain)
+                .assignedSettingsButtonStyle(.primary, size: .compact)
                 .keyboardShortcut(.defaultAction)
 
             case .failed:
@@ -318,25 +297,19 @@ struct CompactionDialogView: View {
                         Text("Close", bundle: .module)
                     }
                 }
-                .buttonStyle(.plain)
-                .foregroundColor(theme.secondaryText)
+                .assignedSettingsButtonStyle(.tertiary, size: .compact)
                 .keyboardShortcut(.cancelAction)
 
                 Button {
                     session.retryCompaction()
                 } label: {
                     Text("Retry", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(theme.accentColor))
-                        .foregroundColor(.white)
                 }
-                .buttonStyle(.plain)
+                .assignedSettingsButtonStyle(.primary, size: .compact)
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 13)
+        .padding(.horizontal, theme.space.s20)
+        .padding(.vertical, theme.space.s12)
     }
 }

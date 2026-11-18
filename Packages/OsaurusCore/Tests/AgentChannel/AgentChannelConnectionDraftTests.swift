@@ -111,7 +111,7 @@ struct AgentChannelConnectionDraftTests {
         draft.secretReferencesText = "bearer"
         let issues = draft.validationIssues()
         #expect(issues.contains { $0.contains("write room allowlist is empty") })
-        #expect(issues.contains { $0.contains("bearer") && $0.contains("keychain id") })
+        #expect(issues.contains { $0.contains("bearer") && $0.contains("has no value") })
     }
 
     // MARK: - Validation-to-section mapping
@@ -135,7 +135,7 @@ struct AgentChannelConnectionDraftTests {
         #expect(sections(containing: "https:// or http://") == ["basics"])
         #expect(sections(containing: "post_message") == ["capabilities"])
         #expect(sections(containing: "write room allowlist is empty") == ["send-receive"])
-        #expect(sections(containing: "keychain id") == ["review"])
+        #expect(sections(containing: "has no value") == ["review"])
     }
 
     @Test func validationFindingsFlagInvalidActionJSONInCapabilities() {

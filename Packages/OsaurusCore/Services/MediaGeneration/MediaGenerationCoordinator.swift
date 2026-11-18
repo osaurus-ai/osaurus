@@ -18,28 +18,40 @@ actor MediaGenerationCoordinator {
     private var cloudModels: [MediaModelInfo] = []
     private var cloudSupported = false
     private var recoveryTasks: [UUID: Task<Void, Never>] = [:]
+    private let isRouterEnabled: @Sendable () -> Bool
 
     init(
         jobs: MediaJobStore = .shared,
-        cloud: OsaurusCloudMediaClient = OsaurusCloudMediaClient()
+        cloud: OsaurusCloudMediaClient = OsaurusCloudMediaClient(),
+        isRouterEnabled: @escaping @Sendable () -> Bool = { OsaurusRouter.isEnabled }
     ) {
         self.jobs = jobs
         self.cloud = cloud
+        self.isRouterEnabled = isRouterEnabled
     }
 
+    /// With the Osaurus Router turned off this makes no request and clears
+    /// any cached Cloud choices; turning it back on posts
+    /// `.remoteProviderStatusChanged`, which triggers a fresh refresh.
     func refreshCloudCatalog() async {
-        do {
-            switch try await cloud.catalog() {
-            case .available(let models):
-                cloudModels = models
-                cloudSupported = true
-            case .unsupported:
+        if isRouterEnabled() {
+            do {
+                let availability = try await cloud.catalog()
+                // The switch can flip while the request is in flight.
+                if isRouterEnabled(), case .available(let models) = availability {
+                    cloudModels = models
+                    cloudSupported = true
+                } else {
+                    cloudModels = []
+                    cloudSupported = false
+                }
+            } catch {
+                // Fail closed: transient/error responses never expose stale Cloud
+                // choices and never redirect work to direct Venice.
                 cloudModels = []
                 cloudSupported = false
             }
-        } catch {
-            // Fail closed: transient/error responses never expose stale Cloud
-            // choices and never redirect work to direct Venice.
+        } else {
             cloudModels = []
             cloudSupported = false
         }

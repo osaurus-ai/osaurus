@@ -326,7 +326,7 @@ private extension OsaurusTool {
 final class AgentChannelListConnectionsTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
     let name = "agent_channel_list_connections"
     let description =
-        "List configured agent communication channel connections such as Discord, Slack, Telegram, iMessage, or custom JSON channels."
+        "List configured agent communication channel connections such as Discord, Slack, Telegram, iMessage, or custom JSON channels. Each extra bot, Slack workspace and email account is its own connection with its own id."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -356,7 +356,7 @@ final class AgentChannelDiagnosticsTool: OsaurusTool, PermissionedTool, AgentCha
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id from agent_channel_list_connections: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, `email`, an extra account such as `discord-<id>` or `slack-<team>`, or a custom connection. Defaults to `discord` when omitted."
                 ),
             ])
         ]),
@@ -390,7 +390,7 @@ final class AgentChannelListSpacesTool: OsaurusTool, PermissionedTool, AgentChan
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id from agent_channel_list_connections: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, `email`, an extra account such as `discord-<id>` or `slack-<team>`, or a custom connection. Defaults to `discord` when omitted."
                 ),
             ])
         ]),
@@ -431,7 +431,7 @@ final class AgentChannelListRoomsTool: OsaurusTool, PermissionedTool, AgentChann
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id from agent_channel_list_connections: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, `email`, an extra account such as `discord-<id>` or `slack-<team>`, or a custom connection. Defaults to `discord` when omitted."
                 ),
             ]),
             "space_id": .object([
@@ -481,7 +481,7 @@ final class AgentChannelReadMessagesTool: OsaurusTool, PermissionedTool, AgentCh
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id from agent_channel_list_connections: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, `email`, an extra account such as `discord-<id>` or `slack-<team>`, or a custom connection. Defaults to `discord` when omitted."
                 ),
             ]),
             "room_id": .object([
@@ -536,7 +536,7 @@ final class AgentChannelReadThreadTool: OsaurusTool, PermissionedTool, AgentChan
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id from agent_channel_list_connections: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, `email`, an extra account such as `discord-<id>` or `slack-<team>`, or a custom connection. Defaults to `discord` when omitted."
                 ),
             ]),
             "thread_id": .object([
@@ -591,7 +591,7 @@ final class AgentChannelSearchMessagesTool: OsaurusTool, PermissionedTool, Agent
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id from agent_channel_list_connections: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, `email`, an extra account such as `discord-<id>` or `slack-<team>`, or a custom connection. Defaults to `discord` when omitted."
                 ),
             ]),
             "query": .object([
@@ -657,7 +657,7 @@ final class AgentChannelDraftMessageTool: OsaurusTool, PermissionedTool, AgentCh
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id from agent_channel_list_connections: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, `email`, an extra account such as `discord-<id>` or `slack-<team>`, or a custom connection. Defaults to `discord` when omitted."
                 ),
             ]),
             "room_id": .object([
@@ -711,7 +711,7 @@ final class AgentChannelSendMessageTool: OsaurusTool, PermissionedTool, AgentCha
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id from agent_channel_list_connections: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, `email`, an extra account such as `discord-<id>` or `slack-<team>`, or a custom connection. Defaults to `discord` when omitted."
                 ),
             ]),
             "room_id": .object([
@@ -773,13 +773,13 @@ final class AgentChannelReplyThreadTool: OsaurusTool, PermissionedTool, AgentCha
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id from agent_channel_list_connections: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, `email`, an extra account such as `discord-<id>` or `slack-<team>`, or a custom connection. Defaults to `discord` when omitted."
                 ),
             ]),
             "thread_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Thread id allowlisted for write access. Slack: `<channel_id>:<thread_ts>`. WhatsApp: `<chat_id>:<message_id>` of the message to quote-reply to (read results expose it as `reply_thread_id`)."
+                    "Thread id allowlisted for write access. Slack: `<channel_id>:<thread_ts>`. WhatsApp: `<chat_id>:<message_id>` of the message to quote-reply to (read results expose it as `reply_thread_id`). Email: the `thread_id` from read results; the reply goes to the sender of the latest received message in that thread."
                 ),
             ]),
             "content": .object([
@@ -1435,7 +1435,7 @@ final class AgentChannelPublishTool: OsaurusTool, ContextualPermissionedTool, @u
     let name = AgentChannelPublishTool.toolName
     let description =
         "Publish a message to one of this agent's pre-approved channel destinations "
-        + "(see the Channel Destinations context). Use a stable `intent_key` per logical "
+        + "(see the Where It Can Post context). Use a stable `intent_key` per logical "
         + "message; repeating a key never sends twice."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -1444,7 +1444,7 @@ final class AgentChannelPublishTool: OsaurusTool, ContextualPermissionedTool, @u
             "binding_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Destination binding id from the Channel Destinations context."
+                    "Destination binding id from the Where It Can Post context."
                 ),
             ]),
             "content": .object([

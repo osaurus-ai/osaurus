@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.no-self-completion",
+  "domain": "onboarding",
+  "label": "onboarding • a reply that claims a step is done never moves the plan",
+  "query": "no_self_completion",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "no_self_completion"
+    }
+  }
+}
