@@ -3,6 +3,41 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>1.0.7</title>
+            <pubDate>Wed, 18 Nov 2026 05:01:22 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.7</sparkle:version>
+            <sparkle:shortVersionString>1.0.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.7/Osaurus-1.0.7.dmg" length="123342195" type="application/octet-stream" sparkle:edSignature="iAEEBnsz6kfDf1+hPEA6A707O1nhg3fJJlo3bXYurrpoFnZ4WP5Xygs6fe3pamAa8oZ4MNu+/pv8Hw6fLQo+CA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Open Local Models on On This Mac, remember the chip, and order chips On This Mac / Available / All by @tpae in https://github.com/osaurus-ai/osaurus/pull/3452
+* Fix Workflows card borders, status ring, and Automate card in light and dark by @tpae in https://github.com/osaurus-ai/osaurus/pull/3454
+* Show the Dependencies step for the Sandbox blocker when a workflow declares no packages by @tpae in https://github.com/osaurus-ai/osaurus/pull/3456
+* Hide hold/release/settle ledger entries from the wallet activity list by @tpae in https://github.com/osaurus-ai/osaurus/pull/3455
+* Bring back custom themes and re-skin the defaults with the osaurus.ai brand palette by @tpae in https://github.com/osaurus-ai/osaurus/pull/3458
+* Replay Anthropic thinking blocks only within the current exchange by @tpae in https://github.com/osaurus-ai/osaurus/pull/3457
+* Privacy Filter: remember choices per conversation, auto-redact model output, Never Redact list, and a calmer review sheet by @tpae in https://github.com/osaurus-ai/osaurus/pull/3459
+* Architect: one living preview, steps in place, Build → Run → Share by @tpae in https://github.com/osaurus-ai/osaurus/pull/3460
+* Themes: three-tone window and a Transparency preference by @tpae in https://github.com/osaurus-ai/osaurus/pull/3462
+* Read Full Disk Access from cache in DiscoveryCenter to prevent main thread hang by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3447
+* Prevent CenteredMessageScrollView tile reentrancy to eliminate chat layout hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3448
+* Report uncaught NSExceptions to Sentry with their name and reason by @tpae in https://github.com/osaurus-ai/osaurus/pull/3463
+* sync iphone: what the iphone app needs from the mac over osaurus sync by @RaajeevChandran in https://github.com/osaurus-ai/osaurus/pull/3453
+* Offer Delete for installed local models and follow Finder changes by @tpae in https://github.com/osaurus-ai/osaurus/pull/3465
+* Cut repeated image-bundle scans and main-thread work on the Image tab by @tpae in https://github.com/osaurus-ai/osaurus/pull/3466
+* Make deleted Orchestrator chats stay deleted by @tpae in https://github.com/osaurus-ai/osaurus/pull/3467
+* Cache agent-channel configuration to prevent main-thread chat preview hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3239
+* Chat: local-model runs that fail well by @tpae in https://github.com/osaurus-ai/osaurus/pull/3464
+* Avoid generic key path instantiation on every SidebarLensBar redraw by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3319
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.6...1.0.7
+]]></description>
+        </item>
+        <item>
             <title>1.0.6</title>
             <pubDate>Mon, 16 Nov 2026 13:39:12 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
