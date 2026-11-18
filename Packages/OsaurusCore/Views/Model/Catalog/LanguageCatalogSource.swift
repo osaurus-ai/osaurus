@@ -561,7 +561,7 @@ final class LanguageCatalogSource: LocalModelCatalogSource {
             }
             item.onCancel = { manager.cancelDownload(id) }
         case .installed:
-            let isExternal = model.externalSource != nil || model.bundleDirectory != nil
+            let isExternal = model.isExternallyOwned
             if check?.updateAvailable == true, !isExternal {
                 item.menuActions.append(.init(title: "Update Model", icon: "arrow.triangle.2.circlepath") {
                     manager.downloadService.repair(model)
