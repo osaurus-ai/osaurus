@@ -1490,6 +1490,11 @@ private struct EditProviderFlow: View {
     // accidentally render both "succeeded" and "failed" feedback at once.
     @State private var reauthorizeState: ReauthorizeState = .idle
 
+    // "Check for new models" (ChatGPT only): reads the Codex client version Osaurus
+    // publishes now, rather than at the next daily check, then ChatGPT's model list.
+    @State private var codexCheckRunning = false
+    @State private var codexCheckResult: String?
+
     enum ReauthorizeState: Equatable {
         case idle
         case signingIn
@@ -1514,6 +1519,7 @@ private struct EditProviderFlow: View {
                 VStack(alignment: .leading, spacing: theme.space.s20) {
                     if usesCodexOAuth {
                         providerReauthorizeSection
+                        codexModelsSection
                         advancedSettingsSection(showConnectionDetails: true)
                     } else if let preset = matchedPreset {
                         knownProviderEditContent(preset: preset)
@@ -1639,6 +1645,59 @@ private struct EditProviderFlow: View {
 
     /// Reuse browser sign-in for existing providers. Stage the refreshed
     /// credential until Save, preserving the provider ID and configuration.
+    /// ChatGPT lists a new model only to a Codex client version at or above that model's
+    /// floor. Osaurus publishes a newer version at osaurus.ai/clients/codex.json once it
+    /// has checked one, and this Mac reads it once a day; this asks now.
+    private var codexModelsSection: some View {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            Text("Models", bundle: .module)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.tertiary)
+
+            HStack(spacing: theme.space.s12) {
+                Text(codexCheckResult ?? L("New ChatGPT models appear within a day. Check now if one is missing."))
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.updatesFrequently)
+
+                Spacer()
+
+                Button(action: checkForNewCodexModels) {
+                    HStack(spacing: theme.space.s6) {
+                        if codexCheckRunning {
+                            SettingsSpinner()
+                        }
+                        Text("Check for new models", bundle: .module)
+                    }
+                }
+                .assignedSettingsButtonStyle(.secondary)
+                .disabled(codexCheckRunning)
+            }
+            .padding(theme.space.s12)
+            .settingsChrome(.selected)
+        }
+    }
+
+    private func checkForNewCodexModels() {
+        guard !codexCheckRunning else { return }
+        codexCheckRunning = true
+        codexCheckResult = L("Checking for new models…")
+        let providerId = provider.id
+        Task { @MainActor in
+            let manager = RemoteProviderManager.shared
+            let before = manager.providerStates[providerId]?.discoveredModels ?? []
+            let published = await CodexClientVersionStore.shared.refresh()
+            let listRead = await manager.refetchModels(providerId: providerId)
+            let after = manager.providerStates[providerId]?.discoveredModels ?? []
+            codexCheckResult = CodexClientVersionStore.checkSentence(
+                listRead: listRead, before: before, after: after,
+                outcome: published.outcome, version: published.version
+            )
+            codexCheckRunning = false
+        }
+    }
+
     private var providerReauthorizeSection: some View {
         VStack(alignment: .leading, spacing: theme.space.s10) {
             Text("Account", bundle: .module)
