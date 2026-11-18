@@ -42,7 +42,6 @@ final class SyncService: @unchecked Sendable {
     private var _lastOpenError: Error?
     private var _opening = false
     private var lifecycle: Lifecycle?
-    private var loggingInstalled = false
     private var _devices: [Device] = []
 
     private init() {}
@@ -105,7 +104,6 @@ final class SyncService: @unchecked Sendable {
         if let existing, existingDirectory == directory.path { return existing }
         if existing != nil { closeLocked() }
 
-        installLoggingOnce()
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let core = try SyncCore.open(
@@ -383,12 +381,6 @@ final class SyncService: @unchecked Sendable {
         }
     }
 
-    private func installLoggingOnce() {
-        guard !loggingInstalled else { return }
-        loggingInstalled = true
-        SyncLogging.useOSLog(level: .info)
-    }
-
     // MARK: - Lifecycle
 
     private func startLifecycle(_ core: SyncCore) {
@@ -416,6 +408,18 @@ final class SyncService: @unchecked Sendable {
         }
 
         func start() {
+            // This Mac's directory reaches a new iPhone before any chat; its manage and attention
+            // conversations after the chats (`offerSystemConversationsFirst`).
+            Task.detached(priority: .utility) { [core] in
+                SyncDeviceFeedContract.offerSystemConversationsFirst(core: core)
+                // Decided, release builds included: with no storage server, the core keeps every
+                // value ever written, and a new iPhone downloaded all of it (every manage request,
+                // attention change and streaming write); compacting took a new iPhone's first sync
+                // from minutes to about 72 s. The trade-off: history older than the compaction is
+                // dropped for good. Nothing this app reads needs it (the manage and attention state
+                // are current values). Turn off here once a storing peer keeps history.
+                try? core.setCompactWithoutStorage(on: true)
+            }
             let workspace = NSWorkspace.shared.notificationCenter
             observers.append(
                 workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) {

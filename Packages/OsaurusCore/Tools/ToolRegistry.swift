@@ -373,6 +373,10 @@ public final class ToolRegistry: ObservableObject {
             ScheduleNextRunTool(),
             CancelNextRunTool(),
             NotifyTool(),
+            // Agent calls: in the schema only while a device can ring
+            // (`SyncAgentCalls.ringAvailable`, checked by the composer).
+            CallUserTool(),
+            ArrangeCallbackTool(),
             // Shared-agent runs only: the HTTP agent-run path adds it to the
             // schema when the agent asks its owner; the composer strips it
             // everywhere else.

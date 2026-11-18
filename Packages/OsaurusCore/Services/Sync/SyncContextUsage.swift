@@ -46,7 +46,11 @@ enum SyncContextUsage {
     /// Prices a chat after a run this Mac hosted and writes it on the chat.
     @MainActor
     static func refresh(scope: String, sessionId: UUID) async {
-        guard let session = SyncConversationStore.shared.loadSession(id: sessionId) else { return }
+        // Read off the main thread (KEEP): the store's queue waits on the core's lock.
+        guard let session = await Task.detached(priority: .utility, operation: {
+            SyncConversationStore.shared.loadSession(id: sessionId)
+        }).value
+        else { return }
         let agentId = session.agentId ?? Agent.defaultId
         let usage = await PhoneContextUsage.compute(sessionId: sessionId, agentId: agentId, model: session.selectedModel)
         write(usage, scope: scope, agentId: agentId, model: session.selectedModel)

@@ -272,6 +272,22 @@ enum BuiltinToolOutputSchemas {
             "items": S.array(S.anyObject("kind, name, status, message."), "Each installed item."),
             "manual_steps": S.array(S.string("A step."), "Steps the user finishes by hand."),
         ], required: ["status", "summary"])
+
+    // MARK: Agent calls
+
+    static let callUser = S.object(
+        [
+            "outcome": S.string(
+                "`answered`, `declined`, `missed`, `busy`, `unavailable`, `cancelled`, `notSent`, or `on_call`."),
+            "note": S.string("What to do next."),
+        ], required: ["outcome", "note"])
+
+    static let arrangeCallback = S.object(
+        [
+            "arranged": S.boolean("The user agreed to one call."),
+            "until": S.string("When the arranged call expires (ISO 8601)."),
+            "note": S.string("What to do next."),
+        ], required: ["arranged", "until", "note"])
 }
 
 extension WebSearchTool { public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.webSearch } }
@@ -293,6 +309,8 @@ extension ConfiguratorHandoffTool {
 }
 extension OsaurusConfigTool { public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.osaurusConfig } }
 extension OsaurusImportTool { var outputSchema: JSONValue? { BuiltinToolOutputSchemas.osaurusImport } }
+extension CallUserTool { var outputSchema: JSONValue? { BuiltinToolOutputSchemas.callUser } }
+extension ArrangeCallbackTool { var outputSchema: JSONValue? { BuiltinToolOutputSchemas.arrangeCallback } }
 
 // Tools that answer in prose publish `{text}`.
 extension SearchMemoryTool { public var outputSchema: JSONValue? { ToolOutputSchema.text("The matching memories.") } }

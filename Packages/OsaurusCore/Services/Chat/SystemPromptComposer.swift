@@ -2951,6 +2951,12 @@ public struct SystemPromptComposer: Sendable {
                     byName.removeValue(forKey: name)
                 }
             }
+            // Agent calls ring a device: offered only while one is set to ring.
+            if !SyncAgentCalls.ringAvailable {
+                for name in SyncAgentCalls.toolNames where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
             if !snapshot.knowledgeEnabled {
                 for name in knowledgeToolNames where !keep.contains(name) {
                     byName.removeValue(forKey: name)
@@ -3318,6 +3324,7 @@ public struct SystemPromptComposer: Sendable {
                 allowed.formUnion(["web_search", "search_and_extract"])
             }
             if snapshot.selfSchedulingEnabled { allowed.formUnion(schedulerToolNames) }
+            if SyncAgentCalls.ringAvailable { allowed.formUnion(SyncAgentCalls.toolNames) }
             if snapshot.knowledgeEnabled { allowed.formUnion(knowledgeToolNames) }
             if snapshot.knowledgeCuratorEnabled {
                 allowed.formUnion(knowledgeCuratorToolNames)

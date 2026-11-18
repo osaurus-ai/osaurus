@@ -173,6 +173,9 @@ final class InboundSharedRunBridge: ObservableObject {
         SubagentInterruptCenter.shared.register(token, for: runKey)
         let handle = Handle(runKey: runKey, taskId: taskId, agentId: agentId, token: token)
         live[runKey] = Live(handle: handle, context: context, stop: stop)
+        // Looks the chat's scope up now, off main: the first delta decides whether the run streams,
+        // and a miss then would leave the whole reply unstreamed.
+        _ = SyncTurnStreamer.canStream(session)
         runsByTask[taskId, default: []].insert(runKey)
         let caller = Participant.caller(from: context)
         if caller.kind != .owner, caller.kind != .ownerDevice {

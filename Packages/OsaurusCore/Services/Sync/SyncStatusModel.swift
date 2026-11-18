@@ -460,9 +460,16 @@ final class SyncStatusModel: ObservableObject {
 
     // MARK: - Devices
 
-    func revoke(_ device: Device) throws {
+    /// The core calls run off the main thread (KEEP): they wait on its lock, held for seconds while it syncs.
+    func revoke(_ device: Device) async throws {
         guard let core = SyncService.shared.core else { return }
-        try core.revokeDevice(device: device.id)
+        let id = device.id
+        do {
+            try await Task.detached(priority: .userInitiated) { try core.revokeDevice(device: id) }.value
+        } catch {
+            Self.logRemoveFailure(error, device: device)
+            throw error
+        }
         FeatureTelemetry.syncDeviceRemoved(rotatedKeys: false)
         dismissPairingResult()
         refresh()
@@ -470,14 +477,31 @@ final class SyncStatusModel: ObservableObject {
 
     /// Revokes `device` and replaces this account's keys. Returns the new
     /// recovery phrase.
-    func revokeAndRotate(_ device: Device) throws -> [String] {
+    func revokeAndRotate(_ device: Device) async throws -> [String] {
         guard let core = SyncService.shared.core else { return [] }
-        _ = try core.revokeAndRotate(devices: [device.id])
+        let id = device.id
+        do {
+            _ = try await Task.detached(priority: .userInitiated) { try core.revokeAndRotate(devices: [id]) }.value
+        } catch {
+            Self.logRemoveFailure(error, device: device)
+            throw error
+        }
         FeatureTelemetry.syncDeviceRemoved(rotatedKeys: true)
         SyncWalletLink.clear()
         dismissPairingResult()
         refresh()
-        return try core.recoveryPhrase()
+        return try await Task.detached(priority: .userInitiated) { try core.recoveryPhrase() }.value
+    }
+
+    /// Removing a device shows only "That Didn't Work" and a short message; the full error goes to
+    /// the log (2026-11-12: two leftover simulator iPhones that never come off).
+    private static func logRemoveFailure(_ error: Error, device: Device) {
+        let detail = error.syncLogDetail
+        let id = String(device.id.prefix(8))
+        log.error("removing \(id, privacy: .public) failed: \(detail, privacy: .public)")
+        #if DEBUG
+            print("[SyncDevices] removing \(id) failed: \(detail)")
+        #endif
     }
 
     // MARK: - Recovery

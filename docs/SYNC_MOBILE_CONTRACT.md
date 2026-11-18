@@ -54,6 +54,16 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `warm` | the `warm` op (§5.1) |
 | `history_filters` | `projects`, `plugins` and `workspaces` in the manage state (§5) |
 | `continue_own_chats` | Answering `hostRun` turns in the Mac's own chats, which carry no `hostDevice` (§3.10) |
+| `workflow_forms` | `detail` on `workflow_dialog` items (the form's fields) and the `submit` answer (§4) |
+| `workflow_runs` | `workflow` on a `run_progress` tool and in `toolCallDisplay`: the run the call started, its steps and how it ended (§3.2, §3.3) |
+| `workflow_library` | `workflows` in the manage state, the `runWorkflow` op and `ai.osaurus.workflow-runs/1` (§5.4) |
+| `workflow_outputs` | the `workflowOutput` op and its `ai.osaurus.workflow-output/1` message (§5.5) |
+| `workflow_details` | `facts` and `steps` on each manage-state workflow: the Mac page's chips and step badges (§5.4) |
+| `workflow_push` | Workflow notifications on the iPhone through the push service: push registrations on the manage conversation, `pushRegistered` in the manage state (§5.6) |
+| `agent_calls` | Agents calling the user back: PushKit grants in push registrations, `call-answer/1`, `call` in the manage state (§5.7) |
+| `workflow_step_details` | `steps` on every `workflow_outputs` message, an empty list for a run without any (§5.5) |
+| `manage_workflows` | the workflow library is a message in the manage conversation, not in the manage state, which a large library took past 64 KiB (§5.4) |
+| `directory_models` | each directory entry carries the agent's `model`, and the agent directory conversation carries the models message (§5.2) too, so a new iPhone has both before the manage conversation arrives |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
   NOT expect a v2 record from a Mac whose directory doesn't list its flag. A directory without
@@ -231,6 +241,20 @@ The device running a synced turn writes `ai.osaurus.run-progress/1` on the conve
     most every 2 seconds;
   - when the run starts with every connected device reached only through a relay, both intervals
     are four times longer (2 s and 8 s). Clients MUST NOT read a slow update as a stalled run.
+- `tools[].workflow` (`workflow_runs`): when the call started a workflow run, the run as the Mac
+  chat's card shows it:
+
+```json
+{ "runId": "…", "name": "Weekly report", "status": "running",
+  "steps": [ { "id": "fetch", "name": "Fetch the numbers", "status": "done" },
+             { "id": "write", "name": "Write the report", "status": "running" } ] }
+```
+
+  - `status`: `running`, `awaiting_user` (a form waits, §4), `completed`, `failed`, `cancelled`
+    or `needs_setup`. Step `status`: `pending`, `running`, `awaiting_user`, `done`, `skipped`,
+    `failed` or `pinned`. Both are kept open.
+  - At most 40 steps. `error` (at most 300 characters) names the failed step when one did.
+  - A change to a step's status is a new shape.
 - At the end the Mac writes `phase: done` with `prefill` and `image` removed and the finished tool
   list kept. The committed messages are then the source of truth.
 - The reply's text streams through the core's stream as before. Its reasoning text does not
@@ -261,6 +285,8 @@ its own `tool_result` message.
 
 - `toolCallDisplay` gives each call's label, category and icon, plus `failed: true` when it
   failed, so the iPhone needs none of the Mac's tables.
+- `toolCallDisplay[id].workflow` (`workflow_runs`): the card the run ended with, as in §3.2. It is
+  there only when the Mac followed the run in this launch.
 - `files` are the generated images, shared artifacts and images in tool results that the turn
   made on the Mac:
   - `blob` is the index into the namespace's blobs;
@@ -466,6 +492,21 @@ While an iPhone is in the account, each Mac keeps one conversation tagged
     high_risk?}`, plus `prune`.
   - `privacy_review`: `{items: [{id, category, original, placeholder}]}`, the detections the
     Privacy Filter found in a hosted run's message, before it goes to the provider.
+  - `workflow_dialog` (`workflow_forms`): a form a workflow run waits on.
+    Any run on the Mac, including one started there (its Run button, an agent in an open chat):
+    the Mac shows that form too, and whichever device answers first wins. A form answered on
+    the Mac is retracted from the feed, so the iPhone closes it.
+    `{workflow, run_id, node_id, title, message, message_truncated?, fields: [{key, label, type,
+    required, options?, help?, default?}], prefill?, phone_answerable}`.
+    - `type` is `text | long_text | number | bool | choice | date | file | folder | secret`;
+      `options` lists a `choice`'s values. An unknown type is answered on the Mac.
+    - `prefill` holds the answers the form starts with (remembered or passed in), by key.
+    - `phone_answerable` is false when a required field is a `file`, `folder` or `secret`: those
+      are answered on the Mac (a path there, and a secret never goes into synced data). The iPhone
+      shows the form read-only with `open`. Optional fields of those types are left out.
+    - The item's `session_id` is the chat whose run started the workflow, when one did, so the
+      iPhone can show the form in that chat.
+    - Forms of one workflow are answered in order: answer the oldest first.
 
   Detail size limits:
   - one item's `detail` is at most 8 KiB, and the feed's is at most 32 KiB, oldest item first;
@@ -490,7 +531,16 @@ Each iPhone answers in its own namespace, `ai.osaurus.attention-answer/1/<its de
   - `approve`, `deny` or `allow_for_conversation`;
   - `approve_rest` (Computer Use: approve this step and the rest of the task in that app);
   - `reply`, with non-empty `text`, at most 16,384 characters;
-  - `dismiss`.
+  - `dismiss`;
+  - `submit`, with `values` (`workflow_forms`): a `workflow_dialog` whose `detail` carries its
+    form and `phone_answerable: true`. `values` maps field keys to answers: a string for `text`,
+    `long_text`, `choice` (one of `options`) and `date` (`YYYY-MM-DD`), a number for `number`, a
+    boolean for `bool`. Leave out an optional field with no answer. The Mac checks the values
+    against the form as its own form does; an answer it can't accept is ignored until the iPhone
+    writes a corrected one under the same id. Once the form takes it, the item is retracted.
+    `submit` isn't listed in `actions`. The Mac enforces the types: a value for a `file`,
+    `folder` or `secret` field, or for a key the form doesn't have, is ignored, and such a field
+    keeps what the Mac would start it with.
 
   `open` is local: open the chat (`session_id`) or the Mac.
 - `redact` is only for `privacy_review` with `approve`. It lists the detections to replace with
@@ -541,6 +591,9 @@ writes `ai.osaurus.manage-state/1` when its agents, models, workspaces or filter
 - `projects`, `plugins` and `workspaces` are the history's filters (`history_filters`), matched
   against a chat's `projectId`, `sourcePluginId` and `workspace.workspaceId`, as HTTP's
   `GET /projects` lists them.
+- The state is written under 56 KiB (the core takes at most 64 KiB a value). Past that, in turn,
+  `workflows` (an older Mac's), `models`, `workspaceAgents` and the history filters are left out;
+  `agents`, `pushRegistered` and `call` stay.
 
 ### 5.1 Requests
 
@@ -673,6 +726,334 @@ One `system` message per agent the iPhone can manage, with content `agent` and a
 - A deleted agent's message is removed. As with the models message, `digest` says when it
   changed.
 
+### 5.4 Workflows (`workflow_library`)
+
+The Mac's installed workflows, sorted by name (at most 100). A Mac with `manage_workflows` lists
+them on a message: one `system` message in the manage conversation with content `workflows` and
+app data `ai.osaurus.manage-workflows/1`, `{ "v": 1, "workflows": [ … ], "digest", "updatedMs" }`,
+`workflows` a blob reference (`{"$blob": i, "size": n}`) when over 16 KiB, and rewritten only when
+`digest` changes, as the models message is (§5.2). An older Mac lists them in the manage state's
+`workflows`; a Mac with `manage_workflows` leaves that out. Either way, each entry is:
+
+```json
+"workflows": [ { "id": "…", "name": "Weekly Report", "summary": "Sums up the week's notes.",
+                 "fields": [ { "key": "topic", "label": "Topic", "type": "text", "required": true },
+                             { "key": "depth", "label": "Depth", "type": "choice", "required": false,
+                               "options": ["short", "long"], "default": "short" } ],
+                 "prefill": { "topic": "Q3" }, "phoneStartable": true } ]
+```
+
+- `fields` is the input form the Mac's Run page shows, built from the input schema. Field
+  `type`s are the dialog field types of §4 (`text`, `long_text`, `number`, `bool`, `choice`,
+  `date`, `file`, `folder`).
+- `prefill` is the last run's input.
+- `phoneStartable` is false when a required field is a `file`, `folder` or `secret`. Those
+  workflows are started on the Mac: `runWorkflow` for one is refused (`invalid_input`). The Mac
+  takes `input` values only for the fields of types the phone fills in; the rest keep their
+  defaults.
+- `blocked`, when present, says what has to be set up on the Mac first.
+- `facts` and `steps` (`workflow_details`) are what the Mac's workflow page shows:
+
+```json
+"facts": [ { "icon": "checkmark.circle.fill", "text": "Ready to run", "tone": "success" },
+           { "icon": "list.number", "text": "4 steps", "tone": "neutral" } ],
+"steps": [ { "name": "Research Company", "kind": "Uses a model and tools", "icon": "wand.and.stars",
+             "badges": [ { "icon": "cloud", "text": "Cloud model", "tone": "caution" },
+                         { "icon": "gauge", "text": "~1.9 min · ~26.4k tokens", "tone": "neutral" } ] } ]
+```
+
+  - `facts` lists, in order:
+    - whether it can run;
+    - its step count;
+    - where its models run;
+    - its version;
+    - whether it's published.
+  - `steps` are in run order (at most 30). Each has the Mac's risk and cost badges: hosts reached, files written, cloud or local model, and time and tokens from past runs.
+  - `icon` is an SF Symbol name.
+  - `tone` is `neutral`, `success`, `warning`, `caution` or `risky`. It is kept open.
+  - The state is written again when a run ends, since the time and token badges come from past runs.
+- `outputs`, `access` and `source` fill the phone's Overview and About tabs. All three are optional; a phone
+  hides what's missing. They come from the installed version alone; nothing is fetched from the registry.
+
+```json
+"outputs": [ "Briefing" ],
+"access": {
+  "files": [ { "icon": "doc.text.magnifyingglass", "title": "Reads", "detail": "nothing" } ],
+  "places": [ "Your Mac" ],
+  "note": "It reads and saves nothing on your Mac.",
+  "needs": [ { "icon": "cube", "title": "Runs on", "detail": "Not chosen yet", "problem": true },
+             { "icon": "network", "title": "Internet access", "detail": "api.example.com" } ]
+},
+"source": { "author": "Ada", "key": "0x…", "version": 3, "changelog": "Shorter briefings.",
+            "hash": "…", "createdMs": 1731400000000, "fromStore": true }
+```
+
+  - `outputs` names what it hands back, as the page's "You get" does.
+  - `access.files`, `places` and `note` are the page's "Your files". `access.needs` is its "Before It
+    Runs" list: models, keys (by name only), internet hosts, workflows it runs, tools, packages, folders
+    and standing folder permissions. `problem` marks what still has to be set up.
+  - `source` is the installed version's file. `key` is present only when the file is signed.
+    `fromStore` is true when it was installed from the registry.
+- `published` is true when the workflow is shared to the registry and still listed there. A phone uses it for its
+  Published tab; from a Mac that doesn't send it, a phone shows no Published workflows.
+
+`runWorkflow` (`workflowId`, `input`) starts one as the Mac's Run button does, as a background
+run. Fields left out keep their defaults, and the input is checked against the schema.
+- The result's `data` is `{ "runId": "…" }`.
+- Errors: `workflow_not_found`, `needs_setup` and `invalid_input`, each with a message to show.
+- The run's forms come through the attention feed (§4) with no `session_id`.
+
+The Mac also writes its recent runs on the manage conversation, whatever started them: each
+workflow's 10 newest, one conversation app data entry per run under
+`ai.osaurus.workflow-run/1/<runId>`. A run is rewritten at most every 500 ms, and only when its
+entry changed; a run no longer listed has its entry removed. Order runs by `startedMs`, newest first.
+
+```json
+{ "workflowId": "…", "caller": "user", "startedMs": 1767571260000,
+  "card": { "runId": "…", "name": "Weekly Report", "status": "running", "steps": [] } }
+```
+
+- One entry per run, not one list: the conversation's history keeps every value written, and a
+  list rewritten on each step change grew it by the whole list each time.
+- Macs before this wrote the whole list as `ai.osaurus.workflow-runs/1`
+  (`{ "v": 1, "runs": [entry, …], "updatedMs": … }`); a Mac writing entries clears it. Read the
+  list only when there are no entries.
+- `card` is the card of §3.2.
+- `finishedMs` is set once the run ends.
+- `caller` is `user`, `agent`, `orchestrator`, `workflow` or `event`. It is kept open.
+
+Pinned workflows are shared by the user's devices on the same manage conversation: one conversation app data
+entry per pinned workflow, `ai.osaurus.workflow-pin/1/<workflowId>` (the id lowercased), written by whichever
+device pinned it, and removed when it's unpinned.
+
+```json
+{ "pinnedMs": 1767571260000 }
+```
+
+- One entry per workflow, so two devices pinning different workflows never overwrite each other.
+- List pinned workflows most recently pinned first. Ignore a pin whose workflow isn't in the list (removed on
+  the Mac); the entry is kept, so the pin comes back if the workflow does.
+- The iPhone pins and unpins today. The Mac doesn't yet, but reads and writes the same entries
+  (`SyncWorkflowPins`) and never removes them, so pinning added there later keeps the phone's pins.
+
+### 5.5 Run outputs (`workflow_outputs`)
+
+`workflowOutput` (`runId`) asks for a finished run's output. Only runs the iPhone opens are sent.
+
+- The Mac writes a message in the manage conversation with content `workflow-output` and
+  `ai.osaurus.workflow-output/1` app data, then answers with `{ "runId": "…" }`:
+
+```json
+{ "v": 1, "runId": "…", "status": "completed", "input": { "topic": "Q3" },
+  "output": { "report": "…" }, "error": "…",
+  "files": [ { "id": "…", "filename": "report.md", "mimeType": "text/markdown", "fileSize": 1180,
+               "blob": 0 },
+             { "id": "…", "filename": "raw.mov", "mimeType": "video/quicktime", "fileSize": 52428800,
+               "skipped": "tooLarge" } ],
+  "steps": [ { "id": "research", "model": "claude-sonnet-4-6", "attempts": 1, "durationMs": 8200,
+               "inputTokens": 1200, "outputTokens": 340, "error": "…",
+               "input": { "company": "Raycast" }, "output": { "notes": "…" }, "logs": [ "…" ],
+               "toolCalls": [ { "name": "web_search", "isError": false, "durationMs": 900, "arguments": "{…}",
+                                "result": "…" } ] } ],
+  "digest": "…" }
+```
+
+- `input` and `output` over 16 KiB move to blobs (`{"$blob": i, "size": n}`).
+- `steps`: what the Mac's run view shows on opening each step, keyed by the card's step `id` (§3.2). Skipped
+  steps are left out; every field but `id` and `attempts` is optional. A step's `input` and `output` over
+  4 KiB move to blobs the same way. A tool call's `arguments` (secrets scrubbed) and `result` are the Mac's
+  previews, at most 4,000 characters each.
+  `logs` is the newest 200 lines, each at most 500 characters; `error` at most 2,000. The message is app data,
+  which the sync core caps at 64 KiB a write (past it the write fails and the output never arrives). Past
+  48 KiB, in turn until it fits: the steps go without `logs` and `toolCalls`; every step `input` and
+  `output` moves to a blob; the oldest steps go with only `{ "id", "trimmed": true }`; and the run's own
+  `input` and `output` move to blobs. The run's `error` is at most 2,000 characters, and at most 100
+  files are listed.
+  Sent on every message by a Mac with `workflow_step_details`, an empty list when no step ran. A message
+  without it was written before: the iPhone asks again, and the Mac rewrites it.
+- A file over 10 MiB, or past 32 MiB for the run, is listed with `skipped: "tooLarge"`. A file that
+  is gone is listed with `skipped: "missing"`.
+- The same run's message is replaced only when its digest changes, the old one removed only once the new
+  one is written. The Mac keeps the last 10 of these messages.
+- Each file is copied for its blob from the descriptor its checks were made on: a plain file, never a
+  link, at its size then.
+- Errors: `run_not_found`, and `running` (the run hasn't ended).
+
+### 5.6 Workflow notifications (`workflow_push`)
+
+An iPhone that wants notifications about this Mac's workflow runs writes
+`ai.osaurus.push-registration/1/<its device key>` on the manage conversation:
+
+```json
+{ "v": 1, "grant": "<base64>", "grantId": "…", "expiresMs": 1770163260000,
+  "contentKey": "<32 bytes, base64>", "installId": "…",
+  "events": ["started", "awaiting_user", "completed", "failed", "needs_setup"],
+  "onlyOthers": true, "updatedMs": 1767571260000 }
+```
+
+- `grant` comes from osaurus-sync's `pushGrant`, made for this Mac as its `audience`. It is
+  sealed to the Osaurus push service, so the Mac can't read the APNs token in it.
+- `contentKey` is a ChaChaPoly key, new with each registration, for what a notification says.
+- `installId` stays the same across unpairing and pairing again. Of several registrations with
+  the same `installId` (an older identity of the same iPhone), the Mac uses the newest.
+- `events` is which changes the iPhone wants; `cancelled` is also accepted. `onlyOthers` (default
+  true) leaves out `started` for runs an iPhone started with `runWorkflow`.
+- Writing nothing (`nil`) to the namespace turns notifications off.
+- The Mac reads registrations on every manage conversation tagged with its device, and only of
+  devices still in the account. It lists the iPhones it holds one for in the manage state as
+  `pushRegistered` (device keys), so an iPhone can tell its registration arrived.
+
+When one of the Mac's own runs changes (§5.4's list), it sends each registered iPhone a push
+through `https://push.sync.osaurus.ai/v1/send`, with `apns-collapse-id` set to the run id:
+
+```json
+{ "aps": { "alert": { "title": "Workflow update", "body": "Open Osaurus to see it." },
+           "mutable-content": 1, "sound": "default", "thread-id": "<workflowId>" },
+  "o": "<base64 of ChaChaPoly combined: nonce | ciphertext | tag>" }
+```
+
+`o` opens with `contentKey` to:
+
+```json
+{ "v": 1, "event": "failed", "runId": "…", "workflowId": "…", "device": "<Mac device key>",
+  "title": "Weekly Report", "body": "Failed: Draft: timed out" }
+```
+
+- The iPhone's notification service extension replaces the alert's title and body with these.
+  The plain alert is what shows if it can't.
+- `event` is one of the registration's `events`, or `cleared`: the run stopped waiting for an
+  answer (answered on the Mac, or on another iPhone). `cleared` comes as a background push
+  (`content-available`, no alert), so the iPhone can remove the waiting notification.
+- Runs that started or ended before the Mac started aren't announced.
+- When the service answers 403 or 410, the Mac stops using that grant until it would have expired.
+  The iPhone writes a new registration to start again.
+
+### 5.7 Agent calls (`agent_calls`)
+
+An agent can call the user back: the Mac rings each device set to ring through PushKit, and the
+device shows an incoming call. A device that wants these adds, to its registration (§5.6):
+
+```json
+{ "calls": true, "voipGrant": "<base64>", "voipGrantId": "…", "voipExpiresMs": 1770163260000 }
+```
+
+- `voipGrant` comes from `pushGrant` for the device's PushKit token, with the app's topic plus
+  `.voip`, made for this Mac. `calls` false, or no `voipGrant`, means the device doesn't ring.
+- The same rules as §5.6 apply: devices still in the account, the newest registration per
+  `installId`, and a grant the service refuses (403, 410) isn't used again until it would have
+  expired.
+
+A call is a `voip` push (no `aps`, sent now or never) to each device set to ring:
+
+```json
+{ "o": "<base64 of ChaChaPoly combined, with contentKey>" }
+```
+
+`o` opens to a ring or a call-off:
+
+```json
+{ "v": 1, "kind": "ring", "callId": "…", "device": "<Mac device key>", "sentMs": 1767571260000,
+  "agentId": "…", "agentName": "Builder", "sessionId": "…",
+  "opening": "Your build finished: all tests pass.", "reason": "Build finished" }
+{ "v": 1, "kind": "cancel", "callId": "…", "device": "<Mac device key>", "sentMs": 1767571290000 }
+```
+
+- iOS ends an app that receives a VoIP push without reporting a call, so the device reports one
+  for every push. For a `cancel`, a ring older than 40 seconds, or one it can't open, it reports
+  the call and ends it at once.
+- A ring lasts 40 seconds. The device writes its answer in
+  `ai.osaurus.call-answer/1/<its device key>`:
+
+  ```json
+  { "v": 1, "callId": "…", "outcome": "answered", "atMs": 1767571270000 }
+  ```
+
+  `outcome` is `answered`, `declined`, `missed` (it rang out) or `busy` (another call was on).
+  A device that answered writes `ended` for the same call when it hangs up; only that device's
+  `ended` counts. Until then (two hours at most) the Mac takes the user to be on that call: `call_user` from any run in the chat
+  doesn't ring (the agent is told to say it in the call), and its approvals get no notice or call.
+- The first `answered` takes the call: the Mac sends a `cancel` to each device that hasn't
+  answered. When every device has turned it down, or after 45 seconds, the call is over.
+- The manage state carries `call` while a call rings and for a minute after it ends:
+  `{ "callId": "…", "state": "ringing" | "answered" | "ended", "answeredBy": "<device key>" }`.
+  A device still ringing for a call that isn't `ringing` there stops, in case its `cancel` was lost.
+- Answered, the device opens the chat `sessionId`, speaks `opening` as the agent's first line,
+  and goes on as any voice call on that chat.
+- A call that rang out with nobody taking it (`missed`; not `declined`, which the user chose)
+  sends each device that rang a notification on its alert grant, with
+  `apns-collapse-id` `call-<sessionId>`. `o` opens to
+  `{ "v": 1, "event": "missed_call", "device", "agentId", "sessionId", "title": "<agent>",
+  "body": "Missed call: <reason>" }`; the plain alert reads "Missed call".
+- One call at a time per Mac.
+- The agent is offered `call_user` and `arrange_callback` only while a device's calling grant
+  is unexpired. `call_user` counts a call, and uses up an arranged one, only when something
+  rang (`answered`, `declined`, `missed`, or called off while ringing); `busy`,
+  `unavailable` and a call that couldn't be sent give both back.
+
+### 5.8 Approval requests (`approval` in a push registration's `events`)
+
+A chat run for an iPhone publishes the approvals it waits on in the chat (`approval/1`, §3.7),
+which only that iPhone shows. An iPhone that lists `approval` in its registration's `events`
+(§5.6) also gets a notification when one is published, so it hears about it with the app closed:
+
+- An alert push, `apns-collapse-id` `approval-<sessionId>`, generic in the clear ("Approval
+  needed"). `o` opens to `{ "v": 1, "event": "approval", "device", "agentId", "sessionId",
+  "title": "<agent>", "body": "Needs your approval: <what>" }`.
+- When the run's approvals are answered (on any device) or the run ends, a background push whose
+  `o` opens to `{ "event": "approval_cleared", "sessionId" }`; the iPhone removes the notice.
+- It goes to the iPhone that asked for the run, or, for a run the Mac continued itself (a helper's
+  report), to every iPhone that lists `approval`.
+- When a call was arranged from that chat (`arrange_callback`) and a device lists
+  `approval_call` too, the agent also calls about it (§5.7), opening with what it waits on. That
+  call counts toward the agent's calls a day but leaves the arranged call for the result. It is
+  spaced like the agent's own calls (10 minutes), stops after two in a row go unanswered in that
+  chat or while the agent is locked out for missed calls, and is called off when the approvals
+  are answered or go. The spacing and the misses survive a relaunch of the Mac.
+- Nothing new is sent for a run that is a turn of a live call (`hostRun.voiceCall`), or while a
+  call placed from the chat is on: the call reads the card out itself. The clearing push still goes.
+
+### 5.9 Live Activities for workflow runs (`workflow_push`)
+
+An iPhone that shows workflow runs on its Lock Screen writes
+`ai.osaurus.push-activity/1/<its device key>` on the manage conversation, signed by that device
+(the Mac ignores one that isn't, or that another device signed):
+
+```json
+{ "v": 1,
+  "activities": [ { "runId": "…", "grant": "<base64>", "grantId": "…", "expiresMs": 1770163260000 } ],
+  "start": { "grant": "<base64>", "grantId": "…", "expiresMs": 1770163260000 } }
+```
+
+- Each `activities` entry is the grant (from `pushGrant`, as in §5.6) for one activity's push
+  token, for the run `runId`. `start`, when present, is the grant for the iPhone's
+  push-to-start token (iOS 17.2 or later, Live Activities on).
+- The content key is the one in the device's push registration (§5.6); without a registration
+  the Mac sends nothing.
+- For a run begun on this Mac after it launched, the Mac starts an activity on each iPhone with a
+  `start` grant. A run an iPhone started gets its activity from that iPhone.
+- Each change to the run's status or a step's status is an update; a run that ends
+  (`completed`, `failed`, `cancelled`, `needs_setup`) gets a final `end`. A push the service
+  couldn't take (a 5xx, an unreachable service, or a 429, which also holds that device's other
+  pushes for the wait) is sent once more, with the run's state as it is then.
+- The APNs payload, `apns-push-type` `liveactivity`:
+
+  ```json
+  { "aps": { "event": "update", "timestamp": 1767571260,
+             "content-state": { "sealed": "<base64>", "status": "running", "done": 2, "total": 5,
+                                "endedMs": 1767571290000 } } }
+  ```
+
+  `endedMs` only once the run ended. A start adds `"event": "start"`,
+  `"attributes-type": "WorkflowRunAttributes"`, `"attributes": { "device": "<Mac device key>",
+  "runId": "…", "startedMs": … }` and a generic alert ("Workflow running"), which Apple reads.
+- `sealed` is ChaChaPoly (combined) with the content key, over
+  `{ "name": "<run>", "mac": "<Mac name>", "steps": [ { "name": "…", "status": "completed" } ] }`.
+  Step `status` is `completed`, `running`, `failed`, `awaiting_user` or `pending`; skipped steps
+  are left out. Nothing readable is in the clear: only the status, counts and end time.
+- Under APNs' 4 KB: `name` at most 80 characters and `mac` 40; every step's status is kept, but
+  step names (at most 40 characters) only for the six around the current step. A card still
+  too large goes without step names, then without steps.
+
 ## 6. HTTP routes and their Sync replacements
 
 Every route the iPhone 1.0(11) calls (`SYNC_MOBILE_IOS_HANDOFF.md` has the full inventory),
@@ -720,9 +1101,9 @@ and what replaces it:
   Streaming it needs a typed stream channel in osaurus-sync.
 - **Image preview frames.** Step progress is in `run-progress/1`, but the frames aren't sent:
   each one would be a durable blob write. This also waits for that channel.
-- **Push.** The Mac stores push registrations, but no transport sends anything
-  (`NoopPushTransport`), and there is no Sync record to register a token yet. Until both exist,
-  the iPhone learns about new items when Sync delivers them.
+- **Push for other attention items.** Workflow runs, Live Activities, approvals a chat run waits
+  on and agent calls go through the push service (§5.6–§5.9). Other attention items aren't
+  pushed: the iPhone learns about them when Sync delivers them.
 
 ## 8. The 6-digit pairing, kept for one release
 

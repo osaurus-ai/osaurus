@@ -196,16 +196,30 @@ final class SyncAttentionFeed {
             in: conversation,
             writtenByThatDevice: true
         )
+        // Unsigned (written before 0.1.0-beta.6): never a workflow form's answer, which only a set its own
+        // device signed may carry.
+        let signed = Set(
+            SyncDeviceFeedContract.perDevice(
+                SyncDeviceFeedContract.AttentionAnswers.self,
+                prefix: SyncDeviceFeedContract.attentionAnswerNamespacePrefix,
+                in: conversation,
+                writtenByThatDevice: true,
+                signedOnly: true
+            ).keys)
         for (device, set) in perDevice {
             guard let name = deviceNames[device] else { continue }
-            entries += set.answers.map { LabeledAnswer(id: $0.key, answer: $0.value, deviceLabel: name) }
+            let answers = signed.contains(device)
+                ? set.answers : set.answers.filter { $0.value.action != SyncDeviceFeedContract.submitAction }
+            entries += answers.map { LabeledAnswer(id: $0.key, answer: $0.value, deviceLabel: name) }
         }
         if let legacy = SyncHostedRunContract.read(
             SyncDeviceFeedContract.AttentionAnswers.self,
             SyncDeviceFeedContract.attentionAnswerNamespace,
             from: conversation
         ) {
-            entries += legacy.answers.map { LabeledAnswer(id: $0.key, answer: $0.value, deviceLabel: legacyLabel) }
+            // Unsigned: never a workflow form's answer, which only this user's own device may send.
+            entries += legacy.answers.filter { $0.value.action != SyncDeviceFeedContract.submitAction }
+                .map { LabeledAnswer(id: $0.key, answer: $0.value, deviceLabel: legacyLabel) }
         }
         return entries.sorted { ($0.answer.answeredMs, $0.id) < ($1.answer.answeredMs, $1.id) }
     }
@@ -238,12 +252,42 @@ final class SyncAttentionFeed {
         _ entries: [LabeledAnswer],
         applied: inout Set<String>,
         center: AttentionCenter = .shared,
-        nowMs: Int64 = SyncHostedRunContract.nowMs()
+        nowMs: Int64 = SyncHostedRunContract.nowMs(),
+        answerForm: (UUID, [String: JSONValue]) -> Result<Void, DialogAnswerError> = { id, values in
+            let coordinator = DialogCoordinator.shared
+            guard let dialog = coordinator.pending.first(where: { $0.id == id }) else { return .failure(.notFound) }
+            // Only the field types the phone fills in (`WorkflowDialogAttention.phoneValues`).
+            let allowed = WorkflowDialogAttention.phoneValues(values, fields: dialog.fields, prefill: dialog.prefill)
+            return coordinator.answer(id, values: allowed)
+        }
     ) {
         for entry in entries where !applied.contains(entry.id) {
             let id = entry.id
             let answer = entry.answer
             let deviceLabel = entry.deviceLabel
+            // A workflow form filled in on the iPhone: its values go to the form as the Mac's own
+            // form sends them, and the run carries on. Answered, the form's item is retracted.
+            if answer.action == SyncDeviceFeedContract.submitAction {
+                guard let uuid = UUID(uuidString: id),
+                    nowMs - answer.answeredMs < SyncDeviceFeedContract.requestTTLMs
+                else { continue }
+                guard let item = center.item(id: uuid), item.isPending, item.kind == .workflowDialog else {
+                    applied.insert(id)
+                    continue
+                }
+                switch answerForm(uuid, answer.values ?? [:]) {
+                case .success, .failure(.notFound):
+                    applied.insert(id)
+                case .failure(.notCurrent):
+                    // Another form of the workflow comes first: this one is applied once it's shown.
+                    break
+                case .failure(.invalid(let issues)):
+                    // Left unapplied, so a corrected answer from the iPhone (same id) still lands.
+                    let reasons = issues.joined(separator: "; ")
+                    log.notice("workflow form \(id, privacy: .public) not accepted: \(reasons, privacy: .public)")
+                }
+                continue
+            }
             guard let uuid = UUID(uuidString: id), nowMs - answer.answeredMs < SyncDeviceFeedContract.requestTTLMs,
                 let outcome = SyncDeviceFeedContract.outcome(for: answer.action)
             else { continue }

@@ -55,22 +55,36 @@ enum SyncDeviceFeedContract {
         "artifact_blobs",
         "history_filters",
         "continue_own_chats",
+        "workflow_forms",
+        "workflow_runs",
+        "workflow_library",
+        "workflow_outputs",
+        "workflow_details",
+        "workflow_push",
+        "agent_calls",
+        "workflow_step_details",
+        "directory_models",
+        "manage_workflows",
     ]
 
     /// Each device's record under `prefix`, keyed by device key. With
     /// `writtenByThatDevice`, a value another device signed is dropped:
     /// requests and answers name their writer, results name their reader.
+    /// With `signedOnly`, an unsigned value is dropped too: one written before 0.1.0-beta.6 is let
+    /// through elsewhere, but these records came later, so an unsigned one names no writer to trust.
     static func perDevice<T: Decodable>(
         _ type: T.Type,
         prefix: String,
         in conversation: Conversation,
-        writtenByThatDevice: Bool
+        writtenByThatDevice: Bool,
+        signedOnly: Bool = false
     ) -> [String: T] {
         var result: [String: T] = [:]
         for entry in conversation.appData where entry.namespace.hasPrefix(prefix) {
             let device = String(entry.namespace.dropFirst(prefix.count))
             guard !device.isEmpty,
                 !writtenByThatDevice || SyncHostedRunContract.isSigned(entry, byNamespaceDevice: device),
+                !signedOnly || entry.authorDevice != nil,
                 let decoded = try? JSONDecoder().decode(type, from: entry.bytes)
             else { continue }
             result[device] = decoded
@@ -95,22 +109,32 @@ enum SyncDeviceFeedContract {
     // MARK: - Attention
 
     /// `action` is one the item offers: `approve`, `deny`,
-    /// `allow_for_conversation`, `reply` (with `text`) or `dismiss`.
+    /// `allow_for_conversation`, `reply` (with `text`) or `dismiss`; or
+    /// `submit` (with `values`) for a `workflow_dialog` that carries its form.
     struct AttentionAnswer: Codable, Equatable, Sendable {
         var action: String
         var text: String?
         /// `privacy_review` with `approve`: the detections to replace with
         /// their placeholders. Missing redacts every detection.
         var redact: [String]?
+        /// `submit`: the form's answers by field key.
+        var values: [String: JSONValue]?
         var answeredMs: Int64
 
-        init(action: String, text: String? = nil, redact: [String]? = nil, answeredMs: Int64) {
+        init(
+            action: String, text: String? = nil, redact: [String]? = nil, values: [String: JSONValue]? = nil,
+            answeredMs: Int64
+        ) {
             self.action = action
             self.text = text
             self.redact = redact
+            self.values = values
             self.answeredMs = answeredMs
         }
     }
+
+    /// The answer that fills in a workflow form from the iPhone.
+    static let submitAction = "submit"
 
     struct AttentionAnswers: Codable, Equatable, Sendable {
         var v: Int = 1
@@ -191,6 +215,12 @@ enum SyncDeviceFeedContract {
         var projects: [HistoryFilter]?
         var plugins: [HistoryFilter]?
         var workspaces: [HistoryFilter]?
+        /// Installed workflows and their input forms (`workflow_library`).
+        var workflows: [ManagedWorkflow]?
+        /// The iPhones this Mac holds a push registration for (`workflow_push`), by device key.
+        var pushRegistered: [String]?
+        /// The agent call this Mac is placing (`agent_calls`), until a minute after it ends.
+        var call: CallState?
         var updatedMs: Int64
     }
 
@@ -207,6 +237,10 @@ enum SyncDeviceFeedContract {
     /// Content of those messages, so they're never taken for chat.
     static let modelsMessageContent = "models"
     static let agentDetailMessageContent = "agent"
+    /// Message app data on the manage conversation's workflows message (`manage_workflows`): the
+    /// workflow library, `workflows` a blob reference when too large to sit inline.
+    static let manageWorkflowsNamespace = "ai.osaurus.manage-workflows/1"
+    static let workflowsMessageContent = "workflows"
 
     // MARK: Requests
 
@@ -226,6 +260,10 @@ enum SyncDeviceFeedContract {
             /// `scope` (the chat), `agentId`, optional `model`: writes the chat's
             /// `ai.osaurus.context-usage/1` and answers with it.
             case contextUsage
+            /// `workflowId`, `input` (the form's values): starts the workflow and answers with its `runId`.
+            case runWorkflow
+            /// `runId`: writes a finished run's output message (§5.5) and answers once it's written.
+            case workflowOutput
             /// An op this Mac's build doesn't know.
             case unsupported
 
@@ -266,6 +304,11 @@ enum SyncDeviceFeedContract {
         var policy: String?
         /// `contextUsage`: the chat's conversation scope.
         var scope: String?
+        /// `runWorkflow`
+        var workflowId: String?
+        var input: JSONValue?
+        /// `workflowOutput`
+        var runId: String?
         var requestedMs: Int64
 
         init(
@@ -357,15 +400,42 @@ enum SyncDeviceFeedContract {
     /// Synced only: signing out and keeping chats leaves this device's old
     /// feeds behind as device-local copies that nothing else reads.
     static func conversation(kind: String, device: String, core: SyncCore) throws -> Conversation? {
-        let filter = ConversationFilter(
-            tags: [
-                Tag(key: SyncConversationMapper.TagKey.kind, value: kind),
-                Tag(key: SyncConversationMapper.TagKey.device, value: device),
-            ],
-            replication: .synced,
-            limit: 1
-        )
-        return try core.conversationsFiltered(filter: filter).first
+        let tags = [
+            Tag(key: SyncConversationMapper.TagKey.kind, value: kind),
+            Tag(key: SyncConversationMapper.TagKey.device, value: device),
+        ]
+        let user = try core.userKey()
+        let pinKey = "SyncSystemConversation.\(user).\(kind).\(device)"
+        // The one used before, looked up by its scope: among many tagged ones (another user's
+        // shared ones can carry the same tags) a list could leave it out, and the fallbacks below
+        // would then pick another. Still checked to be synced and tagged as asked.
+        if let pinned = UserDefaults.standard.string(forKey: pinKey),
+            let conversation = try? core.conversation(scope: pinned),
+            conversation.replication == .synced,
+            tags.allSatisfy({ tag in conversation.tags.contains(tag) })
+        {
+            return conversation
+        }
+        let filter = ConversationFilter(tags: tags, replication: .synced, limit: 50)
+        // Tags are ordinary conversation data, so a conversation another user shared with this one
+        // could carry the same two and be taken for this Mac's own, and the requests in it run as this
+        // user. So: the one used before, once found; else one no other user is in (agents may be);
+        // else one holding app data `device` signed, which no other user's device can. The last is
+        // for a conversation that still lists this user's identity from before a change of phrase, and
+        // is never remembered: a conversation chosen only because no other was found mustn't keep its
+        // place once the real one is. Remembered per account, so another account's, or the one before a
+        // change of phrase, is never taken for this one's.
+        let found = try core.conversationsFiltered(filter: filter)
+        let me = "u:" + user
+        if let own = found.first(where: { conversation in
+            conversation.members.allSatisfy { !$0.principal.hasPrefix("u:") || $0.principal == me }
+        }) {
+            UserDefaults.standard.set(own.scope, forKey: pinKey)
+            return own
+        }
+        return found.first { conversation in
+            conversation.appData.contains { $0.authorDevice?.lowercased() == device.lowercased() }
+        }
     }
 
     /// This device's conversation of `kind`, made when missing.
@@ -380,6 +450,23 @@ enum SyncDeviceFeedContract {
                 Tag(key: SyncConversationMapper.TagKey.kind, value: kind),
             ].sorted { $0.key < $1.key }
         )
+        offerSystemConversationsFirst(core: core)
         return scope
+    }
+
+    /// This Mac's agent directory goes to a catching-up iPhone before any chat: it can't list agents
+    /// or open a chat without it, and on an account with hundreds of chats it otherwise waited behind
+    /// them (`setOfferFirst`). Only the directory: the manage and attention conversations keep every
+    /// request, result and change ever written, and offered first, a new iPhone spent its first
+    /// minutes on their history while its recent chats waited. Called when the core opens and when
+    /// one of them is made.
+    nonisolated static func offerSystemConversationsFirst(core: SyncCore) {
+        let me = core.deviceKey()
+        let scope = { (kind: String) in (try? conversation(kind: kind, device: me, core: core))?.scope }
+        // Fail only on a closed core; the next open sets them again.
+        try? core.setOfferFirst(scopes: [SyncHostedRunContract.directoryKind].compactMap(scope))
+        // After the chats: their history is the largest of all, and offered by activity it came first.
+        // Until it is in, a new iPhone has no model options or workflows (a snapshot would fix that).
+        try? core.setOfferLast(scopes: [manageKind, attentionKind].compactMap(scope))
     }
 }

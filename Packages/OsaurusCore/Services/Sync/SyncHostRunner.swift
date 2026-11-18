@@ -81,6 +81,10 @@ final class SyncHostRunner: ObservableObject {
         let turnId: String
         /// Sync device key of the device that asked for this run.
         var requester: String?
+        /// The agent answering, for the approval notices (`SyncApprovalPush`).
+        var agentId: UUID? = nil
+        /// A turn of a live call: the call reads its approvals out itself.
+        var isVoiceCall = false
         var taskId: UUID?
         var stopRequested = false
         var published: [SyncHostedRunContract.PendingApproval] = []
@@ -458,7 +462,8 @@ final class SyncHostRunner: ObservableObject {
 
         record(turnId, sessionId: session.id, scope: scope, state: .running)
         writeHostRun(scope: scope, turnId: turnId, state: .running)
-        active[scope] = ActiveRun(sessionId: session.id, turnId: turnId, requester: snapshot.requester)
+        active[scope] = ActiveRun(
+            sessionId: session.id, turnId: turnId, requester: snapshot.requester, agentId: agentId)
         if let requester = snapshot.requester, requester != snapshot.me {
             runningFor[session.id] = HostedRequest(deviceKey: requester, agentId: agentId, startedAt: Date())
             if SyncPhoneDevices.isPhone(deviceKey: requester) {
@@ -483,6 +488,7 @@ final class SyncHostRunner: ObservableObject {
             syncReviewerScope: scope
         )
         dispatch.hostedRun = choices.run
+        active[scope]?.isVoiceCall = choices.run?.voiceCall ?? false
         guard let handle = await BackgroundTaskManager.shared.dispatchChat(dispatch) else {
             active[scope] = nil
             runningFor[session.id] = nil
@@ -504,6 +510,98 @@ final class SyncHostRunner: ObservableObject {
             SyncHostRunner.shared.finish(scope: scope, turnId: turnId)
         }
         // A stop or answers may have arrived while the run was being set up.
+        schedule(scope)
+    }
+
+    // MARK: - Continuing a chat with host text
+
+    enum HostTextOutcome: Equatable, Sendable {
+        case started
+        /// Another run drives the chat, or it can't be read yet: try later.
+        case busy
+        /// No other device sees the chat: continue it as any local chat.
+        case notSynced
+        /// The chat can't be continued here any more (its agent is gone).
+        case refused
+    }
+
+    /// Continues a chat other devices see with host text (a helper's report
+    /// kept by `HostContinuationInbox`) the way a hosted run goes: the reply
+    /// goes out as the agent, and its approvals reach the user's devices.
+    /// There is no request turn, so no `hostRun` state is written and the
+    /// ledger isn't touched.
+    func continueWithHostText(_ text: String, sessionId: UUID) async -> HostTextOutcome {
+        guard let core = SyncService.shared.core else { return .notSynced }
+        let found = await Task.detached(priority: .utility) { () -> (scope: String, session: ChatSessionData)? in
+            let store = SyncConversationStore.shared
+            guard let scope = store.scope(forSession: sessionId),
+                let conversation = try? core.conversation(scope: scope),
+                conversation.tag(SyncConversationMapper.TagKey.hostDevice) == core.deviceKey()
+                    || Self.mayBeOwnChat(conversation),
+                let session = store.loadSession(id: sessionId)
+            else { return nil }
+            return (scope, session)
+        }.value
+        guard let found else { return .notSynced }
+        let scope = found.scope
+        let session = found.session
+        guard active[scope] == nil, !processing.contains(scope) else { return .busy }
+
+        let workspaceTarget: WorkspaceAgentRef?
+        switch Self.workspaceTarget(for: session, listed: Self.listedWorkspaceAgents()) {
+        case .success(let ref): workspaceTarget = ref
+        case .failure: return .refused
+        }
+        let agentId = session.agentId ?? Agent.defaultId
+        let agent = AgentManager.shared.agent(for: agentId)
+        guard workspaceTarget != nil || agent.map(Self.canHost) == true else { return .refused }
+
+        let turnId = "host-" + UUID().uuidString.lowercased()
+        active[scope] = ActiveRun(sessionId: sessionId, turnId: turnId, requester: nil, agentId: agentId)
+        if let agent, workspaceTarget == nil {
+            await assignSender(agent: agent, scope: scope, sessionId: sessionId)
+        } else {
+            SyncConversationStore.shared.setAgentSender(nil, forSession: sessionId)
+        }
+        let dispatch = DispatchRequest(
+            prompt: text,
+            agentId: workspaceTarget == nil ? agentId : nil,
+            target: workspaceTarget.map(AgentDispatchTarget.workspace),
+            title: session.title,
+            showToast: false,
+            source: .chat,
+            continueSessionId: sessionId,
+            taskIntent: .hostContinuation,
+            syncReviewerScope: scope
+        )
+        guard let handle = await BackgroundTaskManager.shared.dispatchChat(dispatch) else {
+            active[scope] = nil
+            schedule(scope)
+            return .busy
+        }
+        active[scope]?.taskId = handle.id
+        Self.log.info("continuing \(scope, privacy: .public) with host text as task \(handle.id, privacy: .public)")
+        Task { @MainActor in
+            _ = await BackgroundTaskManager.shared.awaitCompletion(handle.id, timeoutSeconds: Self.runTimeoutSeconds)
+            SyncHostRunner.shared.finishHostText(scope: scope)
+        }
+        return .started
+    }
+
+    /// `finish`, for a run with no request turn: nothing to record.
+    private func finishHostText(scope: String) {
+        let hadApprovals = !(active[scope]?.published.isEmpty ?? true)
+        let hadPrompts = !(active[scope]?.publishedPrompts.isEmpty ?? true)
+        if let sessionId = active[scope]?.sessionId {
+            Task { await SyncContextUsage.refresh(scope: scope, sessionId: sessionId) }
+        }
+        clearApprovalNotices(active[scope])
+        active[scope] = nil
+        ToolPermissionPromptService.denySyncedPrompts(scope: scope)
+        SyncSecretPromptQueue.shared.cancelAll(scope: scope)
+        if hadApprovals { writeApprovals(scope: scope, pending: []) }
+        if hadPrompts { writePrompts(scope: scope, pending: []) }
+        // A request may have come in during the run.
         schedule(scope)
     }
 
@@ -672,6 +770,7 @@ final class SyncHostRunner: ObservableObject {
             let sessionId = run.sessionId
             Task { await SyncContextUsage.refresh(scope: scope, sessionId: sessionId) }
         }
+        clearApprovalNotices(active[scope])
         active[scope] = nil
         ToolPermissionPromptService.denySyncedPrompts(scope: scope)
         SyncSecretPromptQueue.shared.cancelAll(scope: scope)
@@ -811,9 +910,22 @@ final class SyncHostRunner: ObservableObject {
             )
         }
         guard pending != run.published else { return }
+        let before = run.published
         run.published = pending
         active[scope] = run
         writeApprovals(scope: scope, pending: pending)
+        // The card is in the chat, which only the iPhone shows: it hears about it with the app closed.
+        SyncApprovalPush.shared.changed(
+            sessionId: run.sessionId, agentId: run.agentId, requester: run.requester, onCall: run.isVoiceCall,
+            before: before, after: pending)
+    }
+
+    /// The run ended with approvals still published: their notices go too.
+    private func clearApprovalNotices(_ run: ActiveRun?) {
+        guard let run, !run.published.isEmpty else { return }
+        SyncApprovalPush.shared.changed(
+            sessionId: run.sessionId, agentId: run.agentId, requester: run.requester, onCall: run.isVoiceCall,
+            before: run.published, after: [])
     }
 
     /// Publishes the questions (secrets) the run in `scope` is waiting on.

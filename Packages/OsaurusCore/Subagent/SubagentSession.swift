@@ -306,7 +306,9 @@ public enum SubagentSession {
                 success: success,
                 summary: summary,
                 completedEnvelope: completedEnvelope,
-                to: parentSession
+                to: parentSession,
+                sessionId: UUID(uuidString: scope.sessionId),
+                agentId: scope.agentId
             )
         }
 

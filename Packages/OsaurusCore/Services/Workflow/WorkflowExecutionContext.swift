@@ -33,58 +33,58 @@ enum WorkflowExecutionContext {
         }
     }
 
+    // Split in two: one closure nesting every binding is too much for the type checker.
     private static func bindChatContext<T>(
         _ context: WorkflowNodeContext, caller: WorkflowCaller, granted: Set<String>, _ body: () async throws -> T
     ) async throws -> T {
         try await ChatExecutionContext.$currentWorkflowRunId.withValue(context.runID) {
             try await ChatExecutionContext.$currentWorkflowNodeId.withValue(context.node.id) {
-              try await ChatExecutionContext.$currentWorkflowStepReason.withValue(context.node.approvalReason) {
-                try await ChatExecutionContext.$currentAgentId.withValue(caller.agentID) {
-                  try await ChatExecutionContext.$usesSharedKeysOnly.withValue(caller.credentialAgentID == nil) {
-                    try await ChatExecutionContext.$currentSessionId.withValue(caller.sessionID) {
-                        try await ChatExecutionContext.$currentToolCallId.withValue(caller.toolCallID) {
-                            try await ChatExecutionContext.$currentFolderRoot.withValue(context.folderRoot) {
-                                try await ChatExecutionContext.$toolPermissionRunScope.withValue(
-                                    context.permissionScope
-                                ) {
-                                    try await ChatExecutionContext.$isExternalSurface.withValue(
-                                        caller.isExternalSurface
-                                    ) {
-                                        try await ChatExecutionContext.$hasRemoteReviewer.withValue(
-                                            caller.hasRemoteReviewer
-                                        ) {
-                                            try await ChatExecutionContext.$isUnattendedDispatch.withValue(
-                                                caller.isUnattendedDispatch
-                                            ) {
-                                                try await ChatExecutionContext.$workflowGrantedToolNames.withValue(
-                                                    granted
-                                                ) {
-                                                    try await ChatExecutionContext.$workflowSandbox.withValue(
-                                                        context.sandbox
-                                                    ) {
-                                                        try await ChatExecutionContext.$workflowGrantedPaths.withValue(
-                                                            [context.workspace] + context.grantedPaths
-                                                        ) {
-                                                            try await ChatExecutionContext.$workflowWritableRoots
-                                                                .withValue(context.writableRoots.map { [context.workspace] + $0 }) {
-                                                                    try await ChatExecutionContext.$workflowHostFiles
-                                                                        .withValue(context.hostFiles) {
-                                                                            try await body()
-                                                                        }
-                                                                }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                try await ChatExecutionContext.$currentWorkflowStepReason.withValue(context.node.approvalReason) {
+                    try await ChatExecutionContext.$currentAgentId.withValue(caller.agentID) {
+                        try await ChatExecutionContext.$usesSharedKeysOnly.withValue(caller.credentialAgentID == nil) {
+                            try await ChatExecutionContext.$currentSessionId.withValue(caller.sessionID) {
+                                try await ChatExecutionContext.$currentToolCallId.withValue(caller.toolCallID) {
+                                    try await bindRunScope(context, caller: caller, granted: granted, body)
                                 }
                             }
                         }
                     }
-                  }
                 }
-              }
+            }
+        }
+    }
+
+    private static func bindRunScope<T>(
+        _ context: WorkflowNodeContext, caller: WorkflowCaller, granted: Set<String>, _ body: () async throws -> T
+    ) async throws -> T {
+        let grantedPaths = [context.workspace] + context.grantedPaths
+        let writableRoots = context.writableRoots.map { [context.workspace] + $0 }
+        return try await ChatExecutionContext.$currentFolderRoot.withValue(context.folderRoot) {
+            try await ChatExecutionContext.$toolPermissionRunScope.withValue(context.permissionScope) {
+                try await ChatExecutionContext.$isExternalSurface.withValue(caller.isExternalSurface) {
+                    try await ChatExecutionContext.$hasRemoteReviewer.withValue(caller.hasRemoteReviewer) {
+                        try await ChatExecutionContext.$isUnattendedDispatch.withValue(caller.isUnattendedDispatch) {
+                            try await bindWorkflowAccess(context, granted: granted, grantedPaths, writableRoots, body)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static func bindWorkflowAccess<T>(
+        _ context: WorkflowNodeContext, granted: Set<String>, _ grantedPaths: [URL], _ writableRoots: [URL]?,
+        _ body: () async throws -> T
+    ) async throws -> T {
+        try await ChatExecutionContext.$workflowGrantedToolNames.withValue(granted) {
+            try await ChatExecutionContext.$workflowSandbox.withValue(context.sandbox) {
+                try await ChatExecutionContext.$workflowGrantedPaths.withValue(grantedPaths) {
+                    try await ChatExecutionContext.$workflowWritableRoots.withValue(writableRoots) {
+                        try await ChatExecutionContext.$workflowHostFiles.withValue(context.hostFiles) {
+                            try await body()
+                        }
+                    }
+                }
             }
         }
     }

@@ -2652,6 +2652,15 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                 ),
                 "default": .bool(false),
             ])
+            properties["notify_on_exit"] = .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "With `background`: when the process ends, its last log lines come back to you "
+                        + "as a follow-up message in this conversation, even if the user has left it. "
+                        + "Use for jobs that finish (builds, test runs), not servers. Do not poll as well."
+                ),
+                "default": .bool(false),
+            ])
         }
         return .object([
             "type": .string("object"),
@@ -2723,6 +2732,7 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         }
 
         let background = coerceBool(args["background"]) ?? false
+        let notifyOnExit = background && (coerceBool(args["notify_on_exit"]) ?? false)
 
         // Defense in depth: the schema strip is advisory, so a model that
         // passes `background:true` anyway when the agent hasn't opted in
@@ -2785,12 +2795,31 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                 // execAsRoot so the user can stop a runaway server
                 // without leaving the chat.
                 let toolCallId = ChatExecutionContext.currentToolCallId ?? UUID().uuidString
+                // Asked to hear back: the end goes to the launching chat
+                // through the inbox, which continues it even once released.
+                let exitSession = notifyOnExit
+                    ? ChatExecutionContext.currentSessionId.flatMap(UUID.init(uuidString:)) : nil
+                let exitAgent = UUID(uuidString: agentId)
+                var onExit: (@Sendable (Bool, String) async -> Void)?
+                if let sessionId = exitSession {
+                    // Taken now, while this call's secret scope is bound.
+                    let secrets = agentSecretValues(agentId: agentId)
+                    onExit = { killedByUser, tail in
+                        let scrubbed = BackgroundExecLogTail.trimmed(SecretScrubber.scrub(tail, secrets: secrets))
+                        let text = HostContinuationInbox.processEndedMessage(
+                            command: command, pid: pid, killedByUser: killedByUser, logTail: scrubbed)
+                        await MainActor.run {
+                            HostContinuationInbox.shared.add(text: text, sessionId: sessionId, agentId: exitAgent)
+                        }
+                    }
+                }
                 await registerBackgroundLiveExec(
                     toolCallId: toolCallId,
                     pid: pid,
                     command: command,
                     inContainerLogPath: logFile,
-                    agentName: agentName
+                    agentName: agentName,
+                    onExit: onExit
                 )
             }
             return sandboxSuccess(
@@ -2945,7 +2974,8 @@ private func registerBackgroundLiveExec(
     pid: String,
     command: String,
     inContainerLogPath: String,
-    agentName: String
+    agentName: String,
+    onExit: (@Sendable (_ killedByUser: Bool, _ logTail: String) async -> Void)? = nil
 ) async {
     // /workspace/agents/<name>/bg-XXX.log → host bind-mount path.
     let prefix = OsaurusPaths.inContainerAgentHome(agentName) + "/"
@@ -2979,6 +3009,9 @@ private func registerBackgroundLiveExec(
                     agentName: agentName,
                     pid: pid
                 )
+                if let onExit {
+                    await onExit(killedByUser, BackgroundExecLogTail.read(hostLogURL))
+                }
                 // Pid is gone — release the registry entry (after its grace
                 // tail) so it doesn't leak for the lifetime of the process.
                 // The grace window keeps the terminal status observable for a
@@ -3015,6 +3048,33 @@ private func registerBackgroundLiveExec(
             }
         )
     )
+}
+
+/// The end of a background job's log, for `notify_on_exit`.
+enum BackgroundExecLogTail {
+    /// What reaches the chat, at most.
+    static let maxBytes = 2048
+    /// What's read: twice that, so secrets are scrubbed before the cut. Cut first, a secret across the
+    /// cut was left as a part that no longer matched it, and reached the chat.
+    static let readBytes = 4096
+
+    static func read(_ url: URL) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > UInt64(readBytes) ? size - UInt64(readBytes) : 0)
+        let data = (try? handle.readToEnd()) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The last `maxBytes` of an already scrubbed tail, from the start of a line when it was cut.
+    static func trimmed(_ text: String) -> String {
+        guard text.utf8.count > maxBytes else { return text }
+        var tail = Substring(text)
+        while tail.utf8.count > maxBytes { tail = tail.dropFirst() }
+        if let newline = tail.firstIndex(of: "\n") { tail = tail[tail.index(after: newline)...] }
+        return String(tail)
+    }
 }
 
 private actor UserTerminatedFlag {

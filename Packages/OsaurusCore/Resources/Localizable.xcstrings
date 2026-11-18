@@ -156074,6 +156074,9 @@
         }
       }
     },
+    "I need your OK before I go on: %@" : {
+
+    },
     "I picked %@ for you. %@" : {
       "localizations" : {
         "de" : {
@@ -191843,6 +191846,9 @@
         }
       }
     },
+    "Missed call" : {
+
+    },
     "Missing" : {
       "localizations" : {
         "de" : {
@@ -198771,6 +198777,9 @@
     "needs setup in Settings" : {
 
     },
+    "Needs setup on %@" : {
+
+    },
     "Needs setup: %@" : {
 
     },
@@ -198844,6 +198853,9 @@
           }
         }
       }
+    },
+    "Needs your approval" : {
+
     },
     "Needs your input" : {
       "comment" : "Text describing a single task with an outstanding input request.",
@@ -226001,6 +226013,9 @@
           }
         }
       }
+    },
+    "Open Osaurus to see it." : {
+
     },
     "Open osaurus.ai/themes" : {
       "extractionState" : "stale",
@@ -266277,6 +266292,9 @@
         }
       }
     },
+    "Ready to run" : {
+
+    },
     "Ready to run on this Mac." : {
 
     },
@@ -292637,6 +292655,9 @@
           }
         }
       }
+    },
+    "Runs on Desktop" : {
+
     },
     "Runs on its own" : {
       "localizations" : {
@@ -326770,6 +326791,9 @@
           }
         }
       }
+    },
+    "Started on %@" : {
+
     },
     "Started." : {
       "localizations" : {
@@ -390895,6 +390919,9 @@
           }
         }
       }
+    },
+    "Workflow update" : {
+
     },
     "Workflow's choice (%@)" : {
       "comment" : "A label for a picker that lets the user select a model.",

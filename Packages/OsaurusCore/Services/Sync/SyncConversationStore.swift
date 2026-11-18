@@ -40,9 +40,24 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
         /// Attachments the message carries natively. A message's files can't
         /// change after it is sent, so a turn that gains one is sent again.
         var attachmentIds: Set<UUID>
-        /// This device wrote the message, so it alone writes its turn detail.
+        /// The engine lets this device replace the message's app data: written as this user, or
+        /// sent from here as an agent. One written under an earlier user key isn't (sync error 103).
         var authoredHere = true
+        /// The engine lets this device edit the message's text: written as this user.
+        var editableHere = true
         var detailHash: String?
+    }
+
+    /// Whether `message` may have its app data replaced and its text edited from this device, by
+    /// the engine's own rules (`set_message_app_data`, `edit_message`).
+    static func authorship(of message: SyncMessage, me: String?, device: String) -> (appData: Bool, edit: Bool) {
+        let mine = me != nil && message.author == me
+        return (mine || (message.isAgent && message.authorDevice == device), mine)
+    }
+
+    /// This user as message authors name it (`u:<key>`).
+    static func principal(core: SyncCore) -> String? {
+        (try? core.userKey()).map { "u:" + $0 }
     }
 
     /// One session's messages, in order.
@@ -72,6 +87,8 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
     private var drafts: [UUID: ChatSessionData] = [:]
     private var lastLocalWrite: [String: Date] = [:]
     private var fetching: Set<String> = []
+    /// Sessions whose scope `cachedScope` is looking up off the main thread.
+    private var warming: Set<UUID> = []
     /// The agent this device's replies in a session are sent as, by session.
     private var agentSenders: [UUID: String] = [:]
     /// What a failed save was compared against, kept for its retry.
@@ -195,6 +212,20 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
     func scope(forSession id: UUID) -> String? {
         guard let core = currentCore() else { return nil }
         return scope(for: id, core: core)
+    }
+
+    /// The session's scope if it's known already, without touching the core: for the main thread. A miss
+    /// looks it up off the main thread (KEEP), so a later call finds it.
+    func cachedScope(forSession id: UUID) -> String? {
+        if let cached = lock.withLock({ scopes[id] }) { return cached }
+        let start = lock.withLock { warming.insert(id).inserted }
+        if start {
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                _ = scope(forSession: id)
+                lock.withLock { _ = warming.remove(id) }
+            }
+        }
+        return nil
     }
 
     func sessionId(forScope scope: String) -> UUID? {
@@ -512,7 +543,7 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
                 // message's app data`): one another device wrote, an iPhone's prompt
                 // in a hosted chat say, stays as it wrote it. Trying failed the whole
                 // save, and its retry looped every 2 seconds.
-                if ref.authoredHere, turn.role != .tool, ref.contentHash != contentHash {
+                if ref.editableHere, turn.role != .tool, ref.contentHash != contentHash {
                     try core.editMessage(id: ref.messageId, content: encodedTurn.content)
                     ref.contentHash = contentHash
                 }
@@ -725,9 +756,12 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
 
     /// Commits a streamed turn as its message, in order with the session's
     /// saves: the save that follows finds it already written. A copy a save
-    /// wrote before the stream opened is removed.
-    func finishStream(_ stream: OutgoingStream, sessionId: UUID, turn: ChatTurnData) {
+    /// wrote before the stream opened is removed. Called where the saves are
+    /// made, so it's queued ahead of the next one; `pending`, the queue the
+    /// stream's pushes went on, is drained first, so every push is in.
+    func finishStream(_ stream: OutgoingStream, sessionId: UUID, turn: ChatTurnData, after pending: DispatchQueue? = nil) {
         queue.async { [self] in
+            pending?.sync {}
             do {
                 let encoded = try SyncConversationMapper.encode(turn: turn, toolName: nil)
                 let files = TemporaryFiles()
@@ -773,6 +807,7 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
     private func index(for sessionId: UUID, scope: String, core: SyncCore, reload: Bool = false) throws -> SessionIndex {
         if !reload, let cached = lock.withLock({ indexes[sessionId] }) { return cached }
         let messages = try allMessages(scope: scope, core: core)
+        let (me, device) = (Self.principal(core: core), core.deviceKey())
         var index = SessionIndex(repeated: Self.repeatedMessages(messages))
         for message in messages where !index.repeated.contains(message.id) {
             let appData = message.appData(SyncConversationMapper.turnNamespace)
@@ -800,7 +835,8 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
                 extras: extras,
                 incomplete: incomplete || appData?.blobs.contains(where: { !$0.available }) == true,
                 attachmentIds: attachmentIds,
-                authoredHere: message.authorDevice == core.deviceKey(),
+                authoredHere: Self.authorship(of: message, me: me, device: device).appData,
+                editableHere: Self.authorship(of: message, me: me, device: device).edit,
                 detailHash: Self.detailHash(of: message)
             )
         }
@@ -837,6 +873,7 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
         else { return nil }
         let local = SyncLocalSessionStore.load(id)
         var session = SyncConversationMapper.session(from: conversation, local: local)
+        let (me, device) = (Self.principal(core: core), core.deviceKey())
         guard let messages = try? allMessages(scope: scope, core: core) else { return session }
 
         var index = SessionIndex(repeated: Self.repeatedMessages(messages))
@@ -874,7 +911,8 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
                 incomplete: incomplete || appData?.blobs.contains(where: { !$0.available }) == true,
                 attachmentIds: SyncConversationMapper.nativeAttachmentIds(
                     of: message, object: SyncConversationMapper.parseObject(appData?.bytes) ?? [:]),
-                authoredHere: message.authorDevice == core.deviceKey(),
+                authoredHere: Self.authorship(of: message, me: me, device: device).appData,
+                editableHere: Self.authorship(of: message, me: me, device: device).edit,
                 detailHash: Self.detailHash(of: message)
             )
         }

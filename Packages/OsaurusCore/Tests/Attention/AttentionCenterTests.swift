@@ -67,6 +67,21 @@ struct AttentionCenterTests {
         #expect(phone.retracted == [id])
     }
 
+    /// A form a Mac window already shows goes to the iPhone alone: no toast, no notification here.
+    @Test func onlyChannelsLimitsDelivery() {
+        let inApp = RecordingChannel(.inApp)
+        let desktop = RecordingChannel(.desktop)
+        let phone = RecordingChannel(.phone)
+        let center = makeCenter([inApp, desktop, phone])
+        var item = AttentionItem(kind: .workflowDialog, title: "Push Test needs your input")
+        item.onlyChannels = [.phone]
+        let id = center.raise(item)
+        #expect(phone.delivered == [id])
+        #expect(inApp.delivered.isEmpty)
+        #expect(desktop.delivered.isEmpty)
+        #expect(center.item(id: id)?.deliveredTo == ["phone"])
+    }
+
     @Test func retractSettlesWithoutCallingTheResolver() {
         let center = makeCenter([])
         var called = false

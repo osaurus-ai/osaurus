@@ -116,6 +116,28 @@ final class SyncManageFeed {
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
             .store(in: &cancellables)
+        // The Default agent's, the Architect's and the Configurator's models live on their own
+        // configuration stores, not in `agents`: a model picked for them (in a chat, in
+        // Settings) changed nothing the feed watched, and the iPhone kept the old one. Their
+        // saves post these. `publish` writes only a changed state, so extra triggers are cheap.
+        NotificationCenter.default.publisher(for: .agentUpdated)
+            .merge(with: NotificationCenter.default.publisher(for: .appConfigurationChanged))
+            .receive(on: DispatchQueue.main)
+            .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
+            .store(in: &cancellables)
+        // The workflow list and each one's form and setup (`workflow_library`), and its published
+        // status (`workflow_details`).
+        InstalledWorkflowStore.shared.$workflows.map { _ in () }
+            .merge(with: WorkflowRegistryRecordStore.shared.$records.map { _ in () })
+            .receive(on: DispatchQueue.main)
+            .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
+            .store(in: &cancellables)
+        SyncWorkflowRunsFeed.shared.start()
+        // Workflow notifications (`workflow_push`): an iPhone that leaves the account gets none.
+        NotificationCenter.default.publisher(for: SyncService.devicesDidChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { _ in MainActor.assumeIsolated { SyncWorkflowPush.shared.refresh() } }
+            .store(in: &cancellables)
         // Loading or removing a plugin changes the tool list.
         NotificationCenter.default.publisher(for: .toolsListChanged)
             .receive(on: DispatchQueue.main)
@@ -126,6 +148,8 @@ final class SyncManageFeed {
                 let feed = SyncManageFeed.shared
                 feed.subscribe(core)
                 feed.schedulePublish()
+                SyncWorkflowRunsFeed.shared.reset()
+                SyncWorkflowPush.shared.refresh()
             },
             detach: { SyncManageFeed.shared.detach() })
     }
@@ -145,7 +169,11 @@ final class SyncManageFeed {
                     && conversation.tag(SyncConversationMapper.TagKey.device) == me
             }
             guard mine else { return }
-            Task { @MainActor in await SyncManageFeed.shared.applyRequests() }
+            Task { @MainActor in
+                SyncWorkflowPush.shared.refresh()
+                SyncAgentCalls.shared.manageChanged()
+                await SyncManageFeed.shared.applyRequests()
+            }
         }
     }
 
@@ -158,7 +186,10 @@ final class SyncManageFeed {
         agents: [Agent],
         models: [ModelPickerItem],
         workspaceAgents: [SyncDeviceFeedContract.WorkspaceAgent] = [],
-        filters: HistoryFilters = HistoryFilters()
+        filters: HistoryFilters = HistoryFilters(),
+        workflows: [SyncDeviceFeedContract.ManagedWorkflow]? = nil,
+        pushRegistered: [String] = [],
+        call: SyncDeviceFeedContract.CallState? = nil
     ) -> SyncDeviceFeedContract.ManageState {
         let manager = AgentManager.shared
         let listed = agents.filter(SyncHostRunner.canHost).map { agent -> SyncDeviceFeedContract.ManagedAgent in
@@ -185,6 +216,9 @@ final class SyncManageFeed {
             projects: filters.projects,
             plugins: filters.plugins,
             workspaces: filters.workspaces,
+            workflows: workflows,
+            pushRegistered: pushRegistered.isEmpty ? nil : pushRegistered,
+            call: call,
             updatedMs: SyncHostedRunContract.nowMs()
         )
     }
@@ -257,7 +291,10 @@ final class SyncManageFeed {
                 rosters: WorkspaceRosterStore.shared.rosters,
                 localAddresses: Set(agents.compactMap { $0.agentAddress?.lowercased() })
             ),
-            filters: Self.historyFilters()
+            filters: Self.historyFilters(),
+            // The workflow library is its own message now (`manage_workflows`, `SyncManageDetail`).
+            pushRegistered: SyncWorkflowPush.shared.registeredDevices,
+            call: SyncAgentCalls.shared.state
         )
         Task.detached(priority: .utility) {
             do {
@@ -284,6 +321,8 @@ final class SyncManageFeed {
             device: me,
             core: core
         )
+        // Compared as it would be written: a state trimmed to fit still matches what was written.
+        let (state, bytes) = try fitted(state)
         if let existing,
             var current = SyncHostedRunContract.read(
                 SyncDeviceFeedContract.ManageState.self,
@@ -305,9 +344,50 @@ final class SyncManageFeed {
         try core.setConversationAppData(
             scope: scope,
             namespace: SyncDeviceFeedContract.manageStateNamespace,
-            bytes: try SyncHostedRunContract.encode(state)
+            bytes: bytes
         )
         core.syncNow()
+    }
+
+    /// The manage state as written: at most this, under the core's 64 KiB a conversation value
+    /// (past it every publish fails, and the phone gets no manage update at all).
+    nonisolated static let stateLimit = 56 * 1024
+
+    /// `state` encoded under `stateLimit`. Past it, in turn, the lists the phone has elsewhere or
+    /// can do without go: the workflow library (its own message), the chat models (the models
+    /// message), the teammates' agents, then the history filters. The agents, the call and the
+    /// registrations stay; a state still too large is an error, logged, rather than a value the
+    /// core refuses.
+    nonisolated static func fitted(
+        _ state: SyncDeviceFeedContract.ManageState
+    ) throws -> (SyncDeviceFeedContract.ManageState, Data) {
+        var state = state
+        let trims: [(String, (inout SyncDeviceFeedContract.ManageState) -> Void)] = [
+            ("workflows", { $0.workflows = nil }),
+            ("models", { $0.models = [] }),
+            ("workspace agents", { $0.workspaceAgents = [] }),
+            (
+                "history filters",
+                { state in
+                    state.projects = []
+                    state.plugins = []
+                    state.workspaces = []
+                }
+            ),
+        ]
+        var bytes = try SyncHostedRunContract.encode(state)
+        for (name, trim) in trims where bytes.count > stateLimit {
+            trim(&state)
+            bytes = try SyncHostedRunContract.encode(state)
+            log.error(
+                "manage state over \(stateLimit, privacy: .public) bytes: written without \(name, privacy: .public)")
+        }
+        guard bytes.count <= stateLimit else { throw StateTooLarge(bytes: bytes.count) }
+        return (state, bytes)
+    }
+
+    struct StateTooLarge: Error {
+        let bytes: Int
     }
 
     // MARK: - Requests
@@ -349,21 +429,36 @@ final class SyncManageFeed {
             in: conversation,
             writtenByThatDevice: true
         )
+        // Unsigned (written before 0.1.0-beta.6): kept for what a request could do then, as the shared list
+        // below is. Starting a workflow, or sending a run's files, needs a request its device signed.
+        let signed = Set(
+            SyncDeviceFeedContract.perDevice(
+                SyncDeviceFeedContract.ManageRequests.self,
+                prefix: SyncDeviceFeedContract.manageRequestNamespacePrefix,
+                in: conversation,
+                writtenByThatDevice: true,
+                signedOnly: true
+            ).keys)
         for (device, list) in lists.sorted(by: { $0.key < $1.key }) where deviceNames[device] != nil {
+            let requests =
+                signed.contains(device)
+                ? list.requests : list.requests.filter { $0.op != .runWorkflow && $0.op != .workflowOutput }
             let results =
                 SyncHostedRunContract.read(
                     SyncDeviceFeedContract.ManageResults.self,
                     SyncDeviceFeedContract.manageResultNamespace(device: device),
                     from: conversation
                 )?.results ?? [:]
-            sources.append(RequestSource(device: device, requests: list.requests, results: results))
+            sources.append(RequestSource(device: device, requests: requests, results: results))
         }
-        let legacy =
-            SyncHostedRunContract.read(
-                SyncDeviceFeedContract.ManageRequests.self,
-                SyncDeviceFeedContract.manageRequestNamespace,
-                from: conversation
-            )?.requests ?? []
+        // The shared list from before per-device ones has no signer to check, so it keeps only what it
+        // could ask for then: starting a workflow, or sending a run's files, needs a request this
+        // user's own device signed.
+        let legacy = (SyncHostedRunContract.read(
+            SyncDeviceFeedContract.ManageRequests.self,
+            SyncDeviceFeedContract.manageRequestNamespace,
+            from: conversation
+        )?.requests ?? []).filter { $0.op != .runWorkflow && $0.op != .workflowOutput }
         let legacyResults =
             SyncHostedRunContract.read(
                 SyncDeviceFeedContract.ManageResults.self,
@@ -409,8 +504,11 @@ final class SyncManageFeed {
                 }
             )
             applied += outcome.applied
-            guard outcome.results != source.results else { continue }
-            let snapshot = SyncDeviceFeedContract.ManageResults(results: outcome.results)
+            // Fitted to the core's app data cap: one over it failed to write, so it was retried on every
+            // change, forever. The same results always fit the same way, so a fitted record that
+            // is already written isn't written again.
+            let snapshot = SyncDeviceFeedContract.ManageResults(results: outcome.results).fitted()
+            guard snapshot.results != source.results else { continue }
             let namespace = source.resultNamespace
             await Task.detached(priority: .userInitiated) {
                 do {
@@ -605,6 +703,42 @@ final class SyncManageFeed {
             }
         case .contextUsage:
             return await contextUsage(request)
+        case .workflowOutput:
+            let payload: SyncWorkflowOutput.Payload
+            switch SyncWorkflowOutput.payload(runId: request.runId) {
+            case .success(let found): payload = found
+            case .failure(.notFound): return failed("run_not_found", "That run isn't on this Mac any more.")
+            case .failure(.running): return failed("running", "The run hasn't finished yet.")
+            }
+            let written = await Task.detached(priority: .userInitiated) { () -> Bool in
+                defer {
+                    // JSON staged for blobs; the files themselves stay where the run left them.
+                    for blob in payload.blobs where SyncWorkflowOutput.isStaged(blob.path) {
+                        try? FileManager.default.removeItem(atPath: blob.path)
+                    }
+                }
+                do {
+                    try SyncConversationStore.shared.performWrite { core in
+                        try SyncWorkflowOutput.write(payload, core: core)
+                    }
+                    return true
+                } catch {
+                    return false
+                }
+            }.value
+            guard written else { return failed("failed", "The run's output couldn't be sent.") }
+            return answered(["runId": payload.runId])
+        case .runWorkflow:
+            switch SyncWorkflowLibrary.start(workflowId: request.workflowId, values: request.input) {
+            case .success(let runId):
+                return answered(["runId": runId.uuidString.lowercased()])
+            case .failure(.notFound):
+                return failed("workflow_not_found", "That workflow isn't on this Mac.")
+            case .failure(.blocked(let reason)):
+                return failed("needs_setup", "Finish setting it up on your Mac first. \(reason)")
+            case .failure(.invalidInput(let reason)):
+                return failed("invalid_input", reason)
+            }
         default:
             break
         }
@@ -682,7 +816,8 @@ final class SyncManageFeed {
                 } catch {
                     return failed("load_failed", "The model couldn't be loaded on this Mac.")
                 }
-            case .setFavorite, .getModelOptions, .setModelOption, .contextUsage, .unsupported:
+            case .setFavorite, .getModelOptions, .setModelOption, .contextUsage, .runWorkflow, .workflowOutput,
+                .unsupported:
                 return done()
             }
             return done(agentId: agentId)
@@ -712,12 +847,17 @@ final class SyncManageFeed {
         guard let scope = request.scope, !scope.isEmpty else {
             return .init(ok: false, error: "bad_request", message: "Expected scope", doneMs: now)
         }
-        guard let sessionId = SyncConversationStore.shared.sessionId(forScope: scope) else {
+        // Off the main thread (KEEP): both lookups wait on the store's queue and the core's lock.
+        let requested = request.agentId.flatMap(UUID.init(uuidString:))
+        let found = await Task.detached(priority: .userInitiated) { () -> (UUID, UUID?)? in
+            let store = SyncConversationStore.shared
+            guard let sessionId = store.sessionId(forScope: scope) else { return nil }
+            return (sessionId, requested == nil ? store.loadSession(id: sessionId)?.agentId : nil)
+        }.value
+        guard let (sessionId, stored) = found else {
             return .init(ok: false, error: "chat_not_found", message: "That chat isn't on this Mac.", doneMs: now)
         }
-        let agentId =
-            request.agentId.flatMap(UUID.init(uuidString:))
-            ?? SyncConversationStore.shared.loadSession(id: sessionId)?.agentId ?? Agent.defaultId
+        let agentId = requested ?? stored ?? Agent.defaultId
         guard AgentManager.shared.agent(for: agentId) != nil else {
             return .init(ok: false, error: "agent_not_found", message: "That agent isn't on this Mac.", doneMs: now)
         }
@@ -778,4 +918,36 @@ final class SyncManageFeed {
             started = false
         }
     #endif
+}
+
+extension SyncDeviceFeedContract.ManageResults {
+    /// The core refuses one app data value over 64 KiB; a little under, for the encoding's own size.
+    static let maxBytes = 60_000
+
+    /// These results, made to fit `maxBytes`: the oldest lose their `data` first (the iPhone has
+    /// read them), then the oldest go. Deterministic, so the same results always fit the same way.
+    func fitted(maxBytes: Int = Self.maxBytes) -> Self {
+        func fits(_ results: [String: SyncDeviceFeedContract.ManageResult]) -> Bool {
+            ((try? SyncHostedRunContract.encode(Self(v: v, results: results)))?.count ?? .max) <= maxBytes
+        }
+        guard !fits(results) else { return self }
+        var kept = results
+        let oldestFirst = results.sorted { ($0.value.doneMs, $0.key) < ($1.value.doneMs, $1.key) }
+            .map(\.key)
+        for key in oldestFirst where kept[key]?.data != nil {
+            kept[key]?.data = nil
+            if fits(kept) { return Self(v: v, results: kept) }
+        }
+        // Then their messages: a stub of whether it worked still answers the request. Dropped, a request the
+        // Mac had done looked unanswered, and an iPhone asking again (a workflow to run, say) had it done twice.
+        for key in oldestFirst where kept[key]?.message != nil {
+            kept[key]?.message = nil
+            if fits(kept) { return Self(v: v, results: kept) }
+        }
+        for key in oldestFirst {
+            kept[key] = nil
+            if fits(kept) { break }
+        }
+        return Self(v: v, results: kept)
+    }
 }

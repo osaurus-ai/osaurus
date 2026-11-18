@@ -7468,6 +7468,11 @@ final class ChatSession: ObservableObject {
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
+        // A turn from anyone but the host: results kept for this chat may
+        // continue it again (`HostContinuationInbox.maxChain`).
+        if taskIntent != .hostContinuation, let sessionId {
+            HostContinuationInbox.shared.noteTurn(sessionId: sessionId)
+        }
         // Another Mac runs this chat's agent: the turn goes to it. It can't
         // regenerate a turn it already answered.
         if let host = hostDeviceElsewhere {

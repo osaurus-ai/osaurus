@@ -83,6 +83,7 @@ final class AttentionCenter: ObservableObject {
         if let resolver { resolvers[item.id] = resolver }
         let prefs = preferences()
         for channel in channels where channel.supports(item.kind) {
+            guard item.onlyChannels?.contains(channel.id) ?? true else { continue }
             guard prefs.allows(item.kind, on: channel.id), channel.shouldDeliver(item) else { continue }
             channel.deliver(item)
             item.deliveredTo.append(channel.id.rawValue)
@@ -90,7 +91,8 @@ final class AttentionCenter: ObservableObject {
         if !item.deliveredTo.isEmpty { item.deliveredAt = Date() }
         pending.append(item)
         AttentionLog.info(
-            "raised id=\(item.id) kind=\(item.kind.rawValue) channels=\(item.deliveredTo.joined(separator: ","))"
+            "raised id=\(item.id) kind=\(item.kind.rawValue) session=\(item.sessionId?.uuidString ?? "none") "
+                + "channels=\(item.deliveredTo.joined(separator: ","))"
         )
         if let expiresAt = item.expiresAt {
             let id = item.id

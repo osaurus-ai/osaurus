@@ -45,6 +45,9 @@ enum SyncHostedRunContract {
         /// The host's own Default agent. Every Mac has one, so only devices
         /// without agents of their own (an iPhone) offer it.
         var isDefault: Bool?
+        /// The agent's model (`directory_models`), as the manage state's: here too, so a new iPhone can show
+        /// it at once. The manage conversation, with its long history, reaches a new iPhone last.
+        var model: String? = nil
     }
 
     /// Whether the Mac is running, so another device can tell asleep from

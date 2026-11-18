@@ -1432,7 +1432,13 @@ public final class BackgroundTaskManager: ObservableObject {
     /// double-stream into the same `ChatSession`.
     func lookupReattachableSession(for request: DispatchRequest) -> (data: ChatSessionData, live: ChatSession?)? {
         if let id = request.continueSessionId {
-            return lookupContinuedSession(id, agentId: request.agentId, workspace: request.workspaceTarget)
+            return lookupContinuedSession(
+                id,
+                agentId: request.agentId,
+                workspace: request.workspaceTarget,
+                hostContinuation: request.taskIntent == .hostContinuation,
+                bringsHostText: !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
         }
         guard request.reattachSession,
             let key = request.externalSessionKey,
@@ -1505,11 +1511,16 @@ public final class BackgroundTaskManager: ObservableObject {
     }
 
     /// The stored session `id`, when it belongs to `agentId` and nothing else
-    /// is running it.
+    /// is running it. Its latest turn must be the one to answer, unless the
+    /// run is a `.hostContinuation` that brings its own (host text, a
+    /// helper's report, becomes that turn) or picks up after a tool row (a
+    /// parked workflow call whose result has landed).
     private func lookupContinuedSession(
         _ id: UUID,
         agentId: UUID?,
-        workspace: WorkspaceAgentRef? = nil
+        workspace: WorkspaceAgentRef? = nil,
+        hostContinuation: Bool = false,
+        bringsHostText: Bool = false
     ) -> (data: ChatSessionData, live: ChatSession?)? {
         let db = ConversationStores.current
         do { try db.open() } catch {
@@ -1520,6 +1531,7 @@ public final class BackgroundTaskManager: ObservableObject {
             let data = db.loadSession(id: id),
             Self.continues(data, agentId: agentId, workspace: workspace),
             data.turns.last?.role == .user
+                || (hostContinuation && (bringsHostText || data.turns.last?.role == .tool))
         else { return nil }
         let live = ChatWindowManager.shared.session(forSessionId: id)
             ?? LiveChatSessionRegistry.shared.liveSession(for: id)

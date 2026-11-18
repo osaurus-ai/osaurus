@@ -28,13 +28,21 @@ enum AttentionProducers {
         let agentId = ChatExecutionContext.currentAgentId
         let agent = agentId.flatMap { AgentManager.shared.agent(for: $0) }
         let taskId = ChatExecutionContext.currentBackgroundId ?? ChatExecutionContext.currentTaskId
+        // A hidden handoff (the Configurator, say) runs its tools under a
+        // session id of its own ("handoff-…", not a chat), so an item it raised
+        // named no chat, and an iPhone couldn't show it in the chat that asked.
+        // Then the launching chat, bound for the whole turn, is named. A real
+        // chat id (a spawned agent's own chat included) is kept as it was.
+        let chatSessionId =
+            ChatExecutionContext.currentSessionId.flatMap(UUID.init(uuidString:))
+            ?? ChatExecutionContext.currentChatSessionBox?.session?.sessionId
         return AttentionItem(
             id: id,
             kind: kind,
             requester: ChatExecutionContext.currentParticipant,
             agent: agent.map { Participant.agent(name: $0.name, address: $0.agentAddress) },
             agentId: agentId,
-            sessionId: ChatExecutionContext.currentSessionId.flatMap(UUID.init(uuidString:)),
+            sessionId: chatSessionId,
             taskId: taskId,
             turnId: ChatExecutionContext.currentAssistantTurnId,
             title: title,

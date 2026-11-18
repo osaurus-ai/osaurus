@@ -82,6 +82,8 @@ enum SyncRunProgressContract {
         var durationMs: Int?
         /// Bytes of arguments written so far, while `preparing`.
         var argumentBytes: Int?
+        /// The workflow run the call started (`workflow_runs`).
+        var workflow: SyncWorkflowCard?
     }
 
     struct ImageStep: Codable, Equatable, Sendable {
@@ -121,7 +123,9 @@ enum SyncRunProgressContract {
                             failed: failed),
                         icon: icon,
                         state: result == nil ? .running : (failed ? .failed : .done),
-                        durationMs: turn.toolCallDurations[call.id].map { Int(($0 * 1000).rounded()) }
+                        durationMs: turn.toolCallDurations[call.id].map { Int(($0 * 1000).rounded()) },
+                        workflow: SyncWorkflowCards.card(
+                            forCall: call.id, name: call.function.name, result: result)?.settled(by: result)
                     ))
             }
             for artifact in turn.sharedArtifacts where !progress.artifacts.contains(where: { $0.id == artifact.id }) {
@@ -207,7 +211,8 @@ final class SyncRunProgressPublisher {
 
     func update(_ session: ChatSession) {
         guard SyncTurnStreamer.canStream(session), let sessionId = session.sessionId,
-            let scope = SyncConversationStore.shared.scope(forSession: sessionId)
+            // Known scopes only (KEEP): a lookup waits on the core's lock, and this runs on main every tick.
+            let scope = SyncConversationStore.shared.cachedScope(forSession: sessionId)
         else { return }
         let now = SyncHostedRunContract.nowMs()
         guard let progress = SyncRunProgressContract.snapshot(of: session.turns, startedMs: startedMs, nowMs: now)
@@ -219,15 +224,14 @@ final class SyncRunProgressPublisher {
         write(progress, scope: scope, nowMs: now)
     }
 
-    /// The run ended: says so, keeping the final tool and file list.
+    /// The run ended: says so, keeping the final tool and file list. Taken from the turns as they are
+    /// now, not the last write: writes are spaced, and a tool that finished since would still show running.
     func runEnded(_ session: ChatSession) {
-        guard let scope = scope ?? session.sessionId.flatMap(SyncConversationStore.shared.scope(forSession:)),
-            var last = written ?? session.sessionId.flatMap({ _ in
-                SyncRunProgressContract.snapshot(
-                    of: session.turns, startedMs: startedMs, nowMs: SyncHostedRunContract.nowMs())
-            })
+        guard written?.phase != .done,
+            let scope = scope ?? session.sessionId.flatMap(SyncConversationStore.shared.cachedScope(forSession:)),
+            var last = SyncRunProgressContract.snapshot(
+                of: session.turns, startedMs: startedMs, nowMs: SyncHostedRunContract.nowMs()) ?? written
         else { return }
-        guard last.phase != .done else { return }
         last.phase = .done
         last.prefill = nil
         last.image = nil
