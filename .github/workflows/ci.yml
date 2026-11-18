@@ -149,6 +149,16 @@ jobs:
             spm-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
             spm-${{ runner.os }}-${{ env.CACHE_SALT }}-
 
+      # A restore-key hit comes from another dependency graph, and its
+      # workspace-state.json still pins that graph's versions. Resolution
+      # trusts those pins over Package.resolved and checks the new manifests
+      # against the old checkouts (e.g. "enables traits [TTS] on package
+      # 'fluidaudio' that declares no traits"). Without the file it resolves
+      # from Package.resolved, and the cached clones keep that fast.
+      - name: Drop stale SPM resolution state
+        if: ${{ steps.spm-cache.outputs.cache-hit != 'true' }}
+        run: rm -f "$SPM_CACHE/workspace-state.json"
+
       # Third-party compiled output only: the save step at the bottom prunes
       # every first-party (`Osaurus*` / `osaurus*`) build product before
       # saving, so OsaurusCore and its tests always compile from this run's
@@ -797,6 +807,11 @@ jobs:
             statspack-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
             statspack-build-${{ runner.os }}-${{ env.CACHE_SALT }}-
 
+      # Same stale-pin hazard as the SPM cache in build-core-tests.
+      - name: Drop stale SwiftPM resolution state
+        if: ${{ steps.spm-build-cache.outputs.cache-hit != 'true' }}
+        run: rm -f "$SPM_BUILD/workspace-state.json"
+
       - name: Run StatsPack tests
         env:
           DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
@@ -854,6 +869,11 @@ jobs:
           restore-keys: |
             evals-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
             evals-build-${{ runner.os }}-${{ env.CACHE_SALT }}-
+
+      # Same stale-pin hazard as the SPM cache in build-core-tests.
+      - name: Drop stale SwiftPM resolution state
+        if: ${{ steps.spm-build-cache.outputs.cache-hit != 'true' }}
+        run: rm -f "$SPM_BUILD/workspace-state.json"
 
       - name: Run evals harness tests
         env:
