@@ -13,7 +13,10 @@ struct TTSModeSettingsTab: View {
     @Environment(\.settingsLandingPending) private var pendingLanding
     @ObservedObject private var ttsService = TTSService.shared
 
-    @State private var config: TTSConfiguration = .default
+    // Seeded from the store, not `.default`: which cards render (and which
+    // search anchors are hidden) depends on the engine, and a landing scroll
+    // or Advanced expansion is decided against the first render.
+    @State private var config: TTSConfiguration = TTSConfigurationStore.load()
     @State private var hasLoadedSettings = false
     @State private var remoteAPIKey: String = ""
 
