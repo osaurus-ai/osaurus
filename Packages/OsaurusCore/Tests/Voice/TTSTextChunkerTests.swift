@@ -80,4 +80,27 @@ struct TTSTextChunkerTests {
         let chunks = TTSTextChunker.split(text)
         #expect(chunks == ["First short paragraph.", "Second short paragraph."])
     }
+
+    // Chinese and Japanese end sentences with fullwidth marks and no space;
+    // without them a long CJK paste was one chunk however long it ran.
+    @Test("fullwidth sentence marks split CJK text")
+    func cjkTerminatorsSplit() {
+        let sentence = "今天天气很好，我们去公园散步吧。"
+        let text = String(repeating: sentence, count: 30)
+        let chunks = TTSTextChunker.split(text)
+        #expect(chunks.count > 1)
+        for chunk in chunks {
+            #expect(chunk.count <= TTSTextChunker.maxChars)
+            #expect(chunk.hasSuffix("。"))
+        }
+        #expect(chunks.joined() == text)
+    }
+
+    @Test("CJK sentences pack without inserted spaces")
+    func cjkPacksWithoutSpaces() {
+        #expect(TTSTextChunker.split("你好！你好吗？我很好。") == ["你好！你好吗？我很好。"])
+        #expect(TTSTextChunker.split("こんにちは。元気ですか？") == ["こんにちは。元気ですか？"])
+        #expect(TTSTextChunker.split("你好。Hello there.") == ["你好。Hello there."])
+        #expect(TTSTextChunker.split("Hello there. 你好。") == ["Hello there. 你好。"])
+    }
 }

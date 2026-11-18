@@ -480,6 +480,40 @@
         }
       }
     },
+    "American" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amerikanisch"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "미국식"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Американский"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "美式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "美式"
+          }
+        }
+      }
+    },
     "Another loaded model was in the way." : {
 
     },
@@ -519,6 +553,74 @@
     "Available now" : {
 
     },
+    "Brazilian Portuguese" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brasilianisches Portugiesisch"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라질 포르투갈어"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бразильский португальский"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "巴西葡萄牙语"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "巴西葡萄牙語"
+          }
+        }
+      }
+    },
+    "British" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Britisch"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "영국식"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Британский"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "英式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "英式"
+          }
+        }
+      }
+    },
     "Close other apps or unload models, then try again." : {
 
     },
@@ -547,6 +649,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Domain, including subdomains"
+          }
+        }
+      }
+    },
+    "Download the voice model in Voice settings to enable." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lade das Sprachmodell in den Spracheinstellungen, um dies zu aktivieren."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용하려면 음성 설정에서 음성 모델을 다운로드하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чтобы включить, загрузите голосовую модель в настройках голоса."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在语音设置中下载语音模型以启用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在語音設定中下載語音模型以啟用。"
+          }
+        }
+      }
+    },
+    "Each language is its own download with its own voices." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jede Sprache ist ein eigener Download mit eigenen Stimmen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "언어마다 별도로 다운로드하며 음성도 따로 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждый язык загружается отдельно и имеет свои голоса."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每种语言单独下载，并有各自的声音。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每種語言單獨下載，並有各自的聲音。"
           }
         }
       }
@@ -602,6 +772,108 @@
         }
       }
     },
+    "Fast (v3)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schnell (v3)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "빠름(v3)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Быстрый (v3)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快速 (v3)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快速 (v3)"
+          }
+        }
+      }
+    },
+    "Fast (v3) synthesizes quicker but offers fewer voices. Standard has every voice." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schnell (v3) synthetisiert zügiger, bietet aber weniger Stimmen. Standard hat alle Stimmen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "빠름(v3)은 더 빠르게 합성하지만 음성이 적습니다. 표준은 모든 음성을 제공합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Быстрый (v3) синтезирует быстрее, но голосов меньше. В стандартном есть все голоса."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快速 (v3) 合成更快，但声音较少。标准包含所有声音。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快速 (v3) 合成更快，但聲音較少。標準包含所有聲音。"
+          }
+        }
+      }
+    },
+    "female" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "weiblich"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "여성"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "женский"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "女声"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "女聲"
+          }
+        }
+      }
+    },
     "Finish the other work, or let Osaurus swap local models for helpers." : {
 
     },
@@ -613,6 +885,40 @@
     },
     "Freed %@ of cached memory. Trying again…" : {
 
+    },
+    "French" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Französisch"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "프랑스어"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Французский"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "法语"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "法語"
+          }
+        }
+      }
     },
     "Get Raptor 0.7" : {
       "localizations" : {
@@ -676,6 +982,142 @@
         }
       }
     },
+    "Hindi" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hindi"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "힌디어"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Хинди"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "印地语"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "印地語"
+          }
+        }
+      }
+    },
+    "How fast Kokoro speaks. A remote server's speed is in Advanced with its other server fields." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wie schnell Kokoro spricht. Die Geschwindigkeit eines Remote-Servers steht unter Erweitert bei seinen anderen Serverfeldern."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro가 말하는 속도입니다. 원격 서버의 속도는 고급에서 다른 서버 항목과 함께 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скорость речи Kokoro. Скорость удалённого сервера — в «Дополнительно» вместе с другими полями сервера."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro 的语速。远程服务器的速度在“高级”中与其他服务器字段一起。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro 的語速。遠端伺服器的速度在「進階」中與其他伺服器欄位一起。"
+          }
+        }
+      }
+    },
+    "Italian" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Italienisch"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이탈리아어"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Итальянский"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "意大利语"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "義大利語"
+          }
+        }
+      }
+    },
+    "Japanese" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Japanisch"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일본어"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Японский"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "日语"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "日語"
+          }
+        }
+      }
+    },
     "Keep my setup changes nothing. You can add the team later in Settings." : {
       "localizations" : {
         "de" : {
@@ -735,11 +1177,181 @@
     "Kept free for macOS" : {
 
     },
+    "Kokoro Model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro-Modell"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель Kokoro"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro 模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro 模型"
+          }
+        }
+      }
+    },
+    "Kokoro only. Standard has every voice; Fast (v3) is quicker with fewer voices." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur Kokoro. Standard hat alle Stimmen; Schnell (v3) ist zügiger mit weniger Stimmen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro 전용. 표준은 모든 음성을, 빠름(v3)은 더 빠르지만 음성이 적습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только Kokoro. В стандартном есть все голоса; быстрый (v3) быстрее, но голосов меньше."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅限 Kokoro。标准包含所有声音；快速 (v3) 更快但声音较少。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "僅限 Kokoro。標準包含所有聲音；快速 (v3) 更快但聲音較少。"
+          }
+        }
+      }
+    },
     "Limited by" : {
 
     },
     "Loading the model" : {
 
+    },
+    "male" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "männlich"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "남성"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "мужской"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "男声"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "男聲"
+          }
+        }
+      }
+    },
+    "Mandarin" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mandarin"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "중국어"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Китайский"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "普通话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "普通話"
+          }
+        }
+      }
+    },
+    "Mandarin Chinese" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mandarin-Chinesisch"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "중국어(만다린)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Китайский (мандарин)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "普通话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "普通話"
+          }
+        }
+      }
     },
     "Max Tool Attempts sets how many steps one run may take." : {
 
@@ -858,6 +1470,40 @@
     "Normal" : {
 
     },
+    "Not downloaded — about %lld MB" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht geladen – etwa %lld MB"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다운로드되지 않음 — 약 %lld MB"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не загружено — около %lld МБ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未下载 — 约 %lld MB"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未下載 — 約 %lld MB"
+          }
+        }
+      }
+    },
     "Not downloaded — about 530 MB" : {
       "localizations" : {
         "de" : {
@@ -931,6 +1577,108 @@
     },
     "Nothing was changed. Free up memory, then try again." : {
 
+    },
+    "On-Device (Kokoro)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf dem Gerät (Kokoro)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기기 내 (Kokoro)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На устройстве (Kokoro)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本机 (Kokoro)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本機 (Kokoro)"
+          }
+        }
+      }
+    },
+    "On-device Kokoro speaks English, Mandarin, Japanese, Spanish, and French." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro auf dem Gerät spricht Englisch, Mandarin, Japanisch, Spanisch und Französisch."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기기 내 Kokoro는 영어, 중국어, 일본어, 스페인어, 프랑스어를 말합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro на устройстве говорит на английском, китайском, японском, испанском и французском."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本机 Kokoro 支持英语、普通话、日语、西班牙语和法语。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本機 Kokoro 支援英語、普通話、日語、西班牙語和法語。"
+          }
+        }
+      }
+    },
+    "On-device PocketTTS needs no setup. Choose a server to use any OpenAI-compatible speech API." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PocketTTS auf dem Gerät braucht keine Einrichtung. Wähle einen Server, um eine beliebige OpenAI-kompatible Sprach-API zu nutzen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기기 내 PocketTTS는 설정이 필요 없습니다. OpenAI 호환 음성 API를 사용하려면 서버를 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PocketTTS на устройстве не требует настройки. Выберите сервер, чтобы использовать любой OpenAI-совместимый API речи."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本机 PocketTTS 无需设置。选择服务器即可使用任何兼容 OpenAI 的语音 API。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本機 PocketTTS 無需設定。選擇伺服器即可使用任何相容 OpenAI 的語音 API。"
+          }
+        }
+      }
     },
     "Open Setting" : {
 
@@ -1457,6 +2205,40 @@
     "Running a helper" : {
 
     },
+    "Runs on this Mac. Speaks a sentence at a time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Läuft auf diesem Mac. Spricht Satz für Satz."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에서 실행됩니다. 한 문장씩 말합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работает на этом Mac. Произносит текст по предложениям."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在这台 Mac 上运行。逐句朗读。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在這台 Mac 上執行。逐句朗讀。"
+          }
+        }
+      }
+    },
     "Send a message to continue from the last step." : {
 
     },
@@ -1490,6 +2272,74 @@
         }
       }
     },
+    "Spanish" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spanisch"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스페인어"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Испанский"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "西班牙语"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "西班牙語"
+          }
+        }
+      }
+    },
+    "Spanish and French run on Standard only." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spanisch und Französisch laufen nur mit Standard."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스페인어와 프랑스어는 표준에서만 실행됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Испанский и французский работают только в стандартном режиме."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "西班牙语和法语仅支持标准。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "西班牙語和法語僅支援標準。"
+          }
+        }
+      }
+    },
     "Start a new chat, or shorten the input." : {
 
     },
@@ -1515,6 +2365,40 @@
     },
     "Swap Local Models for Subagents lets a helper unload the chat model while it works." : {
 
+    },
+    "The language Kokoro speaks, shown once Advanced → Engine is On-Device (Kokoro). Not the app's display language." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Sprache, die Kokoro spricht; sichtbar, sobald Erweitert → Engine auf „Auf dem Gerät (Kokoro)“ steht. Nicht die Anzeigesprache der App."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro가 말하는 언어로, 고급 → 엔진이 기기 내 (Kokoro)일 때 표시됩니다. 앱 표시 언어가 아닙니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Язык, на котором говорит Kokoro; появляется, когда в «Дополнительно → Движок» выбрано «На устройстве (Kokoro)». Не язык интерфейса."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro 朗读所用的语言，在“高级 → 引擎”设为本机 (Kokoro) 后显示。不是应用的显示语言。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro 朗讀所用的語言，在「進階 → 引擎」設為本機 (Kokoro) 後顯示。不是 App 的顯示語言。"
+          }
+        }
+      }
     },
     "The model needs more memory than Memory Safety allows. Use a smaller model, or change Server → Memory Safety." : {
 
@@ -1549,6 +2433,40 @@
     },
     "The run reached its step limit." : {
 
+    },
+    "The voice replies are read in. Per-agent voices are in each agent's Voice section." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Stimme, in der Antworten vorgelesen werden. Stimmen pro Agent stehen im Abschnitt „Stimme“ des Agenten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "답변을 읽어 주는 음성입니다. 에이전트별 음성은 각 에이전트의 음성 섹션에 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Голос, которым читаются ответы. Голоса отдельных агентов — в разделе «Голос» у каждого агента."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "朗读回复所用的声音。各智能体的声音在其“语音”部分。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "朗讀回覆所用的聲音。各代理的聲音在其「語音」部分。"
+          }
+        }
+      }
     },
     "There wasn't enough free memory to run this." : {
 
@@ -1589,6 +2507,40 @@
     "This usually means the Mac ran out of memory. A smaller model or a shorter context uses less." : {
 
     },
+    "This voice isn't available on the current engine, so the global voice is used." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Stimme ist mit der aktuellen Engine nicht verfügbar, daher wird die globale Stimme verwendet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 음성은 현재 엔진에서 사용할 수 없어 전역 음성을 사용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот голос недоступен в текущем движке, поэтому используется общий голос."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前引擎没有此声音，因此使用全局声音。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前引擎沒有此聲音，因此使用全域聲音。"
+          }
+        }
+      }
+    },
     "Tool Results" : {
       "localizations" : {
         "en" : {
@@ -1614,6 +2566,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Turn filter off"
+          }
+        }
+      }
+    },
+    "unavailable, uses %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nicht verfügbar, verwendet %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용할 수 없음, %@ 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "недоступен, используется %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不可用，改用 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法使用，改用 %@"
           }
         }
       }
@@ -1690,6 +2676,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Values and Domains"
+          }
+        }
+      }
+    },
+    "Voice %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stimme %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "음성 %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Голос %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "声音 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聲音 %@"
           }
         }
       }

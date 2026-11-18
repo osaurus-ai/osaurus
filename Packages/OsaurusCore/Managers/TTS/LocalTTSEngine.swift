@@ -53,16 +53,29 @@ enum LocalTTSEngines {
     /// The engine for `config`, or nil when the configured provider is not on-device.
     static func make(for config: TTSConfiguration) -> (any LocalTTSEngine)? {
         switch config.provider {
-        case .pocketTTS: return PocketTTSEngine()
-        case .openAICompatible: return nil
+        case .pocketTTS:
+            return PocketTTSEngine()
+        case .kokoro:
+            let runtime = KokoroVoiceCatalog.effectiveRuntime(for: config)
+            let voice = KokoroVoiceCatalog.resolveVoice(
+                override: nil, configured: config.kokoroVoice, language: config.kokoroLanguage, runtime: runtime
+            ).voice
+            return KokoroTTSEngine(language: config.kokoroLanguage, runtime: runtime, preloadVoice: voice)
+        case .openAICompatible:
+            return nil
         }
     }
 
     /// `modelId` of the engine `make(for:)` would build, without building it.
     static func modelId(for config: TTSConfiguration) -> String? {
         switch config.provider {
-        case .pocketTTS: return PocketTTSEngine.id
-        case .openAICompatible: return nil
+        case .pocketTTS:
+            return PocketTTSEngine.id
+        case .kokoro:
+            return KokoroTTSEngine.id(
+                language: config.kokoroLanguage, runtime: KokoroVoiceCatalog.effectiveRuntime(for: config))
+        case .openAICompatible:
+            return nil
         }
     }
 

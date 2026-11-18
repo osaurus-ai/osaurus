@@ -528,10 +528,13 @@ public final class TTSService: ObservableObject {
                 // of it. The player node plays the chunks back-to-back, so
                 // prosody stays continuous as long as synthesis keeps up.
                 let chunks = TTSTextChunker.split(text)
+                let sampling =
+                    config.provider == .kokoro
+                    ? "speed=\(String(format: "%.2f", config.kokoroSpeed))"
+                    : "temperature=\(config.temperature.map { String(format: "%.2f", $0) } ?? "default")"
                 TTSDebugLog.log(
                     "playback start id=\(messageId) engine=\(engine.modelId) voice=\(voice) "
-                        + "temperature=\(config.temperature.map { String(format: "%.2f", $0) } ?? "default") "
-                        + "textChars=\(text.count) chunks=\(chunks.count)")
+                        + "\(sampling) textChars=\(text.count) chunks=\(chunks.count)")
                 let playbackStart = Date()
                 for (index, chunk) in chunks.enumerated() {
                     if Task.isCancelled { break }
@@ -657,7 +660,7 @@ public final class TTSService: ObservableObject {
         TTSLogger.service.error(
             "Remote TTS synthesis failed: \(error.localizedDescription, privacy: .public)")
         // Unlike the local path, don't touch `modelState`: that tracks the
-        // PocketTTS download and a network hiccup shouldn't flip it to failed.
+        // on-device model and a network hiccup shouldn't flip it to failed.
         lastRemoteError = error.localizedDescription
         if playingMessageId == messageId {
             stop()
@@ -791,7 +794,7 @@ enum TTSDebugLog {
     }
 }
 
-/// Splits text into utterance-sized chunks for PocketTTS.
+/// Splits text into utterance-sized chunks for the on-device engines.
 ///
 /// PocketTTS carries a continuous decoder state for the length of a single
 /// `synthesizeStreaming` call, and that state drifts audibly on long runs.
@@ -825,10 +828,12 @@ enum TTSTextChunker {
 
         for paragraph in paragraphs(in: text) {
             for sentence in sentences(in: paragraph) {
+                // Chinese and Japanese don't put spaces between sentences.
+                let separator = current.last.map(fullwidthTerminators.contains) == true ? "" : " "
                 if current.isEmpty {
                     current = sentence
-                } else if current.count + 1 + sentence.count <= maxChars {
-                    current += " " + sentence
+                } else if current.count + separator.count + sentence.count <= maxChars {
+                    current += separator + sentence
                 } else {
                     flush()
                     current = sentence
@@ -867,14 +872,20 @@ enum TTSTextChunker {
         return result
     }
 
-    /// Break a single paragraph into sentence-ish spans on `.`, `!`, and `?`,
-    /// keeping the terminating punctuation with its sentence.
+    /// Chinese/Japanese sentence enders: `。`, `！`, `？`.
+    private static let fullwidthTerminators: Set<Character> = ["。", "！", "？"]
+
+    /// Break a single paragraph into sentence-ish spans on `.`, `!`, and `?`
+    /// (and their fullwidth forms), keeping the terminating punctuation with
+    /// its sentence.
     private static func sentences(in paragraph: String) -> [String] {
         var result: [String] = []
         var current = ""
         for character in paragraph {
             current.append(character)
-            if character == "." || character == "!" || character == "?" {
+            if character == "." || character == "!" || character == "?"
+                || fullwidthTerminators.contains(character)
+            {
                 let piece = current.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !piece.isEmpty { result.append(piece) }
                 current = ""

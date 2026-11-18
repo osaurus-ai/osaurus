@@ -2,14 +2,15 @@
 //  TTSModeSettingsTab.swift
 //  osaurus
 //
-//  Settings UI for text-to-speech (PocketTTS).
-//  Toggle TTS, pick voice/temperature, download model, preview.
+//  Settings UI for text-to-speech.
+//  Toggle TTS, choose the engine, download its model, pick a voice, preview.
 //
 
 import SwiftUI
 
 struct TTSModeSettingsTab: View {
     @Environment(\.theme) private var theme
+    @Environment(\.settingsLandingPending) private var pendingLanding
     @ObservedObject private var ttsService = TTSService.shared
 
     @State private var config: TTSConfiguration = .default
@@ -37,6 +38,14 @@ struct TTSModeSettingsTab: View {
         return builtIn
     }
 
+    private var isOnDevice: Bool { config.provider != .openAICompatible }
+
+    private var kokoroRuntime: KokoroRuntime { KokoroVoiceCatalog.effectiveRuntime(for: config) }
+
+    private var kokoroVoiceOptions: [String] {
+        KokoroVoiceCatalog.voices(language: config.kokoroLanguage, runtime: kokoroRuntime)
+    }
+
     private func loadSettings() {
         config = TTSConfigurationStore.load()
         // Keychain reads are blocking XPC; fetch off-main and fill the field
@@ -62,12 +71,16 @@ struct TTSModeSettingsTab: View {
             SettingsPageContent {
                 enableCard
 
-                if config.provider == .pocketTTS {
+                if isOnDevice {
                     modelCard
                 }
 
                 if config.enabled && config.provider == .pocketTTS {
                     voiceCard
+                }
+
+                if config.enabled && config.provider == .kokoro {
+                    kokoroVoiceCard
                 }
 
                 if config.enabled && ttsService.isModelReady {
@@ -88,8 +101,8 @@ struct TTSModeSettingsTab: View {
                 loadSettings()
                 hasLoadedSettings = true
             }
-            // Probe only: loading compiles a ~530 MB CoreML model, which
-            // happens on first speak or from the Load button.
+            // Probe only: loading compiles a Core ML model of up to ~530 MB,
+            // which happens on first speak or from the Load button.
             ttsService.probeModelFiles()
         }
         .onReceive(NotificationCenter.default.publisher(for: .ttsConfigurationChanged)) { _ in
@@ -115,8 +128,11 @@ struct TTSModeSettingsTab: View {
     // MARK: - Model Card
 
     private var modelCard: some View {
-        SettingsSection(title: "PocketTTS Model") {
-            SettingsRow(title: "PocketTTS", description: modelStatusText, verbatimTitle: true, verbatimDescription: true) {
+        SettingsSection(title: config.provider == .kokoro ? "Kokoro Model" : "PocketTTS Model") {
+            SettingsRow(
+                title: config.provider == .kokoro ? "Kokoro-82M" : "PocketTTS",
+                description: modelStatusText, verbatimTitle: true, verbatimDescription: true
+            ) {
                 Image(systemName: modelIconName)
                     .glyphSize(.medium, weight: .medium)
                     .foregroundColor(modelIconColor)
@@ -127,7 +143,57 @@ struct TTSModeSettingsTab: View {
             if case .downloading(let fraction) = ttsService.modelState {
                 downloadProgressBar(fraction: fraction)
             }
+
+            if config.provider == .kokoro {
+                kokoroModelRows
+            }
         }
+    }
+
+    /// Language and runtime pick which Kokoro pack is downloaded and loaded.
+    @ViewBuilder
+    private var kokoroModelRows: some View {
+        SettingsPickerRow(
+            title: "Language",
+            description: "Each language is its own download with its own voices.",
+            anchorId: "voice.tts.kokoro.language",
+            style: .menu,
+            selection: $config.kokoroLanguage,
+            options: KokoroLanguage.allCases.map { .init($0, KokoroVoiceCatalog.displayName(for: $0), verbatim: true) }
+        )
+        .onChange(of: config.kokoroLanguage) { _, language in
+            // Spanish and French have no fast pack; say so by switching the
+            // saved runtime rather than silently running another one.
+            if !language.supportsFastRuntime { config.kokoroRuntime = .standard }
+            keepKokoroVoiceAvailable()
+            saveSettings()
+        }
+
+        SettingsPickerRow(
+            title: "Runtime",
+            description: config.kokoroLanguage.supportsFastRuntime
+                ? "Fast (v3) synthesizes quicker but offers fewer voices. Standard has every voice."
+                : "Spanish and French run on Standard only.",
+            anchorId: "voice.tts.kokoro.runtime",
+            style: .menu,
+            selection: $config.kokoroRuntime,
+            options: [
+                .init(KokoroRuntime.standard, L("Standard")),
+                .init(KokoroRuntime.fast, L("Fast (v3)")),
+            ]
+        )
+        .disabled(!config.kokoroLanguage.supportsFastRuntime)
+        .onChange(of: config.kokoroRuntime) { _, _ in
+            keepKokoroVoiceAvailable()
+            saveSettings()
+        }
+    }
+
+    /// After a language or runtime change, move off a voice the new pack
+    /// doesn't have to that pack's default.
+    private func keepKokoroVoiceAvailable() {
+        guard !KokoroVoiceCatalog.isAvailable(config.kokoroVoice, for: config) else { return }
+        config.kokoroVoice = KokoroVoiceCatalog.defaultVoice(language: config.kokoroLanguage)
     }
 
     @ViewBuilder
@@ -142,15 +208,22 @@ struct TTSModeSettingsTab: View {
     private var modelStatusText: String {
         switch ttsService.modelState {
         case .notReady:
-            return ttsService.modelFilesOnDisk
-                ? L("Downloaded — loads the first time Osaurus speaks")
-                : L("Not downloaded — about 530 MB")
+            guard !ttsService.modelFilesOnDisk else {
+                return L("Downloaded — loads the first time Osaurus speaks")
+            }
+            guard config.provider == .kokoro else { return L("Not downloaded — about 530 MB") }
+            let megabytes = KokoroVoiceCatalog.approximateDownloadMB(
+                language: config.kokoroLanguage, runtime: config.kokoroRuntime)
+            return L("Not downloaded — about \(megabytes) MB")
         case .downloading(let fraction):
             if let fraction {
                 return String(format: "%@ %d%%", L("Downloading"), Int(fraction * 100))
             }
             return L("Preparing…")
-        case .ready: return L("Runs on this Mac. English only. Streams audio as it's synthesized.")
+        case .ready:
+            return config.provider == .kokoro
+                ? L("Runs on this Mac. Speaks a sentence at a time.")
+                : L("Runs on this Mac. English only. Streams audio as it's synthesized.")
         case .failed(let msg): return msg
         }
     }
@@ -244,28 +317,94 @@ struct TTSModeSettingsTab: View {
         return String(format: "%.2f", temperature)
     }
 
+    private var kokoroVoiceCard: some View {
+        SettingsSection(title: "Voice", anchorId: "voice.tts.voice") {
+            SettingsPickerRow(
+                title: "Voice",
+                style: .menu,
+                selection: $config.kokoroVoice,
+                options: kokoroVoiceMenuOptions
+            )
+            .onChange(of: config.kokoroVoice) { _, _ in saveSettings() }
+
+            SettingsSlider(
+                title: "Speed",
+                valueText: String(format: "%.2fx", config.kokoroSpeed),
+                value: $config.kokoroSpeed,
+                range: TTSConfiguration.kokoroSpeedRange,
+                step: 0.05,
+                anchorId: "voice.tts.kokoro.speed"
+            ) { editing in
+                if !editing { saveSettings() }
+            }
+        }
+    }
+
+    /// A saved voice the current pack lacks (e.g. edited by hand) stays
+    /// visible, labelled with the voice playback uses instead.
+    private var kokoroVoiceMenuOptions: [SettingsPickerRow<String>.Option] {
+        let options = kokoroVoiceOptions.map {
+            SettingsPickerRow<String>.Option($0, KokoroVoiceCatalog.displayName(for: $0), verbatim: true)
+        }
+        guard !kokoroVoiceOptions.contains(config.kokoroVoice) else { return options }
+        let fallback = KokoroVoiceCatalog.displayName(
+            for: KokoroVoiceCatalog.defaultVoice(language: config.kokoroLanguage))
+        let label = "\(config.kokoroVoice) — \(L("unavailable, uses \(fallback)"))"
+        return [.init(config.kokoroVoice, label, verbatim: true)] + options
+    }
+
     // MARK: - Advanced (engine + remote server)
 
-    private static let advancedAnchorIds: Set<String> = ["voice.tts.engine", "voice.tts.remote"]
+    private static let kokoroAnchorIds: Set<String> = [
+        "voice.tts.kokoro.language", "voice.tts.kokoro.runtime", "voice.tts.kokoro.speed",
+    ]
+
+    private var advancedAnchorIds: Set<String> {
+        let base: Set<String> = ["voice.tts.engine", "voice.tts.remote"]
+        return config.provider == .kokoro ? base : base.union(Self.kokoroAnchorIds)
+    }
+
+    /// The Kokoro controls only render while Kokoro is the engine; until then
+    /// their search results land on the picker that reveals them.
+    private var hiddenKokoroLanding: String? {
+        guard config.provider != .kokoro, let pendingLanding, Self.kokoroAnchorIds.contains(pendingLanding)
+        else { return nil }
+        return pendingLanding
+    }
+
+    private var engineDescription: String {
+        switch config.provider {
+        case .pocketTTS:
+            return L("On-device PocketTTS needs no setup. Choose a server to use any OpenAI-compatible speech API.")
+        case .kokoro:
+            return L("On-device Kokoro speaks English, Mandarin, Japanese, Spanish, and French.")
+        case .openAICompatible:
+            return L(
+                "Sends text to any server implementing the OpenAI /v1/audio/speech API, such as openai-edge-tts or Kokoro."
+            )
+        }
+    }
 
     private var advancedSection: some View {
-        SettingsAdvancedDisclosure(anchorIds: Self.advancedAnchorIds) {
-            SettingsPickerRow(
-                title: "Engine",
-                description: config.provider == .openAICompatible
-                    ? "Sends text to any server implementing the OpenAI /v1/audio/speech API, such as openai-edge-tts or Kokoro."
-                    : "On-device PocketTTS needs no setup. Choose a server to use any OpenAI-compatible speech API.",
-                anchorId: "voice.tts.engine",
-                style: .menu,
-                selection: $config.provider,
-                options: [
-                    .init(TTSProvider.pocketTTS, L("On-Device (PocketTTS)")),
-                    .init(TTSProvider.openAICompatible, L("OpenAI-Compatible Server")),
-                ]
-            )
-            // The server fields only render for the remote engine; until then
-            // their search result lands on the picker that reveals them.
-            .settingsLandingAnchor(config.provider == .openAICompatible ? nil : "voice.tts.remote")
+        SettingsAdvancedDisclosure(anchorIds: advancedAnchorIds) {
+            VStack(spacing: 0) {
+                SettingsPickerRow(
+                    title: "Engine",
+                    description: engineDescription,
+                    anchorId: "voice.tts.engine",
+                    style: .menu,
+                    selection: $config.provider,
+                    options: [
+                        .init(TTSProvider.pocketTTS, L("On-Device (PocketTTS)")),
+                        .init(TTSProvider.kokoro, L("On-Device (Kokoro)")),
+                        .init(TTSProvider.openAICompatible, L("OpenAI-Compatible Server")),
+                    ]
+                )
+                // The server fields only render for the remote engine; until then
+                // their search result lands on the picker that reveals them.
+                .settingsLandingAnchor(config.provider == .openAICompatible ? nil : "voice.tts.remote")
+            }
+            .settingsLandingAnchor(hiddenKokoroLanding)
 
             if config.provider == .openAICompatible {
                 remoteServerCard

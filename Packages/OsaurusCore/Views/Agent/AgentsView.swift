@@ -6948,6 +6948,7 @@ private struct AgentDetailVoiceSection: View {
     @Binding var autoSpeak: Bool
     @Binding var ttsVoice: String
     let onSave: () -> Void
+    @State private var ttsConfig = TTSConfigurationStore.load()
 
     /// Downloaded is enough: the model loads on first speak, not here.
     private var voiceAvailable: Bool {
@@ -6965,7 +6966,7 @@ private struct AgentDetailVoiceSection: View {
                         Text(
                             voiceAvailable
                                 ? "Read every reply aloud automatically after streaming completes. For on-request only, use the Speak Tool feature instead."
-                                : "Download the PocketTTS model in Voice settings to enable.",
+                                : "Download the voice model in Voice settings to enable.",
                             bundle: .module
                         )
                         .textStyle(.footnote)
@@ -7007,7 +7008,7 @@ private struct AgentDetailVoiceSection: View {
                         Picker("", selection: $ttsVoice) {
                             Text("Default (global)", bundle: .module).tag("")
                             ForEach(agentVoiceOptions, id: \.self) { voice in
-                                Text(PocketTTSVoiceCatalog.displayName(for: voice))
+                                Text(displayName(for: voice))
                                     .tag(voice)
                             }
                         }
@@ -7019,20 +7020,57 @@ private struct AgentDetailVoiceSection: View {
                     }
                     .padding(theme.space.s8)
                     .settingsChrome(.control)
+
+                    if let unavailableVoiceHint {
+                        Text(unavailableVoiceHint)
+                            .textStyle(.footnote)
+                            .foregroundColor(theme.text.tertiary)
+                    }
                 }
             }
         }
         .onAppear { ttsService.probeModelFiles() }
+        .onReceive(NotificationCenter.default.publisher(for: .ttsConfigurationChanged)) { _ in
+            ttsConfig = TTSConfigurationStore.load()
+        }
     }
 
-    /// Built-in catalog plus any stored custom voice (preserves legacy values).
+    /// Voices of the engine that will speak. Kokoro's depend on its language
+    /// and runtime; the remote engine keeps the PocketTTS names it always offered.
+    private var engineVoices: [String] {
+        switch ttsConfig.provider {
+        case .kokoro:
+            return KokoroVoiceCatalog.voices(
+                language: ttsConfig.kokoroLanguage, runtime: KokoroVoiceCatalog.effectiveRuntime(for: ttsConfig))
+        case .pocketTTS, .openAICompatible:
+            return PocketTTSVoiceCatalog.availableVoices
+        }
+    }
+
+    private func displayName(for voice: String) -> String {
+        ttsConfig.provider == .kokoro
+            ? KokoroVoiceCatalog.displayName(for: voice)
+            : PocketTTSVoiceCatalog.displayName(for: voice)
+    }
+
+    /// Engine catalog plus any stored voice it lacks (preserves the choice
+    /// for when the user switches back to the engine that has it).
     private var agentVoiceOptions: [String] {
-        let builtIn = PocketTTSVoiceCatalog.availableVoices
+        let builtIn = engineVoices
         let current = ttsVoice.trimmingCharacters(in: .whitespacesAndNewlines)
         if !current.isEmpty && !builtIn.contains(current) {
             return [current] + builtIn
         }
         return builtIn
+    }
+
+    /// An on-device engine can't speak a voice outside its catalog and uses
+    /// the global voice instead; say so rather than look like it applies.
+    private var unavailableVoiceHint: String? {
+        let current = ttsVoice.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !current.isEmpty, ttsConfig.provider != .openAICompatible, !engineVoices.contains(current)
+        else { return nil }
+        return L("This voice isn't available on the current engine, so the global voice is used.")
     }
 }
 

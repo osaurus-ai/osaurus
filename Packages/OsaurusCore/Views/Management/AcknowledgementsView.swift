@@ -211,6 +211,22 @@ struct AcknowledgementsView: View {
             license: "MIT",
             licenseUrl: "https://huggingface.co/minishlab/potion-base-4M"
         ),
+        Acknowledgement(
+            name: "Kokoro-82M (speech model)",
+            identity: "kokoro-82m",
+            version: "1.0",
+            repository: "https://huggingface.co/hexgrad/Kokoro-82M",
+            license: "Apache 2.0",
+            licenseUrl: "https://huggingface.co/hexgrad/Kokoro-82M"
+        ),
+        Acknowledgement(
+            name: "Misaki (Kokoro G2P lexicons)",
+            identity: "misaki",
+            version: "0.9",
+            repository: "https://github.com/hexgrad/misaki",
+            license: "Apache 2.0",
+            licenseUrl: "https://github.com/hexgrad/misaki/blob/main/LICENSE"
+        ),
     ]
 }
 
