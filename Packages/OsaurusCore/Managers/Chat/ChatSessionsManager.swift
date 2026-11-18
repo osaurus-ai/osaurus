@@ -182,9 +182,9 @@ final class ChatSessionsManager: ObservableObject {
     }
 
     /// Get sessions filtered by agent
-    /// - Parameter agentId: The agent ID to filter by; nil means the Default
-    ///   agent. Untagged chats count as the Default agent's, the same rule the
-    ///   sidebar's `agentHistorySessions` applies, so the two never disagree.
+    /// - Parameter agentId: The agent ID to filter by.
+    ///   When Default agent (or nil) is selected, returns ALL sessions from all agents.
+    ///   Otherwise returns only sessions belonging to the specified agent.
     func sessions(for agentId: UUID?) -> [ChatSessionData] {
         // Chats the user had WITH a workspace teammate's shared agent are
         // keyed by that agent's address (see `sessions(forRemoteAgentAddress:)`),
@@ -196,8 +196,12 @@ final class ChatSessionsManager: ObservableObject {
         let local = sessions.filter {
             !$0.isWorkspaceAgentChat && ($0.hostDevice == nil || $0.hostDevice == me) && $0.servedElsewhere(me: me) == nil
         }
-        let owner = agentId ?? Agent.defaultId
-        return local.filter { ($0.agentId ?? Agent.defaultId) == owner }
+        // When Default agent is selected, show ALL sessions
+        if agentId == nil || agentId == Agent.defaultId {
+            return local
+        }
+        // Otherwise filter by agent
+        return local.filter { $0.agentId == agentId }
     }
 
     /// History with a workspace teammate's shared agent, keyed by its
@@ -243,8 +247,11 @@ final class ChatSessionsManager: ObservableObject {
         Task { await HarnessSessionManager.shared.close(chatId: id) }
     }
 
-    /// Delete every session owned by an agent: those whose `agentId` matches
-    /// (or is nil, for the Default agent's own chats).
+    /// Delete every session owned by an agent. Strict ownership match, unlike
+    /// `sessions(for:)`: the Default agent's "show everything" view must not
+    /// turn a per-agent wipe into an all-agents wipe, so only sessions whose
+    /// `agentId` matches (or is nil, for the Default agent's own chats) are
+    /// removed.
     ///
     /// The in-memory list and selection update synchronously (the UI must
     /// reflect the wipe immediately); the database rows, artifact
