@@ -92,7 +92,7 @@ final class ImageModelDownloadService: ObservableObject {
     /// Hidden marker written into each staged bundle recording the source HF
     /// repo id, so a later re-download knows where to fetch from (installed
     /// bundles otherwise only carry the local directory name).
-    private static let sourceMarkerName = ".osaurus-source"
+    private nonisolated static let sourceMarkerName = ".osaurus-source"
 
     /// Max files staged in parallel. A single HTTPS connection to the HF CDN is
     /// throttled well below a fast link, so serial per-file fetches leave most
@@ -118,19 +118,24 @@ final class ImageModelDownloadService: ObservableObject {
         return FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue
     }
 
-    /// Source HF repo a staged bundle was downloaded from. Reads the hidden
-    /// marker; falls back to a fetched- or curated-catalog entry with the same
-    /// id. `nil` when neither is known (e.g. an old imported bundle), in which
-    /// case re-download is unavailable and only delete is offered.
-    func sourceRepoId(for id: String) -> String? {
+    /// Source HF repo a staged bundle was downloaded from: the hidden marker's
+    /// value (`markedSourceRepoId`), else a fetched- or curated-catalog entry
+    /// with the same id. `nil` when neither is known (e.g. an old imported
+    /// bundle), in which case re-download is unavailable and only delete is
+    /// offered.
+    func sourceRepoId(for id: String, marked: String?) -> String? {
+        marked ?? (fetchedCatalog + Self.curatedCatalog).first { $0.id == id }?.repoId
+    }
+
+    /// The repo id recorded in a bundle's `.osaurus-source` marker. Disk
+    /// read, so callers on the main actor run it detached.
+    nonisolated static func markedSourceRepoId(for id: String) -> String? {
         let marker = ImageGenerationService.imageModelsRoot()
             .appendingPathComponent(id, isDirectory: true)
-            .appendingPathComponent(Self.sourceMarkerName)
-        if let raw = try? String(contentsOf: marker, encoding: .utf8) {
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return trimmed }
-        }
-        return (fetchedCatalog + Self.curatedCatalog).first { $0.id == id }?.repoId
+            .appendingPathComponent(sourceMarkerName)
+        guard let raw = try? String(contentsOf: marker, encoding: .utf8) else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// Best-effort total download size for a catalog repo, mirroring
