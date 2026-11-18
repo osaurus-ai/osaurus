@@ -53,8 +53,13 @@ actor PocketTTSEngine: LocalTTSEngine {
                 }
             }
         )
+        try Task.checkCancellation()
         let mgr = PocketTtsManager(language: Self.language)
         try await mgr.initialize()
+        guard !Task.isCancelled else {
+            await mgr.cleanup()
+            throw CancellationError()
+        }
         manager = mgr
         Self.removeLegacyRootFiles()
     }

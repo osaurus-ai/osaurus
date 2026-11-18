@@ -33,7 +33,10 @@ protocol LocalTTSEngine: Actor {
     /// knows it, else the configured voice, else the model's default.
     nonisolated func resolveVoice(override: String?, config: TTSConfiguration) -> String
 
-    /// Download anything missing and load the model.
+    /// Download anything missing and load the model. A load whose task is
+    /// cancelled throws `CancellationError` and leaves no model resident:
+    /// `unload` can't free a model that is still loading, so the service
+    /// cancels the load instead.
     func load(progress: @escaping LocalTTSLoadProgress) async throws
 
     /// Free the loaded model. The next `load` brings it back.
