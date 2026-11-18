@@ -135,6 +135,7 @@ actor KokoroTTSEngine: LocalTTSEngine {
             // The v3 downloader has no progress callback.
             progress(nil)
         }
+        try Task.checkCancellation()
         progress(nil)
         let mgr = KokoroAneManager(
             variant: variant,
@@ -147,6 +148,10 @@ actor KokoroTTSEngine: LocalTTSEngine {
         // warms Core ML) while the UI still says "loading", instead of
         // stalling the first real sentence.
         _ = try await mgr.synthesizeDetailed(text: language.warmupText, voice: preloadVoice)
+        guard !Task.isCancelled else {
+            await mgr.cleanup()
+            throw CancellationError()
+        }
         manager = mgr
     }
 
@@ -199,6 +204,17 @@ actor KokoroTTSEngine: LocalTTSEngine {
     }
 
     // MARK: - Disk layout
+
+    /// Everything Kokoro downloads, for every language and runtime: the Core
+    /// ML chains and voice packs, and the text frontends (English and
+    /// multilingual G2P, Mandarin and Japanese dictionaries).
+    nonisolated static func downloadDirectories() -> [URL] {
+        guard let models = modelsRoot() else { return [] }
+        return [
+            models.appendingPathComponent("kokoro-82m-coreml", isDirectory: true),
+            models.appendingPathComponent(Repo.kokoro.folderName, isDirectory: true),
+        ]
+    }
 
     /// `~/.cache/fluidaudio/Models`, as FluidAudio resolves it.
     nonisolated private static func modelsRoot() -> URL? {
@@ -298,6 +314,14 @@ public enum KokoroVoiceCatalog {
 
     public static func effectiveRuntime(for config: TTSConfiguration) -> KokoroRuntime {
         effectiveRuntime(language: config.kokoroLanguage, requested: config.kokoroRuntime)
+    }
+
+    /// macOS 26.4 through 26.5.x can segfault in BNNS while Kokoro
+    /// synthesizes, whatever the compute units; Apple fixed it in 26.6.
+    public static func osMayCrashDuringSynthesis(
+        _ version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
+    ) -> Bool {
+        version.majorVersion == 26 && (4 ... 5).contains(version.minorVersion)
     }
 
     /// Voices the language's pack ships for `runtime`. The fast runtime only

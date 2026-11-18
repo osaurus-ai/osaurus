@@ -121,6 +121,20 @@ struct KokoroTTSEngineTests {
             _ = try await engine.synthesize(chunk: "Hello.", voice: "af_heart", config: kokoro(.english))
         }
     }
+
+    @Test("the crash notice covers macOS 26.4 through 26.5.x only")
+    func crashNoticeOSRange() {
+        func affected(_ major: Int, _ minor: Int, _ patch: Int = 0) -> Bool {
+            KokoroVoiceCatalog.osMayCrashDuringSynthesis(
+                OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: patch))
+        }
+        #expect(affected(26, 4))
+        #expect(affected(26, 5, 2))
+        #expect(!affected(26, 3, 1))
+        #expect(!affected(26, 6))
+        #expect(!affected(15, 5))
+        #expect(!affected(27, 0))
+    }
 }
 
 @Suite("Kokoro configuration decoding")

@@ -344,6 +344,74 @@
         }
       }
     },
+    "%@ on disk, for every Kokoro language you've used." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ auf dem Datenträger, für jede verwendete Kokoro-Sprache."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용한 모든 Kokoro 언어가 디스크에서 %@를 차지합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ на диске для всех использованных языков Kokoro."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "占用磁盘空间 %@，包含你用过的所有 Kokoro 语言。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "佔用磁碟空間 %@，包含你用過的所有 Kokoro 語言。"
+          }
+        }
+      }
+    },
+    "%@ on disk." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ auf dem Datenträger."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "디스크에서 %@를 차지합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ на диске."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "占用磁盘空间 %@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "佔用磁碟空間 %@。"
+          }
+        }
+      }
+    },
     "%lld redacted in this conversation" : {
       "localizations" : {
         "en" : {
@@ -418,6 +486,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "-1001234567890 或 @channelname — 每行一個"
+          }
+        }
+      }
+    },
+    "A Core ML bug in these versions can quit Osaurus while Kokoro speaks. Updating to macOS 26.6 or later fixes it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Core-ML-Fehler in diesen Versionen kann Osaurus beenden, während Kokoro spricht. Ein Update auf macOS 26.6 oder neuer behebt ihn."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 버전의 Core ML 버그로 Kokoro가 말하는 동안 Osaurus가 종료될 수 있습니다. macOS 26.6 이상으로 업데이트하면 해결됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Из-за ошибки Core ML в этих версиях Osaurus может закрыться, пока Kokoro говорит. Обновление до macOS 26.6 или новее устраняет её."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这些版本中的 Core ML 错误可能会在 Kokoro 朗读时导致 Osaurus 退出。更新到 macOS 26.6 或更高版本即可修复。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這些版本中的 Core ML 錯誤可能會在 Kokoro 朗讀時導致 Osaurus 結束。更新至 macOS 26.6 或更新版本即可修正。"
           }
         }
       }
@@ -632,6 +734,108 @@
     },
     "Critical" : {
 
+    },
+    "Delete Kokoro Downloads" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro-Downloads löschen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro 다운로드 삭제"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить загрузки Kokoro"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除 Kokoro 下载内容"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除 Kokoro 下載內容"
+          }
+        }
+      }
+    },
+    "Delete Kokoro Downloads?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro-Downloads löschen?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kokoro 다운로드를 삭제할까요?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить загрузки Kokoro?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除 Kokoro 下载内容？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除 Kokoro 下載內容？"
+          }
+        }
+      }
+    },
+    "Delete PocketTTS Model?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PocketTTS-Modell löschen?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PocketTTS 모델을 삭제할까요?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить модель PocketTTS?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除 PocketTTS 模型？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除 PocketTTS 模型？"
+          }
+        }
+      }
     },
     "Domain" : {
       "localizations" : {
@@ -1251,6 +1455,40 @@
     "Loading the model" : {
 
     },
+    "macOS 26.4 and 26.5 can crash Kokoro" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS 26.4 und 26.5 können Kokoro abstürzen lassen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS 26.4 및 26.5에서 Kokoro가 충돌할 수 있음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS 26.4 и 26.5 могут вызывать сбой Kokoro"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS 26.4 和 26.5 可能导致 Kokoro 崩溃"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS 26.4 和 26.5 可能導致 Kokoro 當機"
+          }
+        }
+      }
+    },
     "male" : {
       "localizations" : {
         "de" : {
@@ -1747,6 +1985,74 @@
     },
     "Redact %@" : {
 
+    },
+    "Removes %@ of Kokoro models, voices, and dictionaries for every language. Osaurus downloads the current language again the next time it speaks." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entfernt %@ an Kokoro-Modellen, Stimmen und Wörterbüchern für alle Sprachen. Osaurus lädt die aktuelle Sprache beim nächsten Sprechen erneut herunter."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모든 언어의 Kokoro 모델, 음성, 사전(%@)을 제거합니다. Osaurus는 다음에 말할 때 현재 언어를 다시 다운로드합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаляет %@ моделей, голосов и словарей Kokoro для всех языков. Osaurus снова загрузит текущий язык, когда в следующий раз будет говорить."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除所有语言的 Kokoro 模型、声音和词典，共 %@。Osaurus 下次朗读时会重新下载当前语言。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除所有語言的 Kokoro 模型、聲音和詞典，共 %@。Osaurus 下次朗讀時會重新下載目前語言。"
+          }
+        }
+      }
+    },
+    "Removes the %@ PocketTTS model. Osaurus downloads it again the next time it speaks." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entfernt das PocketTTS-Modell (%@). Osaurus lädt es beim nächsten Sprechen erneut herunter."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PocketTTS 모델(%@)을 제거합니다. Osaurus는 다음에 말할 때 다시 다운로드합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаляет модель PocketTTS (%@). Osaurus снова загрузит её, когда в следующий раз будет говорить."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除 PocketTTS 模型（%@）。Osaurus 下次朗读时会重新下载。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除 PocketTTS 模型（%@）。Osaurus 下次朗讀時會重新下載。"
+          }
+        }
+      }
     },
     "The big new thing in 1.0 is a team. Each teammate handles one part of your Mac, like your calendar, Mail, files, or the web. Ask me anything and I'll pass the job to the right one." : {
       "localizations" : {

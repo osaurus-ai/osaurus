@@ -24,6 +24,7 @@ struct TTSModeSettingsTab: View {
     @State private var connectionTest: ConnectionTestState = .idle
     @State private var previewText: String = "Hello from Osaurus. Text to speech is now ready."
     @State private var previewMessageId = UUID()
+    @State private var showDeleteDownloadsConfirm = false
 
     private func displayName(for voice: String) -> String {
         PocketTTSVoiceCatalog.displayName(for: voice)
@@ -131,7 +132,10 @@ struct TTSModeSettingsTab: View {
         SettingsSection(title: config.provider == .kokoro ? "Kokoro Model" : "PocketTTS Model") {
             SettingsRow(
                 title: config.provider == .kokoro ? "Kokoro-82M" : "PocketTTS",
-                description: modelStatusText, verbatimTitle: true, verbatimDescription: true
+                description: modelStatusText,
+                // With nothing downloaded there's no Downloads row to land on.
+                anchorId: showsDownloadsRow ? nil : "voice.tts.downloads",
+                verbatimTitle: true, verbatimDescription: true
             ) {
                 Image(systemName: modelIconName)
                     .glyphSize(.medium, weight: .medium)
@@ -144,10 +148,70 @@ struct TTSModeSettingsTab: View {
                 downloadProgressBar(fraction: fraction)
             }
 
+            if config.provider == .kokoro && KokoroVoiceCatalog.osMayCrashDuringSynthesis() {
+                InlineBanner(
+                    kind: .warning,
+                    title: L("macOS 26.4 and 26.5 can crash Kokoro"),
+                    caption: L(
+                        "A Core ML bug in these versions can quit Osaurus while Kokoro speaks. Updating to macOS 26.6 or later fixes it."
+                    )
+                )
+            }
+
             if config.provider == .kokoro {
                 kokoroModelRows
             }
+
+            if showsDownloadsRow {
+                downloadsRow
+            }
         }
+        .themedAlert(
+            config.provider == .kokoro ? L("Delete Kokoro Downloads?") : L("Delete PocketTTS Model?"),
+            isPresented: $showDeleteDownloadsConfirm,
+            message: deleteDownloadsMessage,
+            primaryButton: .destructive(L("Delete")) {
+                Task { await ttsService.deleteDownloads() }
+            },
+            secondaryButton: .cancel(L("Cancel"))
+        )
+    }
+
+    private var showsDownloadsRow: Bool {
+        if case .downloading = ttsService.modelState { return false }
+        return ttsService.downloadedBytes > 0 || ttsService.isDeletingDownloads
+    }
+
+    private var downloadedSize: String {
+        ByteCountFormatter.string(fromByteCount: ttsService.downloadedBytes, countStyle: .file)
+    }
+
+    private var downloadsRow: some View {
+        SettingsRow(
+            title: "Downloads",
+            description: config.provider == .kokoro
+                ? L("\(downloadedSize) on disk, for every Kokoro language you've used.")
+                : L("\(downloadedSize) on disk."),
+            anchorId: "voice.tts.downloads",
+            verbatimDescription: true
+        ) {
+            SettingsButton(
+                .destructive,
+                config.provider == .kokoro ? "Delete Kokoro Downloads" : "Delete Model",
+                icon: "trash",
+                isLoading: ttsService.isDeletingDownloads,
+                size: .compact
+            ) { showDeleteDownloadsConfirm = true }
+            .disabled(ttsService.isDeletingDownloads)
+        }
+    }
+
+    private var deleteDownloadsMessage: String {
+        config.provider == .kokoro
+            ? L(
+                "Removes \(downloadedSize) of Kokoro models, voices, and dictionaries for every language. Osaurus downloads the current language again the next time it speaks."
+            )
+            : L("Removes the \(downloadedSize) PocketTTS model. Osaurus downloads it again the next time it speaks.")
     }
 
     /// Language and runtime pick which Kokoro pack is downloaded and loaded.
@@ -259,7 +323,10 @@ struct TTSModeSettingsTab: View {
             SettingsButton(.primary, "Download", icon: "arrow.down") { ttsService.ensureModelLoaded() }
 
         case .downloading:
-            SettingsSpinner()
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner()
+                SettingsButton(.secondary, "Cancel", size: .compact) { ttsService.cancelModelLoad() }
+            }
 
         case .ready:
             StatusChip(L("Ready"), tone: .success, showsDot: true)
@@ -359,16 +426,21 @@ struct TTSModeSettingsTab: View {
         "voice.tts.kokoro.language", "voice.tts.kokoro.runtime", "voice.tts.kokoro.speed",
     ]
 
-    private var advancedAnchorIds: Set<String> {
-        let base: Set<String> = ["voice.tts.engine", "voice.tts.remote"]
-        return config.provider == .kokoro ? base : base.union(Self.kokoroAnchorIds)
+    /// Controls the current engine doesn't render: the Kokoro rows unless
+    /// Kokoro is the engine, and Downloads while a server is.
+    private var hiddenAnchorIds: Set<String> {
+        var ids: Set<String> = config.provider == .kokoro ? [] : Self.kokoroAnchorIds
+        if !isOnDevice { ids.insert("voice.tts.downloads") }
+        return ids
     }
 
-    /// The Kokoro controls only render while Kokoro is the engine; until then
-    /// their search results land on the picker that reveals them.
-    private var hiddenKokoroLanding: String? {
-        guard config.provider != .kokoro, let pendingLanding, Self.kokoroAnchorIds.contains(pendingLanding)
-        else { return nil }
+    private var advancedAnchorIds: Set<String> {
+        hiddenAnchorIds.union(["voice.tts.engine", "voice.tts.remote"])
+    }
+
+    /// Search results for hidden controls land on the picker that reveals them.
+    private var hiddenEngineLanding: String? {
+        guard let pendingLanding, hiddenAnchorIds.contains(pendingLanding) else { return nil }
         return pendingLanding
     }
 
@@ -404,7 +476,7 @@ struct TTSModeSettingsTab: View {
                 // their search result lands on the picker that reveals them.
                 .settingsLandingAnchor(config.provider == .openAICompatible ? nil : "voice.tts.remote")
             }
-            .settingsLandingAnchor(hiddenKokoroLanding)
+            .settingsLandingAnchor(hiddenEngineLanding)
 
             if config.provider == .openAICompatible {
                 remoteServerCard

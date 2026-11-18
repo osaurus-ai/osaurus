@@ -49,7 +49,16 @@ Choosing Spanish or French sets **Runtime** to Standard and disables the picker.
 
 Osaurus links FluidAudio with only its `TTS` trait. The `NemoTextProcessing` trait (NeMo text normalization, a prebuilt Rust library) is off because it can't be linked alongside Osaurus's other Rust code, so Kokoro uses FluidAudio's built-in normalizers for numbers, dates and units.
 
-FluidAudio warns that macOS 26.4 and 26.5 carry an Apple BNNS bug that can intermittently crash Kokoro synthesis ([FluidAudio#844](https://github.com/FluidInference/FluidAudio/issues/844)); macOS 26.6 fixes it.
+FluidAudio warns that macOS 26.4 and 26.5 carry an Apple BNNS bug that can intermittently crash Kokoro synthesis ([FluidAudio#844](https://github.com/FluidInference/FluidAudio/issues/844)); macOS 26.6 fixes it. On those versions the Kokoro Model card shows a warning saying so.
+
+### Cancelling and deleting downloads
+
+While a model downloads or loads, **Cancel** beside the spinner stops it; nothing stays in memory, and the next **Download** resumes partly downloaded files. Once anything is on disk, the model card shows **Downloads** with its size:
+
+- **Delete Kokoro Downloads** removes every Kokoro language and runtime at once (Core ML models, voices, and the text-frontend dictionaries).
+- **Delete Model** (PocketTTS) removes the PocketTTS model.
+
+Both stop playback and free the model first. The next spoken reply downloads the current model again. Osaurus Classic and other copies of Osaurus on the same Mac share FluidAudio's `~/.cache/fluidaudio` folder, so deleting there removes their copy too.
 
 ### OpenAI-Compatible Server
 

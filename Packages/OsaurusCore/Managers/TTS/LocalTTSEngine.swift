@@ -84,6 +84,32 @@ enum LocalTTSEngines {
         make(for: config)?.filesOnDisk() ?? false
     }
 
+    /// Every directory `provider` downloads into, across all the models it
+    /// can load. Empty for remote engines.
+    static func downloadDirectories(for provider: TTSProvider) -> [URL] {
+        switch provider {
+        case .pocketTTS: return PocketTTSEngine.downloadDirectories()
+        case .kokoro: return KokoroTTSEngine.downloadDirectories()
+        case .openAICompatible: return []
+        }
+    }
+
+    /// Bytes allocated on disk under `directories`.
+    static func allocatedBytes(in directories: [URL]) -> Int64 {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .isRegularFileKey]
+        var total: Int64 = 0
+        for directory in directories {
+            guard let walker = fm.enumerator(at: directory, includingPropertiesForKeys: keys) else { continue }
+            for case let url as URL in walker {
+                guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true
+                else { continue }
+                total += Int64(values.totalFileAllocatedSize ?? 0)
+            }
+        }
+        return total
+    }
+
     /// Re-emit an upstream stream as plain sample buffers. Ending the consumer
     /// (cancellation, `break`) cancels the upstream iteration.
     static func samples<Element: Sendable>(

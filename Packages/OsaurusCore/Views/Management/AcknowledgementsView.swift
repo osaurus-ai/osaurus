@@ -227,6 +227,46 @@ struct AcknowledgementsView: View {
             license: "Apache 2.0",
             licenseUrl: "https://github.com/hexgrad/misaki/blob/main/LICENSE"
         ),
+        Acknowledgement(
+            name: "kokoro-coreml (Kokoro Fast v3 generator)",
+            identity: "kokoro-coreml",
+            version: "a3f1ff27",
+            repository: "https://github.com/mattmireles/kokoro-coreml",
+            license: "Apache 2.0",
+            licenseUrl: "https://github.com/mattmireles/kokoro-coreml/blob/main/LICENSE"
+        ),
+        Acknowledgement(
+            name: "unidic-lite (Kokoro Japanese dictionary)",
+            identity: "unidic-lite",
+            version: "2.1.2",
+            repository: "https://github.com/polm/unidic-lite",
+            license: "BSD",
+            licenseUrl: "https://github.com/polm/unidic-lite/blob/master/LICENSE"
+        ),
+        Acknowledgement(
+            name: "cutlet (Kokoro Japanese romanization rules)",
+            identity: "cutlet",
+            version: "",
+            repository: "https://github.com/polm/cutlet",
+            license: "MIT",
+            licenseUrl: "https://github.com/polm/cutlet/blob/master/LICENSE"
+        ),
+        Acknowledgement(
+            name: "ipa-dict (Kokoro Spanish and French lexicons)",
+            identity: "ipa-dict",
+            version: "",
+            repository: "https://github.com/open-dict-data/ipa-dict",
+            license: "MIT",
+            licenseUrl: "https://github.com/open-dict-data/ipa-dict/blob/master/LICENSE"
+        ),
+        Acknowledgement(
+            name: "CharsiuG2P (Kokoro French G2P fallback)",
+            identity: "charsiug2p",
+            version: "",
+            repository: "https://github.com/lingjzhu/CharsiuG2P",
+            license: "MIT",
+            licenseUrl: "https://github.com/lingjzhu/CharsiuG2P/blob/main/LICENSE"
+        ),
     ]
 }
 
@@ -240,7 +280,7 @@ private struct PackageRow: View {
         SettingsRow(
             title: package.name,
             description: package.repository.replacingOccurrences(of: "https://github.com/", with: ""),
-            badge: "v\(package.version)",
+            badge: package.version.isEmpty ? nil : "v\(package.version)",
             verbatimTitle: true,
             verbatimDescription: true
         ) {

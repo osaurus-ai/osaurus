@@ -1553,6 +1553,19 @@ public enum SettingsSearchIndex {
                 "How fast Kokoro speaks. A remote server's speed is in Advanced with its other server fields."
         ),
         .init(
+            id: "voice.tts.downloads",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Downloads",
+            keywords: [
+                "delete kokoro downloads", "delete model", "delete tts model", "remove voice model",
+                "tts disk space", "free up space", "kokoro downloads",
+            ],
+            subTab: "Text To Speech",
+            disambiguation:
+                "Deletes the on-device voice engine's files: every Kokoro language at once, or the PocketTTS model. Shown once something is downloaded."
+        ),
+        .init(
             id: "voice.tts.remote",
             tab: .voice,
             section: "Text to Speech",
