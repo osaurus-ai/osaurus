@@ -120,6 +120,13 @@ struct HarnessRuntimeModelTests {
             manager.effectiveRuntime(for: defaultAgent)
                 == (DefaultAgentConfigurationStore.load().runtime ?? .builtIn)
         )
+
+        let architect = Agent(id: Agent.architectId, name: "Architect", runtime: .harness(UUID()))
+        #expect(manager.effectiveRuntime(for: architect) == manager.effectiveRuntime(for: Agent.architectId))
+        #expect(
+            manager.effectiveRuntime(for: architect)
+                == (ArchitectConfigurationStore.load().runtime ?? .builtIn)
+        )
     }
 
     @Test func agentsWithoutARuntimeKeyStillDecode() throws {
