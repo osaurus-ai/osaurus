@@ -85,6 +85,12 @@ final class InsightsService: ObservableObject {
 
     private let store: ActivityLogStore
     private var storeAvailable = false
+    /// True while the store is being opened (and migrated) off the main
+    /// thread. Rows logged meanwhile are queued in `pendingAppends`.
+    private var storeOpening = false
+    /// Rows logged before the background open finished; appended in order
+    /// once the store is available so they aren't lost from the store.
+    private var pendingAppends: [RequestLog] = []
     private var pagesLoaded = 1
     private var cancellables = Set<AnyCancellable>()
     /// Fired on every append / clear so the dashboard refreshes (debounced).
@@ -113,25 +119,13 @@ final class InsightsService: ObservableObject {
     init(store: ActivityLogStore, openStore: Bool) {
         self.store = store
         if openStore {
-            // Never park the main thread on a key rotation. `store.open()`
-            // waits in `StorageMutationGate.blockingAwaitNotMutating()`, and
-            // the rotation can only finish by hopping onto the main actor
-            // for `endMutating()`, which this thread is holding. Defer the
-            // open until the rotation-complete notification; the hot cache
-            // serves rows in the meantime.
-            if Thread.isMainThread, StorageMutationGate.isRotationInFlight {
-                NotificationCenter.default.publisher(for: StorageMutationGate.didFinishMutatingNotification)
-                    .receive(on: DispatchQueue.main)
-                    .first()
-                    .sink { [weak self] _ in
-                        guard let self, self.openStoreNow() else { return }
-                        self.startRetention()
-                        self.reload()
-                    }
-                    .store(in: &cancellables)
-            } else {
-                openStoreNow()
-            }
+            // Never open the store on the main thread. `store.open()` runs
+            // schema migrations (ALTER TABLE / CREATE INDEX over the whole
+            // activity table) and may wait in
+            // `StorageMutationGate.blockingAwaitNotMutating()` for a key
+            // rotation that can only finish by hopping onto the main actor.
+            // Open off the main thread; the hot cache serves rows meanwhile.
+            openStoreInBackground()
         } else {
             storeAvailable = store.isOpen
         }
@@ -168,24 +162,64 @@ final class InsightsService: ObservableObject {
             }
             .store(in: &cancellables)
 
-        if openStore, storeAvailable {
-            startRetention()
-        }
         reload()
     }
 
-    @discardableResult
-    private func openStoreNow() -> Bool {
-        do {
-            try store.open()
+    /// Opens (and migrates) the store on a background queue, then publishes
+    /// the result on the main actor.
+    private func openStoreInBackground() {
+        guard !storeAvailable, !storeOpening else { return }
+        storeOpening = true
+        let store = self.store
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result: Result<Void, Error> = Result { try store.open() }
+            Task { @MainActor [weak self] in
+                self?.finishOpeningStore(result)
+            }
+        }
+    }
+
+    private func finishOpeningStore(_ result: Result<Void, Error>) {
+        storeOpening = false
+        switch result {
+        case .success:
             storeAvailable = true
             storeError = nil
-        } catch {
+            let pending = pendingAppends
+            pendingAppends.removeAll()
+            appendToStore(pending)
+            startRetention()
+            reload()
+        case .failure(let error):
             storeAvailable = false
+            pendingAppends.removeAll()
             storeError = error.localizedDescription
             NSLog("[Osaurus][Insights] activity log unavailable: %@", "\(error)")
         }
-        return storeAvailable
+    }
+
+    /// Appends rows to the store in order off the main thread, swapping the
+    /// hot-cache entries for their chained copies.
+    private func appendToStore(_ records: [RequestLog]) {
+        guard !records.isEmpty else { return }
+        let store = self.store
+        Task.detached(priority: .utility) { [weak self] in
+            for record in records {
+                do {
+                    let chained = try store.append(record)
+                    await MainActor.run { [weak self] in
+                        guard let self else { return }
+                        if let index = self.logs.firstIndex(where: { $0.id == chained.id }) {
+                            self.logs[index] = chained
+                        }
+                        self.changed.send()
+                    }
+                } catch {
+                    NSLog("[Osaurus][Insights] append failed: %@", "\(error)")
+                    await MainActor.run { [weak self] in self?.storeError = error.localizedDescription }
+                }
+            }
+        }
     }
 
     private func startRetention() {
@@ -211,25 +245,13 @@ final class InsightsService: ObservableObject {
         hasLogs = true
 
         guard storeAvailable else {
+            if storeOpening {
+                pendingAppends.append(record)
+            }
             changed.send()
             return
         }
-        let store = self.store
-        Task.detached(priority: .utility) { [weak self] in
-            do {
-                let chained = try store.append(record)
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    if let index = self.logs.firstIndex(where: { $0.id == chained.id }) {
-                        self.logs[index] = chained
-                    }
-                    self.changed.send()
-                }
-            } catch {
-                NSLog("[Osaurus][Insights] append failed: %@", "\(error)")
-                await MainActor.run { [weak self] in self?.storeError = error.localizedDescription }
-            }
-        }
+        appendToStore([record])
     }
 
     /// Remove every row (store + hot cache). The store records a tombstone.
@@ -242,6 +264,7 @@ final class InsightsService: ObservableObject {
         summary = .empty
         totalRequestCount = 0
         hasLogs = false
+        pendingAppends.removeAll()
         guard storeAvailable else { return }
         let store = self.store
         Task.detached(priority: .utility) { [weak self] in
