@@ -63,6 +63,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `agent_calls` | Agents calling the user back: PushKit grants in push registrations, `call-answer/1`, `call` in the manage state (§5.7) |
 | `workflow_step_details` | `steps` on every `workflow_outputs` message, an empty list for a run without any (§5.5) |
 | `manage_workflows` | the workflow library is a message in the manage conversation, not in the manage state, which a large library took past 64 KiB (§5.4) |
+| `workflow_live_steps` | `workflowOutput` with `partial` answers for a run still going, with its finished steps' details (§5.5) |
 | `workflow_file_inputs` | `runWorkflow` takes `files` the phone attached, and fills file and folder fields from the last run (`lastUsed`) (§5.4) |
 | `directory_models` | each directory entry carries the agent's `model`, and the agent directory conversation carries the models message (§5.2) too, so a new iPhone has both before the manage conversation arrives |
 
@@ -888,6 +889,11 @@ device pinned it, and removed when it's unpinned.
   without it was written before: the iPhone asks again, and the Mac rewrites it.
 - A file over 10 MiB, or past 32 MiB for the run, is listed with `skipped: "tooLarge"`. A file that
   is gone is listed with `skipped: "missing"`.
+- `partial: true` (`workflow_live_steps`) answers for a run still going too, where it would otherwise fail
+  with `running`. The message then has the run's `status` (`running` or `awaiting_user`), no `output` or
+  `files` (they aren't final), and in `steps` the details of finished steps only: one not finished yet is
+  `{ "id": "…", "pending": true }`. Ask again as more steps finish; each answer replaces the message. Once the
+  run has ended, ask without `partial` for its output and files.
 - The same run's message is replaced only when its digest changes, the old one removed only once the new
   one is written. The Mac keeps the last 10 of these messages.
 - Each file is copied for its blob from the descriptor its checks were made on: a plain file, never a
