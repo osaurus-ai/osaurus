@@ -452,6 +452,12 @@
         }
       }
     },
+    "Another loaded model was in the way." : {
+
+    },
+    "Another model in the way" : {
+
+    },
     "Ask about %@ again" : {
       "localizations" : {
         "en" : {
@@ -482,6 +488,21 @@
         }
       }
     },
+    "Available now" : {
+
+    },
+    "Close other apps or unload models, then try again." : {
+
+    },
+    "Continue to pick up where it stopped, or raise Max Tokens for longer replies." : {
+
+    },
+    "Continuous Batching is off" : {
+
+    },
+    "Critical" : {
+
+    },
     "Domain" : {
       "localizations" : {
         "en" : {
@@ -502,6 +523,9 @@
         }
       }
     },
+    "Elevated" : {
+
+    },
     "Exact value" : {
       "localizations" : {
         "en" : {
@@ -521,6 +545,75 @@
           }
         }
       }
+    },
+    "Finish the other work, or let Osaurus swap local models for helpers." : {
+
+    },
+    "Free memory" : {
+
+    },
+    "Free Up Memory" : {
+
+    },
+    "Freed %@ of cached memory. Trying again…" : {
+
+    },
+    "Kept free for macOS" : {
+
+    },
+    "Limited by" : {
+
+    },
+    "Loading the model" : {
+
+    },
+    "Max Tool Attempts sets how many steps one run may take." : {
+
+    },
+    "Memory estimate unavailable" : {
+
+    },
+    "Memory pressure" : {
+
+    },
+    "Memory Safety sets how much memory a model may load into." : {
+
+    },
+    "Memory Safety stopped the load" : {
+
+    },
+    "Memory Safety stopped the model from loading." : {
+
+    },
+    "Model busy" : {
+
+    },
+    "Model busy with other runs" : {
+
+    },
+    "Needed" : {
+
+    },
+    "Needed for this run" : {
+
+    },
+    "Normal" : {
+
+    },
+    "Not enough memory" : {
+
+    },
+    "Nothing was changed. Free up memory, then try again." : {
+
+    },
+    "Open Setting" : {
+
+    },
+    "Osaurus quit unexpectedly while a local model was working." : {
+
+    },
+    "Parallel helper limit" : {
+
     },
     "Redact %@" : {
 
@@ -785,6 +878,12 @@
         }
       }
     },
+    "Released cached memory. Trying again…" : {
+
+    },
+    "Releases cached memory, then tries again." : {
+
+    },
     "Replaces names, emails, links, and other personal data with placeholders before a request reaches a cloud provider. Local models (MLX, Foundation) and on-device tools bypass the filter." : {
       "localizations" : {
         "en" : {
@@ -804,6 +903,12 @@
           }
         }
       }
+    },
+    "Running a helper" : {
+
+    },
+    "Send a message to continue from the last step." : {
+
     },
     "Sent as written" : {
       "localizations" : {
@@ -835,6 +940,9 @@
         }
       }
     },
+    "Start a new chat, or shorten the input." : {
+
+    },
     "Stop redacting" : {
       "localizations" : {
         "en" : {
@@ -855,6 +963,27 @@
         }
       }
     },
+    "Swap Local Models for Subagents lets a helper unload the chat model while it works." : {
+
+    },
+    "The model needs more memory than Memory Safety allows. Use a smaller model, or change Server → Memory Safety." : {
+
+    },
+    "The model needs more memory than the Memory Safety budget allows." : {
+
+    },
+    "The model ran out of memory." : {
+
+    },
+    "The model returned an empty reply." : {
+
+    },
+    "The model stopped inside its reasoning without finishing a reply." : {
+
+    },
+    "The model was busy with other work." : {
+
+    },
     "The model's earlier replies and tool arguments. They only repeat text the model already received, so they're redacted without asking by default." : {
       "localizations" : {
         "en" : {
@@ -864,6 +993,15 @@
           }
         }
       }
+    },
+    "The reply reached its output limit before it finished." : {
+
+    },
+    "The run reached its step limit." : {
+
+    },
+    "There wasn't enough free memory to run this." : {
+
     },
     "These items will be replaced with placeholders before your message goes to %@. Your choices apply to the rest of this conversation." : {
       "localizations" : {
@@ -895,6 +1033,12 @@
         }
       }
     },
+    "This conversation no longer fits in the model's context." : {
+
+    },
+    "This usually means the Mac ran out of memory. A smaller model or a shorter context uses less." : {
+
+    },
     "Tool Results" : {
       "localizations" : {
         "en" : {
@@ -904,6 +1048,15 @@
           }
         }
       }
+    },
+    "Try again in a moment." : {
+
+    },
+    "Try again, or rephrase the request." : {
+
+    },
+    "Try again, or turn off Thinking for this request." : {
+
     },
     "Turn filter off" : {
       "localizations" : {
@@ -924,6 +1077,18 @@
           }
         }
       }
+    },
+    "Unfinished to-dos" : {
+
+    },
+    "Unloaded %@ and freed %@. Trying again…" : {
+
+    },
+    "Unloaded %@. Trying again…" : {
+
+    },
+    "Unloads %@ and releases cached memory, then tries again." : {
+
     },
     "Use Default (%@)" : {
       "localizations" : {
@@ -964,6 +1129,12 @@
           }
         }
       }
+    },
+    "Writing a reply" : {
+
+    },
+    "Your Context Window Cap, not the model's own window, set this limit." : {
+
     },
     "—" : {
       "comment" : "A placeholder text to indicate missing data.",

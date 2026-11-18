@@ -122,6 +122,27 @@ enum FeatureTelemetry {
         )
     }
 
+    /// A chat run ended without an answer: closed tokens only, never the
+    /// model, the content, or byte counts (`total_memory_gb` already rides on
+    /// every event). `phase` is set only for an interrupted run.
+    static func runOutcome(
+        _ outcome: ChatRunOutcome, local: Bool, phase: String? = nil, service: TelemetryService = .shared
+    ) {
+        var props: [String: Value] = [
+            "kind": outcome.kind.rawValue, "cause": outcome.cause.rawValue, "local": local,
+        ]
+        if let pressure = outcome.memoryPressure { props["pressure"] = pressure }
+        if !outcome.limitedBy.isEmpty { props["limited_by"] = outcome.limitedBy.sorted().joined(separator: ",") }
+        if let phase { props["phase"] = phase }
+        service.track("run_outcome", props)
+    }
+
+    /// The person used a run notice's remedy: `try_again`, `free_up_memory`,
+    /// `open_setting`, or `continue`.
+    static func runOutcomeRemedy(kind: String, remedy: String, service: TelemetryService = .shared) {
+        service.track("run_outcome_remedy", ["kind": kind, "remedy": remedy])
+    }
+
     // The `service` parameter defaults to the shared instance for app use;
     // tests inject a recording service to assert the exact event name and
     // properties each KPI moment produces.

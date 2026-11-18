@@ -1032,10 +1032,7 @@ struct SubagentSessionAdmissionTests {
         let envelope = await task.value
         let snapshot = probe.snapshot()
         #expect(ToolEnvelope.isError(envelope))
-        #expect(
-            ToolEnvelope.failureMessage(envelope)
-                .localizedCaseInsensitiveContains("RAM-safety")
-        )
+        #expect(ChatRunOutcome.classify(envelope: envelope)?.kind == .memoryRefused)
         #expect(snapshot.refreshes == 1)
         #expect(snapshot.runs == 0)
         #expect(snapshot.handoffPlans.isEmpty)

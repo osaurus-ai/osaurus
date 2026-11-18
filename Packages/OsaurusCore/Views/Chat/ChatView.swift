@@ -314,6 +314,10 @@ final class ChatSession: ObservableObject {
 
     @Published var lastStreamError: String?
     var delegatedToolFailure = DelegatedToolFailureState()
+    /// The classified terminal tool failure of the active run, read when the
+    /// loop closes the turn on it.
+    private var terminalToolOutcome: (runId: UUID, outcome: ChatRunOutcome)?
+    private var inFlightMarkerId: UUID?
 
     /// Set when an Osaurus Router send fails because the account is out of
     /// credits (HTTP 402 INSUFFICIENT_FUNDS). Drives the "out of credits"
@@ -4400,9 +4404,11 @@ final class ChatSession: ObservableObject {
         frozenScreenContext = nil
         cachedScreenContextTokens = 0
         isScreenContextFrozen = false
+        let showsInterruptedRun = applyInterruptedRunNotice(sessionId: data.id)
         suppressVisibleBlockRebuild = false
         rebuildVisibleBlocks()
         warmupController.reset()
+        if showsInterruptedRun { save() }
 
         // Workflow calls this chat was waiting on when it was last saved
         // (the runs resume on relaunch); any that ended land now.
@@ -4843,6 +4849,58 @@ final class ChatSession: ObservableObject {
         send("", taskIntent: .hostContinuation)
     }
 
+    /// Close the chat whose local model work was cut off by the app ending,
+    /// once: on its unfinished reply, or on a new reply after the request.
+    private func applyInterruptedRunNotice(sessionId: UUID) -> Bool {
+        guard let entry = InFlightRunMarker.shared.claimInterrupted(sessionId: sessionId.uuidString)
+        else { return false }
+        let outcome = ChatRunOutcome(interrupted: entry)
+        let closing: ChatTurn
+        if let last = turns.last, last.role == .assistant, last.runOutcome == nil {
+            closing = last
+        } else {
+            closing = ChatTurn(role: .assistant, content: "")
+            turns.append(closing)
+        }
+        closing.content = outcome.contentAppendingTitle(closing.content)
+        closing.runOutcome = outcome
+        return true
+    }
+
+    /// The turn Regenerate starts from for `turnId`. A notice that closed a
+    /// run on a failed tool call reruns the step that made the call, so the
+    /// model does not resume from the failure it was told not to retry.
+    func regenerationTarget(for turnId: UUID) -> UUID {
+        guard let index = turns.firstIndex(where: { $0.id == turnId }), turns[index].runOutcome != nil,
+            (turns[index].toolCalls ?? []).isEmpty
+        else { return turnId }
+        var previous = index - 1
+        while previous >= 0, turns[previous].role == .tool { previous -= 1 }
+        guard previous >= 0, turns[previous].role == .assistant,
+            let calls = turns[previous].toolCalls,
+            calls.contains(where: { turns[previous].toolResults[$0.id].map(ToolEnvelope.isError) ?? false })
+        else { return turnId }
+        return turns[previous].id
+    }
+
+    /// Close `turn` on `outcome`: the outcome sentence after any partial
+    /// reply (what a later turn reads), the live details for the notice, and
+    /// one content-free telemetry event.
+    private func close(_ turn: ChatTurn, on outcome: ChatRunOutcome, model: String?, isRemote: Bool) async {
+        var outcome = outcome
+        if outcome.cause == .memory {
+            outcome.freeableModels = await ModelRuntime.shared.unusedResidentModelNames(keeping: model)
+            outcome.hasReclaimableCache = await ModelRuntime.shared.reclaimableCacheBytes() > 0
+        }
+        turn.pendingToolName = nil
+        turn.clearPendingToolArgs()
+        turn.content = outcome.contentAppendingTitle(turn.content)
+        turn.runOutcome = outcome
+        let local = !isRemote && model.map { ModelManager.findInstalledModelFromCache(named: $0) != nil } == true
+        FeatureTelemetry.runOutcome(outcome, local: local)
+        rebuildVisibleBlocks()
+    }
+
     // MARK: - Share Artifact Processing
 
     /// Process share_artifact tool results in chat context.
@@ -5231,6 +5289,15 @@ final class ChatSession: ObservableObject {
 
     private func beginRun(_ runId: UUID, context: RunContext) {
         delegatedToolFailure.begin(runID: runId)
+        terminalToolOutcome = nil
+        InFlightRunMarker.shared.end(inFlightMarkerId)
+        inFlightMarkerId = nil
+        if !isRemoteAgentTarget, let model = selectedModel,
+            ModelManager.findInstalledModelFromCache(named: model) != nil
+        {
+            inFlightMarkerId = InFlightRunMarker.shared.begin(
+                .generation, model: model, sessionId: sessionId?.uuidString)
+        }
         activeRunId = runId
         activeRunContext = context
         // An interactive turn holds a foreground reservation so queued
@@ -5289,6 +5356,8 @@ final class ChatSession: ObservableObject {
         let hadLiveRun = isStreaming || currentTask != nil
         currentTask = nil
         isStreaming = false
+        InFlightRunMarker.shared.end(inFlightMarkerId)
+        inFlightMarkerId = nil
         ForegroundReservationCenter.shared.release(foregroundReservation)
         foregroundReservation = nil
         // The run ended; background workers it launched now outlive it on
@@ -5967,6 +6036,8 @@ final class ChatSession: ObservableObject {
         }
 
         delegatedToolFailure.finish(runID: runId)
+        InFlightRunMarker.shared.end(inFlightMarkerId)
+        inFlightMarkerId = nil
         let context = activeRunContext
         let runCompletedCleanly = !stopRequested && lastStreamError == nil
 
@@ -9819,12 +9890,19 @@ final class ChatSession: ObservableObject {
                             // malformed call cannot leave a tool card spinning.
                             assistantTurn.pendingToolName = nil
                             assistantTurn.clearPendingToolArgs()
+                            if let outcome = ChatRunOutcome.classify(
+                                loopFallback: text, architect: effectiveAgentId == Agent.architectId)
+                            {
+                                await self.close(
+                                    assistantTurn, on: outcome, model: turnModelId,
+                                    isRemote: self.isRemoteAgentTarget)
+                                return
+                            }
                             if text == AgentToolLoop.lengthExhaustedFallback {
                                 assistantTurn.content =
                                     AgentLoopModelStep.contentWithLengthFallback(
                                         assistantTurn.content,
-                                        fallback: effectiveAgentId == Agent.architectId
-                                            ? ArchitectConfiguration.outputLimitMessage : text
+                                        fallback: ArchitectConfiguration.outputLimitMessage
                                     )
                             } else {
                                 assistantTurn.appendContentAndNotify(text)
@@ -9838,6 +9916,12 @@ final class ChatSession: ObservableObject {
                             // result. Close that stopped turn visibly with the
                             // canonical envelope message instead of leaving a
                             // blank assistant bubble / eternal-looking task.
+                            if let stored = self.terminalToolOutcome, stored.runId == runId {
+                                await self.close(
+                                    assistantTurn, on: stored.outcome, model: turnModelId,
+                                    isRemote: self.isRemoteAgentTarget)
+                                return
+                            }
                             assistantTurn.pendingToolName = nil
                             assistantTurn.clearPendingToolArgs()
                             let prefix = L("The requested action was not completed.")
@@ -9888,6 +9972,7 @@ final class ChatSession: ObservableObject {
                     loopHooks.recordTerminalToolRejection = { [weak self] envelope in
                         guard let self, self.activeRunId == runId else { return }
                         self.delegatedToolFailure.record(envelope, runID: runId)
+                        self.terminalToolOutcome = ChatRunOutcome.classify(envelope: envelope).map { (runId, $0) }
                     }
                     // What this run may execute, read live: the driver folds
                     // `osaurus_help!!` onto `osaurus_help` only when the
@@ -9979,9 +10064,11 @@ final class ChatSession: ObservableObject {
                         }
                         let overBudgetText = AgentToolLoop.overBudgetMessage(
                             windowSource: overBudgetWindowSource)
-                        assistantTurn.content = overBudgetText
+                        var outcome = ChatRunOutcome(kind: .contextTooLong)
+                        outcome.contextLimitedByCap = overBudgetWindowSource == .userCap
+                        assistantTurn.content = ""
+                        await close(assistantTurn, on: outcome, model: turnModelId, isRemote: isRemoteAgentTarget)
                         lastStreamError = overBudgetText
-                        rebuildVisibleBlocks()
                     }
 
                     if runResult.exit == .lengthExhausted {
@@ -10011,12 +10098,9 @@ final class ChatSession: ObservableObject {
                         // bounded retry failed (or visible partial content made
                         // replay unsafe), then keep cleanup from warming or
                         // announcing this as a completed task.
-                        assistantTurn.content =
-                            AgentLoopModelStep.contentWithLengthFallback(
-                                assistantTurn.content,
-                                fallback: AgentToolLoop.incompleteReasoningFallback
-                            )
-                        rebuildVisibleBlocks()
+                        await close(
+                            assistantTurn, on: ChatRunOutcome(kind: .reasoningOnly), model: turnModelId,
+                            isRemote: isRemoteAgentTarget)
                         lastStreamError = AgentToolLoop.incompleteReasoningFallback
                     }
 
@@ -10138,9 +10222,13 @@ final class ChatSession: ObservableObject {
                             let message = AgentToolLoop.unfinishedTodoCapFallback(
                                 pending: pending
                             )
-                            assistantTurn.content = message
+                            var outcome = ChatRunOutcome(kind: .stepLimit)
+                            outcome.facts = [
+                                ChatRunOutcome.Fact(label: L("Unfinished to-dos"), value: String(pending))
+                            ]
+                            assistantTurn.content = ""
+                            await close(assistantTurn, on: outcome, model: turnModelId, isRemote: isRemoteAgentTarget)
                             lastStreamError = message
-                            rebuildVisibleBlocks()
                         } else {
                             await streamToolFreeWrapUp(
                                 notice: AgentToolLoop.iterationCapWrapUpNotice,
@@ -10223,6 +10311,11 @@ final class ChatSession: ObservableObject {
                     assistantTurn.content = privacyFilterMessage
                     lastStreamError = privacyFilterMessage
                 } catch {
+                    if let outcome = ChatRunOutcome.classify(error: error) {
+                        await close(assistantTurn, on: outcome, model: turnModelId, isRemote: isRemoteAgentTarget)
+                        lastStreamError = error.localizedDescription
+                        return
+                    }
                     let errorMessage = ChatErrorMessages.assistantMessage(for: error)
                     // Preserve any text the model already streamed before the
                     // failure (common when a remote agent disconnects
@@ -13383,7 +13476,7 @@ extension ChatView {
 
     /// Stable callback for regenerate action - prevents closure recreation
     private func regenerateTurn(turnId: UUID) {
-        session.regenerate(turnId: turnId)
+        session.regenerate(turnId: session.regenerationTarget(for: turnId))
     }
 
     /// Read the assistant turn aloud via PocketTTS. If the model isn't downloaded,

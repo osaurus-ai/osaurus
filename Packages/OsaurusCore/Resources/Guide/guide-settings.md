@@ -163,7 +163,12 @@ invoking model.
 Settings → Agents → Delegation → **Local Models & Memory** → **Check Memory Before Delegating**
 is one shared setting for the Orchestrator and all custom agents, not a per-agent override.
 It defaults to On. It budgets child state, reuses already-resident weights, and can
-split a batch or refuse a child under low headroom or elevated memory pressure.
+split a batch or refuse a child under low headroom or critical memory pressure.
+When the child's model is already loaded and its full context doesn't fit, the
+child gets a shorter context that does, down to a floor; under elevated pressure
+the cold-load reserve stays charged, so that context is shorter than at normal
+pressure. A refused child ends the reply with a notice offering **Try Again**,
+**Free Up Memory** and a link to this setting (see Chat → Run notices).
 Reclamation waits for active GPU work to drain and then takes a fresh host sample;
 another delay cannot guarantee that the OS pressure or available bytes will change.
 

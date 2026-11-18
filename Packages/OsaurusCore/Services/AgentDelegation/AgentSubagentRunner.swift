@@ -48,6 +48,9 @@ struct AgentSubagentUsage: Sendable {
     /// Completion tokens summed across steps. Authoritative (completion event)
     /// when the runtime reports them, estimator fallback otherwise.
     var completionTokens: Int = 0
+    /// The largest single step's completion tokens: what a per-step
+    /// response ceiling has to leave room for.
+    var maxStepCompletionTokens: Int = 0
     /// Decode speed of the last step that reported one (tok/s).
     var tokensPerSecond: Double?
 }
@@ -316,6 +319,7 @@ enum AgentSubagentRunner {
                         + TokenEstimator.estimate(outcome.reasoning)
                 }
                 usage.completionTokens += stepCompletion
+                usage.maxStepCompletionTokens = max(usage.maxStepCompletionTokens, stepCompletion)
                 usage.tokensPerSecond =
                     resolvedTokensPerSecond(
                         reported: outcome.tokensPerSecond,

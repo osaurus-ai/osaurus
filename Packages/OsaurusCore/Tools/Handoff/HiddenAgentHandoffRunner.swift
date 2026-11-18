@@ -325,7 +325,7 @@ final class HiddenAgentHandoffKind: SubagentKind, SubagentPostAdmissionResidency
         let result = try await AgentSubagentRunner.run(
             modelName: resolved.name,
             seedMessages: seedMessages,
-            maxTokens: nil,
+            maxTokens: runContract?.responseTokens,
             admissionPositionLimit: runContract?.contextPositions,
             maxIterations: target.maxSteps,
             deadline: Date().addingTimeInterval(target.wallClockSeconds),
@@ -348,6 +348,7 @@ final class HiddenAgentHandoffKind: SubagentKind, SubagentPostAdmissionResidency
             "prompt_tokens": result.usage.promptTokens,
             "completion_tokens": result.usage.completionTokens,
             "total_tokens": result.usage.promptTokens + result.usage.completionTokens,
+            "max_step_completion_tokens": result.usage.maxStepCompletionTokens,
         ]
         if let tps = result.usage.tokensPerSecond {
             usage["tokens_per_second"] = (tps * 10).rounded() / 10
