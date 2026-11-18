@@ -1,0 +1,19 @@
+{
+  "id": "chat_import_reader.tempo-skill-md",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • Tempo-style SKILL.md with frontmatter (fast path)",
+  "query": "Read https://tempo.xyz/SKILL.md and set up tempo",
+  "notes": "A standard Agent Skills file. The fast path reads it; the reader should not be needed.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "https://tempo.xyz/SKILL.md",
+          "text": "---\nname: tempo\ndescription: Send and receive stablecoin payments with the Tempo CLI.\n---\n# Tempo\n\nInstall the CLI with `npm install -g @tempo/cli`, then run `tempo login`.\n\nWhen the user asks to pay someone, run `tempo send <amount> <address>` and confirm the amount first."
+        }
+      ],
+      "items": [{ "kind": "skill", "name": "tempo" }]
+    }
+  }
+}

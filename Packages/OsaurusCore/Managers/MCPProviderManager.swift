@@ -47,6 +47,46 @@ public final class MCPProviderManager: ObservableObject {
     /// lifecycle as `hostStdioRunners` but routed through the container.
     private var sandboxStdioRunners: [UUID: SandboxStdioRunner] = [:]
 
+    // MARK: Per-agent credential variants
+    //
+    // The shared client per provider is built with the values saved for all
+    // agents. An agent whose own value differs from the shared one for a key
+    // the provider reads gets its own client, built on first use with that
+    // agent's values, evicted when idle, when a value it was built with
+    // changes, or when the provider has too many. Tool discovery always uses
+    // the shared client.
+
+    struct VariantKey: Hashable {
+        let providerId: UUID
+        let agentId: UUID
+    }
+
+    private struct Variant {
+        let client: MCP.Client
+        let fingerprint: String
+        /// The store the values were read from; only its changes apply.
+        let store: ObjectIdentifier
+        var lastUsed: Date
+    }
+
+    private struct SharedFingerprint: Equatable {
+        let fingerprint: String
+        let store: ObjectIdentifier
+    }
+
+    private var variants: [VariantKey: Variant] = [:]
+    private var variantConnects: [VariantKey: Task<MCP.Client, Error>] = [:]
+    private var variantHostRunners: [VariantKey: MCPStdioHostRunner] = [:]
+    private var variantSandboxRunners: [VariantKey: SandboxStdioRunner] = [:]
+    private var variantSweepTask: Task<Void, Never>?
+    /// Fingerprint of the all-agents values each shared client was built with.
+    private var sharedFingerprints: [UUID: SharedFingerprint] = [:]
+    /// A per-agent client unused this long is closed.
+    var variantIdleTimeout: TimeInterval = 10 * 60
+    /// Per-agent clients kept open for one provider; the least recently used
+    /// one closes first.
+    var maxVariantsPerProvider = 8
+
     private init() {
         self.configuration = MCPProviderConfigurationStore.load()
 
@@ -57,6 +97,23 @@ public final class MCPProviderManager: ObservableObject {
 
         registerRecoveryObservers()
         startNetworkRecoveryMonitor()
+        NotificationCenter.default.addObserver(
+            forName: .credentialsDidChange, object: nil, queue: .main
+        ) { [weak self] note in
+            let keys = Set(note.userInfo?["keys"] as? [String] ?? [])
+            let store = note.object as? CredentialStore ?? .shared
+            Task { @MainActor [weak self] in
+                await self?.handleCredentialsChanged(keys: keys, store: store)
+            }
+        }
+        // A changed default or agent session rebuilds the clients built with another.
+        NotificationCenter.default.addObserver(
+            forName: .signInSessionsDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.handleCredentialsChanged(keys: [], store: .current)
+            }
+        }
     }
 
     // MARK: - Provider Management
@@ -81,7 +138,7 @@ public final class MCPProviderManager: ObservableObject {
         Keychain.performInBackground {
             var credentialsDurable = true
             if let token = token, !token.isEmpty {
-                credentialsDurable = MCPProviderKeychain.saveToken(token, for: providerId)
+                credentialsDurable = MCPCredentials.saveToken(token, provider: provider)
             }
             Task { @MainActor in
                 MCPProviderManager.shared.finishCredentialStaging(
@@ -142,11 +199,7 @@ public final class MCPProviderManager: ObservableObject {
             var credentialsDurable = true
             // Update token if provided (empty string means clear token)
             if let token = token {
-                if token.isEmpty {
-                    MCPProviderKeychain.deleteToken(for: providerId)
-                } else {
-                    credentialsDurable = MCPProviderKeychain.saveToken(token, for: providerId)
-                }
+                credentialsDurable = MCPCredentials.saveToken(token, provider: provider)
             }
 
             // If the user switched away from OAuth, drop any cached tokens
@@ -173,8 +226,10 @@ public final class MCPProviderManager: ObservableObject {
         // Disconnect first
         disconnect(providerId: id)
 
-        // Remove from configuration (also cleans up Keychain)
+        // Remove from configuration (signs out OAuth). Its keys stay on the
+        // Keys page; only this server's slot bindings are dropped.
         configuration.remove(id: id)
+        MCPCredentials.forgetBindings(providerId: id)
         MCPProviderConfigurationStore.save(configuration)
 
         // Clean up state
@@ -303,6 +358,9 @@ public final class MCPProviderManager: ObservableObject {
                 Task.detached { await replaced.disconnect() }
             }
             clients[providerId] = client
+            sharedFingerprints[providerId] = SharedFingerprint(
+                fingerprint: await Self.credentialFingerprint(provider, agentId: nil),
+                store: ObjectIdentifier(CredentialStore.current))
 
             await registerClientNotificationHandlers(client: client, providerId: providerId)
 
@@ -353,22 +411,28 @@ public final class MCPProviderManager: ObservableObject {
             if let authFailure {
                 // Try one refresh+retry for OAuth providers when we already have tokens.
                 // Off the main actor: the Keychain read blocks on securityd XPC + decrypt.
+                let session = MCPCredentials.signInSession(provider, agentId: provider.credentialAgentId)?
+                    .keychainSession
                 if allowOAuthRetry,
                     provider.authType == .oauth,
                     let tokens = await Task.detached(
                         priority: .userInitiated,
-                        operation: { MCPProviderKeychain.getOAuthTokens(for: providerId) }
+                        operation: { MCPProviderKeychain.getOAuthTokens(for: providerId, session: session) }
                     ).value,
                     tokens.refreshToken?.isEmpty == false
                 {
                     do {
-                        _ = try await MCPOAuthService.refresh(provider: provider, tokens: tokens)
+                        _ = try await MCPOAuthService.refresh(provider: provider, tokens: tokens, session: session)
                         // Re-enter without retry budget so we can't loop.
                         try await performConnect(provider: provider, allowOAuthRetry: false)
                         return
                     } catch {
                         if MCPOAuthService.isPermanentAuthFailure(error) {
-                            handlePermanentOAuthFailure(providerId: providerId)
+                            if let session {
+                                MCPProviderKeychain.deleteOAuthTokens(for: providerId, session: session)
+                            } else {
+                                handlePermanentOAuthFailure(providerId: providerId)
+                            }
                         }
                         // Fall through and surface the original auth challenge.
                     }
@@ -445,9 +509,11 @@ public final class MCPProviderManager: ObservableObject {
         }
         discoveredTools.removeValue(forKey: providerId)
         registeredTools.removeValue(forKey: providerId)
+        sharedFingerprints.removeValue(forKey: providerId)
 
         // Tear down any stdio subprocesses owned by this provider.
         stopStdioRunners(for: providerId)
+        evictVariants { $0.providerId == providerId }
 
         // Update state
         if var state = providerStates[providerId] {
@@ -517,6 +583,9 @@ public final class MCPProviderManager: ObservableObject {
     var testConnectOverride: (@MainActor (UUID) async throws -> Void)?
     /// Test seam: replaces the HTTP/stdio transport a real connect builds.
     var testTransportFactory: (@MainActor (MCPProvider) async throws -> any MCP.Transport)?
+    /// Test seam: per-provider transport factories, checked before
+    /// `testTransportFactory` so concurrently running suites don't collide.
+    var testTransportFactories: [UUID: @MainActor (MCPProvider) async throws -> any MCP.Transport] = [:]
 
     /// Connect one provider with bounded retry on *transient* failures
     /// (offline at launch, DNS not up yet, handshake timeout). Terminal
@@ -712,6 +781,7 @@ public final class MCPProviderManager: ObservableObject {
         for providerId in clients.keys {
             disconnect(providerId: providerId)
         }
+        evictVariants { _ in true }
     }
 
     /// Quit-path teardown: disconnect every provider AND await each stdio
@@ -722,10 +792,12 @@ public final class MCPProviderManager: ObservableObject {
     /// first so the synchronous `disconnect` path below doesn't double-stop
     /// them, then await the real teardown.
     public func shutdownAllStdioRunners() async {
-        let hostRunners = Array(hostStdioRunners.values)
-        let sandboxRunners = Array(sandboxStdioRunners.values)
+        let hostRunners = Array(hostStdioRunners.values) + Array(variantHostRunners.values)
+        let sandboxRunners = Array(sandboxStdioRunners.values) + Array(variantSandboxRunners.values)
         hostStdioRunners.removeAll()
         sandboxStdioRunners.removeAll()
+        variantHostRunners.removeAll()
+        variantSandboxRunners.removeAll()
 
         disconnectAll()
 
@@ -754,14 +826,37 @@ public final class MCPProviderManager: ObservableObject {
             throw MCPProviderError.providerNotFound
         }
 
+        // An agent whose values differ from the shared ones for a key this
+        // server reads calls through a client built with its values.
+        var variantAgent: UUID?
+        var variantFingerprint = ""
+        if let agentId = ChatExecutionContext.usesSharedKeysOnly ? nil : ChatExecutionContext.currentAgentId,
+            MCPCredentials.agentHasOverride(provider, agentId: agentId)
+        {
+            let agentPrint = await Self.credentialFingerprint(provider, agentId: agentId)
+            if agentPrint != (await Self.credentialFingerprint(provider, agentId: nil)) {
+                variantAgent = agentId
+                variantFingerprint = agentPrint
+            } else {
+                evictVariants { $0 == VariantKey(providerId: providerId, agentId: agentId) }
+            }
+        }
+
         // A missing client on an enabled provider (transient connect failure
         // at launch, earlier session loss) is recoverable — reconnect instead
         // of failing the model's tool call outright.
-        if clients[providerId] == nil, provider.enabled {
+        if variantAgent == nil, clients[providerId] == nil, provider.enabled {
             try await coalescedConnect(provider: provider)
         }
-        guard let client = clients[providerId] else {
-            throw MCPProviderError.notConnected
+        let client: MCP.Client
+        if let variantAgent {
+            guard provider.enabled else { throw MCPProviderError.providerDisabled }
+            client = try await variantClient(for: provider, agentId: variantAgent, fingerprint: variantFingerprint)
+        } else {
+            guard let shared = clients[providerId] else {
+                throw MCPProviderError.notConnected
+            }
+            client = shared
         }
 
         let arguments = try MCPProviderTool.convertArgumentsToMCPValues(argumentsJSON)
@@ -791,9 +886,16 @@ public final class MCPProviderManager: ObservableObject {
                     progressHardCap: provider.progressHardCap
                 )
             } catch let error where Self.isRecoverableSessionError(error) {
-                result = try await reconnectAndRetry(
-                    provider: provider, providerId: providerId, toolName: toolName,
-                    arguments: arguments, timeout: timeout)
+                if let variantAgent {
+                    evictVariants { $0 == VariantKey(providerId: providerId, agentId: variantAgent) }
+                    let fresh = try await variantClient(for: provider, agentId: variantAgent)
+                    result = try await Self.callMCPTool(
+                        client: fresh, toolName: toolName, arguments: arguments, timeout: timeout)
+                } else {
+                    result = try await reconnectAndRetry(
+                        provider: provider, providerId: providerId, toolName: toolName,
+                        arguments: arguments, timeout: timeout)
+                }
             }
         } catch {
             if provider.authType == .oauth, Self.isForbiddenError(error) {
@@ -871,6 +973,168 @@ public final class MCPProviderManager: ObservableObject {
             progressHardCap: provider.progressHardCap
         )
     }
+
+    // MARK: - Per-agent variants
+
+    /// Hash of the credential values `provider` reads for `agentId`, read
+    /// off the main actor (values may come from the Keychain).
+    nonisolated static func credentialFingerprint(
+        _ provider: MCPProvider, agentId: UUID?, store: CredentialStore = .current
+    ) async -> String {
+        await Task.detached(priority: .userInitiated) {
+            CredentialStore.$taskLocalStore.withValue(store) {
+                MCPCredentials.fingerprint(provider, agentId: agentId)
+            }
+        }.value
+    }
+
+    /// The client `agentId` uses for `provider`: reused while the values it
+    /// was built with are unchanged, otherwise rebuilt.
+    func variantClient(
+        for provider: MCPProvider, agentId: UUID, fingerprint known: String? = nil
+    ) async throws -> MCP.Client {
+        let key = VariantKey(providerId: provider.id, agentId: agentId)
+        let fingerprint: String
+        if let known {
+            fingerprint = known
+        } else {
+            fingerprint = await Self.credentialFingerprint(provider, agentId: agentId)
+        }
+        if let existing = variants[key] {
+            if existing.fingerprint == fingerprint {
+                variants[key]?.lastUsed = Date()
+                return existing.client
+            }
+            evictVariants { $0 == key }
+        }
+        if let inFlight = variantConnects[key] {
+            return try await inFlight.value
+        }
+        var scoped = provider
+        scoped.credentialAgentId = agentId
+        let attempt = Task { @MainActor in
+            try await self.connectVariant(scoped, key: key, fingerprint: fingerprint)
+        }
+        variantConnects[key] = attempt
+        defer {
+            if variantConnects[key] == attempt { variantConnects[key] = nil }
+        }
+        return try await attempt.value
+    }
+
+    private func connectVariant(_ provider: MCPProvider, key: VariantKey, fingerprint: String) async throws
+        -> MCP.Client
+    {
+        let transport = try await createTransport(for: provider)
+        let client = MCP.Client(
+            name: "Osaurus",
+            version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0",
+            capabilities: Self.clientCapabilities
+        )
+        await Self.installElicitationHandling(on: client, providerName: provider.name)
+        await Self.routeProgressNotifications(from: client)
+        do {
+            try await withTimeout(seconds: provider.discoveryTimeout) {
+                _ = try await client.connect(transport: transport)
+            }
+            try Task.checkCancellation()
+        } catch {
+            Task.detached { await client.disconnect() }
+            stopVariantRunners(key)
+            throw error
+        }
+        variants[key] = Variant(
+            client: client, fingerprint: fingerprint, store: ObjectIdentifier(CredentialStore.current), lastUsed: Date())
+        evictLeastRecentlyUsedVariants(providerId: key.providerId)
+        scheduleVariantSweep()
+        return client
+    }
+
+    /// Keeps at most `maxVariantsPerProvider` per-agent clients for a provider.
+    func evictLeastRecentlyUsedVariants(providerId: UUID) {
+        let open = variants.filter { $0.key.providerId == providerId }
+        guard open.count > maxVariantsPerProvider else { return }
+        let oldest = open.sorted { $0.value.lastUsed < $1.value.lastUsed }
+            .prefix(open.count - maxVariantsPerProvider)
+            .map(\.key)
+        evictVariants { oldest.contains($0) }
+    }
+
+    /// Closes every per-agent client matching `predicate`.
+    func evictVariants(where predicate: (VariantKey) -> Bool) {
+        for key in Array(variants.keys) where predicate(key) {
+            if let variant = variants.removeValue(forKey: key) {
+                let client = variant.client
+                Task.detached { await client.disconnect() }
+            }
+            stopVariantRunners(key)
+        }
+        for key in Array(variantConnects.keys) where predicate(key) {
+            variantConnects.removeValue(forKey: key)?.cancel()
+            stopVariantRunners(key)
+        }
+    }
+
+    private func stopVariantRunners(_ key: VariantKey) {
+        if let runner = variantHostRunners.removeValue(forKey: key) {
+            Task { await runner.stop() }
+        }
+        if let runner = variantSandboxRunners.removeValue(forKey: key) {
+            Task { await runner.stop() }
+        }
+    }
+
+    private func scheduleVariantSweep() {
+        guard variantSweepTask == nil else { return }
+        variantSweepTask = Task { @MainActor [weak self] in
+            while let self, !self.variants.isEmpty, !Task.isCancelled {
+                let interval = max(1, min(60, self.variantIdleTimeout / 2))
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                self.sweepIdleVariants()
+            }
+            self?.variantSweepTask = nil
+        }
+    }
+
+    func sweepIdleVariants(now: Date = Date()) {
+        let cutoff = now.addingTimeInterval(-variantIdleTimeout)
+        let idle = Set(variants.filter { $0.value.lastUsed < cutoff }.map(\.key))
+        evictVariants { idle.contains($0) }
+    }
+
+    /// A changed credential closes the per-agent clients built with it and
+    /// rebuilds a connected shared client whose values changed. Only clients
+    /// built from `store` are affected.
+    func handleCredentialsChanged(keys: Set<String>, store: CredentialStore = .current) async {
+        let storeId = ObjectIdentifier(store)
+        for key in Array(variants.keys) where variants[key]?.store == storeId {
+            guard let provider = configuration.provider(id: key.providerId) else {
+                evictVariants { $0 == key }
+                continue
+            }
+            guard keys.isEmpty || !keys.isDisjoint(with: MCPCredentials.boundKeys(provider, store: store)) else {
+                continue
+            }
+            let fresh = await Self.credentialFingerprint(provider, agentId: key.agentId, store: store)
+            if variants[key]?.fingerprint != fresh { evictVariants { $0 == key } }
+        }
+        for (providerId, built) in sharedFingerprints where built.store == storeId {
+            guard let provider = configuration.provider(id: providerId),
+                keys.isEmpty || !keys.isDisjoint(with: MCPCredentials.boundKeys(provider, store: store))
+            else { continue }
+            let fresh = await Self.credentialFingerprint(provider, agentId: nil, store: store)
+            guard fresh != built.fingerprint, sharedFingerprints[providerId] == built,
+                providerStates[providerId]?.isConnected == true
+            else { continue }
+            disconnect(providerId: providerId)
+            try? await CredentialStore.$taskLocalStore.withValue(store) {
+                try await connect(providerId: providerId)
+            }
+        }
+    }
+
+    /// Test-only view of the per-agent clients.
+    func _testVariantKeys() -> Set<VariantKey> { Set(variants.keys) }
 
     /// True when a tool-call failure indicates the connection/session is
     /// stale (expired `Mcp-Session-Id`, expired auth token, closed
@@ -1243,6 +1507,32 @@ public final class MCPProviderManager: ObservableObject {
         return result
     }
 
+    /// Signs a sign-in session in. The primary session is the sign-in made
+    /// from Tools; any other keeps its tokens in its own Keychain account,
+    /// so agents assigned it call the server as that account.
+    public func oauthSignIn(providerId: UUID, session: SignInSession) async throws {
+        guard session.service == .mcp(providerId) else { throw MCPProviderError.providerNotFound }
+        guard let sessionId = session.keychainSession else {
+            _ = try await oauthSignIn(providerId: providerId)
+            return
+        }
+        guard var provider = configuration.provider(id: providerId) else { throw MCPProviderError.providerNotFound }
+        let result = try await MCPOAuthService.signIn(provider: provider, hint: nil, persist: false)
+        if !MCPProviderKeychain.saveOAuthTokens(result.tokens, for: providerId, session: sessionId),
+            !KeychainQueryHelpers.disablesKeychainForProcess
+        {
+            throw MCPProviderError.connectionFailed("The Keychain didn't save the sign-in.")
+        }
+        // Every session refreshes with the provider's client; keep the one
+        // this sign-in registered when the server had none yet.
+        if provider.oauth?.clientId == nil {
+            provider.oauth = result.config
+            configuration.update(provider)
+            MCPProviderConfigurationStore.save(configuration)
+        }
+        NotificationCenter.default.post(name: .signInSessionsDidChange, object: nil)
+    }
+
     // MARK: - Private Helpers
 
     /// Branch on `provider.transport` and return the appropriate
@@ -1251,6 +1541,9 @@ public final class MCPProviderManager: ObservableObject {
     /// provider's `executionHost`. The runner is retained in the manager
     /// so `disconnect(...)` can stop the subprocess later.
     private func createTransport(for provider: MCPProvider) async throws -> any MCP.Transport {
+        if let factory = testTransportFactories[provider.id] {
+            return try await factory(provider)
+        }
         if let testTransportFactory {
             return try await testTransportFactory(provider)
         }
@@ -1268,6 +1561,9 @@ public final class MCPProviderManager: ObservableObject {
     /// `FileDescriptor`s would close, and the MCP client would see an EOF on
     /// its first read.
     private func createStdioTransport(for provider: MCPProvider) async throws -> any MCP.Transport {
+        // A per-agent variant owns its own subprocess, keyed apart from the
+        // shared one so tearing down either never stops the other.
+        let variantKey = provider.credentialAgentId.map { VariantKey(providerId: provider.id, agentId: $0) }
         switch provider.executionHost {
         case .host:
             let runner = try await MCPStdioHostRunner.make(provider: provider)
@@ -1275,6 +1571,10 @@ public final class MCPProviderManager: ObservableObject {
             await runner.setProcessExitHandler { [weak self] exitCode in
                 Task { @MainActor in
                     guard let self else { return }
+                    if let variantKey {
+                        self.evictVariants { $0 == variantKey }
+                        return
+                    }
                     let tail = await runner.lastStderrTail()
                     self.handleStdioProcessExit(
                         providerId: providerId,
@@ -1284,7 +1584,11 @@ public final class MCPProviderManager: ObservableObject {
                 }
             }
             try await runner.start()
-            hostStdioRunners[provider.id] = runner
+            if let variantKey {
+                variantHostRunners[variantKey] = runner
+            } else {
+                hostStdioRunners[provider.id] = runner
+            }
             return runner.transport
         case .sandbox:
             #if os(macOS)
@@ -1316,7 +1620,9 @@ public final class MCPProviderManager: ObservableObject {
                 // first so the Linux user + bridge token exist; in
                 // allowlist egress mode the token is also the subprocess's
                 // proxy credential.
-                let agentId = ChatExecutionContext.currentAgentId ?? AgentManager.shared.activeAgent.id
+                let agentId =
+                    provider.credentialAgentId ?? ChatExecutionContext.currentAgentId
+                    ?? AgentManager.shared.activeAgent.id
                 let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
                 do {
                     try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
@@ -1330,16 +1636,28 @@ public final class MCPProviderManager: ObservableObject {
                 await runner.setProcessExitHandler { [weak self] exitCode in
                     Task { @MainActor in
                         guard let self else { return }
+                        if let variantKey {
+                            self.evictVariants { $0 == variantKey }
+                            return
+                        }
                         let tail = await runner.lastStderrTail()
+                        let restarted = await runner.wasStoppedByPodRestart()
                         self.handleStdioProcessExit(
                             providerId: providerId,
                             exitCode: exitCode,
                             stderrTail: tail
                         )
+                        if restarted {
+                            await self.reconnectAfterSandboxRestart(providerId: providerId, agentName: agentName)
+                        }
                     }
                 }
                 try await runner.start()
-                sandboxStdioRunners[provider.id] = runner
+                if let variantKey {
+                    variantSandboxRunners[variantKey] = runner
+                } else {
+                    sandboxStdioRunners[provider.id] = runner
+                }
                 return runner.transport
             #else
                 throw MCPStdioTransportError.sandboxUnavailable
@@ -1361,19 +1679,22 @@ public final class MCPProviderManager: ObservableObject {
             throw MCPProviderError.invalidURL
         }
 
-        // Build headers
-        var headers = provider.resolvedHeaders()
+        // Build headers. Credential reads can block on a securityd XPC round
+        // trip plus decryption — done off the main actor so they can't hang
+        // the UI (this method is `@MainActor`).
+        let store = CredentialStore.current
+        var headers = await Task.detached(priority: .userInitiated) {
+            CredentialStore.$taskLocalStore.withValue(store) { provider.resolvedHeaders() }
+        }.value
         switch provider.authType {
         case .oauth:
-            let tokens = try await ensureFreshOAuthTokens(for: provider)
+            // The session of the agent this client is for, else the default.
+            let session = MCPCredentials.signInSession(provider, agentId: provider.credentialAgentId)
+            let tokens = try await ensureFreshOAuthTokens(for: provider, session: session?.keychainSession)
             headers["Authorization"] = "Bearer \(tokens.accessToken)"
         case .bearerToken:
-            // Reading the token from the Keychain blocks on a securityd XPC round
-            // trip plus decryption — done off the main actor so it can't hang the
-            // UI (this method is `@MainActor`).
-            let providerId = provider.id
             let token = await Task.detached(priority: .userInitiated) {
-                MCPProviderKeychain.getToken(for: providerId)
+                CredentialStore.$taskLocalStore.withValue(store) { provider.resolvedBearerToken() }
             }.value
             if let token, !token.isEmpty {
                 headers["Authorization"] = "Bearer \(token)"
@@ -1392,11 +1713,14 @@ public final class MCPProviderManager: ObservableObject {
     }
 
     /// Refresh OAuth tokens proactively if they are at-or-near expiry.
-    private func ensureFreshOAuthTokens(for provider: MCPProvider) async throws -> MCPOAuthTokens {
+    /// `session` is the Keychain session: nil for the primary sign-in.
+    private func ensureFreshOAuthTokens(for provider: MCPProvider, session: UUID? = nil) async throws
+        -> MCPOAuthTokens
+    {
         // Off the main actor: the Keychain read blocks on securityd XPC + decrypt.
         let providerId = provider.id
         let stored = await Task.detached(priority: .userInitiated) {
-            MCPProviderKeychain.getOAuthTokens(for: providerId)
+            MCPProviderKeychain.getOAuthTokens(for: providerId, session: session)
         }.value
         guard let tokens = stored else {
             throw MCPProviderError.connectionFailed("Sign in required")
@@ -1408,10 +1732,15 @@ public final class MCPProviderManager: ObservableObject {
             throw MCPProviderError.connectionFailed("Session expired — please sign in again")
         }
         do {
-            return try await MCPOAuthService.refresh(provider: provider, tokens: tokens)
+            return try await MCPOAuthService.refresh(provider: provider, tokens: tokens, session: session)
         } catch {
             if MCPOAuthService.isPermanentAuthFailure(error) {
-                handlePermanentOAuthFailure(providerId: provider.id)
+                if let session {
+                    // Another session's sign-in ended; the shared client is fine.
+                    MCPProviderKeychain.deleteOAuthTokens(for: provider.id, session: session)
+                } else {
+                    handlePermanentOAuthFailure(providerId: provider.id)
+                }
             }
             throw MCPProviderError.connectionFailed(
                 "Could not refresh OAuth tokens: \(error.localizedDescription)"
@@ -1436,6 +1765,32 @@ public final class MCPProviderManager: ObservableObject {
         }
         notifyStatusChanged()
     }
+
+    #if os(macOS)
+        /// A pod restart stops every sandboxed stdio server; idle ones are
+        /// not running work, so the restart may take them. Bring the
+        /// provider back once the new pod is up, but only when its agent
+        /// is still a member: reconnecting an evicted agent would itself
+        /// force another restart.
+        private func reconnectAfterSandboxRestart(providerId: UUID, agentName: String) async {
+            let deadline = Date().addingTimeInterval(180)
+            while Date() < deadline {
+                if await SandboxManager.shared.status() == .running { break }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            guard await SandboxManager.shared.status() == .running,
+                await SandboxManager.shared.podMemberNames.contains(agentName),
+                providerStates[providerId]?.isConnected != true,
+                configuration.provider(id: providerId)?.enabled == true
+            else { return }
+            if var state = providerStates[providerId] {
+                state.lastError = nil
+                providerStates[providerId] = state
+            }
+            let name = configuration.provider(id: providerId)?.name ?? providerId.uuidString
+            await connectProviderWithTransientRetry(providerId: providerId, providerName: name)
+        }
+    #endif
 
     private func handleStdioProcessExit(providerId: UUID, exitCode: Int32, stderrTail: String) {
         guard providerStates[providerId]?.isConnected == true else { return }
@@ -1537,11 +1892,12 @@ public final class MCPProviderManager: ObservableObject {
         }
         switch provider.authType {
         case .oauth:
-            if let tokens = MCPProviderKeychain.getOAuthTokens(for: provider.id) {
+            let session = MCPCredentials.signInSession(provider, agentId: provider.credentialAgentId)
+            if let tokens = MCPProviderKeychain.getOAuthTokens(for: provider.id, session: session?.keychainSession) {
                 request.setValue("Bearer \(tokens.accessToken)", forHTTPHeaderField: "Authorization")
             }
         case .bearerToken:
-            if let token = MCPProviderKeychain.getToken(for: provider.id), !token.isEmpty {
+            if let token = provider.resolvedBearerToken(), !token.isEmpty {
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }
         case .none:

@@ -106,9 +106,9 @@
         }
 
         @Test
-        func perAgentModeChecksEnvironmentRootfsInsteadOfSharedRootfs() async throws {
+        func checksAgentEnvironmentRootfsInsteadOfLegacySharedRootfs() async throws {
             try await Self.withTemporaryRoot { _ in
-                try Self.createReadyProvisioningTree(perAgentEnvironments: true)
+                try Self.createReadyProvisioningTree()
 
                 let report = SandboxProvisioningDiagnostics.makeReport(
                     generatedAt: Self.fixedDate,
@@ -124,7 +124,7 @@
                     report.locations.first { $0.id == .containerRootFSFile }
                 )
                 #expect(rootfs.status == .ready)
-                #expect(rootfs.title == "Per-agent warm restart rootfs")
+                #expect(rootfs.title == "Agent environment rootfs")
                 #expect(rootfs.path.contains("/environments/agent-test/rootfs.ext4"))
                 #expect(
                     !report.findings.contains {
@@ -209,26 +209,15 @@
             }
         }
 
-        private static func createBaseRoot(
-            setupComplete: Bool,
-            perAgentEnvironments: Bool = false
-        ) throws {
+        private static func createBaseRoot(setupComplete: Bool) throws {
             try OsaurusPaths.ensureExists(OsaurusPaths.config())
             try OsaurusPaths.ensureExists(OsaurusPaths.cache())
-            let config = SandboxConfiguration(
-                setupComplete: setupComplete,
-                perAgentEnvironments: perAgentEnvironments
-            )
+            let config = SandboxConfiguration(setupComplete: setupComplete)
             try JSONEncoder().encode(config).write(to: OsaurusPaths.sandboxConfigFile(), options: .atomic)
         }
 
-        private static func createReadyProvisioningTree(
-            perAgentEnvironments: Bool = false
-        ) throws {
-            try createBaseRoot(
-                setupComplete: true,
-                perAgentEnvironments: perAgentEnvironments
-            )
+        private static func createReadyProvisioningTree() throws {
+            try createBaseRoot(setupComplete: true)
             try OsaurusPaths.ensureExists(OsaurusPaths.container())
             try OsaurusPaths.ensureExists(OsaurusPaths.containerWorkspace())
             try OsaurusPaths.ensureExists(OsaurusPaths.containerAgentsDir())
@@ -237,24 +226,14 @@
             try Data("kernel".utf8).write(to: OsaurusPaths.containerKernelFile(), options: .atomic)
             try Data("initfs".utf8).write(to: OsaurusPaths.containerInitFSFile(), options: .atomic)
 
-            if perAgentEnvironments {
-                let source = OsaurusPaths.container().appendingPathComponent("diagnostic-rootfs.ext4")
-                try Data("rootfs".utf8).write(to: source, options: .atomic)
-                let key = SandboxManager.rootfsTemplateKey
-                try SandboxRootfsTemplateStore.captureTemplate(from: source, key: key)
-                _ = try SandboxRootfsTemplateStore.ensureEnvironment(
-                    agentName: "agent-test",
-                    key: key
-                )
-            } else {
-                let state = OsaurusPaths.container()
-                    .appendingPathComponent("containers/osaurus-sandbox", isDirectory: true)
-                try OsaurusPaths.ensureExists(state)
-                try Data("rootfs".utf8).write(
-                    to: state.appendingPathComponent("rootfs.ext4"),
-                    options: .atomic
-                )
-            }
+            let source = OsaurusPaths.container().appendingPathComponent("diagnostic-rootfs.ext4")
+            try Data("rootfs".utf8).write(to: source, options: .atomic)
+            let key = SandboxManager.rootfsTemplateKey
+            try SandboxRootfsTemplateStore.captureTemplate(from: source, key: key)
+            _ = try SandboxRootfsTemplateStore.ensureEnvironment(
+                agentName: "agent-test",
+                key: key
+            )
         }
     }
 

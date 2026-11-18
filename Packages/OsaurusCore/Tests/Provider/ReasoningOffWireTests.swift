@@ -24,9 +24,10 @@ struct ReasoningOffWireTests {
     }
 
     private static func wire(
-        host: String, model: String = "Qwen3.8-Flash-Next", options: [String: ModelOptionValue]
+        host: String, port: Int = 8000, model: String = "Qwen3.8-Flash-Next",
+        options: [String: ModelOptionValue]
     ) async throws -> [String: Any] {
-        let request = await service(host: host).buildChatRequest(
+        let request = await service(host: host, port: port).buildChatRequest(
             messages: [ChatMessage(role: "user", content: "summarize")],
             parameters: GenerationParameters(temperature: 0.2, maxTokens: 1024, modelOptions: options),
             model: model, stream: false, tools: nil, toolChoice: nil)
@@ -77,6 +78,81 @@ struct ReasoningOffWireTests {
         let stop = Data(#"{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}"#.utf8)
         #expect(RemoteProviderService.oneShotFinishReason(stop) == "stop")
         #expect(RemoteProviderService.oneShotFinishReason(Data("{}".utf8)) == nil)
+    }
+
+    // MARK: - Ollama (#3435)
+
+    @Test(arguments: [("localhost", 11434), ("192.168.1.20", 11434), ("ollama.com", 443)])
+    func ollamaGetsReasoningEffortNone(host: String, port: Int) async throws {
+        let payload = try await Self.wire(host: host, port: port, options: ["disableThinking": .bool(true)])
+        #expect(payload["reasoning_effort"] as? String == "none")
+        #expect((payload["reasoning"] as? [String: String]) == ["effort": "none"])
+        #expect(payload["chat_template_kwargs"] == nil, "Ollama's /v1 drops chat_template_kwargs")
+        #expect(payload["thinking"] == nil)
+    }
+
+    @Test(arguments: ["none", "off", "instruct"])
+    func ollamaDirectRailEffortSendsNone(effort: String) async throws {
+        let payload = try await Self.wire(
+            host: "localhost", port: 11434, options: ["reasoningEffort": .string(effort)])
+        #expect(payload["reasoning_effort"] as? String == "none")
+    }
+
+    @Test func ollamaWithThinkingOnKeepsTheModelDefault() async throws {
+        let unset = try await Self.wire(host: "localhost", port: 11434, options: [:])
+        #expect(unset["reasoning_effort"] == nil)
+        let high = try await Self.wire(
+            host: "localhost", port: 11434, options: ["reasoningEffort": .string("high")])
+        #expect(high["reasoning_effort"] as? String == "high")
+    }
+
+    @Test func otherSelfHostedPortsKeepTemplateKwargs() async throws {
+        let payload = try await Self.wire(host: "localhost", port: 1234, options: ["disableThinking": .bool(true)])
+        #expect((payload["chat_template_kwargs"] as? [String: Bool]) == ["enable_thinking": false])
+        #expect(payload["reasoning_effort"] == nil)
+    }
+
+    // MARK: - Provider-reported completion (#3435)
+
+    @Test func outputTokenParsing() {
+        let openAI = Data(#"{"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":96}}"#.utf8)
+        #expect(RemoteProviderService.oneShotOutputTokens(openAI) == 96)
+        let anthropic = Data(#"{"stop_reason":"max_tokens","usage":{"input_tokens":40,"output_tokens":12}}"#.utf8)
+        #expect(RemoteProviderService.oneShotOutputTokens(anthropic) == 12)
+        let gemini = Data(#"{"usageMetadata":{"candidatesTokenCount":5,"thoughtsTokenCount":91}}"#.utf8)
+        #expect(RemoteProviderService.oneShotOutputTokens(gemini) == 96)
+        #expect(RemoteProviderService.oneShotOutputTokens(Data("{}".utf8)) == nil)
+    }
+
+    @Test func streamedOneShotRecordsStatsOnTheProbe() async throws {
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        continuation.yield("")
+        continuation.yield(StreamingStatsHint.encode(tokenCount: 96, tokensPerSecond: 0, stopReason: "length"))
+        continuation.finish()
+        let probe = WireTransportProbe()
+        let text = try await WireTransportProbe.$current.withValue(probe) {
+            try await RemoteProviderService.collectVisibleText(from: stream)
+        }
+        #expect(text.isEmpty)
+        #expect(probe.completion == .init(finishReason: "length", outputTokens: 96))
+    }
+
+    @Test func probeIgnoresAnEmptyCompletion() {
+        let probe = WireTransportProbe()
+        probe.recordCompletion(finishReason: nil, outputTokens: nil)
+        #expect(probe.completion == nil)
+    }
+
+    @Test func insightsFinishReasonMapping() {
+        #expect(CoreModelService.loggedFinishReason(nil) == .stop)
+        #expect(CoreModelService.loggedFinishReason("stop") == .stop)
+        #expect(CoreModelService.loggedFinishReason("length") == .length)
+        #expect(CoreModelService.loggedFinishReason("max_tokens") == .length)
+        #expect(CoreModelService.loggedFinishReason("MAX_TOKENS") == .length)
+        #expect(CoreModelService.loggedFinishReason("incomplete") == .length)
+        #expect(CoreModelService.loggedFinishReason("tool_calls") == .toolCalls)
+        #expect(CoreModelService.loggedFinishReason("tool_use") == .toolCalls)
+        #expect(CoreModelService.loggedFinishReason("end_turn") == .stop)
     }
 }
 

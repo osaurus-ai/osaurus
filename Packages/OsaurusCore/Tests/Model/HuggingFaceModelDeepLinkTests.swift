@@ -80,9 +80,8 @@ struct HuggingFaceModelDeepLinkTests {
     }
 }
 
-/// Source-level guard: the model link handler must never route through the
-/// hosting-controller rebuild (`showManagementWindow(deeplinkModelId:)`) on a
-/// window that may have a SwiftUI sheet up. Two consecutive Hub links crashed
+/// Source-level guard: the model link handler must never route through a
+/// view rebuild keyed on the model id while a SwiftUI sheet may be up. Two consecutive Hub links crashed
 /// the app that way (SheetPresentationWindow.parentWindowSizeChanged trap,
 /// Sentry APPLE-MACOS-EF) before the shared-state route was introduced.
 struct HuggingFaceModelDeepLinkRouteSourceTests {
@@ -101,7 +100,7 @@ struct HuggingFaceModelDeepLinkRouteSourceTests {
             appDelegate.range(of: "// MARK: - Popover Helper", range: start.upperBound ..< appDelegate.endIndex)
         )
         let body = String(appDelegate[start.lowerBound ..< end.lowerBound])
-        #expect(!body.contains("deeplinkModelId: modelId"), "model links must not rebuild the management window")
+        #expect(!body.contains("deeplinkModelId: modelId"), "model links must not rebuild Settings")
         #expect(body.contains("pendingModelDeepLink = .init(modelId: modelId, file: file)"))
         #expect(body.contains("pendingModelDetailId = modelId"))
     }

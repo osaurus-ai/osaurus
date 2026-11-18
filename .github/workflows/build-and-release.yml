@@ -91,11 +91,15 @@ jobs:
     # so leave headroom for signing, notarization, and publishing while still
     # bounding a hung job well below GitHub's 6h default.
     timeout-minutes: 180
+    outputs:
+      lane: ${{ steps.lane.outputs.lane }}
+      builds_full_dmg: ${{ steps.lane.outputs.builds_full_dmg }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
+          lfs: true
           fetch-depth: 0 # Fetch all history for changelog generation
 
       - name: Set up Xcode ${{ env.XCODE_VERSION }}
@@ -111,6 +115,18 @@ jobs:
 
       - name: Setup build environment
         run: bash scripts/setup_env.sh
+
+      # 0.x tags are Osaurus Classic: appcast.xml, never Latest, no unversioned
+      # DMG or full DMG. 1.x and later are main: appcast-next.xml.
+      - name: Resolve release lane
+        id: lane
+        run: python3 scripts/release/release_lane.py export --version "$VERSION"
+
+      # A 0.x tag on 1.x code would ship 1.0 to every Classic user as a normal
+      # update; a 1.x tag on Classic code would ship Classic as Latest.
+      - name: Require the tagged commit to match its lane
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 scripts/release/release_lane.py check-source --version "$VERSION" --commit "$GITHUB_SHA"
 
       - name: Install certificates
         env:
@@ -133,6 +149,17 @@ jobs:
 
       - name: Verify App Launch (spawn gate)
         run: bash scripts/build/verify_launch.sh
+
+      # Workflow code steps need the JavaScriptCore helper, and first-run
+      # sandbox setup installs the bundled kernel; an app missing either
+      # installs fine and then fails at run time.
+      - name: Verify bundled helpers and sandbox kernel
+        run: |
+          set -euo pipefail
+          APP="build_output/Osaurus.app"
+          test -x "$APP/Contents/Helpers/osaurus"
+          test -x "$APP/Contents/Helpers/osaurus-js-host"
+          test -f "$APP/Contents/Resources/SandboxRuntime/vmlinux"
 
       # Hand the signed light app to `build_full` so the model-bundled DMG
       # never needs a second Xcode compile. ditto keeps Sparkle.framework's
@@ -241,7 +268,7 @@ jobs:
             build_output/Osaurus-${{ env.VERSION }}.dmg
             build_output/Osaurus.dmg
             build_output/Osaurus-${{ env.VERSION }}-dSYMs.zip
-            updates/appcast.xml
+            updates/${{ env.APPCAST_FILE }}
           if-no-files-found: warn
 
       - name: Post to Discord
@@ -252,7 +279,7 @@ jobs:
 
   build_full:
     # Model-bundled ("full") DMG: the signed light app from `build` plus
-    # Raptor 0.6 under Contents/Resources/BundledModels, re-signed, packaged
+    # Raptor 0.7 under Contents/Resources/BundledModels, re-signed, packaged
     # as ULFO, notarized, and published to the Hugging Face Hub (GitHub
     # Releases cap assets at 2 GiB). Runs after `build` so the light release,
     # appcast, and Discord post are never delayed by the ~4 GB pipeline; on
@@ -261,7 +288,8 @@ jobs:
     # `verify_ci` is skipped on workflow_dispatch, and the default `success()`
     # condition treats a skipped transitive dependency as failure — so without
     # this the job never runs for manual validation builds. Mirror `build`.
-    if: ${{ always() && needs.build.result == 'success' }}
+    # Classic patches ship the light DMG only.
+    if: ${{ always() && needs.build.result == 'success' && needs.build.outputs.builds_full_dmg == 'true' }}
     runs-on: macos-26
     # Model download (~3.7 GB), ULFO conversion, a 4 GB notarization
     # round-trip, and the Hub upload each take minutes; bound a hung job well
@@ -271,6 +299,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          lfs: true
 
       - name: Set up Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
@@ -299,7 +329,7 @@ jobs:
           rm -f build_output/Osaurus-app.zip
           test -d build_output/Osaurus.app
 
-      - name: Build full app (bundle Raptor 0.6)
+      - name: Build full app (bundle Raptor 0.7)
         env:
           DEVELOPER_ID_NAME: ${{ secrets.DEVELOPER_ID_NAME }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -324,7 +354,6 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GH_TOKEN: ${{ github.token }}
           PUBLIC_REPO: ${{ github.repository }}
-          IS_BETA: ${{ env.IS_BETA }}
         run: bash scripts/release/upload_full_dmg_hf.sh
 
       - name: Record full DMG checksum
@@ -343,7 +372,8 @@ jobs:
 
   mark_released:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-beta.')
+    # "pending release" marks PRs merged to main, which a Classic patch does not ship.
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-beta.') && needs.build.outputs.lane == 'main'
     runs-on: ubuntu-latest
 
     permissions:
@@ -354,6 +384,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
+          lfs: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Switch "pending release" → "released"

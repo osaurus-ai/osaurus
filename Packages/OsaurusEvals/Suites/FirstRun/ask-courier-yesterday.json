@@ -1,0 +1,50 @@
+{
+  "id": "firstrun.ask-courier-yesterday",
+  "domain": "workflow",
+  "label": "first run • Courier card: What came in since yesterday",
+  "query": "walkthrough ask: What came in since yesterday",
+  "notes": "The walkthrough's `courier.yesterday` ask: the prepared workflow it runs, from workflow.team-ask-courier-yesterday. Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-courier-yesterday",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "messages": [
+            {
+              "id": "<read-1@mail.test>",
+              "subject": "Offer letter attached",
+              "sender": "hr@acme.test",
+              "dateReceived": "{{date:yesterday_start+1200m}}",
+              "isRead": false
+            }
+          ],
+          "count": 1
+        }
+      },
+      "toolArguments": {
+        "read": {
+          "since": "{{date:yesterday_start}}",
+          "limit": 40
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "offer"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

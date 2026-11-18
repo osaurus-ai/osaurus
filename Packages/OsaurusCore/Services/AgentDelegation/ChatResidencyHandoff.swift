@@ -114,7 +114,7 @@ enum ChatResidencyHandoff {
             case let .insufficientMemory(neededGB, availableGB):
                 return String(
                     format:
-                        "Memory check refused the task: the subagent's model needs ~%.1f GB but only ~%.1f GB would be available after freeing the chat model. Use a smaller model for the subagent, free memory, or turn off \"Check memory before delegating\" in Settings → Subagents.",
+                        "Memory check refused the task: the subagent's model needs ~%.1f GB but only ~%.1f GB would be available after freeing the chat model. Use a smaller model for the subagent, free memory, or turn off \"Check memory before delegating\" in Settings → Agents → Delegation.",
                     neededGB,
                     availableGB
                 )

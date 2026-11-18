@@ -13,6 +13,10 @@ copied from English unchanged), then:
   the new locale.
 
 Use ``--validate-only`` to check translation maps without writing.
+
+Use ``--partial`` to land one batch at a time: only keys present in the maps
+are written, everything else is left untouched (still falling back to English),
+and ``--manifest`` becomes optional.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from xcstrings_util import load_catalog  # noqa: E402
+from xcstrings_util import load_catalog, locale_issues  # noqa: E402
 
 # Apple/C/Swift format specifiers. Flags exclude space and apostrophe on
 # purpose: a literal percent sign followed by a word (e.g. "85% of") must not be
@@ -34,11 +38,14 @@ PLACEHOLDER_RE = re.compile(
     r"%(?:\d+\$)?[#0\-+]*[\d.*]*(?:hh|h|ll|l|q|L|z|t|j)?[@diouxXeEfFgGaAcsp%]"
 )
 POSITIONAL_RE = re.compile(r"^%\d+\$")
+# Xcode writes an empty object as "{", a blank line, then "}" at the key's indent.
+EMPTY_OBJECT_RE = re.compile(r"^( *)(.*) : \{\}(,?)$", re.MULTILINE)
 
 
 def dump_xcode(catalog: dict) -> str:
     """Serialize exactly like Xcode's String Catalog editor (no trailing newline)."""
-    return json.dumps(catalog, ensure_ascii=False, indent=2, separators=(",", " : "))
+    text = json.dumps(catalog, ensure_ascii=False, indent=2, separators=(",", " : "))
+    return EMPTY_OBJECT_RE.sub(lambda m: f"{m[1]}{m[2]} : {{\n\n{m[1]}}}{m[3]}", text)
 
 
 def placeholder_signature(text: str) -> tuple:
@@ -87,12 +94,19 @@ def main() -> int:
     parser.add_argument("catalog", type=Path)
     parser.add_argument("--locale", default="ko")
     parser.add_argument("--reference-locales", default="de,zh-Hans")
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--maps", type=Path, nargs="+", required=True, help="Translation map JSON files")
     parser.add_argument("--state", default="translated")
     parser.add_argument("--verbatim-state", default="needs_review")
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument(
+        "--partial",
+        action="store_true",
+        help="Only write keys present in --maps; skip the rest instead of failing on full coverage",
+    )
     args = parser.parse_args()
+    if args.manifest is None and not args.partial:
+        parser.error("--manifest is required unless --partial is set")
 
     refs = [r.strip() for r in args.reference_locales.split(",") if r.strip()]
     catalog = load_catalog(args.catalog)
@@ -106,22 +120,38 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    manifest = json.loads(args.manifest.read_text(encoding="utf-8")) if args.manifest else {}
     verbatim_keys = set(manifest.get("verbatim_keys", []))
     translations = load_maps(args.maps)
 
     errors: list[str] = []
+    skipped: list[str] = []
     translated = 0
     verbatim_applied = 0
 
+    if args.partial:
+        for key in sorted(translations):
+            if key not in strings:
+                errors.append(f"{key}: not in catalog")
+            elif strings[key].get("extractionState") == "stale":
+                skipped.append(f"{key}: stale (no longer used by the app)")
+
     for key, entry in strings.items():
-        if not key.strip():
+        if not key.strip() or entry.get("extractionState") == "stale":
+            continue
+        if args.partial and key not in translations:
             continue
         locs = entry.get("localizations") or {}
         if not all(r in locs for r in refs):
+            if args.partial:
+                skipped.append(f"{key}: lacks reference locale(s) {','.join(refs)}")
             continue
         if args.locale in locs:
-            continue
+            # Partial mode may fill an empty or untranslated stub, never a real translation.
+            if not args.partial or not locale_issues(entry, args.locale, key=key):
+                if args.partial:
+                    skipped.append(f"{key}: already has {args.locale}")
+                continue
 
         loc_value: dict | None = None
 
@@ -173,8 +203,12 @@ def main() -> int:
 
     print(
         f"{args.catalog}: translated={translated} verbatim={verbatim_applied} "
-        f"errors={len(errors)}"
+        f"skipped={len(skipped)} errors={len(errors)}"
     )
+    for note in skipped[:40]:
+        print(f"  skipped: {note}", file=sys.stderr)
+    if len(skipped) > 40:
+        print(f"  ... and {len(skipped) - 40} more skipped", file=sys.stderr)
     if errors:
         for err in errors[:40]:
             print(f"  - {err}", file=sys.stderr)

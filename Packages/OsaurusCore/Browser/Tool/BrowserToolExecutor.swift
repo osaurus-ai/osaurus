@@ -55,7 +55,7 @@ public struct BrowserGate: Sendable {
             return .reject(
                 reason:
                     "The current autonomy policy blocks \(effect.displayLabel.lowercased()) actions in the browser. "
-                    + "Raise the policy in Settings → Computer Use to allow it, or take a different action."
+                    + "Raise the policy in Settings → Computer & Browser Use → Autonomy to allow it, or take a different action."
             )
         }
     }

@@ -146,4 +146,40 @@ struct RedactionMapRollbackTests {
         let resubmittedPhone = await map.intern("949-238-0232", as: .phone)
         #expect(resubmittedPhone.index == 1, "resubmit must reuse [PHONE_1]")
     }
+
+    /// Shared map (a conversation and its subagents): another call
+    /// minted and kept `[PHONE_2]` after this pass took its snapshot.
+    /// Cancelling this pass must not rewind the counter under it, or
+    /// the next phone would reuse `[PHONE_2]` for a different value.
+    @Test func rollbackToSnapshot_keepsCounterWhenALaterIndexIsLive() async {
+        let map = RedactionMap(conversationID: UUID())
+        let preCounters = await map.counterSnapshot
+
+        let mine = await map.intern("949-238-0232", as: .phone)
+        let theirs = await map.intern("415-555-0100", as: .phone)
+        #expect(mine.index == 1)
+        #expect(theirs.index == 2)
+
+        await map.rollbackToSnapshot(removingOriginals: ["949-238-0232"], counters: preCounters)
+
+        #expect(await map.resolve(token: theirs.token) == "415-555-0100")
+        let next = await map.intern("212-555-0199", as: .phone)
+        #expect(next.index == 3, "a live later index must keep the counter where it is")
+    }
+
+    /// `stopRedacting` keeps the old placeholder resolvable (replies
+    /// may still echo it) but later sends carry the value as written.
+    @Test func stopRedacting_keepsReverseMappingAndSkipsValue() async {
+        let map = RedactionMap(conversationID: UUID())
+        let phone = await map.intern("949-238-0232", as: .phone)
+
+        await map.stopRedacting(["949-238-0232"])
+
+        #expect(await map.resolve(token: phone.token) == "949-238-0232")
+        #expect(await map.snapshot().isEmpty)
+        #expect(await map.skippedOriginals.contains("949-238-0232"))
+
+        await map.resumeRedacting(["949-238-0232"])
+        #expect(await !map.skippedOriginals.contains("949-238-0232"))
+    }
 }

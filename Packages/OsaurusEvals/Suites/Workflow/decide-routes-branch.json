@@ -1,0 +1,169 @@
+{
+  "id": "workflow.decide-routes-branch",
+  "domain": "workflow",
+  "label": "workflow \u2022 decide node routes to the refund branch and skips the other",
+  "query": "decide node routes to the refund branch and skips the other",
+  "notes": "A decide node classifies the message; the conditional edge runs only the refund branch. Pins native structured output for decide + generate, branch skip propagation, and output assembly.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [
+          {
+            "from": "triage",
+            "to": "refund",
+            "when": {
+              "op": "equals",
+              "path": "choice",
+              "value": "refund"
+            }
+          },
+          {
+            "from": "triage",
+            "to": "answer",
+            "when": {
+              "op": "equals",
+              "path": "choice",
+              "value": "question"
+            }
+          }
+        ],
+        "examples": [],
+        "input_schema": {
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "triage",
+            "inference": {
+              "instructions": "Classify the customer message. Pick refund when they ask for money back, question otherwise.",
+              "mode": "decide",
+              "model_slot": "triage",
+              "options": [
+                "refund",
+                "question"
+              ]
+            },
+            "input": {
+              "message": "{{input.message}}"
+            },
+            "kind": "inference",
+            "name": "Triage",
+            "output_schema": {
+              "type": "object"
+            },
+            "retry": {
+              "backoff_seconds": 1,
+              "max_attempts": 1
+            },
+            "timeout": 120
+          },
+          {
+            "id": "refund",
+            "inference": {
+              "instructions": "Write a one-sentence reply confirming the refund request is received.",
+              "mode": "generate",
+              "model_slot": "writer"
+            },
+            "input": {
+              "message": "{{input.message}}"
+            },
+            "kind": "inference",
+            "name": "Draft Refund Reply",
+            "output_schema": {
+              "properties": {
+                "reply": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reply"
+              ],
+              "type": "object"
+            },
+            "retry": {
+              "backoff_seconds": 1,
+              "max_attempts": 1
+            },
+            "timeout": 120
+          },
+          {
+            "id": "answer",
+            "inference": {
+              "instructions": "Answer the customer's question in one sentence.",
+              "mode": "generate",
+              "model_slot": "writer"
+            },
+            "input": {
+              "message": "{{input.message}}"
+            },
+            "kind": "inference",
+            "name": "Answer Question",
+            "output_schema": {
+              "properties": {
+                "reply": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reply"
+              ],
+              "type": "object"
+            },
+            "retry": {
+              "backoff_seconds": 1,
+              "max_attempts": 1
+            },
+            "timeout": 120
+          }
+        ],
+        "output": {
+          "category": "{{nodes.triage.output.choice}}",
+          "reply": "{{nodes.refund.output.reply}}"
+        },
+        "output_schema": {
+          "properties": {
+            "category": {
+              "type": "string"
+            },
+            "reply": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "reply"
+          ],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {
+        "message": "Hi, the blender I bought last week (order 4471) arrived broken. I want my money back."
+      },
+      "nodeStatuses": {
+        "triage": "done",
+        "refund": "done",
+        "answer": "skipped"
+      },
+      "outputKeys": [
+        "reply"
+      ],
+      "outputValues": {
+        "category": [
+          "refund"
+        ]
+      }
+    }
+  }
+}

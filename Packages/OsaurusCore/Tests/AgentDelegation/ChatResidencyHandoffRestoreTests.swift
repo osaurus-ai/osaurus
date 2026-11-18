@@ -176,7 +176,7 @@ struct ChatResidencyHandoffRestoreTests {
         )
         #expect(
             insufficient.localizedDescription
-                == "Memory check refused the task: the subagent's model needs ~59.3 GB but only ~54.1 GB would be available after freeing the chat model. Use a smaller model for the subagent, free memory, or turn off \"Check memory before delegating\" in Settings → Subagents."
+                == "Memory check refused the task: the subagent's model needs ~59.3 GB but only ~54.1 GB would be available after freeing the chat model. Use a smaller model for the subagent, free memory, or turn off \"Check memory before delegating\" in Settings → Agents → Delegation."
         )
 
         let busy = ChatResidencyHandoff.HandoffError.chatBusy

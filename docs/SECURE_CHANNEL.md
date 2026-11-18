@@ -40,7 +40,7 @@ Your prompts, your models' responses, and your access keys stay between your mac
 
 5. **No downgrade, ever.** Remote requests to agent execution routes (`/agents/{id}/run`, `/agents/{id}/dispatch`) that arrive outside the channel are refused with `426 Upgrade Required`, and so is every owner route — reads included — when a remote caller presents an owner (master-scoped) key: agents, sessions, run streams, review and approval queues, secret prompts, artifacts, unpairing. (For one release `GET /agents`, which holds no prompts or secrets, stays readable so phones up to 1.0(5) can learn their pin.) There is no fallback mode an attacker can force. Local callers (CLI, App Intents, scripts on the same machine) keep working unchanged, and OpenAI-style routes (`/models`, `/chat/completions`, `/images/*`) stay plaintext-compatible for third-party SDK clients.
 
-6. **Zero configuration.** There is nothing to set up. Pairing two agents — over Bonjour on the LAN or via a relay invite — is all it takes. Capability is advertised automatically (`osc=1` in Bonjour TXT, `secureChannel` in pair responses), sessions are established and refreshed transparently, and mixed-version setups produce a clear "upgrade Osaurus" message instead of a cryptic failure.
+6. **Zero configuration.** There is nothing to set up. Pairing two agents through a relay invite, or a phone through its pairing code, is all it takes. Capability is advertised automatically (`secureChannel` in pair responses), sessions are established and refreshed transparently, and mixed-version setups produce a clear "upgrade Osaurus" message instead of a cryptic failure.
 
 ---
 
@@ -129,7 +129,6 @@ These codes arrive outside the encryption (the handshake's answer, or `/secure/c
 | Transparent response encryption (NIO outbound handler) | `Packages/OsaurusCore/Networking/SecureChannelResponseEncryptor.swift` |
 | Client session cache, identity verification, re-handshake, SSE decrypt | `Packages/OsaurusCore/Services/Provider/SecureChannelClient.swift` |
 | Remote-provider integration (`.osaurus` providers) | `Packages/OsaurusCore/Services/Provider/RemoteProviderService.swift` |
-| Capability advertisement (`osc=1`) | `Packages/OsaurusCore/Networking/BonjourAdvertiser.swift` / `BonjourBrowser.swift` |
 | Transcript signature domain prefix | `Packages/OsaurusCore/Identity/CryptoHelpers.swift` |
 | Connect identity for the paired phone | `Packages/OsaurusCore/Services/MobileConnect/MobileConnectIdentity.swift` |
 
@@ -155,7 +154,7 @@ The Secure Channel composes with — it does not replace — the existing layers
 - **Pairing** establishes *who* a peer is (for the phone, a SPAKE2 exchange keyed by the pairing code — MOBILE_PROTOCOL.md §11.3; between Macs, HPKE-sealed key delivery, challenge-response, server signature verification) and pins the agent address the channel later verifies on every handshake.
 - **`osk-v1` access keys** still authenticate *every* call — now inside the ciphertext — with unchanged scoping (`403 agent_scope_denied` for cross-agent use, on both the run route `/agents/{id}/run` and the `GET /agents/{id}` metadata route) and instant revocation.
 - **Relay trust hardening** (no loopback trust for relay-origin traffic) still applies to the decrypted inner request.
-- **Per-agent host workspace** rides on this trust boundary: only a caller that completed the handshake and passed the agent-scope gate can have a remote agent read/write files inside the folder its owner granted (host **file** tools only — `shell_run` / `git_commit` / `file_undo` stay denied). See [`SECURITY.md`](SECURITY.md) and [`OpenAI_API_GUIDE.md`](OpenAI_API_GUIDE.md).
+- **Per-agent host workspace** rides on this trust boundary: only a caller that completed the handshake and passed the agent-scope gate can have a remote agent read/write files inside the folder its owner granted. Of the externally denied tools, only `file_write` and `file_edit` are unlocked for such a run (`file_read` is not externally denied); `shell_run` / `git_commit` / `file_undo` stay denied. See [`SECURITY.md`](SECURITY.md) and [`OpenAI_API_GUIDE.md`](OpenAI_API_GUIDE.md).
 - **Storage encryption** protects data at rest; the Secure Channel protects it in motion between agents.
 
 Together: keys are sealed at delivery, pinned at pairing, verified at every session, and never travel in plaintext again — and everything an agent says travels inside a forward-secret envelope only the two endpoints can open.

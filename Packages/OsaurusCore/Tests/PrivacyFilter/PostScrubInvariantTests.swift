@@ -237,15 +237,15 @@ struct PostScrubInvariantTests {
         var config = PrivacyFilterConfiguration()
         config.enabled = true
         config.aiDetectionEnabled = false
-        config.alwaysApproveByDefault = true
+        config.defaultReviewPolicy = .autoRedact
         return config
     }
 
     /// Carry-over substitution dirties an EARLIER assistant message
-    /// that contains URLs the detection pass never scanned (detection
-    /// only covers the latest user turn). Those URLs must not trip
-    /// the leak invariant — they were never reviewable. This was the
-    /// second path to the false "N URLs were not scrubbed" block.
+    /// with URLs the model emitted itself. That reply was never scanned,
+    /// so this pass scans it: its URLs are redacted as the model's own
+    /// text rather than tripping the leak invariant. Blocking here was
+    /// the second path to the false "N URLs were not scrubbed" block.
     @Test func applyOutbound_carryOverDirtiedHistory_doesNotBlockOnUnscannedURLs() async throws {
         let guard_ = await acquirePrivacyStoreSandbox("PostScrubInvariant-carryOver")
         defer { guard_.release() }
@@ -270,8 +270,7 @@ struct PostScrubInvariantTests {
         // Turn 2: the assistant's prior reply echoes the email (raw,
         // as clients resend unscrubbed history) AND contains two URLs
         // the model emitted itself. Carry-over substitution rewrites
-        // the email there, dirtying the message; the URLs were never
-        // in detection scope and must not block.
+        // the email there, dirtying the message; the URLs must not block.
         let turn2: [ChatMessage] = [
             ChatMessage(role: "user", content: "Contact me at \(email) please."),
             ChatMessage(
@@ -288,7 +287,7 @@ struct PostScrubInvariantTests {
         )
         let assistantBody = scrubbed2[1].content ?? ""
         #expect(!assistantBody.contains(email), "carry-over email should be re-scrubbed")
-        #expect(assistantBody.contains("https://a.example.com/docs"), "historic URLs ship as-is")
+        #expect(!assistantBody.contains("https://a.example.com/docs"), "the model's own URLs are redacted")
         let userBody = scrubbed2[2].content ?? ""
         #expect(!userBody.contains("949-238-0232"), "latest-turn phone should be scrubbed")
     }

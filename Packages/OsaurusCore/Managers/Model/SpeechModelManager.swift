@@ -161,7 +161,7 @@ public final class SpeechModelManager: ObservableObject {
     public var totalDownloadedSizeString: String {
         let count = downloadedModelsCount
         if count == 0 { return L("No models") }
-        return L("\(count) models ready")
+        return count == 1 ? L("1 model ready") : L("\(count) models ready")
     }
 
     // MARK: - Download Methods
@@ -188,6 +188,10 @@ public final class SpeechModelManager: ObservableObject {
                 _ = try await AsrModels.downloadAndLoad(version: faVersion)
                 self.downloadStates[model.id] = .completed
             } catch is CancellationError {
+                self.downloadStates[model.id] = .notStarted
+            } catch where Task.isCancelled {
+                // A cancelled URL load throws `URLError.cancelled`, not
+                // `CancellationError`; Cancel is not a failure.
                 self.downloadStates[model.id] = .notStarted
             } catch {
                 self.downloadStates[model.id] = .failed(error: error.localizedDescription)

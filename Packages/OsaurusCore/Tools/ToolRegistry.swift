@@ -192,6 +192,11 @@ public final class ToolRegistry: ObservableObject {
     private var cacheInvalidations = Set<AnyCancellable>()
     /// Names of tools registered via registerBuiltInTools (always loaded).
     private(set) var builtInToolNames: Set<String> = []
+    /// `workflow_<slug>` tools of installed workflows. Neither built-in nor
+    /// dynamic: the composer adds each one only for the agents that enabled
+    /// it, so they never enter the baseline or `capabilities` loading.
+    private(set) var workflowToolNames: Set<String> = []
+    private(set) var hostedWorkflowToolNames: Set<String> = []
 
     /// Tool names that require the sandbox container to be running
     private var sandboxToolNames: Set<String> = []
@@ -368,6 +373,14 @@ public final class ToolRegistry: ObservableObject {
             ScheduleNextRunTool(),
             CancelNextRunTool(),
             NotifyTool(),
+            // Agent calls: in the schema only while a device can ring
+            // (`SyncAgentCalls.ringAvailable`, checked by the composer).
+            CallUserTool(),
+            ArrangeCallbackTool(),
+            // Shared-agent runs only: the HTTP agent-run path adds it to the
+            // schema when the agent asks its owner; the composer strips it
+            // everywhere else.
+            AskOwnerTool(),
             // Default-agent generic reads (Phase C). Always loaded; the
             // composer further restricts visibility to the default
             // agent only. The matching consolidated writes live under
@@ -377,6 +390,28 @@ public final class ToolRegistry: ObservableObject {
             // `capabilities_discover` / `capabilities_load`.
             OsaurusInspectTool(),
             OsaurusHelpTool(),
+            // The Architect's draft tools. Always loaded so its schema is
+            // stable; the composer strips them from every other agent
+            // (`architectToolNames`) and each refuses outside an Architect
+            // turn. `architect_handoff` is the Orchestrator's way in.
+            WorkflowDraftTool(),
+            WorkflowTestTool(),
+            WorkflowRunsTool(),
+            WorkflowDiscoverTool(),
+            WorkflowProposeSaveTool(),
+            ArchitectHandoffTool(),
+            // The Orchestrator's way to the hidden Configurator, and its
+            // session tool. Each refuses outside an Orchestrator turn;
+            // the composer strips them from every other agent.
+            ConfiguratorHandoffTool(),
+            StatusTool(),
+            // The Configurator's New Agent draft. Refuses outside a
+            // Configurator turn; the composer strips it from every other
+            // agent (`agentCreationToolNames`).
+            AgentDraftTool(),
+            // Workflows: the Orchestrator's `run_workflow`. Per-agent
+            // `workflow_<slug>` tools come from `syncWorkflowTools`.
+            RunWorkflowTool(),
             // Computer Use (macOS automation harness). Registered as a
             // built-in so the runtime can execute it and ChatView can
             // intercept its live activity feed, but the system prompt
@@ -581,6 +616,17 @@ public final class ToolRegistry: ObservableObject {
         }
     }
 
+    /// The schema a registered tool declares for its envelope `result`.
+    func outputSchema(forTool name: String) -> JSONValue? {
+        toolsByName[name]?.outputSchema
+    }
+
+    /// Whether a registered tool owns its own time budget instead of the
+    /// registry's wall-clock cap.
+    func bypassesTimeout(_ name: String) -> Bool {
+        toolsByName[resolvedRegisteredName(for: name)]?.bypassRegistryTimeout ?? false
+    }
+
     /// Get only tools that have an audited spawned-operation cancellation
     /// path. This keeps target-agent schemas honest: a child must not be
     /// invited to call a tool that the owned dispatcher will reject before
@@ -594,6 +640,14 @@ public final class ToolRegistry: ObservableObject {
             }
             return tool.asOpenAITool()
         }
+    }
+
+    /// Whether this exact invocation may run with
+    /// `ownsExecutionUntilTermination` (its tool cooperates with
+    /// cancellation for these arguments).
+    func supportsSpawnedOwnership(name: String, argumentsJSON: String) -> Bool {
+        guard let tool = toolsByName[resolvedRegisteredName(for: name)] else { return false }
+        return tool.spawnedOperationCancellationSupport(argumentsJSON: argumentsJSON) == .cooperative
     }
 
     // MARK: - External surface deny list
@@ -716,32 +770,119 @@ public final class ToolRegistry: ObservableObject {
         return AgentManager.shared.effectiveCapabilities(for: agentId).enabledAppleApps.contains(app)
     }
 
-    /// Envelope for an Apple tool whose app is off for the calling agent
-    /// (or that was called without an agent). Names the one real switch.
-    nonisolated static func appleAppOffEnvelope(tool: String, app: AppleApp, agentId: UUID?) -> String {
-        let message: String
-        if agentId == nil {
-            message =
+    /// Why an Apple tool cannot run for the calling agent, and whether the
+    /// model can recover on its own. Built-in agents have no Apple Apps
+    /// switch, so their refusal is a correctable steer (`tool_not_found`)
+    /// toward the path they do have. A custom agent's switch is real and
+    /// only the person can flip it, so that refusal stays terminal.
+    nonisolated static func appleAppOffRefusal(
+        tool: String, app: AppleApp, agentId: UUID?
+    ) -> (kind: ToolEnvelope.Kind, message: String) {
+        guard let agentId else {
+            return (
+                .rejected,
                 "'\(tool)' belongs to the built-in \(app.displayName) app and only runs inside an Osaurus agent that has \(app.displayName) enabled."
-        } else if agentId == Agent.defaultId {
-            message =
-                "'\(tool)' belongs to the built-in \(app.displayName) app. The Default agent never uses Apple app tools; enable \(app.displayName) on a custom agent (`osaurus_config` → capabilities.apple_apps) and delegate to it."
-        } else {
-            message =
-                "'\(tool)' belongs to the built-in \(app.displayName) app, which is off for this agent. It cannot be loaded with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps (or have the Orchestrator set capabilities.apple_apps), then retry."
+            )
         }
+        if agentId == Agent.defaultId {
+            return (
+                .toolNotFound,
+                "'\(tool)' belongs to the built-in \(app.displayName) app, which the Orchestrator never uses itself. "
+                    + "Call \(RunWorkflowTool.toolName) with a teammate that has \(app.displayName) on (`status` lists "
+                    + "them). If none does, call \(ConfiguratorHandoffTool.toolName) to turn \(app.displayName) on for one."
+            )
+        }
+        if agentId == Agent.architectId {
+            return (
+                .toolNotFound,
+                "'\(tool)' is a workflow step tool, not one you call yourself. Add it to the draft as a `tool` step "
+                    + "with \(WorkflowDraftTool.toolName), then run the draft with \(WorkflowTestTool.toolName). "
+                    + "The step authorizes it; no agent setting is involved, so do not ask the user to change one."
+            )
+        }
+        if Agent.isHiddenBuiltIn(agentId) {
+            return (
+                .toolNotFound,
+                "'\(tool)' belongs to the built-in \(app.displayName) app, which this built-in agent cannot use. "
+                    + "Do the task without it, or say which step needs \(app.displayName)."
+            )
+        }
+        return (
+            .rejected,
+            "'\(tool)' belongs to the built-in \(app.displayName) app, which is off for this agent. It cannot be loaded with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps (or have the Orchestrator set capabilities.apple_apps), then retry."
+        )
+    }
+
+    /// Envelope for an Apple tool whose app is off for the calling agent
+    /// (or that was called without an agent).
+    nonisolated static func appleAppOffEnvelope(tool: String, app: AppleApp, agentId: UUID?) -> String {
+        let refusal = appleAppOffRefusal(tool: tool, app: app, agentId: agentId)
         return ToolEnvelope.failure(
-            kind: .rejected, message: message, tool: tool, retryable: false,
+            kind: refusal.kind, message: refusal.message, tool: tool, retryable: false,
             metadata: ["apple_app": app.rawValue]
+        )
+    }
+
+    /// Refusal for a workspace tool requested while the agent's sandbox is on
+    /// but not running. The folder refusal would steer the model to attach a
+    /// host folder, and attaching one turns the sandbox off. `nil` when the
+    /// agent doesn't use the sandbox on this host.
+    static func sandboxNotReadyRefusal(tool: String, agentId: UUID?) -> (message: String, retryable: Bool)? {
+        guard let agentId,
+            AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true,
+            SandboxManager.State.shared.availability.isAvailable
+        else { return nil }
+        if let reason = SandboxToolRegistrar.shared.unavailabilityReason(for: agentId) {
+            return (
+                "\(tool) runs in this agent's sandbox, which is not available: \(reason.message) "
+                    + "Tell the user what is blocking it; do not ask for a working folder.",
+                false
+            )
+        }
+        return (
+            "\(tool) runs in this agent's sandbox, which has not started yet. "
+                + "Call \(BuiltinSandboxTools.initPendingToolName) to start it, then retry.",
+            true
         )
     }
 
     private func appleAppGateRefusal(for tool: AppleToolBase) -> String? {
         if Self.isAppleAppEnabledForCurrentAgent(tool.app) { return nil }
+        if ChatExecutionContext.workflowGrantedToolNames?.contains(tool.name) == true { return nil }
         ToolRegistryLogger.registry.error(
             "refusing '\(tool.name, privacy: .public)': \(tool.app.rawValue, privacy: .public) is not enabled for the current agent"
         )
         return Self.appleAppOffEnvelope(tool: tool.name, app: tool.app, agentId: ChatExecutionContext.currentAgentId)
+    }
+
+    /// Refuses a folder write tool when the calling agent's working folder
+    /// is read only and a host folder is bound. No grant bypasses it: a
+    /// workflow step that runs as the agent gets the same answer.
+    private func readOnlyFolderRefusal(for name: String) -> String? {
+        guard Self.readOnlyFolderBlockedToolNames.contains(name), ChatExecutionContext.currentFolderRoot != nil,
+            Self.agentHasReadOnlyWorkingFolder(ChatExecutionContext.currentAgentId)
+        else { return nil }
+        ToolRegistryLogger.registry.error(
+            "refusing '\(name, privacy: .public)': the current agent's working folder is read only")
+        return Self.readOnlyFolderEnvelope(tool: name)
+    }
+
+    /// The default agent never has a read-only working folder.
+    static func agentHasReadOnlyWorkingFolder(_ agentId: UUID?) -> Bool {
+        guard let agentId, agentId != Agent.defaultId else { return false }
+        return AgentManager.shared.agent(for: agentId)?.settings.workingFolderReadOnly == true
+    }
+
+    nonisolated static let readOnlyFolderMessageSuffix =
+        "this agent's working folder is read only. "
+        + "Read and search it instead, or ask the user to turn off Read Only in the agent's Working Folder settings."
+
+    nonisolated static func readOnlyFolderEnvelope(tool: String) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "'\(tool)' changes the working folder, and " + readOnlyFolderMessageSuffix,
+            tool: tool, retryable: false)
     }
 
     /// Resolve the permission gate (missing system permissions, ask/deny
@@ -752,7 +893,14 @@ public final class ToolRegistry: ObservableObject {
     /// Used by parallel tool batches: approvals resolve serially in model
     /// order first, then the approved set executes concurrently with
     /// `execute(..., permissionGateResolved: true)`.
-    func resolvePermissionGate(name rawName: String, argumentsJSON: String) async throws {
+    ///
+    /// Returns why the call will run without its approval card, if a
+    /// setting skipped one; the batch records it against its call id.
+    @discardableResult
+    func resolvePermissionGate(
+        name rawName: String,
+        argumentsJSON: String
+    ) async throws -> ToolApprovalSkipReason? {
         let name = resolvedRegisteredName(for: rawName)
         // External-surface deny happens BEFORE the gate so a denied tool
         // can never pop an approval prompt from an external request.
@@ -766,23 +914,18 @@ public final class ToolRegistry: ObservableObject {
                 ]
             )
         }
-        guard dynamicGrantRefusal(for: name) == nil else { return }
-        guard let tool = toolsByName[name] else { return }
+        guard dynamicGrantRefusal(for: name) == nil, readOnlyFolderRefusal(for: name) == nil else { return nil }
+        guard let tool = toolsByName[name] else { return nil }
         // Preflight first, mirroring `execute`: a batch member that cannot
         // pass schema validation must not raise an approval card, and the
         // card must show the coerced arguments the body will receive.
         // A rejection is not thrown here — `execute` re-runs preflight and
         // returns the structured envelope — so this only decides what the
         // user is shown.
-        let normalized = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
-        guard case .ready(let effectiveArgumentsJSON) = Self.preflight(
-            argumentsJSON: normalized,
-            schema: tool.parameters,
-            toolName: name,
-            hint: tool.argumentHint,
-            preservingEmpty: tool.preservedEmptyStringArguments
-        ) else { return }
-        try await runPermissionGate(
+        guard case .ready(let effectiveArgumentsJSON) = await Self.preflight(
+            tool: tool, name: name, argumentsJSON: argumentsJSON)
+        else { return nil }
+        return try await runPermissionGate(
             tool: tool,
             name: name,
             argumentsJSON: effectiveArgumentsJSON
@@ -874,11 +1017,20 @@ public final class ToolRegistry: ObservableObject {
     /// The permission gate shared by `execute` and `resolvePermissionGate`:
     /// system-permission prompts, the per-tool ask/deny/auto policy
     /// (including the user approval prompt), and `.auto` grant backfill.
-    private func runPermissionGate(tool: OsaurusTool, name: String, argumentsJSON: String) async throws {
+    /// Returns why the call ran without its approval card, when a user or
+    /// agent setting skipped one, for the audit marker.
+    @discardableResult
+    private func runPermissionGate(
+        tool: OsaurusTool,
+        name: String,
+        argumentsJSON: String
+    ) async throws -> ToolApprovalSkipReason? {
         let approvalArgumentsJSON = SecretArgumentScrubber.recordedArguments(
             toolName: name,
             argumentsJSON: argumentsJSON
         )
+        let agentScope = ToolApprovalResolver.currentScope
+        var skipReason: ToolApprovalSkipReason?
         if let permissioned = tool as? PermissionedTool {
             let requirements = permissioned.requirements
             // Computer Use funnel: this gate is the one chokepoint every real
@@ -889,30 +1041,42 @@ public final class ToolRegistry: ObservableObject {
             let isComputerUse = name == ComputerUseTool.toolName
             if isComputerUse { FeatureTelemetry.computerUseAttempt() }
 
-            // Check system permissions and prompt the user for any that are missing
+            // Ask for each missing system permission: macOS's own dialog
+            // when it can still show one, otherwise the Osaurus panel.
             let missingSystemPermissions = await SystemPermissionService.shared.missingPermissions(
                 from: requirements
             )
+            var stillMissing: [SystemPermission] = []
+            var unanswered = false
             for permission in missingSystemPermissions {
-                _ = await SystemPermissionService.shared.requestPermissionAndWait(permission)
+                let outcome = await SystemPermissionGate.ensure(permission, toolName: name)
+                guard !outcome.allowsCall else { continue }
+                stillMissing.append(permission)
+                if outcome == .notAnswered { unanswered = true }
             }
-            let stillMissing = await SystemPermissionService.shared.missingPermissions(
-                from: requirements
-            )
             if !stillMissing.isEmpty {
                 if isComputerUse {
                     FeatureTelemetry.computerUseRefused(stage: .permissionAccessibility)
                 }
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
+                let addOnly = stillMissing.contains(.calendar) ? await SystemPermissionGate.calendarIsAddOnly() : false
+                let message: String
+                if addOnly {
+                    message =
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Calendar is set to Add Only for Osaurus, so it can add events but not read them. Ask the user to choose Full Access for Osaurus in System Settings → Privacy & Security → Calendars, then try again."
+                } else if unanswered {
+                    message =
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Osaurus asked the user to turn it on and they did not answer. Tell them what needs it and where: System Settings → Privacy & Security → \(stillMissing[0].systemSettingsPath); then they can ask again."
+                } else {
+                    message =
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or Osaurus Settings → Privacy & Security → Permissions), then try again."
+                }
                 // Typed like `AppleToolError.permissionDenied`: the first
                 // missing permission's stable name and its System Settings
                 // pane ride along so the envelope tells the model exactly
                 // which grant is missing and where it lives (the Apple app
                 // tools hit this gate before their body runs).
-                var userInfo: [String: Any] = [
-                    NSLocalizedDescriptionKey:
-                        "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or the Osaurus Permissions tab), then try again."
-                ]
+                var userInfo: [String: Any] = [NSLocalizedDescriptionKey: message]
                 if let first = stillMissing.first {
                     userInfo[Self.missingPermissionUserInfoKey] = first.rawValue
                     if let url = first.systemSettingsURL?.absoluteString {
@@ -923,17 +1087,20 @@ public final class ToolRegistry: ObservableObject {
             }
 
             let defaultPolicy = permissioned.defaultPermissionPolicy
-            var effectivePolicy = configuration.policy[name] ?? defaultPolicy
+            let globalPolicy = configuration.policy[name] ?? defaultPolicy
+            var effectivePolicy = ToolApprovalResolver.policy(tool: name, global: globalPolicy, scope: agentScope)
             // Argument-aware narrowing (strictest wins): a contextual tool
             // resolves this specific invocation's policy from its arguments
             // (e.g. the destination binding's outbound mode for
             // `agent_channel_publish`). The configured/user policy can narrow
             // the contextual result and the contextual result can narrow the
             // configured policy; neither can loosen the other.
+            var contextualPolicy: ToolPermissionPolicy?
             if let contextual = tool as? ContextualPermissionedTool {
                 let resolved = await contextual.resolveContextualPermissionPolicy(
                     argumentsJSON: argumentsJSON
                 )
+                contextualPolicy = resolved
                 effectivePolicy = ToolPermissionPolicy.strictest(effectivePolicy, resolved)
             }
             // A per-call tool refuses every pre-grant: the run lease and the
@@ -975,6 +1142,33 @@ public final class ToolRegistry: ObservableObject {
                     // Headless eval / external MCP with no UI: deny instead of
                     // hanging on an approval card nobody can click.
                     approved = false
+                } else if ChatExecutionContext.isExternalSurface, !ChatExecutionContext.hasRemoteReviewer,
+                    let route = ChatExecutionContext.ownerApprovalRoute
+                {
+                    // A teammate / remote caller on a shared agent set to Ask
+                    // Me: the run parks until the agent's owner answers on
+                    // the hosted card, a notification, or their phone.
+                    let decision = await OwnerApprovalService.shared.request(
+                        route: route,
+                        toolName: name,
+                        callId: ChatExecutionContext.currentToolCallId,
+                        perCallApproval: perCallApproval
+                            || OwnerApprovalService.perCallOnSharedRuns.contains(name),
+                        arguments: argumentsJSON
+                    )
+                    approved = decision.isGranted
+                    if !approved {
+                        throw NSError(
+                            domain: "ToolRegistry",
+                            code: 4,
+                            userInfo: [
+                                NSLocalizedDescriptionKey: decision.refusalMessage(
+                                    toolName: name,
+                                    ownerLabel: OwnerApprovalService.shared.ownerLabel
+                                )
+                            ]
+                        )
+                    }
                 } else if ChatExecutionContext.isExternalSurface, !ChatExecutionContext.hasRemoteReviewer {
                     // External MCP/HTTP callers cannot interact with GUI prompts.
                     // The owner's paired phone can: its run falls through to
@@ -1002,12 +1196,16 @@ public final class ToolRegistry: ObservableObject {
                     // moves into the outbox rather than blocking the run on a
                     // card nobody can answer.
                     approved = true
-                } else if ToolApprovalSettings.autoAllowAll, !perCallApproval {
-                    // User opted into the global auto-allow chat setting: skip
-                    // the interactive card. Only reachable where a card would
-                    // have been shown, so external/headless denials above win.
-                    // A per-call tool opts out: "auto-allow tools" is not
-                    // consent to destroy a knowledge collection unseen.
+                } else if let reason = ToolApprovalResolver.cardSkipReason(
+                    scope: agentScope, perCallApproval: perCallApproval)
+                {
+                    // The global auto-allow switch, or this agent's Never
+                    // Ask: skip the interactive card. Only reachable where a
+                    // card would have been shown, so external/headless
+                    // denials above win. A per-call tool opts out: "auto-allow
+                    // tools" is not consent to destroy a knowledge collection
+                    // unseen.
+                    skipReason = reason
                     approved = true
                 } else {
                     // A knowledge write renders paths + diffs instead of the
@@ -1016,14 +1214,25 @@ public final class ToolRegistry: ObservableObject {
                     let writePreview =
                         await (tool as? KnowledgeWritePreviewingTool)?
                         .approvalPreview(argumentsJSON: approvalArgumentsJSON)
+                    let settled = SilentSettleNote()
                     let outcome = await ToolPermissionPromptService.requestApprovalOutcome(
                         toolName: name,
                         description: tool.description,
+                        descriptionIsForModel: true,
                         argumentsJSON: approvalArgumentsJSON,
                         knowledgeWritePreview: writePreview,
                         perCallApprovalOnly: perCallApproval,
-                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON)
+                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON),
+                        agentChoice: perCallApproval ? nil : agentScope?.approvalChoice,
+                        revalidate: queuedCardRevalidation(
+                            name: name,
+                            defaultPolicy: defaultPolicy,
+                            contextualPolicy: contextualPolicy,
+                            perCallApproval: perCallApproval,
+                            note: settled
+                        )
                     )
+                    skipReason = settled.reason
                     switch outcome {
                     case .denied:
                         approved = false
@@ -1055,6 +1264,8 @@ public final class ToolRegistry: ObservableObject {
                     )
                 }
             case .auto:
+                skipReason = ToolApprovalResolver.policySkipReason(
+                    tool: name, global: globalPolicy, effective: effectivePolicy, scope: agentScope)
                 // Filter out system permissions from per-tool grant requirements
                 let nonSystemRequirements = requirements.filter { !SystemPermissionService.isSystemPermission($0) }
                 // Auto-grant missing requirements when policy is .auto
@@ -1068,7 +1279,10 @@ public final class ToolRegistry: ObservableObject {
             }
         } else {
             // Default for tools without requirements: auto-run unless explicitly denied
-            let effectivePolicy = configuration.policy[name] ?? .auto
+            let globalPolicy = configuration.policy[name] ?? .auto
+            let effectivePolicy = ToolApprovalResolver.policy(tool: name, global: globalPolicy, scope: agentScope)
+            skipReason = ToolApprovalResolver.policySkipReason(
+                tool: name, global: globalPolicy, effective: effectivePolicy, scope: agentScope)
             if effectivePolicy == .deny {
                 throw NSError(
                     domain: "ToolRegistry",
@@ -1083,15 +1297,29 @@ public final class ToolRegistry: ObservableObject {
                     // Headless eval with no UI: deny instead of hanging on an
                     // approval card nobody can click (see task-local doc).
                     approved = false
-                } else if ToolApprovalSettings.autoAllowAll {
+                } else if let reason = ToolApprovalResolver.cardSkipReason(
+                    scope: agentScope, perCallApproval: false)
+                {
+                    skipReason = reason
                     approved = true
                 } else {
+                    let settled = SilentSettleNote()
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,
                         description: tool.description,
+                        descriptionIsForModel: true,
                         argumentsJSON: approvalArgumentsJSON,
-                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON)
+                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON),
+                        agentChoice: agentScope?.approvalChoice,
+                        revalidate: queuedCardRevalidation(
+                            name: name,
+                            defaultPolicy: .auto,
+                            contextualPolicy: nil,
+                            perCallApproval: false,
+                            note: settled
+                        )
                     )
+                    skipReason = settled.reason
                 }
                 if !approved {
                     throw NSError(
@@ -1100,6 +1328,52 @@ public final class ToolRegistry: ObservableObject {
                         userInfo: [NSLocalizedDescriptionKey: "User denied execution for tool: \(name)"]
                     )
                 }
+            }
+        }
+        return skipReason
+    }
+
+    /// Why a queued card settled without being shown, for the audit marker.
+    @MainActor private final class SilentSettleNote {
+        var reason: ToolApprovalSkipReason?
+    }
+
+    /// Re-runs the gate's policy steps right before a queued card would show,
+    /// so an answer given while it waited (Always Allow, an agent entry, a
+    /// run lease, a policy changed to Deny) settles it without a second card.
+    /// Per-call tools always show theirs.
+    private func queuedCardRevalidation(
+        name: String,
+        defaultPolicy: ToolPermissionPolicy,
+        contextualPolicy: ToolPermissionPolicy?,
+        perCallApproval: Bool,
+        note: SilentSettleNote
+    ) -> ToolPermissionPromptService.Revalidation? {
+        guard !perCallApproval else { return nil }
+        let agentId = ChatExecutionContext.currentAgentId
+        let inWorkflowRun = ChatExecutionContext.currentWorkflowRunId != nil
+        let runScope = ChatExecutionContext.toolPermissionRunScope
+        return { @MainActor [weak self] () -> ToolPermissionPromptService.PromptResolution? in
+            guard let self else { return nil }
+            let global = self.configuration.policy[name] ?? defaultPolicy
+            let scope = ToolApprovalResolver.scope(agentId: agentId, inWorkflowRun: inWorkflowRun)
+            var policy = ToolApprovalResolver.policy(tool: name, global: global, scope: scope)
+            if let contextualPolicy {
+                policy = ToolPermissionPolicy.strictest(policy, contextualPolicy)
+            }
+            switch policy {
+            case .deny:
+                return .denied
+            case .auto:
+                note.reason = ToolApprovalResolver.policySkipReason(
+                    tool: name, global: global, effective: policy, scope: scope)
+                return .allowOnce
+            case .ask:
+                if runScope?.allows(name) == true { return .allowOnce }
+                guard let reason = ToolApprovalResolver.cardSkipReason(scope: scope, perCallApproval: false)
+                else { return nil }
+                note.reason = reason
+                return .allowOnce
             }
         }
     }
@@ -1169,8 +1443,7 @@ public final class ToolRegistry: ObservableObject {
                 reason:
                     "There is no '\(name)' tool. The tool you mean is named '\(intended)' — "
                     + "call it with that exact name\(schemaHint(for: intended)).",
-                toolName: name,
-                retryable: true
+                toolName: name
             ).toJSONString()
         }
 
@@ -1188,8 +1461,7 @@ public final class ToolRegistry: ObservableObject {
                     "There is no '\(name)' tool. To fetch a web page, call search_and_extract "
                     + "with {\"urls\": [\"<url>\"]} — it fetches the pages and returns their "
                     + "readable content. To find sources first, call web_search.",
-                toolName: name,
-                retryable: true
+                toolName: name
             ).toJSONString()
         }
 
@@ -1210,6 +1482,12 @@ public final class ToolRegistry: ObservableObject {
         // `nil` scope means the surface published none and gates its own tools — the registry then
         // behaves exactly as before. See `ChatExecutionContext.toolExecutionScope`.
         if let scope = ChatExecutionContext.toolExecutionScope, !scope.permits(name) {
+            // A read-only working folder strips its write tools from the schema, so they land
+            // here, not at the execute-time refusal below. Must precede the "no folder" answer:
+            // the folder is attached, just read only.
+            if let refusal = readOnlyFolderRefusal(for: name) {
+                return refusal
+            }
             ToolRegistryLogger.registry.error(
                 "refusing '\(name, privacy: .public)': not exposed to this request"
             )
@@ -1242,6 +1520,28 @@ public final class ToolRegistry: ObservableObject {
             // The refusal stands — no execution boundary moves. Naming the
             // Folder chip leaks nothing: it is public UX.
             if Self.coreWorkspaceToolNames.contains(name) {
+                // The Orchestrator never holds folder tools, with or without
+                // a folder; attaching one would not make this call succeed.
+                if ChatExecutionContext.currentAgentId == Agent.defaultId,
+                    scope.permits(RunWorkflowTool.toolName)
+                {
+                    return ToolErrorEnvelope(
+                        kind: .toolNotFound,
+                        reason:
+                            "\(name) is folder work, which the Orchestrator hands off. Call "
+                            + "\(RunWorkflowTool.toolName) with workflow \"\(BuiltInWorker.files.displayName)\" "
+                            + "and input {\"\(AgentWrapperCatalog.taskInput)\": \"<the request>\"}.",
+                        toolName: name
+                    ).toJSONString()
+                }
+                if let refusal = Self.sandboxNotReadyRefusal(tool: name, agentId: ChatExecutionContext.currentAgentId) {
+                    return ToolEnvelope.failure(
+                        kind: .unavailable,
+                        message: refusal.message,
+                        tool: name,
+                        retryable: refusal.retryable
+                    )
+                }
                 return ToolErrorEnvelope(
                     kind: .toolNotFound,
                     reason:
@@ -1250,8 +1550,9 @@ public final class ToolRegistry: ObservableObject {
                         + PromptWorkingFolderTool.attachFolderSteer
                         + " An attached folder also becomes the agent's Working Folder for "
                         + "future chats and background runs; enabling Autonomous execution is "
-                        + "the other option. Until then, deliver file content with "
-                        + "share_artifact and say why.",
+                        + "the other option."
+                        + (scope.permits("share_artifact")
+                            ? " Until then, deliver file content with share_artifact and say why." : ""),
                     toolName: name,
                     retryable: false
                 ).toJSONString()
@@ -1276,6 +1577,20 @@ public final class ToolRegistry: ObservableObject {
                 !isNonLoadableBuiltIn
                 && (ChatExecutionContext.currentAgentId != Agent.defaultId
                     || Self.configureWriteToolNames.contains(name))
+            // The Orchestrator holds no loader: its configure writes go
+            // through the Configurator, never a capabilities load.
+            if ChatExecutionContext.currentAgentId == Agent.defaultId, Self.configureToolNames.contains(name),
+                !scope.permits("capabilities"), !scope.permits("capabilities_load"),
+                scope.permits(ConfiguratorHandoffTool.toolName)
+            {
+                return ToolErrorEnvelope(
+                    kind: .toolNotFound,
+                    reason:
+                        "Osaurus settings belong to the Configurator. "
+                        + "Call \(ConfiguratorHandoffTool.toolName) with the user's request instead.",
+                    toolName: name
+                ).toJSONString()
+            }
             if loadGateAllows, loadableCodes.isSuperset(of: toolAvailability.reasonCodes) {
                 // Name the loader tool this request actually exposes. Chat
                 // surfaces publish the merged `capabilities` gateway and NOT
@@ -1303,6 +1618,23 @@ public final class ToolRegistry: ObservableObject {
             return ToolErrorEnvelope(
                 kind: .toolNotFound,
                 reason: "\(name) is not available in this conversation.",
+                toolName: name,
+                retryable: false
+            ).toJSONString()
+        }
+
+        // The sandbox adapters are reached by name only through a published
+        // scope; the public workspace tools route to them through the
+        // bridge, not here. A surface that publishes no scope is one that
+        // gates its own tools, and none of those may run a VM command or
+        // file write directly.
+        if ChatExecutionContext.toolExecutionScope == nil, Self.sandboxBackendAdapterToolNames.contains(name) {
+            ToolRegistryLogger.registry.error(
+                "refusing '\(name, privacy: .public)': sandbox adapter called without a request scope"
+            )
+            return ToolErrorEnvelope(
+                kind: .toolNotFound,
+                reason: "\(name) is not available here. Use file_read, file_write, file_edit, or shell_run.",
                 toolName: name,
                 retryable: false
             ).toJSONString()
@@ -1353,6 +1685,9 @@ public final class ToolRegistry: ObservableObject {
         if let apple = tool as? AppleToolBase, let refusal = appleAppGateRefusal(for: apple) {
             return refusal
         }
+        if let refusal = readOnlyFolderRefusal(for: name) {
+            return refusal
+        }
         if let invalidArguments = Self.invalidToolArgumentsEnvelope(
             argumentsJSON,
             toolName: name
@@ -1386,14 +1721,7 @@ public final class ToolRegistry: ObservableObject {
         // It also closes a consent gap: the gate now sees the SAME coerced
         // arguments the tool body will receive, so an approval card cannot
         // preview one thing while execution does another.
-        let normalizedArguments = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
-        switch Self.preflight(
-            argumentsJSON: normalizedArguments,
-            schema: tool.parameters,
-            toolName: name,
-            hint: tool.argumentHint,
-            preservingEmpty: tool.preservedEmptyStringArguments
-        ) {
+        switch await Self.preflight(tool: tool, name: name, argumentsJSON: argumentsJSON) {
         case .rejected(let envelopeJSON):
             return envelopeJSON
         case .ready(let effectiveArgumentsJSON):
@@ -1402,10 +1730,13 @@ public final class ToolRegistry: ObservableObject {
             // serially in model order BEFORE executing concurrently, so
             // approval prompts never stack or race).
             if !permissionGateResolved {
-                try await runPermissionGate(
-                    tool: tool,
-                    name: name,
-                    argumentsJSON: effectiveArgumentsJSON
+                try await ToolApprovalAudit.record(
+                    runPermissionGate(
+                        tool: tool,
+                        name: name,
+                        argumentsJSON: effectiveArgumentsJSON
+                    ),
+                    callId: ChatExecutionContext.currentToolCallId
                 )
             }
             // Approval can suspend while the user revokes the capability.
@@ -1502,37 +1833,35 @@ public final class ToolRegistry: ObservableObject {
             let runBody: () async throws -> String = {
                 try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
                     try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
-                        try await ChatExecutionContext.$allowHostFolderWrites.withValue(policy.allowFolderWrites) {
-                            try await ChatExecutionContext.$sandboxReadBridge.withValue(readBridge) {
-                                try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
-                                    if tool.bypassRegistryTimeout || ownsExecutionUntilTermination {
-                                        // Spawned runners pass
-                                        // `ownsExecutionUntilTermination`: their
-                                        // `OwnedSubagentOperation` supplies the
-                                        // deadline/interrupt signal and MUST
-                                        // drain this direct body before the
-                                        // child can finish. Using the generic
-                                        // timeout race here would return while
-                                        // its losing body task was still live.
-                                        return Self.normalizeToolResult(
-                                            try await Self.runToolBodyUntimed(
-                                                tool,
-                                                argumentsJSON: effectiveArgumentsJSON,
-                                                authorizeBody: authorizeBody
-                                            ),
-                                            tool: name
-                                        )
-                                    }
-                                    return Self.normalizeToolResult(
-                                        try await Self.runToolBody(
+                        try await ChatExecutionContext.$sandboxReadBridge.withValue(readBridge) {
+                            try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
+                                if tool.bypassRegistryTimeout || ownsExecutionUntilTermination {
+                                    // Spawned runners pass
+                                    // `ownsExecutionUntilTermination`: their
+                                    // `OwnedSubagentOperation` supplies the
+                                    // deadline/interrupt signal and MUST
+                                    // drain this direct body before the
+                                    // child can finish. Using the generic
+                                    // timeout race here would return while
+                                    // its losing body task was still live.
+                                    return try await Self.normalizeExecutedToolResult(
+                                        try await Self.runToolBodyUntimed(
                                             tool,
                                             argumentsJSON: effectiveArgumentsJSON,
-                                            timeoutSeconds: Self.defaultToolTimeoutSeconds,
                                             authorizeBody: authorizeBody
                                         ),
                                         tool: name
                                     )
                                 }
+                                return try await Self.normalizeExecutedToolResult(
+                                    try await Self.runToolBody(
+                                        tool,
+                                        argumentsJSON: effectiveArgumentsJSON,
+                                        timeoutSeconds: Self.defaultToolTimeoutSeconds,
+                                        authorizeBody: authorizeBody
+                                    ),
+                                    tool: name
+                                )
                             }
                         }
                     }
@@ -1566,13 +1895,16 @@ public final class ToolRegistry: ObservableObject {
     /// `.sandbox(hostRead: ctx)`. Resolved once per call so the two
     /// task-locals stay consistent, and inert (`nil` / `false`) in plain
     /// folder and plain sandbox modes.
-    private var combinedHostReadPolicy: (scope: URL?, allowSecretReads: Bool, allowFolderWrites: Bool) {
-        (nil, false, false)
+    private var combinedHostReadPolicy: (scope: URL?, allowSecretReads: Bool) {
+        (nil, false)
     }
 
     /// Sandbox identity bound around every tool body while VM execution is
     /// active. The five public workspace tools use it as their backend router.
     private var combinedSandboxReadBridge: SandboxReadBridge? {
+        // A workflow with dependencies runs in its own environment, whoever
+        // started it (an agent, the Orchestrator, a tab, a test).
+        if let workflow = ChatExecutionContext.workflowSandbox { return workflow.bridge }
         guard toolsByName.keys.contains("sandbox_exec") else { return nil }
         // A dispatched host-folder run (Watcher / schedule / plugin folder)
         // has exactly one filesystem — the folder it was pointed at. The
@@ -1624,7 +1956,8 @@ public final class ToolRegistry: ObservableObject {
                     argumentsJSON: argumentsJSON
                 ),
                 hasSandboxBridge: combinedSandboxReadBridge != nil,
-                hasFolderRoot: ChatExecutionContext.currentFolderRoot != nil
+                hasFolderRoot: ChatExecutionContext.currentFolderRoot != nil,
+                hasWorkflowSandbox: ChatExecutionContext.workflowSandbox != nil
             )
         }
         return .nativeHost
@@ -1772,22 +2105,35 @@ public final class ToolRegistry: ObservableObject {
             )
         }
 
-        // Try to detect "coercion changed the shape" via canonicalised
-        // JSON byte equality. When the bytes match, hand back the
-        // original literal; otherwise re-serialise so the tool body
-        // gets native types.
-        let opts: JSONSerialization.WritingOptions = [.sortedKeys]
-        guard let coercedData = try? JSONSerialization.data(withJSONObject: coerced, options: opts),
-            let originalData = try? JSONSerialization.data(withJSONObject: parsed, options: opts)
+        // When coercion left the arguments as parsed, hand back the
+        // original literal; otherwise re-serialise so the tool body gets
+        // native types. Coercion only converts strings, renames keys and
+        // drops empty optionals, so Foundation equality sees every change,
+        // and unchanged values compare by identity instead of serialising
+        // a large payload twice.
+        if (coerced as AnyObject).isEqual(parsed) {
+            return .ready(argumentsJSON: argumentsJSON)
+        }
+        guard let coercedData = try? JSONSerialization.data(withJSONObject: coerced, options: [.sortedKeys]),
+            let coercedJSON = String(data: coercedData, encoding: .utf8)
         else { return .ready(argumentsJSON: argumentsJSON) }
-
-        if coercedData == originalData {
-            return .ready(argumentsJSON: argumentsJSON)
-        }
-        guard let coercedJSON = String(data: coercedData, encoding: .utf8) else {
-            return .ready(argumentsJSON: argumentsJSON)
-        }
         return .ready(argumentsJSON: coercedJSON)
+    }
+
+    /// The dispatcher's `preflight`, off the main actor: parsing, coercing
+    /// and validating a large payload (a whole file in `file_write`) would
+    /// otherwise run on the UI thread.
+    @concurrent
+    nonisolated static func preflight(tool: any OsaurusTool, name: String, argumentsJSON: String) async
+        -> PreflightOutcome
+    {
+        preflight(
+            argumentsJSON: tool.normalizeArgumentsBeforeValidation(argumentsJSON),
+            schema: tool.parameters,
+            toolName: name,
+            hint: tool.argumentHint,
+            preservingEmpty: tool.preservedEmptyStringArguments
+        )
     }
 
     /// Registry-boundary result normalization, applied to EVERY executed
@@ -1802,7 +2148,33 @@ public final class ToolRegistry: ObservableObject {
     ///    re-wrapped with `truncated: true` plus a recovery hint, so no
     ///    single call (base64 payload, giant diff, runaway listing) can
     ///    blow the context window in one turn. Error-ness is preserved.
-    nonisolated static func normalizeToolResult(_ raw: String, tool: String) -> String {
+    /// Capture request identity before leaving actor/task-local context. The
+    /// transform and bounded SSD retention run off the UI actor. No read tool
+    /// is added or granted: recovery is advertised only when already exposed.
+    nonisolated static func normalizeExecutedToolResult(_ raw: String, tool: String) async throws -> String {
+        try Task.checkCancellation()
+        if raw.utf8.count <= ToolOutputCaps.universalResult {
+            return normalizeToolResult(raw, tool: tool)
+        }
+        let owner = ChatExecutionContext.toolExecutionScope?.permits("file_read") == true
+            ? RetainedToolResultStore.Owner.current : nil
+        let store = owner == nil ? nil : RetainedToolResultStore.current()
+        let work = Task.detached(priority: .utility) {
+            normalizeToolResult(raw, tool: tool, retainingFor: owner, store: store)
+        }
+        let result = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
+        try Task.checkCancellation()
+        return result
+    }
+
+    nonisolated static func normalizeToolResult(
+        _ raw: String, tool: String, retainingFor owner: RetainedToolResultStore.Owner? = nil,
+        store: RetainedToolResultStore? = nil
+    ) -> String {
         // The secret-prompt marker is deliberately NOT an envelope —
         // `SecretPromptParser` keys off `action` at the JSON root and the
         // chat loop replaces it with a real envelope after the overlay
@@ -1830,13 +2202,23 @@ public final class ToolRegistry: ObservableObject {
         // CJK/emoji-heavy payload is ~300 KB and ~3× the tokens of ASCII.
         // Measure in bytes; slice in characters at the proportional length so
         // ASCII payloads behave exactly as before (bytes == characters).
-        let cap = ToolOutputCaps.universalResult
+        let universalCap = ToolOutputCaps.universalResult
         let isEnvelope = ToolEnvelope.isSuccess(payload) || ToolEnvelope.isError(payload)
         let byteCount = payload.utf8.count
 
-        if byteCount <= cap {
+        if byteCount <= universalCap {
             return isEnvelope ? payload : ToolEnvelope.success(tool: tool, text: payload)
         }
+        let retained: RetainedToolResultStore.Reference?
+        if let owner, !Task.isCancelled {
+            retained = try? (store ?? RetainedToolResultStore.current()).retain(payload, tool: tool, owner: owner)
+        } else {
+            retained = nil
+        }
+        // A recoverable preview should not itself fill the conversation and
+        // force another summary. The existing universal cap remains the
+        // fallback when retention is unavailable or no reader was exposed.
+        let cap = retained == nil ? universalCap : 6_000
         // Head-biased: at the registry backstop the front of an oversized
         // payload is what identifies it (the recovery hint rides in the
         // envelope, not the marker). The cap is a BYTE budget: a proportional
@@ -1859,31 +2241,41 @@ public final class ToolRegistry: ObservableObject {
         if truncatedContent.utf8.count > cap {
             truncatedContent = HeadTailTruncation.applyByteExact(payload, byteCap: cap, headFraction: 2.0 / 3.0)
         }
-        let hint =
+        let genericHint =
             "Output exceeded the per-call cap and was truncated (head and tail kept). "
             + "Re-run with narrower arguments — filters, `max_results`, line ranges, or "
             + "head/tail options — to retrieve the missing region."
+        let hint = retained.map {
+            "Only a preview is included. The full normalized result is retained at \($0.path). "
+                + "Read it with file_read using that path and max_chars:60000; follow next_read for more pages. "
+                + "Lines are JSONL chunks: concatenate their text fields to reconstruct the result. "
+                + "Paging this reference reads the saved result without repeating the original tool call."
+        } ?? genericHint
+
+        var recovery: [String: Any] = [:]
+        if let retained { recovery["full_result"] = retained.payload }
+        if owner != nil, retained == nil { recovery["full_result_retained"] = false }
 
         if ToolEnvelope.isError(payload) {
             return ToolEnvelope.failure(
                 kind: .executionError,
                 message: "Tool '\(tool)' failed and its error output exceeded the per-call cap. " + hint,
                 tool: tool,
-                metadata: [
+                metadata: recovery.merging([
                     "truncated": true,
                     "original_chars": payload.count,
                     "content": truncatedContent,
-                ]
+                ]) { first, _ in first }
             )
         }
         return ToolEnvelope.success(
             tool: tool,
-            result: [
+            result: recovery.merging([
                 "kind": "truncated_output",
                 "truncated": true,
                 "original_chars": payload.count,
                 "content": truncatedContent,
-            ] as [String: Any],
+            ]) { first, _ in first },
             warnings: [hint]
         )
     }
@@ -2031,6 +2423,68 @@ public final class ToolRegistry: ObservableObject {
         toolsByName[name] != nil
             && !builtInToolNames.contains(name)
             && !runtimeManagedToolNames.contains(name)
+            && !workflowToolNames.contains(name)
+            && !hostedWorkflowToolNames.contains(name)
+    }
+
+    /// Registers one `workflow_<slug>` tool per installed workflow and drops
+    /// the tools of uninstalled ones. Called whenever the installed set
+    /// loads. A workflow whose tool name is already taken by another kind
+    /// of tool is skipped (and logged), so `workflowToolNames` only ever
+    /// names tools that really are `WorkflowTool`s: the exposure checks
+    /// built on it never misclassify a plugin or MCP tool as a workflow.
+    func syncWorkflowTools(_ workflows: [InstalledWorkflow]) {
+        let tools = workflows.map(WorkflowTool.init).filter { !Self.architectToolNames.contains($0.name) }
+        let wanted = Set(tools.map(\.name))
+        for stale in workflowToolNames.subtracting(wanted) where toolsByName[stale] is WorkflowTool {
+            toolsByName[stale] = nil
+        }
+        var installed: Set<String> = []
+        for tool in tools {
+            if toolsByName[tool.name] == nil || toolsByName[tool.name] is WorkflowTool {
+                toolsByName[tool.name] = tool
+                installed.insert(tool.name)
+            } else {
+                print("[ToolRegistry] workflow tool \(tool.name) collides with a registered tool; not exposed")
+            }
+        }
+        workflowToolNames = installed
+    }
+
+    /// One `workflow_<slug>` per hosted workflow this Mac added. An
+    /// install of the same name keeps it.
+    func syncHostedWorkflowTools(_ links: [HostedWorkflowLink]) {
+        let tools = links.map(HostedWorkflowTool.init).filter { !Self.architectToolNames.contains($0.name) }
+        let wanted = Set(tools.map(\.name))
+        for stale in hostedWorkflowToolNames.subtracting(wanted) where toolsByName[stale] is HostedWorkflowTool {
+            toolsByName[stale] = nil
+        }
+        var installed: Set<String> = []
+        for tool in tools {
+            if toolsByName[tool.name] == nil || toolsByName[tool.name] is HostedWorkflowTool {
+                toolsByName[tool.name] = tool
+                installed.insert(tool.name)
+            } else {
+                print("[ToolRegistry] hosted workflow tool \(tool.name) collides with a registered tool; not exposed")
+            }
+        }
+        hostedWorkflowToolNames = installed
+    }
+
+    /// Whether `name` is free for a workflow tool: unregistered, or held by
+    /// a workflow tool (which the next sync replaces).
+    func isWorkflowToolNameAvailable(_ name: String) -> Bool {
+        toolsByName[name] == nil || toolsByName[name] is WorkflowTool
+    }
+
+    /// Tools that only make sense with a chat agent bound: `run_workflow`,
+    /// the Architect's draft tools, and the per-workflow tools. An
+    /// external caller with no agent context (the MCP bridge without a
+    /// grant) cannot run them, so they are hidden from `/mcp/tools` and
+    /// refused by `/mcp/call` rather than failing opaquely.
+    func requiresAgentContext(_ name: String) -> Bool {
+        name == RunWorkflowTool.toolName || Self.architectToolNames.contains(name) || workflowToolNames.contains(name)
+            || hostedWorkflowToolNames.contains(name)
     }
 
     private struct DynamicGrantContext {
@@ -2107,10 +2561,11 @@ public final class ToolRegistry: ObservableObject {
     }
 
     private func dynamicGrantRefusal(for name: String, requireRegistered: Bool = false) -> String? {
-        guard
-            (requireRegistered && toolsByName[name] == nil)
-                || !isDynamicToolGranted(name, agentId: ChatExecutionContext.currentAgentId)
-        else {
+        let granted =
+            ChatExecutionContext.workflowGrantedToolNames?.contains(name) == true
+            ? (!isDynamicRegisteredTool(named: name) || isGlobalEnabled(name))
+            : isDynamicToolGranted(name, agentId: ChatExecutionContext.currentAgentId)
+        guard (requireRegistered && toolsByName[name] == nil) || !granted else {
             return nil
         }
         return ToolErrorEnvelope(
@@ -2193,6 +2648,12 @@ public final class ToolRegistry: ObservableObject {
         return toolsByName[name]?.parameters
     }
 
+    /// The tool's own pre-validation repair (identity for unknown tools), so
+    /// callers that validate ahead of `execute` see what `execute` will.
+    func normalizedArgumentsForTool(name: String, argumentsJSON: String) -> String {
+        toolsByName[name]?.normalizeArgumentsBeforeValidation(argumentsJSON) ?? argumentsJSON
+    }
+
     /// Get estimated tokens for a tool by name (returns 0 if not found).
     func estimatedTokens(for name: String) -> Int {
         return listTools().first(where: { $0.name == name })?.estimatedTokens ?? 0
@@ -2255,6 +2716,30 @@ public final class ToolRegistry: ObservableObject {
     }
 
     /// Returns policy and requirements information for a given tool
+    /// What the gate does for this tool in one custom agent's runs: the
+    /// agent's own policy replaces the global one unless that is Deny.
+    /// `configuredPolicy` is the agent's override; nil means Default.
+    func policyInfo(for name: String, agentId: UUID) -> ToolPolicyInfo? {
+        guard let global = policyInfo(for: name) else { return nil }
+        let scope = ToolApprovalResolver.scope(agentId: agentId, inWorkflowRun: false)
+        let override = scope?.policies[name]
+        var effective = ToolApprovalResolver.policy(
+            tool: name, global: configuration.policy[name] ?? global.defaultPolicy, scope: scope)
+        if effective == .auto, requiresPerCallApproval(name) {
+            effective = .ask
+        }
+        return ToolPolicyInfo(
+            isPermissioned: global.isPermissioned,
+            defaultPolicy: global.effectivePolicy,
+            configuredPolicy: override,
+            effectivePolicy: effective,
+            requirements: global.requirements,
+            grantsByRequirement: global.grantsByRequirement,
+            systemPermissions: global.systemPermissions,
+            systemPermissionStates: global.systemPermissionStates
+        )
+    }
+
     func policyInfo(for name: String) -> ToolPolicyInfo? {
         guard let tool = toolsByName[name] else { return nil }
         let isPermissioned = (tool as? PermissionedTool) != nil
@@ -2504,6 +2989,52 @@ public final class ToolRegistry: ObservableObject {
         }
     }
 
+    /// `registerPluginTool` for a whole plugin: one registry publish and at
+    /// most one configuration write, instead of one of each per tool (each
+    /// publish invalidates every registry observer and the tool-list memo).
+    func registerPluginTools(_ tools: [OsaurusTool]) {
+        guard !tools.isEmpty else { return }
+        var byName = toolsByName
+        var newlyEnabled: [String] = []
+        var accepted: [OsaurusTool] = []
+        for tool in tools {
+            if refusesBuiltInCollision(name: tool.name, source: "plugin") { continue }
+            if byName[tool.name] == nil, !configuration.enabled.keys.contains(tool.name) {
+                newlyEnabled.append(tool.name)
+            }
+            byName[tool.name] = tool
+            sandboxToolNames.remove(tool.name)
+            builtInSandboxToolNames.remove(tool.name)
+            mcpToolNames.remove(tool.name)
+            pluginToolNames.insert(tool.name)
+            accepted.append(tool)
+        }
+        toolsByName = byName
+        if !newlyEnabled.isEmpty {
+            var updated = configuration
+            for name in newlyEnabled { updated.setEnabled(true, for: name) }
+            configuration = updated
+            ToolConfigurationStore.save(updated)
+        }
+        let entries = accepted.map {
+            (
+                name: $0.name, description: $0.description,
+                tokenCount: Self.estimateTokenCount($0), parameters: $0.parameters
+            )
+        }
+        Task {
+            for entry in entries {
+                await ToolIndexService.shared.onToolRegistered(
+                    name: entry.name,
+                    description: entry.description,
+                    runtime: .native,
+                    tokenCount: entry.tokenCount,
+                    parameters: entry.parameters
+                )
+            }
+        }
+    }
+
     /// A built-in name is never overwritten by an MCP or plugin tool: a
     /// remote `calendar_events` would otherwise be governed by the Calendar
     /// toggle, skip TCC, and run under the built-in's permission policy.
@@ -2574,8 +3105,8 @@ public final class ToolRegistry: ObservableObject {
     /// The git subset of the folder tools. Registered process-wide with the
     /// core set; visible only when the executing session's folder is a git
     /// repo (schema filtering in `excludedToolNames`).
-    static let gitToolNames: Set<String> = [
-        "git_status", "git_diff", "git_commit",
+    nonisolated static let gitToolNames: Set<String> = [
+        "git_status", "git_diff", "git_log", "git_commit",
     ]
 
     /// The read-only subset of the folder tools. In combined sandbox +
@@ -2767,6 +3298,11 @@ public final class ToolRegistry: ObservableObject {
     ) -> AgentToolLoop.AnnouncedToolCallRecovery {
         var recovery = AgentToolLoop.AnnouncedToolCallRecovery(exposed: exposed)
         recovery.workspaceBlocked = Self.coreWorkspaceToolNames.subtracting(exposed)
+        // Exposed read tools mean a folder is attached; a read-only one withholds its write
+        // tools, which "no workspace attached" would misdescribe.
+        if exposed.contains("file_read"), Self.agentHasReadOnlyWorkingFolder(agentId) {
+            recovery.workspaceBlocked.subtract(Self.readOnlyFolderBlockedToolNames)
+        }
         recovery.loaderName =
             loaderPermitted("capabilities")
             ? "capabilities"
@@ -2796,6 +3332,13 @@ public final class ToolRegistry: ObservableObject {
 
     static let coreWorkspaceToolNames: Set<String> = [
         "file_read", "file_search", "file_write", "file_edit", "shell_run",
+    ]
+
+    /// Folder tools that change the working folder or run a command in it.
+    /// A read-only working folder (`AgentSettings.workingFolderReadOnly`)
+    /// strips them from the schema and refuses them at execute.
+    nonisolated static let readOnlyFolderBlockedToolNames: Set<String> = [
+        "file_write", "file_edit", "file_copy", "shell_run", "git_commit", "file_undo", "redact_file",
     ]
 
     /// Redaction tools: part of the host-folder schema (they resolve the
@@ -3089,7 +3632,7 @@ public final class ToolRegistry: ObservableObject {
         return L("native")
     }
 
-    static let capabilityToolNames: Set<String> = [
+    nonisolated static let capabilityToolNames: Set<String> = [
         "capabilities", "capabilities_discover", "capabilities_load",
     ]
 
@@ -3419,23 +3962,23 @@ extension ToolRegistry {
     /// to workers).
     nonisolated static let orchestratorExcludedToolNames: Set<String> = Set([
         "share_artifact",
-        // The Orchestrator reads its working folder (`file_read` /
-        // `file_search`) to brief workers and read their deliverables; the
-        // workers do the writing and shell work in that folder.
-        "file_write", "file_edit", "shell_run",
+        // Folder work, reading included, belongs to workers: deliverables
+        // reach the Orchestrator as results and shared artifacts.
+        "file_read", "file_search", "file_write", "file_edit", "shell_run",
+        // Osaurus itself is the Configurator's (`configurator_handoff`).
+        // The domain write tools beyond `osaurus_config` are registered at
+        // runtime and stripped in `resolveTools` from `configureToolNames`.
+        "osaurus_config", "osaurus_inspect", "osaurus_help",
     ])
     // Every other host-folder tool (`file_copy`, `file_undo`,
     // `file_operation_history`, `detect_pii`, `redact_file`) is folder WORK
-    // too — copying, reverting, and scanning files is what a worker does in
-    // that folder. Keeping the Orchestrator's folder surface at exactly
-    // `file_read` / `file_search` is also what its addendum promises.
-    // (Spelled out rather than `hostFolderExtraToolNames`: that accessor is
-    // main-actor isolated and this constant is nonisolated.)
+    // too. (Spelled out rather than `hostFolderExtraToolNames`: that accessor
+    // is main-actor isolated and this constant is nonisolated.)
     .union(["file_copy", "file_undo", "file_operation_history", "detect_pii", "redact_file"])
     // The built-in Apple app tools (Calendar, Mail, Messages, …) are a
-    // custom-agent capability: the Orchestrator enables them on other
+    // custom-agent capability: the Configurator enables them on other
     // agents through `osaurus_config` (`capabilities.apple_apps`) and
-    // dispatches the actual calendar/mail work there. Excluded here so
+    // the actual calendar/mail work runs there. Excluded here so
     // not even a ticked manual name or a session load leaks one into the
     // Orchestrator's schema.
     .union(AppleApp.allToolNames)
@@ -3450,26 +3993,58 @@ extension ToolRegistry {
         "get_current_time", "calculate", "share_artifact",
     ]
 
-    /// Turn-1 schema for the `.orchestrator` surface (the Default agent):
-    /// the consolidated configure surface — the two generic reads
-    /// (`osaurus_inspect` / `osaurus_help`) plus the single declarative write tool
-    /// (`osaurus_config`) — together with the agent-loop tools
-    /// (`todo` / `complete` / `clarify`),
-    /// `get_current_time`, `calculate`, and the native search pair (`web_search` /
-    /// `search_and_extract`) for quick lookups — heavy research still
-    /// dispatches to workers. The Default agent loads its write tools
-    /// **directly**; it does NOT use `capabilities_discover` /
-    /// `capabilities_load` (those stay available to custom agents). Computed
-    /// from the live domain registry so a newly registered domain expands
-    /// the set automatically, and stable across a session for KV-cache
-    /// reuse. `prompt_working_folder` is deliberately NOT here: the
-    /// Orchestrator never writes files, its (read-only) folder is set from
-    /// the chat Folder chip or Settings → Orchestrator, and this baseline is
-    /// a reviewed first-turn schema contract.
-    static var orchestratorAllowedToolNames: Set<String> {
-        configureToolNames.union([
-            "todo", "complete", "clarify", "get_current_time", "calculate",
-            "web_search", "search_and_extract",
-        ])
+    /// The Orchestrator's routing surface: read status, hand Osaurus questions and changes to the Configurator, hand new
+    /// workflows to the Architect, run an installed workflow, or ask one
+    /// question.
+    nonisolated static let orchestratorRoutingToolNames: Set<String> = [
+        StatusTool.toolName, ConfiguratorHandoffTool.toolName,
+        ArchitectHandoffTool.toolName, RunWorkflowTool.toolName, "clarify",
+    ]
+
+    /// Quick tools the Orchestrator does not hold: the agent-loop pair, time,
+    /// arithmetic, and web lookups. This work goes to the research worker and
+    /// other wrappers; the gate never counts these as tool work.
+    nonisolated static let orchestratorLegacyToolNames: Set<String> = [
+        "todo", "complete", "get_current_time", "calculate", "web_search", "search_and_extract",
+    ]
+
+    /// Turn-1 schema for the `.orchestrator` surface (the Default agent).
+    /// `prompt_working_folder` is deliberately NOT here: the Orchestrator
+    /// never touches files; its folder is set from the chat Folder chip or
+    /// Settings → Orchestrator.
+    static var orchestratorAllowedToolNames: Set<String> { orchestratorRoutingToolNames }
+
+    /// The Configurator's whole schema: the consolidated configure surface
+    /// (`osaurus_help`, `osaurus_inspect`, `osaurus_config`, and any other
+    /// registered domain write tool). Nothing that acts outside Osaurus.
+    static var configuratorAllowedToolNames: Set<String> {
+        configureToolNames
+    }
+
+    /// The New Agent draft tool. Stripped from every agent's schema except
+    /// the Configurator in a New Agent chat.
+    nonisolated static let agentCreationToolNames: Set<String> = [AgentDraftTool.toolName]
+
+    /// The Configurator's schema in a New Agent chat: the draft, the
+    /// read-only guide and inspect, and `clarify`. No `osaurus_config`:
+    /// nothing is created or changed until the person clicks Create.
+    nonisolated static let configuratorCreationToolNames: Set<String> = [
+        AgentDraftTool.toolName, "osaurus_help", "osaurus_inspect", "clarify",
+    ]
+
+    /// The Architect's own tools. Stripped from every other agent.
+    nonisolated static let architectToolNames: Set<String> = [
+        WorkflowDraftTool.toolName,
+        WorkflowTestTool.toolName,
+        WorkflowRunsTool.toolName, WorkflowDiscoverTool.toolName,
+        WorkflowProposeSaveTool.toolName,
+    ]
+
+    /// The Architect's whole schema: its draft tools, the read-only
+    /// `osaurus_inspect` (models, MCP servers, plugins), and `clarify`. A
+    /// turn ends on a plain reply or on `workflow_propose_save`. Nothing
+    /// that acts on the world outside a test run.
+    static var architectAllowedToolNames: Set<String> {
+        architectToolNames.union(["osaurus_inspect", "clarify"])
     }
 }

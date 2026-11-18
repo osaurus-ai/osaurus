@@ -94,7 +94,7 @@ final class AppleScriptKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             config: config,
             perAgentEnabled: settings?.appleScriptEnabled ?? false
         )
-        guard available else {
+        guard available || scope.isGrantedByWorkflow(capability) else {
             throw SubagentError.denied("AppleScript is not enabled for this agent.")
         }
 
@@ -115,11 +115,12 @@ final class AppleScriptKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
         case .assignedButNotInstalled(let assigned):
             throw SubagentError.unavailable(
                 "The assigned AppleScript model '\(assigned)' is not installed. "
-                    + "Install it, or pick an installed one in Settings → Computer Use → Models."
+                    + "Install it in Settings → Local Models → AppleScript, or pick an installed one in "
+                    + "Settings → Model Defaults → AppleScript Model."
             )
         case .noneInstalled:
             throw SubagentError.unavailable(
-                "No AppleScript model is installed. Download one in Settings → Computer Use → Models."
+                "No AppleScript model is installed. Download one in Settings → Local Models → AppleScript."
             )
         }
 
@@ -214,6 +215,7 @@ final class AppleScriptKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
     }
 
     func validateExecutionAuthority(_ scope: SubagentScope, resolved: ResolvedModel) async throws {
+        if scope.isGrantedByWorkflow(capability) { return }
         let config = SubagentConfigurationStore.snapshot()
         let enabled = await MainActor.run {
             AgentManager.shared.agent(for: scope.agentId)?.settings.appleScriptEnabled ?? false

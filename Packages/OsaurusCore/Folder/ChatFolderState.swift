@@ -44,6 +44,10 @@ public final class ChatFolderState: ObservableObject {
     /// Monotonic guard so a slow restore/set can't clobber a newer one.
     private var generation = 0
 
+    /// Generation of the in-flight default-folder adoption, if any. Any
+    /// later set/clear/restore supersedes it.
+    private var hostAdoptionGeneration: Int?
+
     /// Fired after a USER-initiated mutation (`setFolder` / `clearFolder`)
     /// — never for persistence restores — so the owning session can mark
     /// itself dirty and save promptly. Without this, a folder picked
@@ -61,6 +65,12 @@ public final class ChatFolderState: ObservableObject {
     // MARK: - Derived state
 
     public var hasActiveFolder: Bool { context != nil }
+
+    /// True while a default folder (project or agent working folder) is
+    /// resolving on its way to turning the agent's sandbox off. Until that
+    /// finishes the agent still reads as sandboxed, so the composer's
+    /// "sandbox on ⇒ no folder" rule must leave this folder alone.
+    public var isAdoptingHostFolder: Bool { hostAdoptionGeneration == generation }
 
     /// Root of the active folder, nil when none is selected.
     public var rootPath: URL? { context?.rootPath }
@@ -96,7 +106,12 @@ public final class ChatFolderState: ObservableObject {
         guard response == .OK, let url = panel.url else {
             return nil
         }
-        return await setFolder(url)
+        let selected = await setFolder(url)
+        if selected == nil {
+            ToastManager.shared.error(L("Could not open folder"),
+                message: L("Folder access could not be granted. Try selecting the folder again."))
+        }
+        return selected
     }
 
     /// Set a folder programmatically: mint a security-scoped bookmark, start
@@ -120,20 +135,37 @@ public final class ChatFolderState: ObservableObject {
                 )
             }.value
         } catch {
+            folderLog.error("folder selection: bookmark creation failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
 
         guard generation == myGeneration else { return nil }
-        guard url.startAccessingSecurityScopedResource() else { return nil }
+        let accessURL: URL
+        if url.startAccessingSecurityScopedResource() {
+            accessURL = url
+        } else {
+            // A custom-sandboxed development app can create the bookmark
+            // without the picker's original URL carrying an active scope.
+            // Activate the actual bookmark, as the restore path already does.
+            let resolved = await Task.detached(priority: .userInitiated) {
+                FolderContextService.resolveSecurityScopedURL(from: bookmarkData)
+            }.value
+            guard generation == myGeneration else { return nil }
+            guard let resolved, resolved.startAccessingSecurityScopedResource() else {
+                folderLog.error("folder selection: security scope could not be started")
+                return nil
+            }
+            accessURL = resolved
+        }
 
-        let built = await FolderContextService.shared.buildContext(from: url)
+        let built = await FolderContextService.shared.buildContext(from: accessURL)
         guard generation == myGeneration else {
-            url.stopAccessingSecurityScopedResource()
+            accessURL.stopAccessingSecurityScopedResource()
             return nil
         }
 
         releaseCurrentScope()
-        securityScopedURL = url
+        securityScopedURL = accessURL
         bookmark = bookmarkData
         lastKnownPath = url.standardizedFileURL.path
         RecentFoldersStore.shared.record(path: url.standardizedFileURL.path, bookmark: bookmarkData)
@@ -198,6 +230,19 @@ public final class ChatFolderState: ObservableObject {
         pendingRestore = Task {
             await self.performRestore(bookmark: bookmark, path: path, generation: myGeneration)
         }
+    }
+
+    /// `restore` for a default folder that will replace the agent's sandbox.
+    /// Returns a token for `endHostFolderAdoption` once the sandbox decision
+    /// is made.
+    public func beginHostFolderAdoption(bookmark: Data?, path: String?) -> Int {
+        restore(bookmark: bookmark, path: path)
+        hostAdoptionGeneration = generation
+        return generation
+    }
+
+    public func endHostFolderAdoption(_ token: Int) {
+        if hostAdoptionGeneration == token { hostAdoptionGeneration = nil }
     }
 
     /// Restore folder state and wait for the context build. Returns the
@@ -378,3 +423,14 @@ public final class ChatFolderState: ObservableObject {
         }
     }
 }
+
+#if OSAURUS_DESIGN_INSPECTOR
+extension ChatFolderState {
+    /// A display-only folder; no bookmark/access grant, indexing or persisted chat mutation.
+    static func inspectorMenuSample() -> ChatFolderState {
+        let state = ChatFolderState()
+        state.context = FolderContext(rootPath: URL(fileURLWithPath: "/tmp/osaurus-menu-check"), projectType: .unknown, tree: "menu-sample.txt", manifest: nil, gitStatus: nil, isGitRepo: false)
+        return state
+    }
+}
+#endif

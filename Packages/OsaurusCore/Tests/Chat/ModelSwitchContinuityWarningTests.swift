@@ -88,9 +88,9 @@ struct ModelSwitchContinuityWarningTests {
             session.turns = [ChatTurn(role: .user, content: "what's the weather")]
             #expect(session.isRemoteAgentTarget == false)
 
-            // Point the window at a remote agent (what connectToRelayAgent /
-            // connectToDiscoveredAgent do), then let the pin move the chip.
-            window.selectedDiscoveredAgentProviderId = UUID()
+            // Point the window at a remote agent (what connectToRelayAgent
+            // does), then let the pin move the chip.
+            window.selectedRemoteAgentProviderId = UUID()
             #expect(session.isRemoteAgentTarget)
             session.selectedModel = "foundation"
             #expect(session.modelSwitchContinuityWarning == nil)

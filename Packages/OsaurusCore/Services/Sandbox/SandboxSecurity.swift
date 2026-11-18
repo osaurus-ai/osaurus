@@ -204,8 +204,10 @@ public enum SandboxPathSanitizer {
         }
 
         if path.hasPrefix("/") {
-            let allowedPrefixes = [agentHome, "/workspace/shared"]
-            guard allowedPrefixes.contains(where: { path.hasPrefix($0) }) else {
+            // Whole components only: `/workspace/agents/a` must not admit
+            // the sibling home `/workspace/agents/ab`.
+            let allowedRoots = [agentHome, "/workspace/shared"]
+            guard allowedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else {
                 return .failure(.outsideAllowedRoots)
             }
             return .success(path)

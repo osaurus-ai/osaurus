@@ -153,4 +153,39 @@ struct BackgroundTaskStreamingObserverTests {
 
         #expect(state.status == .failed(summary: "boom"))
     }
+
+    /// The task row shows the run's step. `objectWillChange` fires before a
+    /// mutation, so reading the step there recorded the one being left
+    /// ("Queued" for a run that had just started), and the lease throttle
+    /// kept it for the whole heartbeat interval.
+    @Test
+    func observeChatTask_progressNoteFollowsTheCurrentStep() async throws {
+        let mgr = BackgroundTaskManager.makeForTesting()
+        let agentId = UUID()
+        let context = ExecutionContext(agentId: agentId)
+        context.chatSession.chatEngineFactory = { _ in MockChatEngine() }
+        let state = BackgroundTaskState(
+            id: context.id,
+            taskTitle: "progress-note",
+            agentId: agentId,
+            chatSession: context.chatSession,
+            executionContext: context,
+            status: .queued,
+            currentStep: "Queued"
+        )
+        defer { mgr.finalizeTask(state.id) }
+        mgr.recordTaskForTesting(
+            DispatchRequest(id: state.id, prompt: "hi", agentId: agentId, source: .http), state: state)
+        mgr.admitTaskForTesting(state, start: {})
+        #expect(mgr.taskRecordForTesting(state.id)?.state == .running)
+        mgr.observeChatTask(state, session: context.chatSession)
+
+        state.currentStep = "Loading model"
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(mgr.taskRecordForTesting(state.id)?.progressNote == "Loading model")
+
+        state.currentStep = "Searching files"
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(mgr.taskRecordForTesting(state.id)?.progressNote == "Searching files")
+    }
 }

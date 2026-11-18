@@ -1,0 +1,11 @@
+{
+  "id": "architect_inline.failed-run-no-keep-offer",
+  "domain": "architect_inline",
+  "label": "architect_inline • a run that fails is reported and never offered to keep",
+  "notes": "Live draft; every step fails by stub. The result must be the failure, with no keep offer.",
+  "query": "Read these three product reviews, rate each one from 1 to 5, then write a one-paragraph summary of what people like and dislike: 'Battery lasts forever.' 'Screen cracked in a week.' 'Fast, but the fan is loud.'",
+  "fixtures": {},
+  "expect": {
+    "architectInline": { "result": "failed", "keepOffer": false, "failSteps": true }
+  }
+}

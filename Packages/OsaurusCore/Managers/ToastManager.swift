@@ -33,6 +33,27 @@ public final class ToastManager {
     /// Action handlers registered for specific action IDs
     private var actionHandlers: [String: (ToastActionResult) -> Void] = [:]
 
+    /// Why a toast went away.
+    public enum DismissReason: Sendable {
+        /// The close button.
+        case user
+        /// Its timeout elapsed, or it was pushed out by newer toasts.
+        case expired
+        /// Its action button ran.
+        case action
+        /// Code removed it.
+        case programmatic
+    }
+
+    /// One-shot callbacks for specific toasts, run when they go away.
+    private var dismissObservers: [UUID: @MainActor (DismissReason) -> Void] = [:]
+
+    /// Runs `handler` once when the toast `id` goes away, with the reason.
+    public func onDismiss(of id: UUID, _ handler: @escaping @MainActor (DismissReason) -> Void) {
+        guard toasts.contains(where: { $0.id == id }) else { return }
+        dismissObservers[id] = handler
+    }
+
     // MARK: - Initialization
 
     private init() {
@@ -71,7 +92,7 @@ public final class ToastManager {
         ToastWindowController.shared.showOverlayIfNeeded()
 
         // Add toast to the list
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+        withAnimation(ThemeManager.shared.currentTheme.motion.springAnimation) {
             toasts.append(toast)
         }
 
@@ -88,17 +109,18 @@ public final class ToastManager {
 
     /// Dismiss a toast by ID
     /// - Parameter id: The toast ID to dismiss
-    public func dismiss(id: UUID) {
+    public func dismiss(id: UUID, reason: DismissReason = .programmatic) {
         // Cancel any pending dismiss task
         dismissTasks[id]?.cancel()
         dismissTasks.removeValue(forKey: id)
 
         // Remove from list with animation
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        withAnimation(ThemeManager.shared.currentTheme.motion.springAnimation) {
             toasts.removeAll { $0.id == id }
         }
 
         print("[Osaurus] Toast dismissed: \(id)")
+        dismissObservers.removeValue(forKey: id)?(reason)
     }
 
     /// Dismiss all toasts
@@ -110,9 +132,12 @@ public final class ToastManager {
         dismissTasks.removeAll()
 
         // Remove all toasts with animation
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        withAnimation(ThemeManager.shared.currentTheme.motion.springAnimation) {
             toasts.removeAll()
         }
+        let observers = dismissObservers
+        dismissObservers.removeAll()
+        for observer in observers.values { observer(.programmatic) }
 
         print("[Osaurus] All toasts dismissed")
     }
@@ -152,7 +177,7 @@ public final class ToastManager {
             toast.progress = progress
         }
 
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        withAnimation(ThemeManager.shared.currentTheme.motion.springAnimation) {
             toasts[index] = toast
         }
 
@@ -278,7 +303,6 @@ public final class ToastManager {
         message: String? = nil,
         agentId: UUID,
         avatarImageData: Data? = nil,
-        customThemeId: UUID? = nil,
         timeout: TimeInterval? = nil
     ) -> UUID {
         show(
@@ -288,8 +312,7 @@ public final class ToastManager {
                 message: message,
                 timeout: timeout,
                 agentId: agentId,
-                avatarImageData: avatarImageData,
-                customThemeId: customThemeId
+                avatarImageData: avatarImageData
             )
         )
     }
@@ -301,7 +324,6 @@ public final class ToastManager {
         message: String? = nil,
         agentId: UUID,
         avatarImageData: Data? = nil,
-        customThemeId: UUID? = nil,
         progress: Double? = nil
     ) -> UUID {
         show(
@@ -311,7 +333,6 @@ public final class ToastManager {
                 message: message,
                 agentId: agentId,
                 avatarImageData: avatarImageData,
-                customThemeId: customThemeId,
                 progress: progress
             )
         )
@@ -350,7 +371,7 @@ public final class ToastManager {
         NotificationCenter.default.post(name: .toastActionTriggered, object: result)
 
         // Dismiss the toast after action
-        dismiss(id: toast.id)
+        dismiss(id: toast.id, reason: .action)
     }
 
     /// Handle built-in actions automatically
@@ -399,11 +420,12 @@ public final class ToastManager {
 
         case .showExecutionContext(let contextId):
             // Lazily create a window from a dispatched execution context
-            TaskDispatcher.shared.openWindow(for: contextId)
+            BackgroundTaskManager.shared.openTaskWindowIfPresent(contextId)
 
         case .openSettings(let tab):
             // Open settings window to specific tab
             if let tabName = tab, let managementTab = ManagementTab.resolved(from: tabName) {
+                ManagementStateManager.shared.requestLegacySubTab(for: tabName)
                 AppDelegate.shared?.showManagementWindow(initialTab: managementTab)
             } else {
                 AppDelegate.shared?.showManagementWindow()
@@ -444,7 +466,7 @@ public final class ToastManager {
             guard !Task.isCancelled else { return }
 
             // Dismiss the toast
-            dismiss(id: id)
+            dismiss(id: id, reason: .expired)
         }
 
         dismissTasks[id] = task
@@ -463,7 +485,7 @@ public final class ToastManager {
 
         // Dismiss the oldest dismissable toasts
         for toast in dismissableToasts.prefix(excessCount) {
-            dismiss(id: toast.id)
+            dismiss(id: toast.id, reason: .expired)
         }
     }
 }

@@ -46,13 +46,19 @@ enum SessionTurnImages {
     /// generated-images folder and still exist. Links anywhere else are left
     /// out: the phone must never be able to read arbitrary Mac files.
     static func generatedImageFiles(in content: String) -> [URL] {
+        generatedImageLinks(in: content).map(\.file)
+    }
+
+    /// The same files, each with the link text that names it in `content`.
+    static func generatedImageLinks(in content: String) -> [(link: String, file: URL)] {
         guard content.contains("](file://") else { return [] }
         let range = NSRange(content.startIndex..., in: content)
         return linkPattern.matches(in: content, range: range).compactMap { match in
             guard let linkRange = Range(match.range(at: 1), in: content),
-                let url = URL(string: String(content[linkRange])), url.isFileURL
+                let url = URL(string: String(content[linkRange])), url.isFileURL,
+                let file = existingFile(url, under: OsaurusPaths.generatedImages())
             else { return nil }
-            return existingFile(url, under: OsaurusPaths.generatedImages())
+            return (String(content[linkRange]), file)
         }
     }
 

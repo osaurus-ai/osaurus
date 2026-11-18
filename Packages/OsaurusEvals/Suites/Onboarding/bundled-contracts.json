@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.bundled-contracts",
+  "domain": "onboarding",
+  "label": "onboarding • bundled workflows validate and call tools with their real arguments",
+  "query": "bundled_contracts",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "bundled_contracts"
+    }
+  }
+}

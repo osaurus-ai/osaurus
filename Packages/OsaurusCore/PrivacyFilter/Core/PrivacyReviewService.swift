@@ -19,6 +19,7 @@
 //  one.
 //
 
+import Combine
 import Foundation
 
 /// Outcome of one review pass.
@@ -52,19 +53,40 @@ final class PrivacyReviewService {
     private struct Registration {
         let token: PresenterToken
         let closure: (RedactionReviewState) -> Void
+        /// Whether this window holds the conversation a review is for.
+        let owns: (String) -> Bool
     }
 
-    /// Most recent registration wins, but older ones stay around so
-    /// their tokens can still be cleared without affecting the active
-    /// one. We only ever present through `current`.
+    /// Every live registration, oldest first. Older ones stay around so
+    /// their tokens can still be cleared without affecting the others.
     private var registrations: [Registration] = []
 
-    /// The active presenter — last one registered.
-    private var current: Registration? { registrations.last }
+    /// The window that should show a review for `scopeId`: the most
+    /// recent registration that holds that conversation, else the most
+    /// recent registration of all.
+    private func presenter(for scopeId: String) -> Registration? {
+        registrations.last(where: { $0.owns(scopeId) }) ?? registrations.last
+    }
 
     /// Open review states by id, so a cancellation handler running on
     /// some other Task can route a cancel to the right state.
-    private var openStates: [UUID: RedactionReviewState] = [:]
+    private var openStates: [UUID: RedactionReviewState] = [:] {
+        didSet { publishAwaitingScopes() }
+    }
+
+    /// Privacy scopes with a review waiting on a person, on this Mac or a
+    /// paired phone. A run in one of these is not stuck, however long the
+    /// person takes.
+    let awaitingScopes = CurrentValueSubject<Set<String>, Never>([])
+
+    func isAwaitingReview(scopeId: String) -> Bool {
+        awaitingScopes.value.contains(scopeId)
+    }
+
+    private func publishAwaitingScopes() {
+        let scopes = Set(openStates.values.map(\.sessionId)).union(remoteStates.values.map(\.sessionId))
+        if scopes != awaitingScopes.value { awaitingScopes.send(scopes) }
+    }
 
     private init() {}
 
@@ -77,10 +99,26 @@ final class PrivacyReviewService {
     /// `unregisterPresenter(_:)` on teardown — discarding it leaks the
     /// registration and forces a stale closure to keep capturing the
     /// window state forever.
-    func registerPresenter(_ closure: @escaping (RedactionReviewState) -> Void) -> PresenterToken {
+    ///
+    /// `owns` reports whether the window holds a conversation (by privacy
+    /// scope id) so a review opens over the chat it belongs to.
+    func registerPresenter(
+        owns: @escaping (String) -> Bool = { _ in false },
+        _ closure: @escaping (RedactionReviewState) -> Void
+    ) -> PresenterToken {
         let token = PresenterToken(id: UUID())
-        registrations.append(Registration(token: token, closure: closure))
+        registrations.append(Registration(token: token, closure: closure, owns: owns))
         return token
+    }
+
+    /// The name the review sheet shows for the provider a send is bound
+    /// for. The managed router reads as Osaurus Cloud.
+    static func providerDisplayName(_ providerId: UUID?) -> String? {
+        guard let providerId,
+            let provider = RemoteProviderManager.shared.configuration.providers.first(where: { $0.id == providerId })
+        else { return nil }
+        if provider.providerType == .osaurusRouter { return L("Osaurus Cloud") }
+        return provider.name
     }
 
     /// Clear a previously registered presenter by token. Other
@@ -90,11 +128,12 @@ final class PrivacyReviewService {
         registrations.removeAll { $0.token == token }
     }
 
-    /// Ask the registered presenter (if any) to confirm the detection
-    /// list. Returns the approved subset, or `nil` when canceled.
-    /// Auto-approves when no presenter is registered, when the global
-    /// "always approve" config flag is on, or when the session has
-    /// opted into always-approve.
+    /// Ask the presenter for this conversation to confirm the detection
+    /// list. The pipeline has already redacted everything the
+    /// conversation's policy, category answers and origin settings let
+    /// it redact without asking; what arrives here needs a person.
+    /// With no presenter (or a non-interactive caller) the send fails
+    /// closed or auto-approves per `requireReviewForNonInteractive`.
     ///
     /// `allowInteractive` is the request-origin gate: HTTP API,
     /// plugin, and P2P callers pass `false` so a registered chat-window
@@ -108,7 +147,8 @@ final class PrivacyReviewService {
         detections: [DetectedEntity],
         sessionId: String,
         allowInteractive: Bool = true,
-        allowRemote: Bool = false
+        allowRemote: Bool = false,
+        providerId: UUID? = nil
     ) async -> PrivacyReviewOutcome {
         // Short circuit: nothing to review.
         if detections.isEmpty {
@@ -117,39 +157,14 @@ final class PrivacyReviewService {
 
         let configSnapshot = PrivacyFilterStore.snapshot()
 
-        // Per-session "Require review" wins over EVERYTHING — the
-        // user explicitly opted this conversation OUT of auto-approve
-        // (e.g. global default is on, but they're about to share
-        // sensitive context they want a final look at). Checked first
-        // so it overrides both the global flag and per-session
-        // auto-approve.
-        let sessionRequiresReview = await SessionRedactionStore.shared.isReviewRequired(sessionId)
-        if !sessionRequiresReview {
-            // Honor the global "always approve" toggle from settings.
-            // This is the user's coarse-grained "I trust this app and
-            // want frictionless sending" switch; per-session is the
-            // fine-grained version that's preserved across review
-            // sheets in the same conversation.
-            if configSnapshot.alwaysApproveByDefault {
-                print("[PrivacyReview] auto-approved \(detections.count) item(s): global always-approve is on")
-                return .approved(detections)
-            }
-
-            // Honor per-session auto-approve.
-            if await SessionRedactionStore.shared.isAutoApproveEnabled(sessionId) {
-                print("[PrivacyReview] auto-approved \(detections.count) item(s): session \(sessionId) has always-approve on")
-                return .approved(detections)
-            }
-        }
-
         // The owner's paired phone is a real pair of eyes, just not this
         // window: hand it the review instead of failing closed (§19).
         if !allowInteractive, allowRemote {
-            print("[PrivacyReview] handing \(detections.count) item(s) to the paired phone for session \(sessionId)")
+            print("[PrivacyReview] handing \(detections.count) item(s) to the owner's remote client for session \(sessionId)")
             return await reviewRemotely(detections: detections, sessionId: sessionId)
         }
 
-        guard allowInteractive, let presenter = current?.closure else {
+        guard allowInteractive, let presenter = presenter(for: sessionId)?.closure else {
             // No usable UI — either the caller is non-interactive
             // (HTTP API, plugin, P2P: `allowInteractive == false`) or
             // no presenter is registered. Two paths:
@@ -182,13 +197,14 @@ final class PrivacyReviewService {
 
         let state = RedactionReviewState(
             detections: detections,
-            sessionId: sessionId
+            sessionId: sessionId,
+            providerName: Self.providerDisplayName(providerId)
         )
-        // Pre-hydrate the always-approve toggle from session state so
-        // the sheet shows the user the correct current value. Handled
-        // here (not in init) because `SessionRedactionStore` is actor-
-        // isolated and we already have an awaiting context.
-        state.alwaysApprove = await SessionRedactionStore.shared.isAutoApproveEnabled(sessionId)
+        // Hydrated here (not in init) because `SessionRedactionStore`
+        // is actor-isolated and we already have an awaiting context.
+        // A review only happens under `ask`, so that is the starting
+        // value; the footer picker changes it for later sends.
+        state.initialPolicy = await SessionRedactionStore.shared.effectivePolicy(sessionId, config: configSnapshot)
         let stateId = state.id
         openStates[stateId] = state
         print("[PrivacyReview] showing the Mac review sheet \(stateId) for \(detections.count) item(s)")
@@ -243,7 +259,9 @@ final class PrivacyReviewService {
     }
 
     /// Reviews waiting on a remote answer, oldest first.
-    private var remoteStates: [UUID: RedactionReviewState] = [:]
+    private var remoteStates: [UUID: RedactionReviewState] = [:] {
+        didSet { publishAwaitingScopes() }
+    }
 
     var remoteReviews: [RemoteReview] {
         remoteStates.values
@@ -269,32 +287,87 @@ final class PrivacyReviewService {
     /// unticking a row in the Mac's sheet does. Returns false when the id is
     /// unknown — already answered, or the run ended.
     @discardableResult
-    func resolveRemotely(id: UUID, redactedIds: Set<UUID>) -> Bool {
+    func resolveRemotely(id: UUID, redactedIds: Set<UUID>, attention: AttentionResolution? = nil) -> Bool {
         guard let state = remoteStates[id] else {
             print("[PrivacyReview] phone answered review \(id), but it is no longer pending")
             return false
         }
-        print("[PrivacyReview] phone answered review \(id): redact \(redactedIds.intersection(Set(state.entities.map(\.id))).count) of \(state.entities.count)")
+        // Detections the attention item couldn't list are never sent as-is.
+        let unseen = Set(state.entities.map(\.id)).subtracting(listed[id] ?? Set(state.entities.map(\.id)))
+        let redacted = redactedIds.union(unseen)
+        print("[PrivacyReview] phone answered review \(id): redact \(redacted.intersection(Set(state.entities.map(\.id))).count) of \(state.entities.count)")
         remoteStates.removeValue(forKey: id)
+        listed.removeValue(forKey: id)
         for entity in state.entities {
-            state.setApproval(entity, to: redactedIds.contains(entity.id))
+            state.setApproval(entity, to: redacted.contains(entity.id))
         }
+        AttentionCenter.shared.resolve(id: id, with: attention ?? Self.phoneAnswer(.approved))
+        AttentionProducers.endWaiting(itemId: id)
         state.confirm()
         return true
+    }
+
+    private static func phoneAnswer(_ outcome: AttentionResolution.Outcome) -> AttentionResolution {
+        AttentionResolution(outcome: outcome, surface: .phone, decidedBy: .ownerDevice(L("Your iPhone")))
     }
 
     /// Cancels a review from a paired phone: the send is aborted, nothing
     /// reaches the provider.
     @discardableResult
-    func cancelRemotely(id: UUID) -> Bool {
+    func cancelRemotely(id: UUID, attention: AttentionResolution? = nil) -> Bool {
         guard let state = remoteStates[id] else {
             print("[PrivacyReview] phone cancelled review \(id), but it is no longer pending")
             return false
         }
         print("[PrivacyReview] phone cancelled review \(id)")
         remoteStates.removeValue(forKey: id)
+        listed.removeValue(forKey: id)
+        AttentionCenter.shared.resolve(id: id, with: attention ?? Self.phoneAnswer(.denied))
+        AttentionProducers.endWaiting(itemId: id)
         state.cancel()
         return true
+    }
+
+    /// Detections each remote review's attention item lists, by review id.
+    private var listed: [UUID: Set<UUID>] = [:]
+
+    /// Puts a remote review in the attention feed, where the device the run
+    /// is for answers it: approve with the detections to redact (all when
+    /// it doesn't say), or deny to stop the send.
+    private func raiseAttention(for state: RedactionReviewState) {
+        let id = state.id
+        let rows: [[String: Any]] = state.entities.map { entity in
+            [
+                "id": entity.id.uuidString,
+                "category": entity.category.rawValue,
+                "original": entity.original,
+                "placeholder": entity.placeholder.token,
+            ]
+        }
+        let detail = AttentionDetail.encode(["items": rows], listKey: "items")
+        let shown = (detail.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["items"]
+            as? [[String: Any]] ?? [])
+            .compactMap { ($0["id"] as? String).flatMap(UUID.init(uuidString:)) }
+        listed[id] = Set(shown)
+        var item = AttentionProducers.item(
+            id: id,
+            kind: .privacyReview,
+            title: L("Review what's sent to the model?"),
+            body: state.entities.count == 1
+                ? L("The Privacy Filter found 1 item.") : L("The Privacy Filter found \(state.entities.count) items.")
+        )
+        item.detail = detail
+        AttentionProducers.beginWaiting(itemId: id, step: L("Waiting for privacy review"))
+        AttentionCenter.shared.raise(item) { resolution in
+            let service = PrivacyReviewService.shared
+            guard resolution.isGrant else {
+                service.cancelRemotely(id: id, attention: resolution)
+                return
+            }
+            let all = Set(state.entities.map(\.id))
+            let chosen = resolution.redact.map { Set($0.compactMap(UUID.init(uuidString:))) } ?? all
+            service.resolveRemotely(id: id, redactedIds: chosen, attention: resolution)
+        }
     }
 
     /// Suspends until the paired phone answers, the way the chat window's
@@ -308,6 +381,7 @@ final class PrivacyReviewService {
         let state = RedactionReviewState(detections: detections, sessionId: sessionId)
         let stateId = state.id
         remoteStates[stateId] = state
+        raiseAttention(for: state)
         print("[PrivacyReview] remote review \(stateId) parked for session \(sessionId): \(detections.count) item(s), waiting on the phone")
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (cont: CheckedContinuation<PrivacyReviewOutcome, Never>) in
@@ -329,11 +403,16 @@ final class PrivacyReviewService {
         if remoteStates[id] != nil {
             print("[PrivacyReview] remote review \(id) cancelled: its run was cancelled (client hung up or the run was stopped)")
         }
+        AttentionCenter.shared.resolve(id: id, with: AttentionProducers.abandoned)
+        AttentionProducers.endWaiting(itemId: id)
         remoteStates[id]?.cancel()
     }
 
     private func clearRemoteState(id: UUID) {
         remoteStates.removeValue(forKey: id)
+        listed.removeValue(forKey: id)
+        AttentionCenter.shared.retract(id: id)
+        AttentionProducers.endWaiting(itemId: id)
     }
 
     /// Resolve a still-open review state as `.canceled`. Invoked from

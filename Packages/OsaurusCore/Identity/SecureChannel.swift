@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Osaurus Secure Channel v1 — end-to-end encryption for agent-to-agent
-//  HTTP traffic (LAN Bonjour peers and the relay tunnel alike).
+//  HTTP traffic (LAN and the relay tunnel alike).
 //
 //  Design (SIGMA-style signed-ephemeral handshake):
 //    1. Client sends an ephemeral X25519 public key + random nonce

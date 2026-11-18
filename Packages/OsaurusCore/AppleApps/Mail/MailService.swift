@@ -77,6 +77,8 @@ struct MailQuery: Sendable, Equatable {
     var mailboxPath: String?
     var unreadOnly: Bool = false
     var since: Date?
+    /// Received at or before; pages back through more mail than `limit`.
+    var until: Date?
     var limit: Int = 25
 }
 
@@ -117,6 +119,25 @@ protocol MailServicing: Sendable {
     func move(id: String, mailboxPath: String?, to destinationPath: String) async throws -> MailMessageSummary
     func setStatus(id: String, mailboxPath: String?, patch: MailStatusPatch) async throws -> MailMessageSummary
     func thread(id: String, mailboxPath: String?, limit: Int) async throws -> [MailMessageSummary]
+    /// How many accounts Mail has, or nil when the service cannot tell.
+    /// Asked only after an empty listing, to tell "no mail" from "no account".
+    func accountCount() async throws -> Int?
+}
+
+extension MailServicing {
+    func accountCount() async throws -> Int? { nil }
+}
+
+enum MailAccountCheck {
+    static let noAccountMessage =
+        "Mail has no account set up, so there is no mail to read. Add an account in Mail → Settings → Accounts, then ask again."
+
+    /// Throws the no-account error when an empty `rows` result comes from a
+    /// Mail with no accounts at all.
+    static func throwIfNoAccount<T>(_ rows: [T], service: MailServicing) async throws {
+        guard rows.isEmpty, let count = try? await service.accountCount(), count == 0 else { return }
+        throw AppleToolError.unavailable(noAccountMessage, retryable: false)
+    }
 }
 
 // MARK: - Mailbox paths
@@ -587,6 +608,10 @@ final class AppleScriptMailService: MailServicing, @unchecked Sendable {
 
     // MARK: MailServicing
 
+    func accountCount() async throws -> Int? {
+        AppleScriptBridge.int(try await run("tell application \"Mail\" to return count of accounts", timeout: 30))
+    }
+
     func mailboxes() async throws -> [MailboxInfo] {
         let out = try await run(
             """
@@ -627,6 +652,9 @@ final class AppleScriptMailService: MailServicing, @unchecked Sendable {
         var conditions: [String] = []
         if query.unreadOnly { conditions.append("read status is false") }
         if let since = query.since { conditions.append("date received > \(AppleScriptBridge.dateExpression(since))") }
+        if let until = query.until {
+            conditions.append("date received is less than or equal to \(AppleScriptBridge.dateExpression(until))")
+        }
         let out = try await run(
             """
             tell application "Mail"

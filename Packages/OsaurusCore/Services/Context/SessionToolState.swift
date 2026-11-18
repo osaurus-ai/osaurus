@@ -107,10 +107,16 @@ struct SessionToolState: Sendable {
     /// the scope refused every call with `tool_not_found`. `agentId` is
     /// optional only for legacy callers / tests that reason about the mode
     /// components alone; every live surface passes it.
+    ///
+    /// `orchestratorConfig` (Default agent only) carries the Orchestrator's
+    /// configuration generation, the workflow-routing setting, and the latest
+    /// configuration-history sequence, so a reloaded `default-agent.json`, a
+    /// routing flip, or any recorded configuration change re-freezes the schema.
     static func fingerprint(
         executionMode: ExecutionMode,
         toolMode: ToolSelectionMode,
-        agentId: UUID? = nil
+        agentId: UUID? = nil,
+        orchestratorConfig: String? = nil
     ) -> String {
         let modeTag: String
         switch executionMode {
@@ -124,7 +130,16 @@ struct SessionToolState: Sendable {
         if let agentId {
             fingerprint += "/\(agentComponentPrefix)\(agentId.uuidString)"
         }
+        if let orchestratorConfig {
+            fingerprint += "/\(orchestratorConfig)"
+        }
         return fingerprint
+    }
+
+    @MainActor
+    static func orchestratorConfigComponent() -> String {
+        "cfg:\(DefaultAgentConfigurationStore.generation)"
+            + "/ver:\(ConfigHistoryRecorder.latestSequence.map(String.init) ?? "-")"
     }
 
     /// Marker that introduces the agent component of a fingerprint. Kept

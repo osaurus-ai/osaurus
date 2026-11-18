@@ -14,9 +14,14 @@ import VecturaKit
 
 public actor MetalSafeEmbedder: VecturaEmbedder {
     private let inner: any VecturaEmbedder
+    private let maxTextsPerGateHold: Int?
 
-    public init(inner: any VecturaEmbedder) {
+    /// - Parameter maxTextsPerGateHold: texts embedded per exclusive gate
+    ///   hold. A transformer pass over a whole index rebuild would otherwise
+    ///   block generation for its full duration; `nil` keeps one hold per call.
+    public init(inner: any VecturaEmbedder, maxTextsPerGateHold: Int? = nil) {
         self.inner = inner
+        self.maxTextsPerGateHold = maxTextsPerGateHold.map { max(1, $0) }
     }
 
     public var dimension: Int {
@@ -24,17 +29,29 @@ public actor MetalSafeEmbedder: VecturaEmbedder {
     }
 
     public func embed(texts: [String]) async throws -> [[Float]] {
-        // Throws CancellationError if cancelled while waiting; no gate is
-        // held on that path, so the exit pairing below is untouched.
-        try await MetalGate.shared.enterEmbedding()
         let started = Date()
+        let chunkSize = maxTextsPerGateHold ?? max(texts.count, 1)
+        var result: [[Float]] = []
+        result.reserveCapacity(texts.count)
         do {
-            let result = try await inner.embed(texts: texts)
-            await MetalGate.shared.exitEmbedding()
+            var start = texts.startIndex
+            repeat {
+                let end = min(start + chunkSize, texts.endIndex)
+                // Throws CancellationError if cancelled while waiting; no gate
+                // is held on that path, so the exit pairing is untouched.
+                try await MetalGate.shared.enterEmbedding()
+                do {
+                    result += try await inner.embed(texts: Array(texts[start..<end]))
+                    await MetalGate.shared.exitEmbedding()
+                } catch {
+                    await MetalGate.shared.exitEmbedding()
+                    throw error
+                }
+                start = end
+            } while start < texts.endIndex
             logActivity(texts: texts, dimensions: result.first?.count, started: started, error: nil)
             return result
         } catch {
-            await MetalGate.shared.exitEmbedding()
             logActivity(texts: texts, dimensions: nil, started: started, error: error)
             throw error
         }
@@ -77,16 +94,21 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
     private let modelName: String
     private let dimensionValue: Int
     private let tokenizerLoader: any TokenizerLoader
+    private let directory: URL?
     private var pipeline: Model2VecStaticEmbeddingPipeline?
 
+    /// - Parameter directory: a downloaded Model2Vec bundle. `nil` resolves
+    ///   the built-in model through `locateModelDirectory(modelName:)`.
     public init(
         modelName: String,
         dimension: Int,
-        tokenizerLoader: any TokenizerLoader
+        tokenizerLoader: any TokenizerLoader,
+        directory: URL? = nil
     ) {
         self.modelName = modelName
         self.dimensionValue = dimension
         self.tokenizerLoader = tokenizerLoader
+        self.directory = directory
     }
 
     public var dimension: Int {
@@ -117,7 +139,7 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
     }
 
     private func resolveModelDirectory() throws -> URL {
-        guard let directory = Self.locateModelDirectory(modelName: modelName) else {
+        guard let directory = directory ?? Self.locateModelDirectory(modelName: modelName) else {
             throw VMLXModel2VecEmbedderError.modelNotFound(modelName)
         }
         return directory

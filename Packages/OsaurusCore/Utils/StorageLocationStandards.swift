@@ -19,6 +19,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 
 public enum StorageLocationStandards {
 
@@ -29,6 +30,8 @@ public enum StorageLocationStandards {
         case standard
         case testOverride = "test_override"
         case environmentOverride = "environment_override"
+        /// A non-Default Space under `~/.osaurus-spaces/`.
+        case space
     }
 
     /// Classification of the active app-data root against platform
@@ -38,6 +41,7 @@ public enum StorageLocationStandards {
         case homeDotDirectory = "home_dot_directory"
         case testOverride = "test_override"
         case environmentOverride = "environment_override"
+        case space
         case custom
     }
 
@@ -57,6 +61,7 @@ public enum StorageLocationStandards {
         case rootOverriddenForTests = "root_overridden_for_tests"
         case rootEnvironmentOverride = "root_environment_override"
         case rootCustomLocation = "root_custom_location"
+        case rootSpace = "root_space"
         case legacyApplicationSupportRootPresent = "legacy_application_support_root_present"
         case migrationDecisionPending = "migration_decision_pending"
         case modelsRootHomeVisibleByDesign = "models_root_home_visible_by_design"
@@ -198,6 +203,8 @@ public enum StorageLocationStandards {
             rootSource = .testOverride
         } else if testRootOverride?.isEmpty == false {
             rootSource = .environmentOverride
+        } else if !SpaceRegistry.isDefaultActive {
+            rootSource = .space
         } else {
             rootSource = .standard
         }
@@ -274,6 +281,16 @@ public enum StorageLocationStandards {
                     message:
                         "Storage root is overridden via OSAURUS_TEST_ROOT; "
                         + "spec compliance was not assessed."
+                )
+            )
+        case .space:
+            findings.append(
+                Finding(
+                    code: .rootSpace,
+                    severity: .info,
+                    message:
+                        "Storage root \(inputs.activeRootPath) belongs to a non-Default Space "
+                        + "under ~/.osaurus-spaces; spec compliance was not assessed."
                 )
             )
         case .custom:
@@ -402,6 +419,8 @@ public enum StorageLocationStandards {
             return .testOverride
         case .environmentOverride:
             return .environmentOverride
+        case .space:
+            return .space
         case .standard:
             break
         }

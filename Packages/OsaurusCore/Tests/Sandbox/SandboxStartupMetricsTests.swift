@@ -268,6 +268,73 @@ struct SandboxStartupMetricsTests {
     }
 
     @Test
+    func provisionStepError_namesTheFailedScriptLineAndHidesTheMarker() {
+        let marker = SandboxProvisionStepError.bootstrapStepMarker
+        let failed = SandboxProvisionStepError(
+            step: .bootstrapScript,
+            underlying: SandboxError.userCreationFailed("install: can't chown\n\(marker)plugins_dir\n")
+        )
+        #expect(failed.bootstrapStep == .pluginsDir)
+        #expect(!failed.localizedDescription.contains(marker))
+        #expect(failed.localizedDescription.contains("install: can't chown"))
+
+        let unmarked = SandboxProvisionStepError(
+            step: .bootstrapScript, underlying: SandboxError.userCreationFailed("killed"))
+        #expect(unmarked.bootstrapStep == .unknown)
+        let bogus = SandboxProvisionStepError(
+            step: .bootstrapScript, underlying: SandboxError.userCreationFailed("\(marker)rm -rf"))
+        #expect(bogus.bootstrapStep == .unknown)
+        let transport = SandboxProvisionStepError(step: .bootstrapExec, underlying: SandboxError.timeout)
+        #expect(transport.bootstrapStep == nil)
+    }
+
+    @Test
+    func bootstrapScript_marksEveryStepBeforeItRuns() {
+        let script = SandboxManager.agentBootstrapScript(
+            agentName: "abc", homeDir: "/workspace/agents/abc", bridgeTokenDir: "/run/osaurus",
+            token: "tok", soulSeedBody: "# soul")
+        let lines = script.split(separator: "\n").map(String.init)
+        let marks = lines.filter { $0.hasPrefix("STEP=") }.map { String($0.dropFirst(5)) }
+        #expect(marks == SandboxProvisionStepError.BootstrapStep.allCases.filter { $0 != .unknown }.map(\.rawValue))
+        #expect(script.contains("trap 'rc=$?; [ \"$rc\" -eq 0 ] || echo \"\(SandboxProvisionStepError.bootstrapStepMarker)$STEP\" >&2' EXIT"))
+        // Each mark precedes the command it names.
+        let index = { (needle: String) in lines.firstIndex { $0.contains(needle) } ?? -1 }
+        #expect(index("STEP=adduser") < index("adduser -D"))
+        #expect(index("STEP=plugins_dir") < index("install -d"))
+        #expect(index("STEP=token_write") < index("umask 0077"))
+        #expect(index("STEP=soul_seed") < index("SOUL_EOF"))
+    }
+
+    @Test
+    func perBootSetup_clearsStaleUserAdminLocksBeforeAnythingElse() {
+        let lines = SandboxManager.perBootSetupScript.split(separator: "\n").map(String.init)
+        #expect(lines.first == "set -e")
+        #expect(lines.dropFirst().first == "rm -f /etc/passwd+ /etc/group+ /etc/shadow+")
+    }
+
+    @Test
+    func userAdminFailure_namesFullDiskAndStaleLockAndKeepsTheStepMarker() {
+        let marker = SandboxProvisionStepError.bootstrapStepMarker
+        let enospc = "adduser: write error: No space left on device\n\(marker)adduser\n"
+
+        let hostFull = SandboxManager.userAdminFailureMessage(enospc, hostFreeBytes: 200 << 20)
+        #expect(hostFull.hasPrefix("Your Mac is out of disk space"))
+        let envFull = SandboxManager.userAdminFailureMessage(enospc, hostFreeBytes: 50 << 30)
+        #expect(envFull.hasPrefix("This agent's sandbox environment is full"))
+        #expect(SandboxManager.userAdminFailureMessage(enospc, hostFreeBytes: nil) == envFull)
+
+        let failed = SandboxProvisionStepError(step: .bootstrapScript, underlying: SandboxError.userCreationFailed(hostFull))
+        #expect(failed.bootstrapStep == .adduser)
+        #expect(!failed.localizedDescription.contains(marker))
+
+        let locked = SandboxManager.userAdminFailureMessage(
+            "adduser: can't create '/etc/passwd+': File exists\n", hostFreeBytes: nil)
+        #expect(locked.hasPrefix("An earlier change to this agent's sandbox users was interrupted"))
+
+        #expect(SandboxManager.userAdminFailureMessage("killed\n", hostFreeBytes: 0) == "killed\n")
+    }
+
+    @Test
     func failureSummary_listsTokensOnly() {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let full = SandboxStartupFailureSample(

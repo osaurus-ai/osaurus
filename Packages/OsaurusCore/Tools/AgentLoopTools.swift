@@ -575,7 +575,7 @@ public final class SpeakTool: OsaurusTool, @unchecked Sendable {
                 kind: .unavailable,
                 message:
                     "Text-to-speech is disabled in settings. Tell the user to enable it under "
-                    + "Settings → Voice if they want spoken responses.",
+                    + "Settings → Voice → Text to Speech if they want spoken responses.",
                 tool: name,
                 retryable: false
             )

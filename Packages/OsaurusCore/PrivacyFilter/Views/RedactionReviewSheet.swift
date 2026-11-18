@@ -2,27 +2,34 @@
 //  RedactionReviewSheet.swift
 //  osaurus / PrivacyFilter
 //
-//  Modal presented before a cloud send when the engine has detected
-//  PII the user hasn't already approved this turn. The user can:
-//    • Toggle individual entries
-//    • Approve All / Skip All (toolbar above the list)
-//    • Tick "Always approve in this conversation"
-//    • Send (commit current approvals) or Cancel the send entirely
+//  Modal presented before a cloud send when the pipeline found items
+//  that need a person to decide. Compact by default: one list grouped
+//  by where each item came from (your message, a tool result, the
+//  model's own text), a short preview under the selected row, and a
+//  footer that sets how the rest of the conversation behaves. "Show
+//  full message" opens the side-by-side outgoing preview.
 //
-//  Layout note: with real localizations, the original two-row footer
-//  overflowed at 480pt — `Always approve in this conversation` and
-//  `Cancel send` are both wide strings. The footer is now three rows
-//  (always-approve toggle, optional skip-all banner, summary +
-//  Cancel + Send) each with `fixedSize(horizontal:vertical:)` on
-//  buttons so wrap behavior is stable and predictable.
+//  The user can:
+//    • Toggle individual rows, or Redact All
+//    • From a row's menu: never redact this value / domain (kept in
+//      Settings → Privacy Filter → Never Redact), or answer for the
+//      whole category in this conversation
+//    • Pick the conversation policy: ask, redact automatically, or off
+//    • Send (commit) or Cancel the send entirely
+//
+//  Keyboard: ↑/↓ move the selection, Space toggles it, Return sends,
+//  Esc cancels.
 //
 
 import SwiftUI
 
 struct RedactionReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
     @ObservedObject var state: RedactionReviewState
+    @State private var showsFullPreview = false
+    @FocusState private var listFocused: Bool
 
     /// True when the user has toggled every detected entity off. We
     /// gate the primary Send button in this state so a privacy
@@ -33,183 +40,270 @@ struct RedactionReviewSheet: View {
         !state.entities.isEmpty && state.approvedCount == 0
     }
 
+    /// Context long enough that the inline snippet can't show it well.
+    private var hasLongContext: Bool {
+        state.entities.contains { ($0.containingText?.count ?? 0) > 600 }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
-            Divider().padding(.bottom, 4)
             listToolbar
-            // Master/detail split: the row list on the left stays
-            // scannable for a quick approve-all pass, while the right
-            // pane lets the user verify each match against the full
-            // surrounding message before approving. The split view
-            // collapses to a single list at narrow widths so the
-            // sheet still works on a smaller display.
-            HSplitView {
-                list
-                    .frame(minWidth: 320, idealWidth: 360)
-                ContextPreview(state: state)
-                    .frame(minWidth: 360, idealWidth: 440)
+            if showsFullPreview {
+                HSplitView {
+                    list(inlinePreview: false)
+                        .frame(minWidth: 320, idealWidth: 360)
+                    ContextPreview(state: state)
+                        .frame(minWidth: 360, idealWidth: 440)
+                }
+            } else {
+                list(inlinePreview: true)
             }
-            Divider()
+            ThemeHairlineDivider()
             footer
         }
-        .frame(minWidth: 820, idealWidth: 880, minHeight: 480, idealHeight: 520)
-        .background(theme.primaryBackground)
+        .frame(
+            minWidth: showsFullPreview ? 820 : 560,
+            idealWidth: showsFullPreview ? 880 : 620,
+            minHeight: 380 * max(1, theme.fontScale),
+            idealHeight: 460 * max(1, theme.fontScale)
+        )
+        .background(theme.surface.canvas)
+        .onAppear {
+            showsFullPreview = hasLongContext
+            listFocused = true
+        }
         .onDisappear { state.sheetDismissed() }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("privacy.review.title", bundle: .module)
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("privacy.review.subtitle", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
+    private var headerSubtitle: String {
+        if let provider = state.providerName {
+            return L(
+                "These items will be replaced with placeholders before your message goes to \(provider). Your choices apply to the rest of this conversation."
+            )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 12)
+        return L(
+            "These items will be replaced with placeholders before your message leaves your Mac. Your choices apply to the rest of this conversation."
+        )
     }
 
-    /// Small toolbar above the list. Hosts the bulk-toggle buttons so
-    /// the footer can be reserved for terminal actions (Cancel / Send
-    /// / Send anyway) with stable layout.
-    private var listToolbar: some View {
-        HStack(spacing: 8) {
-            Button(action: state.approveAll) {
-                Text("privacy.review.approveAll", bundle: .module)
+    private var header: some View {
+        SettingsSheetHeader(
+            icon: "eye.slash.fill",
+            title: "Review Before Sending",
+            subtitleText: headerSubtitle,
+            onClose: {
+                state.cancel()
+                dismiss()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .fixedSize()
+        )
+    }
 
-            Button(action: state.skipAll) {
-                Text("privacy.review.skipAll", bundle: .module)
+    /// Bulk toggle and the full-preview switch. The footer is reserved
+    /// for terminal actions (Cancel / Send) and the conversation policy.
+    private var listToolbar: some View {
+        HStack(spacing: theme.space.s8) {
+            Toggle(
+                isOn: Binding(
+                    get: { state.allApproved == true },
+                    set: { newValue in newValue ? state.approveAll() : state.skipAll() }
+                )
+            ) {
+                Text(localized: "Redact all")
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .settingsCheckbox()
             .fixedSize()
 
             Spacer()
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 6)
-    }
 
-    private var list: some View {
-        ScrollView {
-            VStack(spacing: 8) {
-                ForEach(state.entities) { entity in
-                    row(for: entity)
-                }
+            Button(action: { showsFullPreview.toggle() }) {
+                Text(showsFullPreview ? L("Hide full message") : L("Show full message"))
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
-        }
-    }
-
-    private func row(for entity: DetectedEntity) -> some View {
-        let isSelected = state.selectedEntityID == entity.id
-        return HStack(alignment: .center, spacing: 12) {
-            Image(systemName: entity.category.reviewIcon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .frame(width: 22, height: 22)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.accentColor.opacity(0.12))
-                )
-
-            VStack(alignment: .leading, spacing: 2) {
-                // Long URLs / addresses get middle-truncated across at
-                // most two lines so the salient parts (scheme + host;
-                // street + city) stay visible without exploding the
-                // sheet height.
-                Text(entity.original)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text(verbatim: "\(entity.category.localizedName)  →  \(entity.placeholder.token)")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .layoutPriority(1)
-
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { entity.approved },
-                    set: { newValue in state.setApproval(entity, to: newValue) }
-                )
-            )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
+            .buttonStyle(.settings(.secondary, size: .compact))
             .fixedSize()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, theme.settingsSheetInset)
+        .padding(.top, theme.space.s12)
+        .padding(.bottom, theme.space.s6)
+    }
+
+    private func list(inlinePreview: Bool) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                ForEach(state.groups, id: \.origin) { group in
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
+                        Text(verbatim: Self.title(for: group.origin))
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.footnote)
+                            .foregroundColor(theme.text.tertiary)
+                        ForEach(group.entities) { entity in
+                            row(for: entity, inlinePreview: inlinePreview)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, theme.settingsSheetInset)
+            .padding(.vertical, theme.space.s8)
+        }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($listFocused)
+        .onKeyPress(.upArrow) {
+            state.moveSelection(by: -1)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            state.moveSelection(by: 1)
+            return .handled
+        }
+        .onKeyPress(.space) {
+            state.toggleSelected()
+            return .handled
+        }
+    }
+
+    private func row(for entity: DetectedEntity, inlinePreview: Bool) -> some View {
+        let isSelected = state.selectedEntityID == entity.id
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(alignment: .center, spacing: theme.space.s12) {
+                Image(systemName: entity.category.reviewIcon)
+                    .glyphSize(.body, weight: .medium)
+                    .foregroundColor(theme.text.link)
+                    .frame(width: 22, height: 22)
+                    .settingsChrome(.selected)
+
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    // Long URLs / addresses get middle-truncated across at
+                    // most two lines so the salient parts (scheme + host;
+                    // street + city) stay visible without exploding the
+                    // sheet height.
+                    Text(entity.original)
+                        .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                        .foregroundColor(entity.approved ? theme.text.primary : theme.text.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: theme.space.s6) {
+                        Text(verbatim: entity.approved
+                            ? "\(entity.category.localizedName)  →  \(entity.placeholder.token)"
+                            : "\(entity.category.localizedName)  ·  \(L("Sent as written"))")
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if state.neverRedactEntry(for: entity) != nil {
+                            StatusChip(L("Never redact"), tone: .neutral, icon: "checkmark.shield")
+                        }
+                        if let answer = state.categoryAnswers[entity.category] {
+                            StatusChip(
+                                answer == .alwaysRedact ? L("Always in this chat") : L("Never in this chat"),
+                                tone: .accent
+                            )
+                        }
+                    }
+                }
+                .layoutPriority(1)
+
+                rowMenu(for: entity)
+
+                Toggle(
+                    isOn: Binding(
+                        get: { entity.approved },
+                        set: { newValue in state.setApproval(entity, to: newValue) }
+                    )
+                ) {
+                    Text(localized: "Redact")
+                }
+                .settingsSwitch()
+                .fixedSize()
+                .localizedHelp("Redact")
+                .accessibilityLabel(Text(verbatim: L("Redact \(entity.original)")))
+            }
+
+            if inlinePreview, isSelected {
+                InlineContextPreview(state: state, entity: entity)
+            }
+        }
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
         // Selected rows pick up an accent border so the user has a
-        // visual link to the highlighted match in the right pane.
-        // Tapping anywhere outside the toggle (which we explicitly
-        // let bubble its own gesture) updates the selection.
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(isSelected ? theme.accentColor.opacity(0.10) : theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(
-                            isSelected ? theme.accentColor.opacity(0.55) : theme.inputBorder,
-                            lineWidth: isSelected ? 1.5 : 1
-                        )
-                )
-        )
+        // visual link to the highlighted match in the preview.
+        .settingsChrome(isSelected ? .selected : .control)
         .contentShape(Rectangle())
-        .onTapGesture { state.select(entity) }
+        .onTapGesture {
+            state.select(entity)
+            listFocused = true
+        }
+    }
+
+    @ViewBuilder
+    private func rowMenu(for entity: DetectedEntity) -> some View {
+        let category = entity.category.localizedName
+        SettingsOverflowMenu(help: "More options", size: .compact) {
+            if state.neverRedactEntry(for: entity) != nil {
+                Button(localized: "Undo never redact") { state.removeNeverRedact(for: entity) }
+            } else {
+                Button(localized: "Never redact this value") { state.addNeverRedact(.value, for: entity) }
+                if let host = NeverRedactEntry.host(of: entity.original), host != entity.original.lowercased() {
+                    Button(L("Never redact \(host)")) { state.addNeverRedact(.domain, for: entity) }
+                }
+            }
+            Divider()
+            Button(L("Always redact \(category) in this conversation")) {
+                state.setCategoryAnswer(entity.category, .alwaysRedact)
+            }
+            Button(L("Never redact \(category) in this conversation")) {
+                state.setCategoryAnswer(entity.category, .neverRedact)
+            }
+            if state.categoryAnswers[entity.category] != nil {
+                Button(L("Ask about \(category) again")) {
+                    state.setCategoryAnswer(entity.category, nil)
+                }
+            }
+        }
     }
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Row 1: always-approve toggle on its own line so its
-            // localised string ("Always approve in this conversation"
-            // and similar long Latin variants) doesn't fight with the
-            // Cancel / Send buttons.
-            Toggle(isOn: $state.alwaysApprove) {
-                Text("privacy.review.alwaysApprove", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            // Row 1: how the rest of this conversation behaves. Replaces
+            // the old "Always approve in this conversation" checkbox.
+            HStack(spacing: theme.space.s8) {
+                Text(localized: "For the rest of this conversation")
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
+                    .lineLimit(1)
+                SettingsMenuPicker(
+                    selection: Binding(
+                        get: { state.policy },
+                        set: { state.setPolicy($0) }
+                    )
+                ) {
+                    ForEach(ConversationPrivacyPolicy.allCases, id: \.self) { policy in
+                        Text(verbatim: policy.menuTitle).tag(policy)
+                    }
+                }
+                .fixedSize()
+                Spacer(minLength: 0)
             }
-            .toggleStyle(.checkbox)
 
             // Row 2: skip-all warning banner. Only shown when the user
-            // has actively toggled every detection off — this is a
-            // privacy feature, so sending unscrubbed text needs to be
-            // a deliberate choice, not an accidental one.
+            // has toggled every detection off — this is a privacy
+            // feature, so sending unscrubbed text needs to be a
+            // deliberate choice, not an accidental one.
             if allSkipped {
                 skipAllBanner
             }
 
-            // Row 3: summary + cancel / send. Summary uses
-            // `layoutPriority(0)` and truncates so the buttons stay
-            // pinned to the trailing edge.
-            HStack(spacing: 12) {
+            // Row 3: summary + cancel / send. Summary truncates so the
+            // buttons stay pinned to the trailing edge.
+            HStack(spacing: theme.space.s12) {
                 Text(
                     "privacy.review.summary \(state.approvedCount) \(state.skippedCount)",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .layoutPriority(0)
@@ -222,14 +316,15 @@ struct RedactionReviewSheet: View {
                 }) {
                     Text("privacy.review.cancel", bundle: .module)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.settings(.secondary))
                 .keyboardShortcut(.cancelAction)
                 .fixedSize()
 
                 sendButton
             }
         }
-        .padding(20)
+        .padding(theme.settingsSheetInset)
+        .background(theme.surface.subtle)
     }
 
     /// Primary commit button. Two variants:
@@ -252,82 +347,134 @@ struct RedactionReviewSheet: View {
                 Text(LocalizedStringKey(label), bundle: .module)
                     .frame(minWidth: minWidth)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
+            .buttonStyle(.settings(.destructive))
             .fixedSize()
         } else {
             Button(action: action) {
                 Text(LocalizedStringKey(label), bundle: .module)
                     .frame(minWidth: minWidth)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.settings(.primary))
             .keyboardShortcut(.defaultAction)
             .fixedSize()
         }
     }
 
     private var skipAllBanner: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(.orange)
-                .padding(.top, 1)
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundColor(theme.status.warning.foreground)
+                .padding(.top, theme.space.s2)
             Text("privacy.review.skipAllWarning", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.orange.opacity(0.12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.orange.opacity(0.4), lineWidth: 1)
-                )
-        )
+        .settingsChrome(.status(.warning))
     }
 
+    /// Group header for rows that came from `origin`.
+    static func title(for origin: PrivacySegmentOrigin) -> String {
+        switch origin {
+        case .userInput: return L("From your message")
+        case .toolResult(let name?): return L("From the \(name) tool")
+        case .toolResult(nil): return L("From tool results")
+        case .modelOutput: return L("From the model's own text")
+        }
+    }
 }
 
-// MARK: - Context Preview
-
-/// Right-hand pane in the redaction review sheet. Shows the
-/// **scrubbed payload** the wire will carry — the user's containing
-/// text with originals already substituted for placeholders — and
-/// reveals the original on hover. Mirrors the chat bubble UX so the
-/// user has one mental model for "what does Privacy Filter do to my
-/// text" across both surfaces.
-///
-/// Without this pane the user is approving redactions blind — fine
-/// for `My name is Alice`, painful for "paste a document" workflows.
-private struct ContextPreview: View {
-    @Environment(\.theme) private var theme
-    @ObservedObject var state: RedactionReviewState
-
-    /// Approved (original, placeholder) pairs whose container
-    /// matches the selected entity. We only substitute approved
-    /// entries so the user sees exactly what will leave the device:
-    /// toggling a row off in the left list immediately reveals that
-    /// original in the right preview.
-    private var activePairs: [RedactionPreviewBuilder.Pair] {
-        guard let selected = state.selectedEntity,
-            let containing = selected.containingText
-        else { return [] }
-        return state.entities.compactMap { entity in
-            guard entity.containingText == containing, entity.approved else { return nil }
-            return RedactionPreviewBuilder.Pair(
-                original: entity.original,
-                placeholder: entity.placeholder.token
-            )
+extension ConversationPrivacyPolicy {
+    /// Label in the sheet footer and the composer's privacy menu.
+    var menuTitle: String {
+        switch self {
+        case .ask: return L("Ask about new items")
+        case .autoRedact: return L("Redact automatically")
+        case .off: return L("Turn filter off")
         }
     }
 
+    /// Short state name for the composer chip.
+    var chipTitle: String {
+        switch self {
+        case .ask: return L("Review")
+        case .autoRedact: return L("Auto")
+        case .off: return L("Off")
+        }
+    }
+
+    var chipIcon: String {
+        switch self {
+        case .ask: return "eye.slash"
+        case .autoRedact: return "checkmark.shield"
+        case .off: return "shield.slash"
+        }
+    }
+}
+
+// MARK: - Previews of the outgoing text
+
+/// Approved (original, placeholder) pairs from the same containing
+/// segment as `entity`, so the preview shows exactly what will leave
+/// the device: toggling a row off reveals that original in the preview.
+@MainActor
+private func activePairs(for entity: DetectedEntity, in state: RedactionReviewState) -> [RedactionPreviewBuilder.Pair] {
+    guard let containing = entity.containingText else { return [] }
+    return state.entities.compactMap { other in
+        guard other.containingText == containing, other.approved else { return nil }
+        return RedactionPreviewBuilder.Pair(original: other.original, placeholder: other.placeholder.token)
+    }
+}
+
+private func focusText(for entity: DetectedEntity) -> String {
+    entity.approved ? entity.placeholder.token : entity.original
+}
+
+/// Short preview under the selected row in the compact layout.
+private struct InlineContextPreview: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject var state: RedactionReviewState
+    let entity: DetectedEntity
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        if let containing = entity.containingText, !containing.isEmpty {
+            let preview = RedactionPreviewBuilder.build(text: containing, pairs: activePairs(for: entity, in: state))
+            RedactionPreviewTextView(
+                scrubbedText: preview.scrubbed,
+                highlights: preview.highlights,
+                theme: theme,
+                focusText: focusText(for: entity)
+            )
+            .frame(
+                maxWidth: .infinity,
+                minHeight: theme.lineHeight(.body) * 2,
+                maxHeight: theme.lineHeight(.body) * 5,
+                alignment: .topLeading
+            )
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
+            .settingsChrome(.subtle)
+        }
+    }
+}
+
+/// Right-hand pane of the expanded layout. Shows the **scrubbed
+/// payload** the wire will carry — the containing text with originals
+/// already substituted for placeholders — and reveals the original on
+/// hover. Mirrors the chat bubble UX so the user has one mental model
+/// for "what does Privacy Filter do to my text" across both surfaces.
+private struct ContextPreview: View {
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
+    @ObservedObject var state: RedactionReviewState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             if let entity = state.selectedEntity {
                 header(for: entity)
                 bodyView(for: entity)
@@ -336,145 +483,119 @@ private struct ContextPreview: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
     }
 
     private func header(for entity: DetectedEntity) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: entity.category.reviewIcon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(.body, weight: .medium)
+                .foregroundColor(theme.text.link)
                 .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(theme.accentColor.opacity(0.14))
-                )
+                .settingsChrome(.selected)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(entity.original)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Text(entity.category.localizedName)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                    Text(entity.placeholder.token)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.accentColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                        .glyphSize(.tiny, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
+                    StatusChip(entity.placeholder.token, tone: .accent)
                 }
             }
             Spacer()
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 10)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.top, theme.space.s16)
+        .padding(.bottom, theme.space.s8)
     }
 
     @ViewBuilder
     private func bodyView(for entity: DetectedEntity) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        let pairs = activePairs(for: entity, in: state)
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
                 Text("privacy.review.context.header", bundle: .module)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .textCase(.uppercase)
-                    .tracking(0.4)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.tertiary)
                 Spacer()
-                if !activePairs.isEmpty {
-                    HStack(spacing: 4) {
+                if !pairs.isEmpty {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "shield.lefthalf.filled")
-                            .font(.system(size: 9, weight: .semibold))
+                            .glyphSize(.tiny, weight: .semibold)
                         Text("privacy.review.context.hoverHint", bundle: .module)
-                            .font(.system(size: 10))
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
                     }
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
                 }
             }
 
             if let containing = entity.containingText, !containing.isEmpty {
-                let preview = RedactionPreviewBuilder.build(
-                    text: containing,
-                    pairs: activePairs
-                )
+                let preview = RedactionPreviewBuilder.build(text: containing, pairs: pairs)
                 RedactionPreviewTextView(
                     scrubbedText: preview.scrubbed,
                     highlights: preview.highlights,
-                    theme: theme
+                    theme: theme,
+                    focusText: focusText(for: entity)
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.codeBlockBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.accentColor.opacity(0.18), lineWidth: 1)
-                        )
-                )
+                .frame(maxWidth: .infinity, minHeight: max(100, theme.lineHeight(.body) * 3), maxHeight: .infinity, alignment: .topLeading)
+                .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+                .settingsChrome(.subtle)
             } else {
                 emptyContextCard
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.bottom, 16)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.bottom, theme.space.s16)
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var emptyContextCard: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "text.viewfinder")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.top, 1)
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundColor(theme.text.tertiary)
+                .padding(.top, theme.space.s2)
             Text("privacy.review.context.empty", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.codeBlockBackground.opacity(0.6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+        .settingsChrome(.subtle)
     }
 
     private var emptySelection: some View {
         HStack {
             Spacer()
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Image(systemName: "shield.lefthalf.filled")
-                    .font(.system(size: 24))
-                    .foregroundColor(theme.tertiaryText.opacity(0.6))
+                    .glyphSize(.xxlarge)
+                    .foregroundColor(theme.text.disabled)
                 Text("privacy.review.context.empty", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
-            .padding(.vertical, 60)
+            .padding(.vertical, theme.space.s64)
             Spacer()
         }
     }
-
 }
 
 // MARK: - Category Icon
 
-private extension EntityCategory {
+extension EntityCategory {
     /// SF Symbol shown next to each detected category in the review
-    /// sheet. View-only presentation, so it stays out of the core
-    /// `EntityCategory` model and file-local to the only consumer.
+    /// sheet and the composer's redaction list. View-only presentation,
+    /// so it stays out of the core `EntityCategory` model.
     var reviewIcon: String {
         switch self {
         case .accountNumber: return "creditcard.fill"

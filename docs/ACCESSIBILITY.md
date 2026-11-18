@@ -24,78 +24,67 @@ Osaurus is committed to providing an accessible experience for all users. This d
 
 ## Color Palette Compliance
 
-### Light Theme
+The values below are the default **Osaurus** theme's semantic palettes in
+[`CustomTheme.swift`](../Packages/OsaurusCore/Models/Theme/CustomTheme.swift)
+(`ThemeColorRoles.lightDefaults` / `.darkDefaults`), generated from the
+bundled design library: cream neutrals, teal for links and focus, and teal
+(light) or lime (dark) for primary actions. Ratios are measured against each
+appearance's canvas surface (`#FBFAF7` light, `#121211` dark). Regenerate this
+table whenever those palettes change.
+
+### Light Appearance
 
 | Element           | Hex Code  | Contrast Ratio | Status        |
 | ----------------- | --------- | -------------- | ------------- |
 | **Text Colors**   |           |                |               |
-| Primary Text      | `#1a1a18` | ~17:1          | ✅ AAA        |
-| Secondary Text    | `#555550` | ~7:1           | ✅ AA         |
-| Tertiary Text     | `#717168` | ~5.5:1         | ✅ AA         |
+| Primary Text      | `#2F2C29` | 13.3:1         | ✅ AAA        |
+| Secondary Text    | `#494540` | 9.1:1          | ✅ AAA        |
+| Tertiary Text     | `#5B5753` | 6.9:1          | ✅ AA         |
+| Link              | `#076869` | 6.3:1          | ✅ AA         |
+| Disabled Text     | `#898681` | 3.5:1          | Exempt (inactive) |
 | **Status Colors** |           |                |               |
-| Success           | `#15803d` | ~4.5:1         | ✅ AA         |
-| Warning           | `#a16207` | ~4.5:1         | ✅ AA         |
-| Error             | `#dc2626` | ~4.5:1         | ✅ AA         |
-| Info              | `#555550` | ~7:1           | ✅ AA         |
+| Success           | `#227758` | 5.2:1          | ✅ AA         |
+| Warning           | `#976000` | 5.0:1          | ✅ AA         |
+| Error             | `#9B2208` | 7.7:1          | ✅ AAA        |
+| Info              | `#0E4F90` | 7.9:1          | ✅ AAA        |
 | **UI Components** |           |                |               |
-| Input Border      | `#a8a8a3` | ~3.5:1         | ✅ AA         |
-| Primary Border    | `#d0d0cc` | ~2.2:1         | ✅ Decorative |
-| Focus Border      | `#4a4a46` | ~8:1           | ✅ AAA        |
+| Primary Action    | `#065456` | 8.3:1 (label 8.5:1) | ✅ AAA   |
+| Strong Border     | `#898681` | 3.5:1          | ✅ AA         |
+| Default Border    | `#BAB9B1` | 1.9:1          | Decorative    |
+| Subtle Border     | `#D9D9CD` | 1.4:1          | Decorative    |
+| Focus Border      | `#076869` | 6.3:1          | ✅ AA         |
 
-### Dark Theme
+### Dark Appearance
 
 | Element           | Hex Code  | Contrast Ratio | Status        |
 | ----------------- | --------- | -------------- | ------------- |
 | **Text Colors**   |           |                |               |
-| Primary Text      | `#f5f5f2` | ~17:1          | ✅ AAA        |
-| Secondary Text    | `#a8a8a3` | ~8.5:1         | ✅ AAA        |
-| Tertiary Text     | `#8a8a85` | ~5.5:1         | ✅ AA         |
+| Primary Text      | `#FBFAF7` | 18.0:1         | ✅ AAA        |
+| Secondary Text    | `#D9D9CD` | 13.2:1         | ✅ AAA        |
+| Tertiary Text     | `#A2A09A` | 7.2:1          | ✅ AAA        |
+| Link              | `#0DB1B5` | 7.1:1          | ✅ AAA        |
+| Disabled Text     | `#56524D` | 2.4:1          | Exempt (inactive) |
 | **Status Colors** |           |                |               |
-| Success           | `#22c55e` | ~8:1           | ✅ AAA        |
-| Warning           | `#fbbf24` | ~11:1          | ✅ AAA        |
-| Error             | `#f87171` | ~6:1           | ✅ AA         |
-| Info              | `#60a5fa` | ~6:1           | ✅ AA         |
+| Success           | `#4CE5AD` | 11.7:1         | ✅ AAA        |
+| Warning           | `#FFB35C` | 10.6:1         | ✅ AAA        |
+| Error             | `#F37358` | 6.6:1          | ✅ AA         |
+| Info              | `#70B8FF` | 8.9:1          | ✅ AAA        |
 | **UI Components** |           |                |               |
-| Input Border      | `#52525b` | ~3:1           | ✅ AA         |
-| Primary Border    | `#3f3f46` | ~2.5:1         | ✅ Decorative |
-| Focus Border      | `#8a8a85` | ~5.5:1         | ✅ AA         |
+| Primary Action    | `#C0EC51` | 13.7:1 (label 13.7:1) | ✅ AAA |
+| Strong Border     | `#75716D` | 3.9:1          | ✅ AA         |
+| Default Border    | `#3E3B37` | 1.7:1          | Decorative    |
+| Subtle Border     | `#312E2B` | 1.4:1          | Decorative    |
+| Focus Border      | `#0DB1B5` | 7.1:1          | ✅ AA         |
+
+Default and subtle borders separate surfaces that already differ in fill, so they
+are decorative under 1.4.11. A control whose boundary is its only visual cue must
+use the strong or focus border.
 
 ---
 
-## Theme Presets Compliance
+## Color Change Guidelines
 
-### Neon Theme (Dark)
-
-| Element          | Hex Code  | Contrast Ratio | Status |
-| ---------------- | --------- | -------------- | ------ |
-| Primary Text     | `#f0f0f0` | ~18:1          | ✅ AAA |
-| Secondary Text   | `#b0b0b0` | ~9:1           | ✅ AAA |
-| Tertiary Text    | `#909090` | ~5.5:1         | ✅ AA  |
-| Accent (Magenta) | `#ff00ff` | ~6:1           | ✅ AA  |
-
-### Nord Theme (Dark)
-
-| Element        | Hex Code  | Contrast Ratio | Status |
-| -------------- | --------- | -------------- | ------ |
-| Primary Text   | `#eceff4` | ~10:1          | ✅ AAA |
-| Secondary Text | `#d8dee9` | ~7:1           | ✅ AA  |
-| Tertiary Text  | `#b8c4d4` | ~5:1           | ✅ AA  |
-| Accent (Frost) | `#88c0d0` | ~7:1           | ✅ AA  |
-
-### Paper Theme (Light)
-
-| Element        | Hex Code  | Contrast Ratio | Status |
-| -------------- | --------- | -------------- | ------ |
-| Primary Text   | `#3d3d3d` | ~9:1           | ✅ AAA |
-| Secondary Text | `#555555` | ~7:1           | ✅ AA  |
-| Tertiary Text  | `#737373` | ~5:1           | ✅ AA  |
-| Accent (Gold)  | `#9a7b30` | ~4.5:1         | ✅ AA  |
-
----
-
-## Custom Theme Guidelines
-
-When creating custom themes, users should ensure:
+When changing the light or dark palette, ensure:
 
 1. **Primary text** maintains at least **7:1** contrast for optimal readability
 2. **Secondary text** maintains at least **4.5:1** contrast
@@ -136,9 +125,11 @@ Luminance = 0.2126 × R + 0.7152 × G + 0.0722 × B
 
 ### Typography
 
-- Configurable font sizes via theme settings
+- Text Size (Settings → General → Appearance, or View → Zoom In / Zoom Out) scales text everywhere from 70% to 160%
+- A theme's **Reading Size** (Large, Larger) enlarges chat and body text on top of Text Size, and **Line Spacing → Relaxed** opens up line height
+- A theme's **Interface Font** and **Code Font** can use installed readable families (Atkinson Hyperlegible, Lexend, OpenDyslexic, Inter, IBM Plex)
 - System font support for optimal rendering
-- Minimum text size of 12pt for body content
+- Minimum text size of 12pt for body content; theme JSON cannot set body text below it
 
 ---
 
@@ -167,16 +158,31 @@ Our accessibility testing includes:
 
 1. **Decorative Borders**: Some decorative borders (e.g., card borders, subtle dividers) may not meet the 3:1 contrast requirement, as they are purely decorative and do not convey information.
 
-2. **Custom Themes**: User-created custom themes may not meet accessibility standards. The theme editor does not currently enforce minimum contrast ratios.
+## Themes
+
+Themes (Settings → General → Appearance → Theme) are generated, not hand-painted,
+so every theme keeps the contrast contract above:
+
+- Accent colors, built-in or custom, are solved per appearance so text links and
+  focus rings reach 4.5:1 and filled buttons reach 4.5:1 for their labels (7:1
+  under High contrast). A custom color keeps its hue; chroma is capped so
+  extreme picks stay calm.
+- **Contrast → High** raises text to 7:1 and control borders to 4.5:1, and
+  **Stronger Outlines** / **Larger Controls** thicken borders and enlarge hit
+  targets. macOS **Increase Contrast** switches every theme to its high-contrast
+  colors automatically.
+- Hand-edited JSON is kept within safe ranges (minimum text sizes, line height,
+  stroke widths, control heights). A theme whose overrides fall below the
+  contrast targets still loads, but its card shows a **Low contrast** badge and
+  the editor lists each failing pair.
 
 ---
 
 ## Future Improvements
 
-- [ ] Add contrast ratio warnings in the theme editor
-- [ ] Provide accessibility presets for users with specific needs
-- [ ] Implement automatic contrast adjustment suggestions
-- [ ] Add colorblind-friendly theme presets
+- [x] Provide accessibility controls for users with specific needs (theme Readability options)
+- [x] Honor the macOS Increase Contrast setting with a higher-contrast palette
+- [ ] Verify the Light and Dark palettes under color vision deficiency simulations
 
 ---
 
@@ -185,7 +191,7 @@ Our accessibility testing includes:
 If you encounter accessibility issues with Osaurus, please report them:
 
 1. Open an issue on GitHub with the `accessibility` label
-2. Include the theme you're using
+2. Include your theme, Appearance (System, Light or Dark) and Text Size
 3. Describe the specific accessibility barrier
 4. If possible, include a screenshot
 

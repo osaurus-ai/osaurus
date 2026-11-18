@@ -2,20 +2,20 @@
 //  AgentSecretsKeychain.swift
 //  osaurus
 //
-//  Secure Keychain storage for agent-level secrets (API keys, tokens, etc.).
-//  Unlike ToolSecretsKeychain which is plugin-scoped, this stores secrets
-//  per-agent only, making them accessible to any sandbox plugin.
+//  Agent secrets saved before the Keys store (`sandbox_secret_set`, the
+//  secret prompt, the agent's Sandbox page). Read-only: the Keys store
+//  imports them as each agent's own keys and reads them as a fallback until
+//  then. Nothing here writes or deletes a Keychain item.
 //
 
 import Foundation
 import Security
 
-/// Keychain wrapper for agent-scoped secret storage.
-/// Account format: `"{agentId}.{key}"` — no plugin scoping.
+/// Legacy agent-scoped secrets. Account format: `"{agentId}.{key}"`.
 public enum AgentSecretsKeychain {
     private static let service = "ai.osaurus.agent-secrets"
 
-    // MARK: - In-Memory Store (tests + hermetic harnesses)
+    // MARK: - In-Memory Store (tests)
 
     /// Lock-guarded mutable dictionary usable as a `@TaskLocal` value.
     final class InMemorySecretStore: @unchecked Sendable {
@@ -47,37 +47,14 @@ public enum AgentSecretsKeychain {
         }
     }
 
-    /// In-memory backend, active in two situations:
-    ///
-    ///  1. Scoped (tests): `_withInMemoryStoreForTesting` binds a fresh
-    ///     TASK-LOCAL store for the closure's task tree. Task-local (not
-    ///     process-global) because parallel test suites each bind their own
-    ///     store — a shared global raced and wiped secrets mid-test.
-    ///  2. Whole-process: `OSAURUS_AGENT_SECRETS_IN_MEMORY=1` (set by the
-    ///     eval CLI). The harness runs Keychain-free
-    ///     (`OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1` — legacy-item ACL prompts
-    ///     hang headless runs), but the sandbox secrets pipeline
-    ///     (`sandbox_secret_set` → exec env injection → output scrubbing)
-    ///     is a scored surface that needs a WORKING store. The pipeline
-    ///     logic is exercised for real; only the persistence medium
-    ///     changes, and the user's login Keychain stays untouched.
-    ///
-    /// The in-memory store is checked BEFORE the Keychain-free no-op gate,
-    /// so both env vars together mean "no login Keychain, memory instead".
-    @TaskLocal private static var taskLocalStore: InMemorySecretStore?
-
-    private static let processStore: InMemorySecretStore? =
-        ProcessInfo.processInfo.environment["OSAURUS_AGENT_SECRETS_IN_MEMORY"] == "1"
-        ? InMemorySecretStore() : nil
-
-    private static var activeInMemoryStore: InMemorySecretStore? {
-        taskLocalStore ?? processStore
-    }
+    /// Legacy items for migration and fallback tests, bound per task tree
+    /// so parallel suites each get their own.
+    @TaskLocal private static var activeInMemoryStore: InMemorySecretStore?
 
     static func _withInMemoryStoreForTesting<T>(
         _ body: () throws -> T
     ) rethrows -> T {
-        try $taskLocalStore.withValue(InMemorySecretStore()) {
+        try $activeInMemoryStore.withValue(InMemorySecretStore()) {
             try body()
         }
     }
@@ -87,17 +64,9 @@ public enum AgentSecretsKeychain {
     static func _withInMemoryStoreForTesting<T>(
         _ body: @Sendable () async throws -> T
     ) async rethrows -> T {
-        try await $taskLocalStore.withValue(InMemorySecretStore()) {
+        try await $activeInMemoryStore.withValue(InMemorySecretStore()) {
             try await body()
         }
-    }
-
-    private static func testingSave(_ value: String, account: String) -> (enabled: Bool, saved: Bool) {
-        guard let store = activeInMemoryStore else {
-            return (enabled: false, saved: false)
-        }
-        store.set(account, value)
-        return (enabled: true, saved: true)
     }
 
     private static func testingGet(account: String) -> (enabled: Bool, value: String?) {
@@ -107,31 +76,8 @@ public enum AgentSecretsKeychain {
         return (enabled: true, value: store.get(account))
     }
 
-    private static func testingDelete(account: String) -> (enabled: Bool, deleted: Bool) {
-        guard let store = activeInMemoryStore else {
-            return (enabled: false, deleted: false)
-        }
-        store.set(account, nil)
-        return (enabled: true, deleted: true)
-    }
-
     private static func testingAllAccounts() -> [String]? {
         activeInMemoryStore?.accounts()
-    }
-
-    @discardableResult
-    public static func saveSecret(_ value: String, id: String, agentId: UUID) -> Bool {
-        let account = "\(agentId.uuidString).\(id)"
-        guard let valueData = value.data(using: .utf8) else { return false }
-
-        let testing = testingSave(value, account: account)
-        if testing.enabled {
-            return testing.saved
-        }
-        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-        let didWrite = Keychain.write(service: service, account: account, data: valueData)
-        if didWrite { noteAccountSaved(account) }
-        return didWrite
     }
 
     public static func getSecret(id: String, agentId: UUID) -> String? {
@@ -146,22 +92,8 @@ public enum AgentSecretsKeychain {
             .flatMap { String(data: $0, encoding: .utf8) }
     }
 
-    @discardableResult
-    public static func deleteSecret(id: String, agentId: UUID) -> Bool {
-        let account = "\(agentId.uuidString).\(id)"
-
-        let testing = testingDelete(account: account)
-        if testing.enabled {
-            return testing.deleted
-        }
-        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-        let didDelete = Keychain.delete(service: service, account: account)
-        if didDelete { noteAccountsRemoved { $0 == account } }
-        return didDelete
-    }
-
     /// Enumerates accounts then fetches each value individually.
-    public static func getAllSecrets(agentId: UUID) -> [String: String] {
+    private static func allSecrets(agentId: UUID) -> [String: String] {
         let prefix = "\(agentId.uuidString)."
 
         var secrets: [String: String] = [:]
@@ -174,11 +106,6 @@ public enum AgentSecretsKeychain {
         return secrets
     }
 
-    /// Enumerates secret identifiers without decrypting their values.
-    ///
-    /// Prompt construction only needs to tell the model which secret names are
-    /// available. Fetching the values here is both unnecessary and can hit the
-    /// slow Keychain data-decryption path during ordinary chat composition.
     /// Secret *names* for `agentId`, for listing in the system prompt so the
     /// model knows which env vars exist. Non-blocking: this is reached
     /// synchronously from chat-preview composition on the main actor, and a
@@ -186,9 +113,8 @@ public enum AgentSecretsKeychain {
     /// SecItemCopyMatching that hung the UI). On a cold cache we kick the
     /// background seed and return `[]`; the next compose (seed lands in ms,
     /// and composes re-run on every budget/input change) lists the real
-    /// names. The value paths that must be exact — `getAllSecrets` for env
-    /// injection, `deleteAllSecrets` — still go through the blocking
-    /// `allAccounts()`.
+    /// names. The legacy import and env fallback, which must be exact, go
+    /// through the blocking `allAccounts()`.
     public static func secretIDs(agentId: UUID) -> [String] {
         let prefix = "\(agentId.uuidString)."
         return cachedAccountsOrSeed()
@@ -197,48 +123,32 @@ public enum AgentSecretsKeychain {
             .sorted()
     }
 
-    public static func deleteAllSecrets(agentId: UUID) {
-        let prefix = "\(agentId.uuidString)."
+    // MARK: - Legacy (read-only) access for CredentialStore
 
-        // In-memory store: purge matching entries directly. Without this,
-        // an eval harness running many cases in one process would leak
-        // one case's secrets into the next (per-case cleanup calls here).
-        if let store = activeInMemoryStore {
-            store.removeAll(prefix: prefix)
-            return
-        }
-
-        if KeychainQueryHelpers.disablesKeychainForProcess { return }
-        for account in allAccounts() where account.hasPrefix(prefix) {
-            Keychain.delete(service: service, account: account)
-        }
-        noteAccountsRemoved { $0.hasPrefix(prefix) }
+    /// `<service>/<account>` id the credential migration tracks for an item.
+    static func legacyId(agentId: UUID, key: String) -> String {
+        "\(service)/\(agentId.uuidString).\(key)"
     }
 
-    // MARK: - Environment Safety
-
-    /// Env var names that must never be overridden by user-defined secrets.
-    private static let reservedEnvVarNames: Set<String> = [
-        "PATH", "HOME", "SHELL", "USER", "LOGNAME",
-        "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
-        "VIRTUAL_ENV", "OSAURUS_PLUGIN",
-    ]
-
-    /// Returns agent secrets with reserved env var names stripped out.
-    static func getFilteredSecrets(agentId: UUID) -> [String: String] {
-        getAllSecrets(agentId: agentId).filter { !reservedEnvVarNames.contains($0.key) }
+    /// Legacy values for `agentId`, reserved names stripped. Read-only:
+    /// the unified store copies these and never writes back.
+    static func legacyFilteredSecrets(agentId: UUID) -> [String: String] {
+        allSecrets(agentId: agentId).filter { !CredentialResolver.isReservedEnvVar($0.key) }
     }
 
-    /// Returns merged agent + plugin secrets with reserved names stripped out.
-    /// Plugin secrets override agent secrets of the same name.
-    static func mergedSecretsEnvironment(agentId: UUID, pluginId: String) -> [String: String] {
-        var env = getFilteredSecrets(agentId: agentId)
-        let pluginSecrets =
-            ToolSecretsKeychain
-            .getAllSecrets(for: pluginId, agentId: agentId)
-            .filter { !reservedEnvVarNames.contains($0.key) }
-        env.merge(pluginSecrets) { _, new in new }
-        return env
+    /// Every legacy (agent, key) pair, for the one-way import.
+    /// `isDefinitive` is false when the Keychain was locked or failed, so an
+    /// empty list means "couldn't look", not "nothing there".
+    static func legacyEntries() -> (entries: [(agentId: UUID, key: String)], isDefinitive: Bool) {
+        let listing = allAccountsListing()
+        let entries = listing.accounts.compactMap { account -> (agentId: UUID, key: String)? in
+            guard account.count > 37,
+                let agentId = UUID(uuidString: String(account.prefix(36))),
+                account[account.index(account.startIndex, offsetBy: 36)] == "."
+            else { return nil }
+            return (agentId, String(account.dropFirst(37)))
+        }
+        return (entries, listing.isDefinitive)
     }
 
     /// Resolve the account-name memo off the caller's thread so the first
@@ -296,47 +206,27 @@ public enum AgentSecretsKeychain {
 
     nonisolated(unsafe) private static var seedInFlight = false
 
-    /// Maintain the memo in place after a write rather than dropping it: the
-    /// non-blocking `secretIDs` reader would otherwise answer `[]` for every
-    /// compose between the mutation and the re-seed — including the very send
-    /// that follows a `store_secret` — telling the model no secrets exist on
-    /// exactly the turns that matter. Account names only change through this
-    /// type, so the edit is exact. A never-seeded memo stays nil.
-    private static func noteAccountSaved(_ account: String) {
-        accountsCacheLock.lock()
-        if var cached = cachedAccounts, !cached.contains(account) {
-            cached.append(account)
-            cachedAccounts = cached
-        }
-        accountsCacheLock.unlock()
-    }
-
-    private static func noteAccountsRemoved(where shouldRemove: (String) -> Bool) {
-        accountsCacheLock.lock()
-        if let cached = cachedAccounts {
-            cachedAccounts = cached.filter { !shouldRemove($0) }
-        }
-        accountsCacheLock.unlock()
-    }
-
     private static func allAccounts() -> [String] {
+        allAccountsListing().accounts
+    }
+
+    private static func allAccountsListing() -> (accounts: [String], isDefinitive: Bool) {
         if let accounts = testingAllAccounts() {
-            return accounts
+            return (accounts, true)
         }
-        if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
+        if KeychainQueryHelpers.disablesKeychainForProcess { return ([], true) }
 
         accountsCacheLock.lock()
         let cached = cachedAccounts
         accountsCacheLock.unlock()
         if let cached {
-            return cached
+            return (cached, true)
         }
 
         // `SecItemCopyMatching` takes a process-wide Keychain lock and has hung
         // the UI when reached from `secretIDs` during chat-preview composition
-        // on the main thread. Account names change only through this type's own
-        // writes, so memoize the enumeration and maintain it in place on every
-        // mutation. Only a definitive enumeration is cached: a locked or
+        // on the main thread. Nothing writes this service anymore, so memoize
+        // the enumeration. Only a definitive enumeration is cached: a locked or
         // transiently failing keychain must not latch an empty account list.
         let outcome = Keychain.fetchAllItems(service: service, returnData: false)
         let accounts = outcome.items.compactMap { $0[kSecAttrAccount as String] as? String }
@@ -345,6 +235,21 @@ public enum AgentSecretsKeychain {
             cachedAccounts = accounts
             accountsCacheLock.unlock()
         }
-        return accounts
+        return (accounts, outcome.isDefinitive)
+    }
+
+    // MARK: - Test seams
+
+    /// Seeds a legacy item in the in-memory store bound by
+    /// `_withInMemoryStoreForTesting`. False when no in-memory store is active.
+    @discardableResult
+    static func _testSeedSecret(_ value: String, id: String, agentId: UUID) -> Bool {
+        guard let store = activeInMemoryStore else { return false }
+        store.set("\(agentId.uuidString).\(id)", value)
+        return true
+    }
+
+    static func _testRemoveAll(agentId: UUID) {
+        activeInMemoryStore?.removeAll(prefix: "\(agentId.uuidString).")
     }
 }

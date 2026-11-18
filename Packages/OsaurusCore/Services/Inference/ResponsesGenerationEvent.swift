@@ -24,6 +24,10 @@ enum ResponsesGenerationEvent: Sendable {
     case billing(RouterBillingSummary)
     case artifacts([RemoteRunArtifact])
     case agentTool(StreamingAgentToolHint.Trace)
+    /// A shared agent's host is waiting on its owner to approve a tool call.
+    case ownerApproval(StreamingOwnerApprovalHint.Status)
+    /// The shared agent's owner said something in the conversation mid-run.
+    case participantMessage(StreamingParticipantMessageHint.Message)
     case remoteToolCompleted(StreamingToolHint.ToolCallDone)
     /// Opaque reserved metadata from an older service extension. Preserve it
     /// for diagnostics; it is never model text or an executable tool call.

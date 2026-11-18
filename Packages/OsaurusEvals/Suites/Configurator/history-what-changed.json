@@ -1,0 +1,58 @@
+{
+  "id": "configurator.history-what-changed",
+  "domain": "configurator",
+  "label": "configurator • what changed recently comes from history",
+  "query": "What changed in my Osaurus setup this week?",
+  "notes": "Versioning. Two seeded versions after the setup as found: three days ago the Configurator created the agent Research Buddy at the user's request; twenty hours ago spell check was turned off outside any apply (recorded as Changed in Settings). The grounded move is osaurus_config action history or diff before answering; an answer from memory or a guess fails. Read-only: nothing may be applied.",
+  "fixtures": {
+    "seedConfigHistory": {
+      "prepare": "chat:\n  spell_check: true\n",
+      "steps": [
+        {
+          "yaml": "agents:\n- name: Research Buddy\n  description: Finds and summarizes sources on a topic.\n",
+          "caller": "configurator",
+          "callerDetail": "eval-session",
+          "requestText": "make me a research agent called Research Buddy",
+          "hoursAgo": 72
+        },
+        {
+          "yaml": "chat:\n  spell_check: false\n",
+          "caller": "observed",
+          "callerDetail": "before_apply",
+          "hoursAgo": 20
+        }
+      ]
+    }
+  },
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Says the agent Research Buddy was created (about three days ago, through the assistant or chat).",
+        "Says spell check was turned off (about a day ago, changed in Settings rather than by the assistant).",
+        "Does not mention any other change, and does not claim to have changed anything now."
+      ],
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {},
+          "argsAnyOf": [
+            {
+              "action": "history"
+            },
+            {
+              "action": "diff"
+            }
+          ]
+        }
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "maxIterations": 6
+    }
+  }
+}

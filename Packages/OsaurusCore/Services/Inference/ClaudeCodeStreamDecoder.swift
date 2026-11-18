@@ -6,7 +6,8 @@
 //  events. Pure and synchronous so it unit-tests against recorded fixtures
 //  without spawning anything.
 //
-//  Wire shape (verified against CLI 2.1.212). Each line is one JSON object:
+//  Wire shape (verified against CLI 2.1.212 and 2.1.308). Each line is one
+//  JSON object:
 //
 //    {"type":"system","subtype":"init", ...}          session id, tool list
 //    {"type":"system","subtype":"status", ...}        "requesting", ...
@@ -15,6 +16,8 @@
 //    {"type":"assistant","message":{...}}             COMPLETE message — ignored
 //    {"type":"user","message":{"content":[{"type":"tool_result",...}]}}
 //    {"type":"result","subtype":"success", ...}       final usage + stop reason
+//    {"type":"control_request","request_id":..., "request":{"subtype":...}}
+//                                                     host question; must be answered
 //
 //  Two traps that cost visible correctness if missed:
 //
@@ -39,6 +42,11 @@ public enum ClaudeCodeStreamEvent: Sendable, Equatable {
     /// A tool call the CLI's permission rules refused. Replaces the failed
     /// completion trace so the chat can say why, without carrying the result.
     case toolDenied(callId: String?, name: String)
+    /// A call to a tool this run doesn't have (hidden, or never existed).
+    case toolUnavailable(callId: String?, name: String)
+    /// The CLI asks its host something (`can_use_tool` permission prompts)
+    /// and waits for a `control_response` with the same `request_id`.
+    case controlRequest(requestId: String, subtype: String)
     /// Terminal usage frame.
     case stats(outputTokens: Int, tokensPerSecond: Double, stopReason: String?)
     /// Subscription rate-limit notice. Surfaced verbatim rather than retried.
@@ -87,6 +95,12 @@ public struct ClaudeCodeStreamDecoder: Sendable {
 
         case "rate_limit_event":
             return decodeRateLimit(root)
+
+        case "control_request":
+            guard let requestId = root["request_id"] as? String,
+                let subtype = (root["request"] as? [String: Any])?["subtype"] as? String
+            else { return [] }
+            return [.controlRequest(requestId: requestId, subtype: subtype)]
 
         case "system":
             if (root["subtype"] as? String) == "init", let id = root["session_id"] as? String {
@@ -168,6 +182,10 @@ public struct ClaudeCodeStreamDecoder: Sendable {
                 events.append(.toolDenied(callId: callId, name: name))
                 continue
             }
+            if isError, Self.isUnavailableTool(block["content"]) {
+                events.append(.toolUnavailable(callId: callId, name: name))
+                continue
+            }
             events.append(
                 .toolTrace(
                     StreamingAgentToolHint.Trace(
@@ -188,17 +206,23 @@ public struct ClaudeCodeStreamDecoder: Sendable {
     /// mode") and older ("requested permissions to use Bash, but you haven't
     /// granted it yet"). The text is only inspected, never forwarded.
     static func isPermissionDenial(_ content: Any?) -> Bool {
-        let text: String
-        if let string = content as? String {
-            text = string
-        } else if let parts = content as? [[String: Any]] {
-            text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
-        } else {
-            return false
-        }
-        let lowered = text.lowercased()
+        guard let lowered = resultText(content)?.lowercased() else { return false }
         return (lowered.hasPrefix("permission to use ") && lowered.contains("has been denied"))
             || (lowered.contains("requested permissions to use ") && lowered.contains("haven't granted"))
+    }
+
+    /// The CLI's answer to a call naming a tool the run doesn't have:
+    /// `<tool_use_error>Error: No such tool available: WebFetch</tool_use_error>`.
+    static func isUnavailableTool(_ content: Any?) -> Bool {
+        resultText(content)?.lowercased().contains("no such tool available") == true
+    }
+
+    private static func resultText(_ content: Any?) -> String? {
+        if let string = content as? String { return string }
+        if let parts = content as? [[String: Any]] {
+            return parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        }
+        return nil
     }
 
     // MARK: - result

@@ -38,13 +38,32 @@ struct LeanFolderContextTests {
         #expect(!section.contains("mode append"))
     }
 
+    @MainActor
     @Test func codeProjectKeepsTheCheckLine() async throws {
         let (root, context) = try await folder(manifest: "Package.swift")
         defer { try? FileManager.default.removeItem(at: root) }
 
         #expect(context.projectType != .unknown)
-        let section = SystemPromptTemplates.leanFolderContext(from: context)
+        let section = SystemPromptTemplates.leanFolderContext(
+            from: context, toolNames: ToolRegistry.coreWorkspaceToolNames)
         #expect(section.contains(SystemPromptTemplates.runnableCodeCheckLine))
+        #expect(section.contains(SystemPromptTemplates.folderDocumentFormatsLine))
+        #expect(section.contains("Writes are confined"))
+    }
+
+    /// A read-only folder (Keeper on Downloads) keeps `file_read` and
+    /// `file_search` only, so nothing may send it to write or run.
+    @Test func readOnlyFolderNamesNoWriteOrRunTool() async throws {
+        let (root, context) = try await folder(manifest: "Package.swift")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let section = SystemPromptTemplates.leanFolderContext(
+            from: context, toolNames: ["file_read", "file_search"])
+        #expect(section.contains(SystemPromptTemplates.folderDocumentReadFormatsLine))
+        #expect(section.contains("read-only"))
+        for absent in ["file_write", "file_edit", "shell_run", "Writes are confined", "run an available"] {
+            #expect(!section.contains(absent), "\(absent)")
+        }
     }
 
     @Test func optionalToolLinesFollowTheSchema() async throws {

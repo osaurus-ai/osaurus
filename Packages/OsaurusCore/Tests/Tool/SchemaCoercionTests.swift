@@ -18,6 +18,54 @@ import Testing
 @Suite
 struct SchemaCoercionTests {
 
+    // MARK: - Preflight literal preservation
+
+    private static let preflightSchema: JSONValue = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "path": .object(["type": .string("string")]),
+            "count": .object(["type": .string("integer")]),
+            "force": .object(["type": .string("boolean")]),
+            "mode": .object(["type": .string("string"), "enum": .array([.string("append"), .string("replace")])]),
+            "note": .object(["type": .string("string")]),
+            "items": .object(["type": .string("array"), "items": .object(["type": .string("number")])]),
+        ]),
+        "required": .array([.string("path")]),
+    ])
+
+    private func preflightReady(_ json: String) -> String? {
+        if case .ready(let out) = ToolRegistry.preflight(
+            argumentsJSON: json, schema: Self.preflightSchema, toolName: "t")
+        {
+            return out
+        }
+        return nil
+    }
+
+    /// Native arguments reach the tool body byte-for-byte as sent.
+    @Test func preflightKeepsUnchangedArgumentsVerbatim() {
+        let raw = #"{ "path" : "a/b.txt", "count": 3, "force": true, "mode": "append", "items": [1, 2.5] }"#
+        #expect(preflightReady(raw) == raw)
+    }
+
+    @Test func preflightRewritesEveryKindOfCoercion() throws {
+        let cases = [
+            #"{"path": "a", "count": "3"}"#,
+            #"{"path": "a", "force": "true"}"#,
+            #"{"path": "a", "mode": "Append"}"#,
+            #"{"path": "a", "note": ""}"#,
+            #"{"Path": "a"}"#,
+            #"{"path": "a", "items": "[1, 2]"}"#,
+            #"{"properties": {"path": "a"}}"#,
+        ]
+        for raw in cases {
+            let out = try #require(preflightReady(raw), "rejected: \(raw)")
+            #expect(out != raw, "coercion not applied: \(raw)")
+            let object = try #require(try JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any])
+            #expect(object["path"] as? String == "a", "\(raw) → \(out)")
+        }
+    }
+
     // MARK: - browser_do regression
 
     /// Exact shape the bug report screenshot showed: `actions` is a

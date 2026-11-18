@@ -20,35 +20,35 @@ struct MultimodalSection: View {
             blurb:
                 "Vision / video / audio gating. Auto follows the loaded model; Force-Off rejects media regardless of model capability."
         ) {
-            SettingsField(
-                label: "Vision-Language Mode",
-                hint:
+            SettingsRow(
+                title: "Vision-Language Mode",
+                description:
                     "Auto = follow the model. Force-Off = reject any media. Force-On = require model support."
             ) {
-                Picker("", selection: $draft.multimodal.vlmMode) {
-                    ForEach(VMLXVLMServerMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                            .tag(mode)
+                AssignedBaseSegmentedPicker(
+                    selection: $draft.multimodal.vlmMode,
+                    options: VMLXVLMServerMode.allCases.map {
+                        .init($0, $0.rawValue.replacingOccurrences(of: "_", with: " ").capitalized, verbatim: true)
                     }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                )
+                .fixedSize()
+                .accessibilityLabel(Text("Vision-Language Mode", bundle: .module))
             }
 
             SettingsToggle(
-                title: L("Allow Video"),
+                title: "Allow Video",
                 description: "Permit video-bearing requests on capable models.",
                 isOn: $draft.multimodal.enableVideo
             )
 
             SettingsToggle(
-                title: L("Allow Audio"),
+                title: "Allow Audio",
                 description: "Permit audio-bearing requests on capable models.",
                 isOn: $draft.multimodal.enableAudio
             )
 
             SettingsToggle(
-                title: L("Require Media Salt for Cache"),
+                title: "Require Media Salt for Cache",
                 description:
                     "Engine invariant whenever a cache reuse tier is enabled — keeps prompts with different media from sharing cache entries. Disabling fails validation.",
                 isOn: $draft.multimodal.requireMediaSaltForCache

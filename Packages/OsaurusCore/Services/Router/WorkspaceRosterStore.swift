@@ -96,6 +96,7 @@ final class WorkspaceRosterStore: ObservableObject {
     private var lastRefreshStarted: Date?
     private var stateGeneration = UUID()
     private var refreshInFlight = false
+    private var refreshPending = false
     private var observerCount = 0
     /// Whether the sync stream currently carries a verified snapshot, in
     /// which case an activation refresh has nothing to add. Injectable so
@@ -104,9 +105,17 @@ final class WorkspaceRosterStore: ObservableObject {
     /// Eventually-consistent identity gate for `refresh`. Injectable so the
     /// request contract can be tested without a keychain.
     var hasIdentity: () -> Bool = { MasterKey.existsCached() }
+    /// A fresh wallet signs nothing but its credit claim until that settles,
+    /// so the roster waits instead of failing. Injectable for tests.
+    var awaitsFirstCredit: () -> Bool = { RouterCreditAcquisitionCoordinator.shared.blocksGeneralSignedRequests }
+    /// Whether a poll-path refresh removes pairings the roster no longer
+    /// lists. Tests over stubbed rosters turn it off so they never touch
+    /// the shared pairing store.
+    var prunesPairingsOnRefresh = true
     private var activationObserver: NSObjectProtocol?
     private var remoteAgentsCancellable: AnyCancellable?
     private var routerEnabledCancellable: AnyCancellable?
+    private var creditResolvedObserver: NSObjectProtocol?
 
     init(client: OsaurusRouterAPIClient = .shared, observeAppActivation: Bool = true) {
         self.client = client
@@ -130,6 +139,15 @@ final class WorkspaceRosterStore: ObservableObject {
                         await self?.refresh(reason: .manual)
                     }
                 }
+            creditResolvedObserver = NotificationCenter.default.addObserver(
+                forName: .routerCreditAcquisitionResolved,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.refresh(reason: .manual)
+                }
+            }
         }
     }
 
@@ -201,11 +219,22 @@ final class WorkspaceRosterStore: ObservableObject {
         // verified: the next roster verdict (`online` true/false) replaces
         // it in `dropHostReachable`, and a relay failure replaces it via
         // `noteHostUnreachable`. No separate lifetime, or an idle chat with
-        // a router that reports no presence would re-lock after 35 s.
+        // a router that reports no presence would re-lock after 40 s.
         if hostReachableAt[lowered] != nil {
             return .online
         }
         return Self.presence(for: agent)
+    }
+
+    /// True only when the workspace's roster is inside its verification
+    /// lease and does not list the agent: an authoritative "unshared".
+    /// An unverified or never-loaded roster proves nothing either way.
+    func verifiedRosterOmits(_ ref: WorkspaceAgentRef) -> Bool {
+        guard let verified = verifiedAt[ref.workspaceId],
+            now().timeIntervalSince(verified) < Self.verificationLifetime,
+            rosters.contains(where: { $0.id == ref.workspaceId })
+        else { return false }
+        return agent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId) == nil
     }
 
     /// Whether `address` is HOSTED ON THIS MAC, by matching a local agent's
@@ -282,15 +311,20 @@ final class WorkspaceRosterStore: ObservableObject {
     enum RefreshReason { case launch, activation, poll, manual }
 
     /// Reload every workspace roster. `.activation` is skipped entirely
-    /// while the sync stream is verified and throttled otherwise; every
-    /// other reason runs unless a refresh is already in flight.
+    /// while the sync stream is verified and throttled otherwise. Any other
+    /// reason that arrives while a refresh is in flight runs once more after
+    /// it: the in-flight fetch may predate the share or unshare that asked.
     func refresh(reason: RefreshReason = .manual) async {
         guard OsaurusRouter.isEnabled, hasIdentity() else {
             if !rosters.isEmpty { rosters = [] }
             if lastError != nil { lastError = nil }
             return
         }
-        guard !refreshInFlight else { return }
+        guard !awaitsFirstCredit() else { return }
+        guard !refreshInFlight else {
+            if reason != .activation { refreshPending = true }
+            return
+        }
         if reason == .activation {
             if isSyncVerified() { return }
             if let last = lastRefreshStarted,
@@ -299,13 +333,20 @@ final class WorkspaceRosterStore: ObservableObject {
                 return
             }
         }
-        let generation = stateGeneration
         refreshInFlight = true
         if rosters.isEmpty, lastRefreshedAt == nil { isLoading = true }
         defer {
             refreshInFlight = false
             isLoading = false
         }
+        repeat {
+            refreshPending = false
+            await performRefresh()
+        } while refreshPending && OsaurusRouter.isEnabled && hasIdentity()
+    }
+
+    private func performRefresh() async {
+        let generation = stateGeneration
         lastRefreshStarted = now()
 
         let workspaces: [OsaurusRouterWorkspaceSummary]
@@ -333,6 +374,7 @@ final class WorkspaceRosterStore: ObservableObject {
         guard generation == stateGeneration else { return }
         if lastError != nil { lastError = nil }
         apply(rosters: next, verifiedWorkspaceIds: verified)
+        if prunesPairingsOnRefresh { removeStalePairings(loadedWorkspaceIds: verified) }
 
         // Keep the pairing side in step: any teammate agent not yet paired
         // gets the background handshake, so a row that just appeared is
@@ -431,6 +473,42 @@ final class WorkspaceRosterStore: ObservableObject {
         // starts the sync stream for a first workspace and stops it once
         // the last one is gone.
         WorkspaceSyncService.shared.noteMembership(hasWorkspaces: !next.isEmpty)
+    }
+
+    // MARK: - Stale pairings
+
+    /// Paired teammate agents an authoritative roster shows are gone: the
+    /// pairing's workspace left the list (left / deleted), or a workspace
+    /// whose agents were just fetched no longer lists the agent (unshared).
+    /// A workspace whose agent fetch failed is not in `loadedWorkspaceIds`
+    /// and keeps its pairings. Pairings with no workspace (direct pairing,
+    /// guest links) are never touched.
+    nonisolated static func stalePairingIds(
+        remoteAgents: [RemoteAgent],
+        rosters: [WorkspaceRoster],
+        loadedWorkspaceIds: Set<String>
+    ) -> [UUID] {
+        remoteAgents.compactMap { remote in
+            guard let workspaceId = remote.workspaceId else { return nil }
+            guard let roster = rosters.first(where: { $0.workspace.id == workspaceId }) else { return remote.id }
+            guard loadedWorkspaceIds.contains(workspaceId) else { return nil }
+            let listed = roster.agents.contains {
+                $0.agentAddress.lowercased() == remote.agentAddress.lowercased()
+            }
+            return listed ? nil : remote.id
+        }
+    }
+
+    /// Drop the pairings `stalePairingIds` names, so a left or unshared
+    /// agent stops being reachable from chat as soon as the roster says so
+    /// rather than when the host's attestation lapses.
+    func removeStalePairings(loadedWorkspaceIds: Set<String>) {
+        let manager = RemoteAgentManager.shared
+        for id in Self.stalePairingIds(
+            remoteAgents: manager.remoteAgents, rosters: rosters, loadedWorkspaceIds: loadedWorkspaceIds)
+        {
+            _ = manager.remove(id: id)
+        }
     }
 
     // MARK: - Workspace list hand-off

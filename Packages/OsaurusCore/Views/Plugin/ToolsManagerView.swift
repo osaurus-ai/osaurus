@@ -2,10 +2,11 @@
 //  ToolsManagerView.swift
 //  osaurus
 //
-//  Tools & MCP. Three tabs: Services (MCP services you've connected plus a
-//  browsable Directory of ones you can add — the default), All Tools (every
-//  usable tool grouped by where it comes from, with per-tool permissions and
-//  the Auto-Allow master switch), and Plugins (native plugin browser).
+//  Tools & MCP. The page is Services (MCP services you've connected plus a
+//  browsable Directory of ones you can add); All Tools (every usable tool
+//  grouped by where it comes from, with per-tool permissions and the
+//  Auto-Allow master switch) and Plugins (native plugin browser) open as
+//  pushed pages from the header.
 //
 
 import AppKit
@@ -20,6 +21,7 @@ import SwiftUI
 let toolGroupRenderCapValue = 20
 
 struct ToolsManagerView: View {
+    @ObservedObject private var badgeStore = ManagementBadgeStore.shared
     @ObservedObject private var themeManager = ThemeManager.shared
     private let repoService = PluginRepositoryService.shared
     private let providerManager = MCPProviderManager.shared
@@ -76,9 +78,9 @@ struct ToolsManagerView: View {
     @State private var toolsNeedingPermissionCount: Int = 0
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerBar
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
+                .settingsHeaderEntrance(hasAppeared: hasAppeared)
 
             Group {
                 switch selectedTab {
@@ -93,10 +95,10 @@ struct ToolsManagerView: View {
             .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
+            withAnimation(theme.motion.standard.delay(0.1)) {
                 hasAppeared = true
             }
             applyPendingSubTabRequest()
@@ -134,40 +136,60 @@ struct ToolsManagerView: View {
 
     // MARK: - Header Bar
 
+    @ViewBuilder
     private var headerBar: some View {
-        ManagerHeaderWithTabs(
-            title: L("Tools & MCP"),
-            subtitle: headerSubtitle
-        ) {
-            if selectedTab == .services {
-                HeaderPrimaryButton("Add Service", icon: "plus") {
+        if selectedTab == .services {
+            servicesHeader
+        } else {
+            SettingsPageHeader(
+                title: selectedTab.title,
+                subtitle: headerSubtitle,
+                onRefresh: reloadTools,
+                refreshHelp: "Reload tools",
+                isRefreshing: isRefreshingInstalled,
+                toolbar: {
+                    if selectedTab == .all {
+                        SettingsHeaderToolbar(searchText: $searchText, searchPlaceholder: "Search tools")
+                    }
+                }
+            )
+            .settingsBackDestination(L("Tools & MCP"), verbatim: true) { selectedTab = .services }
+        }
+    }
+
+    private var servicesHeader: some View {
+        SettingsPageHeader(
+            title: "Tools & MCP",
+            subtitle: headerSubtitle,
+            count: badgeStore.headerCount(for: .tools),
+            onRefresh: reloadTools,
+            refreshHelp: "Reload tools",
+            isRefreshing: isRefreshingInstalled,
+            secondary: {
+                SettingsButton(.secondary, ToolsTab.all.title, icon: "wrench.and.screwdriver") {
+                    withAnimation(theme.motion.quick) { selectedTab = .all }
+                }
+                .settingsLandingAnchor("tools.allTools")
+                SettingsButton(.secondary, ToolsTab.nativePlugins.title, icon: "puzzlepiece.extension") {
+                    withAnimation(theme.motion.quick) { selectedTab = .nativePlugins }
+                }
+                .settingsLandingAnchor("tools.plugins")
+            },
+            primary: {
+                SettingsButton(.primary, "Add Service", icon: "plus") {
                     showAddServiceSheet = true
                 }
                 .settingsLandingAnchor("tools.addService")
             }
-            HeaderIconButton(
-                "arrow.clockwise",
-                isLoading: isRefreshingInstalled,
-                help: isRefreshingInstalled ? L("Refreshing...") : L("Reload tools")
-            ) {
-                Task {
-                    isRefreshingInstalled = true
-                    await PluginManager.shared.loadAll()
-                    reload()
-                    isRefreshingInstalled = false
-                }
-            }
-        } tabsRow: {
-            // Search only appears on the All tab, where it is actually wired
-            // to the catalog results. Counts live inside each screen (section
-            // headers, connection hub, custom library) instead of mixing
-            // units in the tab bar.
-            HeaderTabsRow(
-                selection: $selectedTab,
-                searchText: $searchText,
-                searchPlaceholder: "Search tools",
-                showSearch: selectedTab == .all
-            )
+        )
+    }
+
+    private func reloadTools() {
+        Task {
+            isRefreshingInstalled = true
+            await PluginManager.shared.loadAll()
+            reload()
+            isRefreshingInstalled = false
         }
     }
 
@@ -191,7 +213,7 @@ struct ToolsManagerView: View {
             // `VStack`), since a nested stack would be realized as one eager
             // child and defeat virtualization. Row spacing is 8; section
             // headers and intro cards add 8 more top padding for a 16 gap.
-            LazyVStack(spacing: 8) {
+            LazyVStack(spacing: theme.space.s8) {
                 let builtIn = visibleTools(builtInSectionToolEntries, section: .builtIn)
                 let pluginGroups = visiblePluginGroups()
                 let remoteGroups = visibleRemoteGroups()
@@ -212,27 +234,26 @@ struct ToolsManagerView: View {
                 // overrides, so the two are never configured in different tabs.
                 ToolAutoAllowToggle()
                     .settingsLandingAnchor("tools.allTools")
-                    .padding(.top, 8)
 
                 if hasAnyTool {
                     filterToolbar
-                        .padding(.top, 8)
+                        .padding(.top, theme.space.s8)
                 }
 
                 if !hasAnyTool {
-                    emptyState(
-                        icon: "wrench.and.screwdriver",
-                        title: L("No tools yet"),
-                        subtitle: searchText.isEmpty
-                            ? L("Install a plugin, add a service, or create a custom tool to get started")
-                            : L("Try a different search term")
+                    SettingsEmptyState(
+                        inline: "wrench.and.screwdriver",
+                        title: "No tools yet",
+                        hint: searchText.isEmpty
+                            ? "Install a plugin, add a service, or create a custom tool to get started"
+                            : "Try a different search term"
                     )
                 } else if !hasAnyVisible {
                     filteredEmptyState
                 } else {
                     if toolsNeedingPermissionCount > 0 {
                         ToolPermissionBanner(count: toolsNeedingPermissionCount, subject: .tools)
-                            .padding(.top, 8)
+                            .padding(.top, theme.space.s8)
                     }
 
                     // Sources are no longer wrapped in collapsible section
@@ -300,17 +321,16 @@ struct ToolsManagerView: View {
                         diagnostic: exposureDiagnostic,
                         searchText: searchText
                     )
-                    .padding(.top, 8)
+                    .padding(.top, theme.space.s8)
                 }
             }
-            .padding(24)
-            .frame(maxWidth: .infinity)
+            .settingsPageInsets()
         }
     }
 
     /// Plain-language toolbar for narrowing the catalog by status and source.
     private var filterToolbar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             ToolFilterMenu(
                 icon: "square.grid.2x2",
                 accessibilityTitle: L("Filter by source"),
@@ -357,44 +377,17 @@ struct ToolsManagerView: View {
                     expandedToolGroups.insert(key)
                 }
             }
-            .padding(.top, 4)
+            .padding(.top, theme.space.s4)
         }
     }
 
     // MARK: - Empty / Loading States
 
-    private func emptyState(icon: String, title: String, subtitle: String?) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 40, weight: .light))
-                .foregroundColor(theme.tertiaryText)
-
-            Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
-            if let subtitle = subtitle {
-                Text(subtitle)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 60)
-    }
-
     private var filteredEmptyState: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "line.3.horizontal.decrease.circle")
-                .foregroundColor(theme.tertiaryText)
-            Text("No tools match the current filters", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.5)))
+        SettingsEmptyState(
+            inline: "line.3.horizontal.decrease.circle",
+            title: "No tools match the current filters"
+        )
     }
 
     // MARK: - Helpers
@@ -737,7 +730,8 @@ func cachedAvailability(
 // MARK: - Tool Plugin Card
 
 private struct ToolPluginCard: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
     let plugin: PluginState
     let tools: [ToolRegistry.ToolEntry]
     let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
@@ -754,119 +748,32 @@ private struct ToolPluginCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        isExpanded.toggle()
-                    }
-                }) {
-                    HStack(spacing: 10) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(
-                                    plugin.hasLoadError
-                                        ? Color.red.opacity(0.12)
-                                        : theme.accentColor.opacity(0.12)
-                                )
-                            Image(
-                                systemName: plugin.hasLoadError
-                                    ? "exclamationmark.triangle.fill"
-                                    : "puzzlepiece.extension.fill"
-                            )
-                            .font(.system(size: 14))
-                            .foregroundColor(
-                                plugin.hasLoadError ? .red : theme.accentColor
-                            )
-                        }
-                        .frame(width: 34, height: 34)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 8) {
-                                Text(plugin.displayName)
-                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                    .foregroundColor(theme.primaryText)
-                                    .lineLimit(1)
-
-                                if plugin.hasLoadError {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "exclamationmark.triangle.fill")
-                                            .font(.system(size: 10))
-                                        Text("Error", bundle: .module)
-                                            .font(.system(size: 10, weight: .semibold))
-                                    }
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(Capsule().fill(Color.red.opacity(0.15)))
-                                    .foregroundColor(.red)
-                                }
-                            }
-
-                            if let description = plugin.pluginDescription {
-                                Text(description)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(theme.secondaryText)
-                                    .lineLimit(1)
-                            }
-                        }
-
-                        Spacer()
-
-                        if !tools.isEmpty {
-                            Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")", bundle: .module)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Capsule().fill(theme.tertiaryBackground))
-                        }
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
+        SettingsGroup {
+            LibraryRow(
+                title: plugin.displayName,
+                subtitle: plugin.pluginDescription,
+                action: toggleExpanded
+            ) {
+                SettingsIconTile(
+                    icon: plugin.hasLoadError ? "exclamationmark.triangle.fill" : "puzzlepiece.extension.fill",
+                    size: 32,
+                    tint: plugin.hasLoadError ? theme.statusInk(.error) : nil
+                )
+            } badges: {
+                if plugin.hasLoadError {
+                    StatusChip(L("Error"), tone: .error, icon: "exclamationmark.triangle.fill")
                 }
-                .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel(
-                    Text("Plugin \(plugin.displayName), \(tools.count) tools", bundle: .module))
+            } trailing: {
+                ToolGroupDisclosure(count: tools.isEmpty ? nil : tools.count, isExpanded: isExpanded)
             }
 
             if isExpanded, let loadError = plugin.loadError {
-                Divider()
-                    .padding(.vertical, 4)
-
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(.red)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Failed to load plugin", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.red)
-                        Text(loadError)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(3)
-                    }
-
-                    Spacer()
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.red.opacity(0.08))
-                )
-                .transition(.opacity)
+                InlineBanner(kind: .error, title: L("Failed to load plugin"), caption: loadError)
+                    .transition(.opacity)
             }
 
             if isExpanded && !tools.isEmpty && !plugin.hasLoadError {
-                Divider()
-                    .padding(.vertical, 4)
-
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(visibleTools, id: \.id) { entry in
                         ToolEntryRow(
                             entry: entry,
@@ -895,16 +802,20 @@ private struct ToolPluginCard: View {
                 .transition(.opacity)
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(HoverableCardBackground())
+    }
+
+    private func toggleExpanded() {
+        withAnimation(theme.motion.springAnimation) {
+            isExpanded.toggle()
+        }
     }
 }
 
 // MARK: - Remote Provider Tools Card
 
 private struct RemoteProviderToolsCard: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
     let provider: MCPProvider
     let tools: [ToolRegistry.ToolEntry]
     let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
@@ -914,7 +825,6 @@ private struct RemoteProviderToolsCard: View {
     let onToolMutated: (String) -> Void
 
     @State private var isExpanded: Bool = false
-    @State private var isMenuHovering = false
     @State private var showAllTools = false
 
     private var visibleTools: [ToolRegistry.ToolEntry] {
@@ -923,98 +833,34 @@ private struct RemoteProviderToolsCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        SettingsGroup {
+            LibraryRow(
+                title: provider.name,
+                subtitle: provider.url,
+                monospacedSubtitle: true,
+                action: {
+                    withAnimation(theme.motion.springAnimation) {
                         isExpanded.toggle()
                     }
-                }) {
-                    HStack(spacing: 10) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor.opacity(0.12))
-                            Image(systemName: "server.rack")
-                                .font(.system(size: 14))
-                                .foregroundColor(theme.accentColor)
-                        }
-                        .frame(width: 34, height: 34)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 8) {
-                                Text(provider.name)
-                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                    .foregroundColor(theme.primaryText)
-                                    .lineLimit(1)
-
-                                HStack(spacing: 4) {
-                                    Circle()
-                                        .fill(theme.successColor)
-                                        .frame(width: 6, height: 6)
-                                    Text("Connected", bundle: .module)
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundColor(theme.successColor)
-                                }
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(theme.successColor.opacity(0.12)))
-                            }
-
-                            Text(provider.url)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.tertiaryText)
-                                .lineLimit(1)
-                        }
-
-                        Spacer()
-
-                        Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")", bundle: .module)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(theme.tertiaryBackground))
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel(
-                    Text("Service \(provider.name), \(tools.count) tools", bundle: .module))
-
-                Menu {
-                    Button(action: onDisconnect) {
-                        Label {
-                            Text("Disconnect", bundle: .module)
-                        } icon: {
-                            Image(systemName: "bolt.slash")
-                        }
+            ) {
+                SettingsIconTile(icon: "server.rack", size: 32)
+            } badges: {
+                StatusChip(L("Connected"), tone: .success, showsDot: true)
+            } trailing: {
+                ToolGroupDisclosure(count: tools.count, isExpanded: isExpanded)
+            } menu: {
+                Button(action: onDisconnect) {
+                    Label {
+                        Text("Disconnect", bundle: .module)
+                    } icon: {
+                        Image(systemName: "bolt.slash")
                     }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 16))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground.opacity(isMenuHovering ? 1 : 0))
-                        )
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .onHover { isMenuHovering = $0 }
-                .accessibilityLabel(Text("Actions for \(provider.name)", bundle: .module))
             }
 
             if isExpanded && !tools.isEmpty {
-                Divider()
-                    .padding(.vertical, 4)
-
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(visibleTools, id: \.id) { entry in
                         RemoteToolRow(
                             entry: entry,
@@ -1043,8 +889,26 @@ private struct RemoteProviderToolsCard: View {
                 .transition(.opacity)
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(HoverableCardBackground())
+    }
+}
+
+/// Tool count and the rotating disclosure chevron on a tool group header.
+private struct ToolGroupDisclosure: View {
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
+    let count: Int?
+    let isExpanded: Bool
+
+    var body: some View {
+        HStack(spacing: theme.space.s8) {
+            if let count {
+                Text(L("\(count) tool\(count == 1 ? "" : "s")"))
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
+                    .lineLimit(1)
+            }
+            SettingsChevron()
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+        }
     }
 }

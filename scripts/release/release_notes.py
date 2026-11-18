@@ -5,25 +5,41 @@ from pathlib import Path
 import subprocess
 import uuid
 
+from release_lane import CLASSIC_NOTICE, ReleaseLane
+
 
 def api(*arguments):
     result = subprocess.run(["gh", "api", *arguments], check=True, capture_output=True, text=True)
     return json.loads(result.stdout)
 
 
-def release_notes(repository, tag, source):
+def repository_tags():
+    result = subprocess.run(["git", "tag", "--list"], check=True, capture_output=True, text=True)
+    return result.stdout.split()
+
+
+def release_notes(repository, tag, source, tags=repository_tags):
+    lane = ReleaseLane.for_version(tag)
     pages = api(f"/repos/{repository}/releases?per_page=100", "--paginate", "--slurp")
     matches = [release for page in pages for release in page if release["tag_name"] == tag]
     if len(matches) > 1:
         raise ValueError(f"More than one release matches {tag}")
     if matches and (matches[0].get("body") or "").strip():
-        return matches[0]["body"]
-    # GitHub computes notes for this tag/commit; this endpoint creates no release.
-    generated = api("--method", "POST", f"/repos/{repository}/releases/generate-notes",
-                    "-f", f"tag_name={tag}", "-f", f"target_commitish={source}")
-    body = generated.get("body")
-    if not isinstance(body, str) or not body.strip():
-        raise ValueError("GitHub returned empty release notes")
+        body = matches[0]["body"]
+    else:
+        # GitHub computes notes for this tag/commit; this endpoint creates no release.
+        # Without previous_tag_name it diffs against the newest release by date,
+        # which after a Classic patch is the other lane.
+        request = ["--method", "POST", f"/repos/{repository}/releases/generate-notes",
+                   "-f", f"tag_name={tag}", "-f", f"target_commitish={source}"]
+        previous = lane.previous_tag(tags())
+        if previous:
+            request += ["-f", f"previous_tag_name={previous}"]
+        body = api(*request).get("body")
+        if not isinstance(body, str) or not body.strip():
+            raise ValueError("GitHub returned empty release notes")
+    if lane.is_classic and not body.lstrip().startswith(CLASSIC_NOTICE):
+        body = f"{CLASSIC_NOTICE}\n\n{body}"
     return body
 
 

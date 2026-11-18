@@ -174,6 +174,7 @@ enum AgentSubagentRunner {
         treatEmptyChoicesAsFinal: Bool = false,
         isInterrupted: @escaping @Sendable () -> Bool = { false },
         toolset: AgentSubagentToolset? = nil,
+        endsRun: (@Sendable (ServiceToolInvocation, String) -> Bool)? = nil,
         onProgress: Progress? = nil,
         onChannelDelta: ChannelObserver? = nil,
         streamProvider: StreamProvider? = nil,
@@ -202,21 +203,29 @@ enum AgentSubagentRunner {
         } else {
             toolTokens = 0
         }
+        // History is trimmed to the priced ceiling, so tool results that grow
+        // the transcript never carry a request past it.
         let budgetManager = AgentLoopBudget.makeBudgetManager(
-            contextWindow: contextWindow,
+            contextWindow: min(contextWindow, admissionPositionLimit ?? contextWindow),
             systemPromptChars: messages.first?.content?.count ?? 0,
             toolTokens: toolTokens,
             maxResponseTokens: effectiveMaxTokens
         )
         let watermark = CompactionWatermark()
         let engine = ChatEngine(source: .chatUI, activitySource: .agent)
+        // The wall-clock budget stands still while a person decides on an
+        // approval card one of the child's tools raised.
+        let started = Date()
+        let budget = deadline.timeIntervalSince(started)
+        let clock = DeadlineClock()
+        let approvalWait = clock.observer(chainingTo: ChatExecutionContext.approvalWaitObserver)
 
         /// One probe for all three cancel sources, in specificity order: the
         /// subagent's own stop button first, then its wall-clock budget, then
         /// the surrounding task.
         @Sendable func cancelCause() -> SubagentCancelCause? {
             if isInterrupted() { return .userInterrupt }
-            if Date() >= deadline { return .deadline }
+            if clock.hasElapsed(budget, since: started) { return .deadline }
             if Task.isCancelled { return .parentTask }
             return nil
         }
@@ -407,7 +416,9 @@ enum AgentSubagentRunner {
                 let operation = ChatExecutionContext.$currentSessionId.withValue(sessionId) {
                     ChatExecutionContext.$currentModelName.withValue(modelName) {
                         ChatExecutionContext.$toolResultImagesEnabled.withValue(childAcceptsImages) {
-                            toolset.beginExecution(invocation)
+                            ChatExecutionContext.$approvalWait.withValue(.init(notify: approvalWait)) {
+                                toolset.beginExecution(invocation)
+                            }
                         }
                     }
                 }
@@ -449,7 +460,8 @@ enum AgentSubagentRunner {
                 )
                 return AgentLoopToolExecution(
                     result: result,
-                    isError: ToolEnvelope.isError(result)
+                    isError: ToolEnvelope.isError(result),
+                    endRun: endsRun?(invocation, result) ?? false
                 )
             }
         )

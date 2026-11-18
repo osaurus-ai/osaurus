@@ -19,6 +19,12 @@
 
 import Foundation
 
+/// Secret values a sandbox tool put in an exec's environment. Bound around
+/// the exec so the live sandbox log redacts them as lines arrive.
+enum SandboxLogScrubbing {
+    @TaskLocal static var secrets: [String: String] = [:]
+}
+
 enum SecretScrubber {
     /// Values shorter than this are never scrubbed: tiny strings
     /// ("1", "true", "dev") would false-positive all over ordinary

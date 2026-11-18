@@ -130,6 +130,9 @@ struct RenameQuietlyTests {
                 turns: [ChatTurnData(role: .user, content: "How do I fix a SwiftUI layout bug?")]
             )
             ChatSessionsManager.shared.save(session)
+            try await waitUntil(timeout: .seconds(2)) { ChatSessionStore.load(id: session.id) != nil }
+            // The store dates a session by when its turns were written.
+            let storedUpdatedAt = try #require(ChatSessionStore.load(id: session.id)).updatedAt
 
             ChatSessionsManager.shared.renameQuietly(id: session.id, title: "SwiftUI Layout Bug")
 
@@ -145,7 +148,7 @@ struct RenameQuietlyTests {
             let persisted = try #require(ChatSessionStore.load(id: session.id))
             // Tolerance for the store's timestamp round-trip precision.
             #expect(
-                abs(persisted.updatedAt.timeIntervalSince(originalUpdatedAt)) < 0.001
+                abs(persisted.updatedAt.timeIntervalSince(storedUpdatedAt)) < 0.001
             )
         }
     }

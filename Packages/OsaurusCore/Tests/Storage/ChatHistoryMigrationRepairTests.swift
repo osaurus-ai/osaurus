@@ -17,8 +17,10 @@
 //  These tests pin the reproduced failure state and the partial variants,
 //  asserting the now-idempotent migrations self-heal on the next `open()`:
 //  columns that already exist are skipped, the missing ones are added, the
-//  schema version reconciles to the latest, and existing + new data round
-//  trips.
+//  schema version reconciles to the latest, and existing data reads back.
+//  The app no longer writes this database (it's the import source for
+//  sync); rows written after the repair use the test seed, which names every
+//  column an older build wrote, so it proves the repaired schema is complete.
 //
 
 import CryptoKit
@@ -143,7 +145,7 @@ struct ChatHistoryMigrationRepairTests {
                 title: "New chat after repair",
                 turns: [ChatTurnData(role: .user, content: "fresh turn after repair")]
             )
-            try db.saveSession(newSession)
+            try db.seedForTesting(newSession)
             let reloaded = db.loadSession(id: newId)
             #expect(reloaded?.turns.count == 1)
             #expect(reloaded?.turns.first?.content == "fresh turn after repair")
@@ -190,7 +192,7 @@ struct ChatHistoryMigrationRepairTests {
             #expect(loaded?.turns.first?.modelContextExcluded == true)
 
             let newId = UUID()
-            try db.saveSession(
+            try db.seedForTesting(
                 ChatSessionData(
                     id: newId,
                     title: "Save works",
@@ -242,7 +244,7 @@ struct ChatHistoryMigrationRepairTests {
             // Full load + new save both succeed.
             #expect(db.loadSession(id: sid)?.turns.count == 1)
             let newId = UUID()
-            try db.saveSession(
+            try db.seedForTesting(
                 ChatSessionData(id: newId, title: "post-heal", turns: [ChatTurnData(role: .user, content: "hi")])
             )
             #expect(db.loadSession(id: newId)?.turns.count == 1)
@@ -312,7 +314,7 @@ struct ChatHistoryMigrationRepairTests {
 
             // New saves still work against the version-ahead file.
             let newId = UUID()
-            try db.saveSession(
+            try db.seedForTesting(
                 ChatSessionData(
                     id: newId,
                     title: "saved by older build",
@@ -378,7 +380,7 @@ struct ChatHistoryMigrationRepairTests {
             // …history survived, and the failing save now lands.
             #expect(db.loadSession(id: sid)?.turns.first?.content == "kept")
             let newId = UUID()
-            try db.saveSession(
+            try db.seedForTesting(
                 ChatSessionData(
                     id: newId,
                     title: "saved after repair",
@@ -437,7 +439,7 @@ struct ChatHistoryMigrationRepairTests {
 
             #expect(db.loadSession(id: sid)?.turns.first?.content == "kept through the fork")
             let newId = UUID()
-            try db.saveSession(
+            try db.seedForTesting(
                 ChatSessionData(
                     id: newId,
                     title: "saved after v15 repair",
@@ -462,7 +464,7 @@ struct ChatHistoryMigrationRepairTests {
             #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
 
             let id = UUID()
-            try db.saveSession(
+            try db.seedForTesting(
                 ChatSessionData(
                     id: id,
                     title: "Fresh",
@@ -487,7 +489,7 @@ struct ChatHistoryMigrationRepairTests {
             )
             let initial = ChatHistoryDatabase()
             try initial.open()
-            try initial.saveSession(session)
+            try initial.seedForTesting(session)
             initial.close()
             // Recreate the previous schema's missing columns in this private fixture.
             try self.seedChatHistoryDB([
@@ -506,7 +508,7 @@ struct ChatHistoryMigrationRepairTests {
             loaded.turns[0].generationTokensPerSecond = 106.6
             loaded.turns[0].modelLoadSeconds = 0.4
             loaded.turns[0].lastOutputAt = Date(timeIntervalSince1970: 1002)
-            try upgraded.saveSession(loaded)
+            try upgraded.seedForTesting(loaded)
             upgraded.close()
             let reopened = ChatHistoryDatabase()
             try reopened.open()
@@ -532,10 +534,10 @@ struct ChatHistoryMigrationRepairTests {
             )
             let initial = ChatHistoryDatabase()
             try initial.open()
-            try initial.saveSession(session)
+            try initial.seedForTesting(session)
             initial.close()
 
-            // Preserve all prior row bytes/columns, remove only the v23 carrier,
+            // Preserve all prior row bytes/columns, remove only the controls carrier,
             // and stamp the schema a shipped v22 build would have left.
             try self.seedChatHistoryDB([
                 "ALTER TABLE turns DROP COLUMN turn_generation_controls",
@@ -546,7 +548,7 @@ struct ChatHistoryMigrationRepairTests {
 
             let upgraded = ChatHistoryDatabase()
             try upgraded.open()
-            var loaded = try #require(upgraded.loadSession(id: session.id))
+            let loaded = try #require(upgraded.loadSession(id: session.id))
             #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
             #expect(self.diskColumns(table: "turns").contains("turn_generation_controls"))
             #expect(loaded.turns.map(\.id) == session.turns.map(\.id))
@@ -558,28 +560,32 @@ struct ChatHistoryMigrationRepairTests {
             controls.hasResolvedReasoning = true
             controls.overrides = ChatTurnOverrides(temperature: 0, topK: 0,
                 templateKwargs: ["template": .object(["city": .null])])
+            // A row an upstream build wrote after the upgrade reads back with
+            // its controls; the pre-upgrade rows keep none.
             var next = ChatTurnData(role: .user, content: "new controlled question")
             next.generationControls = controls
-            loaded.turns.append(next)
-            try upgraded.saveSession(loaded)
+            let controlled = ChatSessionData(title: "v22 controlled row", turns: [next])
+            try upgraded.seedForTesting(controlled)
             upgraded.close()
 
             let reopened = ChatHistoryDatabase()
             try reopened.open()
             defer { reopened.close() }
             let restored = try #require(reopened.loadSession(id: session.id))
-            #expect(restored.turns.map(\.id) == loaded.turns.map(\.id))
-            #expect(restored.turns.map(\.content) == ["legacy question", "legacy answer", "new controlled question"])
+            #expect(restored.turns.map(\.content) == ["legacy question", "legacy answer"])
             #expect(restored.turns[1].thinking == "legacy reasoning")
-            #expect(restored.turns[0].generationControls == nil)
-            #expect(restored.turns[1].generationControls == nil)
-            #expect(restored.turns[2].generationControls == controls)
+            #expect(restored.turns.allSatisfy { $0.generationControls == nil })
+            let restoredControlled = try #require(reopened.loadSession(id: controlled.id))
+            #expect(restoredControlled.turns.first?.generationControls == controls)
             #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
         }
     }
 
+    /// A v25 store has no summary column: opening adds it and keeps the turns.
+    /// A row an upstream build wrote with its summary reads back with it, so
+    /// the importer keeps the compaction the user already ran.
     @Test
-    func v23CompactionSummaryUpgradeSurvivesDatabaseReopen() async throws {
+    func v25CompactionSummaryUpgradeSurvivesDatabaseReopen() async throws {
         try await runWithPlaintextRoot {
             let session = ChatSessionData(
                 title: "legacy compaction",
@@ -590,15 +596,18 @@ struct ChatHistoryMigrationRepairTests {
             )
             let initial = ChatHistoryDatabase()
             try initial.open()
-            try initial.saveSession(session)
+            try initial.seedForTesting(session)
             initial.close()
             try self.seedChatHistoryDB([
                 "ALTER TABLE sessions DROP COLUMN conversation_summary",
-                "PRAGMA user_version = 23",
+                "PRAGMA user_version = 25",
             ])
+            #expect(!self.diskColumns(table: "sessions").contains("conversation_summary"))
+
             let upgraded = ChatHistoryDatabase()
             try upgraded.open()
             var loaded = try #require(upgraded.loadSession(id: session.id))
+            #expect(self.diskColumns(table: "sessions").contains("conversation_summary"))
             #expect(loaded.conversationSummary == nil)
             #expect(loaded.turns.map(\.id) == session.turns.map(\.id))
             let summary = ConversationSummary(
@@ -608,15 +617,39 @@ struct ChatHistoryMigrationRepairTests {
                 savedTokensEstimate: 100
             )
             loaded.conversationSummary = summary
-            try upgraded.saveSession(loaded)
+            try upgraded.seedForTesting(loaded)
             upgraded.close()
+
             let reopened = ChatHistoryDatabase()
             try reopened.open()
             defer { reopened.close() }
             let restored = try #require(reopened.loadSession(id: session.id))
             #expect(restored.conversationSummary == summary)
+            #expect(reopened.loadAllMetadata().first { $0.id == session.id }?.conversationSummary == summary)
             #expect(restored.turns.map(\.content) == ["old question", "old answer"])
             #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
+        }
+    }
+
+    @Test
+    func malformedStoredSummaryFallsBackToIntactTranscript() async throws {
+        try await runWithPlaintextRoot {
+            let session = ChatSessionData(
+                title: "bad summary",
+                turns: [ChatTurnData(role: .user, content: "kept question")]
+            )
+            let db = ChatHistoryDatabase()
+            try db.open()
+            try db.seedForTesting(session)
+            db.close()
+            try self.seedChatHistoryDB(["UPDATE sessions SET conversation_summary = 'invalid json'"])
+
+            let reopened = ChatHistoryDatabase()
+            try reopened.open()
+            defer { reopened.close() }
+            let loaded = try #require(reopened.loadSession(id: session.id))
+            #expect(loaded.conversationSummary == nil)
+            #expect(loaded.turns.map(\.content) == ["kept question"])
         }
     }
 
@@ -732,7 +765,7 @@ struct ChatHistoryMigrationRepairTests {
             let prefix = "[Current Time]\nSunday, September 20, 2026 at 2:34 AM\n[/Current Time]\n\n"
             let db = ChatHistoryDatabase()
             try db.open()
-            try db.saveSession(
+            try db.seedForTesting(
                 ChatSessionData(
                     id: sid,
                     title: "resume",
@@ -753,28 +786,6 @@ struct ChatHistoryMigrationRepairTests {
             #expect(turns[0].injectedContextPrefix == prefix)
             #expect(turns[1].injectedContextPrefix == nil)
             #expect(turns[2].injectedContextPrefix == nil)
-        }
-    }
-
-    /// A row first saved WITHOUT its block (the block is stamped at send
-    /// time) must be rewritten once the block lands: the incremental upsert
-    /// keys on the content hash, so the hash has to cover the block.
-    @Test
-    func injectedContextPrefixStampedAfterFirstSaveIsStillWritten() async throws {
-        try await runWithPlaintextRoot {
-            let sid = UUID()
-            var turn = ChatTurnData(role: .user, content: "question")
-            let db = ChatHistoryDatabase()
-            try db.open()
-            defer { db.close() }
-            try db.saveSession(ChatSessionData(id: sid, title: "t", turns: [turn]))
-            #expect(db.loadSession(id: sid)?.turns.first?.injectedContextPrefix == nil)
-
-            turn.injectedContextPrefix = "[Current Time]\nnow\n[/Current Time]\n\n"
-            try db.saveSession(ChatSessionData(id: sid, title: "t", turns: [turn]))
-            #expect(
-                db.loadSession(id: sid)?.turns.first?.injectedContextPrefix
-                    == "[Current Time]\nnow\n[/Current Time]\n\n")
         }
     }
 }

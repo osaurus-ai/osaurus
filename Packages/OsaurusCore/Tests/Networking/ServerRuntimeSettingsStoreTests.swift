@@ -471,6 +471,32 @@ struct ServerRuntimeSettingsStoreTests {
         #expect(plan.displaySummary.contains("load_cap=0.79"))
     }
 
+    @Test func runningSandboxVMIsTakenOutOfTheLoadBudget() throws {
+        let sandbox: UInt64 = 4 << 30
+        var settings = VMLXServerRuntimeSettings()
+        settings.memorySafety.mode = .strict
+        let baseline = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(for: settings, sandboxVMBytes: 0)
+        let budget = try #require(baseline.resolvedLoadBudgetBytes)
+        let shared = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(for: settings, sandboxVMBytes: sandbox)
+        #expect(shared.resolvedLoadBudgetBytes == budget - sandbox)
+        #expect(shared.warnings.contains { $0.contains("sandbox VM") })
+
+        // A request that fits alone is refused when it can't fit beside the VM.
+        let request = VMLXMemoryRequestEstimate(workingSetBytes: budget - (1 << 30))
+        let alone = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: settings, request: request, sandboxVMBytes: 0)
+        #expect(alone.blockingIssues.isEmpty)
+        let beside = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: settings, request: request, sandboxVMBytes: sandbox)
+        #expect(beside.blockingIssues.contains { $0.field == "memorySafety.requestEstimate" })
+
+        // The diagnostic mode promises no automatic caps.
+        settings.memorySafety.mode = .diagnosticDangerous
+        let diagnostic = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: settings, request: request, sandboxVMBytes: sandbox)
+        #expect(!diagnostic.warnings.contains { $0.contains("sandbox VM") })
+    }
+
     @Test(arguments: [false, true])
     @MainActor func load_movesLegacyImplicitPrefixCapUnderMemorySafety(snapshotFirst: Bool) async throws {
         let dir = try makeTempDirectory()

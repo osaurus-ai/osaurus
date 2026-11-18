@@ -44,7 +44,8 @@ final class SkillUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
             "skill": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The skill's name (case-insensitive) or its id from `osaurus_list skill`."
+                    "The skill's name (case-insensitive) or its id from `osaurus_inspect` "
+                        + "`{action: \"list\", scope: \"skills\"}`."
                 ),
             ]),
             "edits": .object([
@@ -199,8 +200,8 @@ final class SkillUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
                 ResolutionFailure(
                     kind: .notFound,
                     message:
-                        "No skill named \"\(reference)\". Use `osaurus_list skill` to see the "
-                        + "installed skills.",
+                        "No skill named \"\(reference)\". Use `osaurus_inspect` "
+                        + "`{action: \"list\", scope: \"skills\"}` to see the installed skills.",
                     retryable: true
                 )
             )

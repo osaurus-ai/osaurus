@@ -173,8 +173,15 @@ public actor ToolSearchService {
 
     public func initialize() async {
         guard !isInitialized else { return }
+        guard EmbeddingService.vectorIndexesAvailable else {
+            ToolIndexLogger.search.error(
+                "Tool vector index closed: \(EmbeddingService.launchError?.localizedDescription ?? "embedding model unavailable")"
+            )
+            return
+        }
 
-        let storageDir = OsaurusPaths.toolIndex().appendingPathComponent("vectura", isDirectory: true)
+        let storageDir = OsaurusPaths.toolIndex().appendingPathComponent(
+            EmbeddingService.indexDirectoryName, isDirectory: true)
 
         for attempt in 1 ... 2 {
             do {
@@ -272,7 +279,7 @@ public actor ToolSearchService {
                     description: pending.entry.description,
                     parameters: pending.parameters
                 )
-                _ = try await MediaActivityLogger.$embeddingPurpose.withValue("tool_index") {
+                _ = try await MediaActivityLogger.withEmbedding(purpose: "tool_index", role: .document) {
                     try await db.addDocument(text: text, id: id)
                 }
 
@@ -358,7 +365,7 @@ public actor ToolSearchService {
         guard let db = vectorDB else { return [] }
         do {
             let fetchCount = topK * 3
-            let results = try await MediaActivityLogger.$embeddingPurpose.withValue("tool_search") {
+            let results = try await MediaActivityLogger.withEmbedding(purpose: "tool_search", role: .query) {
                 try await db.search(
                     query: .text(query),
                     numResults: fetchCount,
@@ -824,8 +831,10 @@ public actor ToolSearchService {
 
     // MARK: - Rebuild
 
-    public func rebuildIndex() async {
-        guard let db = vectorDB else { return }
+    /// Returns whether every entry was embedded into the index.
+    @discardableResult
+    public func rebuildIndex() async -> Bool {
+        guard let db = vectorDB else { return false }
         do {
             try await db.reset()
             reverseIdMap.removeAll()
@@ -855,13 +864,15 @@ public actor ToolSearchService {
                 ids.append(id)
             }
             if !texts.isEmpty {
-                _ = try await MediaActivityLogger.$embeddingPurpose.withValue("tool_index") {
+                _ = try await MediaActivityLogger.withEmbedding(purpose: "tool_index", role: .document) {
                     try await db.addDocuments(texts: texts, ids: ids)
                 }
             }
             ToolIndexLogger.search.info("Tool index rebuilt with \(entries.count) entries")
+            return true
         } catch {
             ToolIndexLogger.search.error("Failed to rebuild tool index: \(error)")
+            return false
         }
     }
 

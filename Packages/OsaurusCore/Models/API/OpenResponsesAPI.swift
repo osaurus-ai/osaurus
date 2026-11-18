@@ -48,7 +48,7 @@ public struct OpenResponsesTextConfig: Codable, Sendable {
 
 public struct OpenResponsesTextFormat: Codable, Sendable {
     public let type: String
-
+    /// `json_schema` only: schema name, description, body, and strict flag.
     public let name: String?
     public let description: String?
     public let schema: JSONValue?

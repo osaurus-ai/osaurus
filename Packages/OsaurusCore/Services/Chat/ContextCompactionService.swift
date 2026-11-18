@@ -13,7 +13,7 @@
 //  summary didn't reclaim.
 //
 //  Model resolution (`effectiveModelIdentifier`): the user-configured
-//  compaction model (Settings → Chat → Compaction Model) wins; when none is
+//  compaction model (Models → Model Defaults → Compaction Model) wins; when none is
 //  set, the chat's CURRENT model summarizes. Falling back to the resident
 //  chat model means auto compaction never has to interrupt a send with a
 //  model picker, and — because the target is the invoking parent —
@@ -47,6 +47,7 @@ enum ContextCompactionError: Error, LocalizedError, Equatable {
     /// is never applied over the conversation (#3036).
     case truncatedSummary(model: String)
     case timedOut
+    case phaseTimedOut(model: String, phase: CompactionDeadline.Phase, seconds: Int)
     /// The summarize request itself failed. Carries the model that ran so
     /// the dialog names it — the configured compaction model routes every
     /// chat's summary to the same provider, regardless of the chat model.
@@ -68,6 +69,8 @@ enum ContextCompactionError: Error, LocalizedError, Equatable {
             return "'\(model)' hit its output limit before finishing the summary, so nothing was replaced. If it is a reasoning model served remotely, its server may be ignoring the request to turn reasoning off"
         case .timedOut:
             return "Context compaction timed out"
+        case .phaseTimedOut(let model, let phase, let seconds):
+            return "Context compaction timed out while \(phase.description) (\(seconds)s limit; model: \(model)). No summary was applied."
         case .requestFailed(let model, let message):
             return "Compaction model '\(model)' failed: \(message)"
         }
@@ -77,13 +80,19 @@ enum ContextCompactionError: Error, LocalizedError, Equatable {
 /// Live progress phases surfaced in the compaction dialog / popover.
 enum ContextCompactionPhase: Equatable, Sendable {
     case preparing
+    case waitingForLocalWork
+    case preparingModel
     case summarizing
+    case restoringModel
     case applying
 
     var label: String {
         switch self {
         case .preparing: return L("Analyzing conversation…")
+        case .waitingForLocalWork: return L("Waiting for other local work…")
+        case .preparingModel: return L("Preparing the compaction model…")
         case .summarizing: return L("Summarizing older messages…")
+        case .restoringModel: return L("Restoring the chat model…")
         case .applying: return L("Applying summary…")
         }
     }
@@ -92,7 +101,10 @@ enum ContextCompactionPhase: Equatable, Sendable {
     var progressFraction: Double {
         switch self {
         case .preparing: return 0.15
+        case .waitingForLocalWork: return 0.2
+        case .preparingModel: return 0.35
         case .summarizing: return 0.55
+        case .restoringModel: return 0.85
         case .applying: return 0.9
         }
     }
@@ -378,7 +390,7 @@ final class ContextCompactionService {
         invocation: ModelJobInvocation,
         agentId: UUID,
         afterToolBatch: Bool = false,
-        onPhase: @MainActor (ContextCompactionPhase) -> Void
+        onPhase: @escaping @MainActor (ContextCompactionPhase) -> Void
     ) async throws -> ConversationSummary {
         onPhase(.preparing)
 
@@ -432,7 +444,9 @@ final class ContextCompactionService {
             sessionId: sessionId, requestSource: invocation.source?.inferenceSource ?? .chatUI,
             remote: remoteConn != nil, localThinkingCapability: localThinkingCapability)
 
-        onPhase(.summarizing)
+        let generationTimeout = Self.timeoutSeconds
+        let phaseRelay = CompactionPhaseRelay(publish: onPhase)
+        defer { phaseRelay.invalidate() }
         let startedAt = Date()
         // Activity-log attribution: where the transcript went (local model or
         // which cloud provider), the real post-scrub wire bytes, and the
@@ -447,16 +461,27 @@ final class ContextCompactionService {
         )
         let summary: ConversationSummary
         do {
-            let generatedText = try await valueWithDeadline(
-                seconds: Self.timeoutSeconds,
-                operationName: "context compaction"
-            ) {
+            let generatedText = try await CompactionDeadline.run(
+                waitingSeconds: SubagentAdmission.defaultWaitTimeoutSeconds
+            ) { enter in
                 try await AuxiliaryModelHandoff.run(
                     targetModelName: modelId,
                     invocation: invocation,
                     sessionID: sessionId,
                     agentID: agentId,
-                    operationName: "context_compaction"
+                    operationName: "context_compaction",
+                    onPhase: { phase, budget in
+                        let stage: CompactionDeadline.Phase
+                        switch phase {
+                        case .waiting: stage = .waiting
+                        case .preparing: stage = .preparing
+                        case .running: stage = .generating
+                        case .restoring: stage = .restoring
+                        }
+                        enter(stage, budget ?? generationTimeout)
+                        logger.info("Compaction phase: \(stage.description, privacy: .public)")
+                        Task { @MainActor in phaseRelay.receive(stage) }
+                    }
                 ) {
                     if let wireProbe {
                         return try await WireTransportProbe.$current.withValue(wireProbe) {
@@ -476,11 +501,13 @@ final class ContextCompactionService {
             }
             summary = try Self.validatedSummary(
                 generatedText, covered: covered, modelId: modelId)
-        } catch is DeadlineExceededError {
+        } catch let error as CompactionDeadline.Expired {
+            let failure = ContextCompactionError.phaseTimedOut(
+                model: modelId, phase: error.phase, seconds: Int(error.seconds.rounded()))
             Self.logToInsights(
                 model: modelId, messages: messages, response: nil,
-                startedAt: startedAt, error: "timed out", context: logContext)
-            throw ContextCompactionError.timedOut
+                startedAt: startedAt, error: failure.localizedDescription, context: logContext)
+            throw failure
         } catch is CancellationError {
             throw CancellationError()
         } catch RemoteProviderServiceError.outputTruncated {
@@ -599,7 +626,7 @@ final class ContextCompactionService {
         }
 
         for turn in covered {
-            if previouslyCovered.contains(turn.id) { continue }
+            if previouslyCovered.contains(turn.id) || !ChatSession.isModelVisible(turn) { continue }
             switch turn.role {
             case .user:
                 // The send path prepends attached-document text to the user
@@ -631,6 +658,9 @@ final class ContextCompactionService {
                 if parts.isEmpty { continue }
                 lines.append(parts.joined(separator: "\n"))
             case .tool:
+                if let recovery = RetainedToolResultStore.compactionContext(turn.content) {
+                    lines.append("[Tool result recovery metadata]: \(recovery)")
+                }
                 lines.append("[Tool result]: \(clip(turn.content, to: 1_200))")
             case .system:
                 continue

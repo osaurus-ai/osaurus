@@ -50,6 +50,7 @@ struct DataGridRowData: Equatable {
 // MARK: - Representable
 
 struct AgentDataGridRepresentable: NSViewRepresentable {
+    @Environment(\.isEnabled) private var inspectionEnabled
     let columns: [DataGridColumn]
     let rows: [DataGridRowData]
     let showsSelectionColumn: Bool
@@ -114,7 +115,31 @@ struct AgentDataGridRepresentable: NSViewRepresentable {
     }
 
     private func apply(to coordinator: Coordinator) {
-        coordinator.theme = DataGridThemeColors(theme: theme)
+        coordinator.isInteractionEnabled = inspectionEnabled
+        coordinator.tableView?.isEnabled = inspectionEnabled
+        let palette = DataGridThemeColors(theme: theme)
+        let changed = coordinator.theme?.renderFingerprint != palette.renderFingerprint
+        coordinator.theme = palette
+        if let table = coordinator.tableView, changed {
+            let scoped = palette.resolvedTheme
+            table.rowHeight = max(scoped.assignedMetric("component.library.53.height", fallback: 28), max(scoped.assignedLineHeight("component.library.53.text", fallback: 16), scoped.assignedLineHeight("component.library.53.caption", fallback: 14)) + 2 * palette.padding)
+            table.intercellSpacing = NSSize(width: scoped.assignedMetric("component.library.53.gap", fallback: scoped.space.s0), height: 0)
+            table.backgroundColor = NSColor(scoped.surface.raised)
+            if let scroll = table.enclosingScrollView {
+                scroll.wantsLayer = true
+                scroll.layer?.cornerRadius = scoped.assignedMetric("component.library.53.radius", fallback: 0)
+                scroll.layer?.borderWidth = scoped.assignedMetric("component.library.53.borderWidth", fallback: 0)
+                scroll.layer?.borderColor = NSColor(scoped.border.default).cgColor
+                scroll.layer?.masksToBounds = true
+            }
+            for column in table.tableColumns { coordinator.styleHeader(column) }
+            if let header = table.headerView {
+                header.frame.size.height = max(17, scoped.assignedLineHeight("component.library.53.label", fallback: 14) + 2 * palette.padding)
+                header.needsDisplay = true
+            }
+            // Style-only updates must repaint existing rows even when data is unchanged.
+            table.reloadData()
+        }
         coordinator.onRowOpen = onRowOpen
         coordinator.onNeedsMoreRows = onNeedsMoreRows
         coordinator.showsSelectionColumn = showsSelectionColumn
@@ -131,10 +156,16 @@ struct AgentDataGridRepresentable: NSViewRepresentable {
     private var effectiveColumns: [GridColumnSpec] {
         var specs: [GridColumnSpec] = []
         if showsSelectionColumn {
-            specs.append(GridColumnSpec(id: Coordinator.selectionColumnId, title: "", width: 30, resizable: false))
+            let width = max(30, theme.assignedMetric("component.library.4.indicatorSize", fallback: 24) + 8)
+            specs.append(GridColumnSpec(id: Coordinator.selectionColumnId, title: "", width: width, resizable: false))
         }
         if showsStatusColumn {
-            specs.append(GridColumnSpec(id: Coordinator.statusColumnId, title: "", width: 70, resizable: false))
+            let scoped = theme
+            let font = scoped.assignedNativeFont("component.library.53.caption", fallback: scoped.nsFont(.caption))
+            let textWidth = (L("Deleted") as NSString).size(withAttributes: [.font: font]).width
+            let width = max(70, ceil(textWidth) + 2 * scoped.assignedMetric("component.library.53.padding", fallback: scoped.space.s8)
+                + scoped.assignedMetric("component.library.53.gap", fallback: scoped.space.s0))
+            specs.append(GridColumnSpec(id: Coordinator.statusColumnId, title: "", width: width, resizable: false))
         }
         for (index, column) in columns.enumerated() {
             specs.append(
@@ -167,24 +198,36 @@ struct GridColumnSpec: Equatable {
 /// Pre-converted NSColors, rebuilt only when the theme changes, so cell
 /// configuration stays cheap.
 struct DataGridThemeColors: Equatable {
-    let primaryText: NSColor
-    let tertiaryText: NSColor
+    let resolvedTheme: any ThemeProtocol
+    let padding: CGFloat
+    let textPrimary: NSColor
+    let textTertiary: NSColor
     let accent: NSColor
     let zebra: NSColor
     let headerBackground: NSColor
     let warning: NSColor
+    let codeFont: NSFont
+    let headerFont: NSFont
+    let captionFont: NSFont
+    let renderFingerprint: Int
 
     init(theme: ThemeProtocol) {
-        primaryText = NSColor(theme.primaryText)
-        tertiaryText = NSColor(theme.tertiaryText)
-        accent = NSColor(theme.accentColor)
-        zebra = NSColor(theme.inputBackground).withAlphaComponent(0.5)
-        headerBackground = NSColor(theme.tertiaryBackground)
-        warning = NSColor(theme.warningColor)
+        resolvedTheme = theme
+        padding = theme.assignedMetric("component.library.53.padding", fallback: theme.space.s8)
+        codeFont = theme.assignedNativeFont("component.library.53.text", fallback: theme.nsFont(.footnote, family: .code))
+        headerFont = theme.assignedNativeFont("component.library.53.label", fallback: theme.nsFont(.micro, weight: .semibold, family: .code))
+        captionFont = theme.assignedNativeFont("component.library.53.caption", fallback: theme.nsFont(.micro, weight: .semibold))
+        renderFingerprint = theme.renderFingerprint
+        textPrimary = NSColor(theme.text.primary)
+        textTertiary = NSColor(theme.text.tertiary)
+        accent = NSColor(theme.text.link)
+        zebra = NSColor(theme.surface.subtle)
+        headerBackground = NSColor(theme.surface.hover)
+        warning = NSColor(theme.status.warning.foreground)
     }
 
     static func == (lhs: DataGridThemeColors, rhs: DataGridThemeColors) -> Bool {
-        lhs.primaryText == rhs.primaryText && lhs.accent == rhs.accent && lhs.zebra == rhs.zebra
+        lhs.renderFingerprint == rhs.renderFingerprint
     }
 }
 
@@ -222,6 +265,7 @@ extension AgentDataGridRepresentable {
         var showsStatusColumn = false
         var showsOpenColumn = false
         var selectedKeys: Set<String> = []
+        var isInteractionEnabled = true
 
         private var rows: [DataGridRowData] = []
         private var columnSpecs: [GridColumnSpec] = []
@@ -237,6 +281,12 @@ extension AgentDataGridRepresentable {
             let currentTitles = tableView.tableColumns.map(\.title)
             let targetTitles = columns.map(\.title)
             guard currentIds != targetIds || currentTitles != targetTitles else {
+                for (column, spec) in zip(tableView.tableColumns, columns) where !spec.resizable {
+                    column.minWidth = 0
+                    column.maxWidth = spec.width
+                    column.width = spec.width
+                    column.minWidth = spec.width
+                }
                 columnSpecs = columns
                 return
             }
@@ -252,7 +302,8 @@ extension AgentDataGridRepresentable {
                 column.resizingMask = spec.resizable ? .userResizingMask : []
                 // Match the monospaced cell text so column names read as
                 // part of the data, and keep truncated titles hoverable.
-                column.headerCell.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
+                column.headerCell.font = theme?.headerFont
+                styleHeader(column)
                 if !spec.title.isEmpty {
                     column.headerToolTip = spec.title
                 }
@@ -260,6 +311,18 @@ extension AgentDataGridRepresentable {
             }
             columnSpecs = columns
             tableView.reloadData()
+        }
+
+        func styleHeader(_ column: NSTableColumn) {
+            guard let palette = theme else { return }
+            let cell = (column.headerCell as? DataGridInspectionHeaderCell) ?? DataGridInspectionHeaderCell(textCell: column.title)
+            cell.palette = palette
+            cell.font = palette.headerFont
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byTruncatingTail
+            paragraph.minimumLineHeight = palette.resolvedTheme.assignedLineHeight("component.library.53.label", fallback: 14)
+            cell.attributedStringValue = NSAttributedString(string: column.title, attributes: [.font: palette.headerFont, .foregroundColor: palette.textPrimary, .kern: palette.resolvedTheme.assignedTracking("component.library.53.label") ?? 0, .paragraphStyle: paragraph])
+            column.headerCell = cell
         }
 
         // MARK: Row application (append-aware)
@@ -297,10 +360,10 @@ extension AgentDataGridRepresentable {
             guard visible.length > 0 else { return }
             for row in visible.location ..< (visible.location + visible.length) {
                 guard row < rows.count else { continue }
-                if let cell = tableView.view(atColumn: columnIndex, row: row, makeIfNecessary: false),
-                    let checkbox = cell.subviews.compactMap({ $0 as? NSButton }).first
+                if let cell = tableView.view(atColumn: columnIndex, row: row, makeIfNecessary: false) as? DataGridCheckboxCell
                 {
-                    checkbox.state = selectedKeys.contains(rows[row].key) ? .on : .off
+                    cell.setSelection(selectedKeys.contains(rows[row].key))
+                    (tableView.rowView(atRow: row, makeIfNecessary: false) as? DataGridRowView)?.inspectionSelected = selectedKeys.contains(rows[row].key)
                 }
             }
         }
@@ -324,6 +387,8 @@ extension AgentDataGridRepresentable {
                 }()
             let isDeleted = row < rows.count && rows[row].isDeleted
             rowView.zebraColor = (row % 2 == 1) ? theme?.zebra : nil
+            rowView.palette = theme
+            rowView.inspectionSelected = row < rows.count && selectedKeys.contains(rows[row].key)
             rowView.alphaValue = isDeleted ? 0.55 : 1
             return rowView
         }
@@ -340,11 +405,13 @@ extension AgentDataGridRepresentable {
             case Self.selectionColumnId:
                 let cell = reusableCell(tableView, id: "sel-cell") { DataGridCheckboxCell() }
                 guard let checkboxCell = cell as? DataGridCheckboxCell else { return cell }
+                checkboxCell.applyInspection(theme)
                 checkboxCell.configure(
                     isOn: selectedKeys.contains(rowData.key),
-                    enabled: rowData.selectable
+                    enabled: isInteractionEnabled && rowData.selectable,
+                    visible: rowData.selectable
                 ) { [weak self] isOn in
-                    guard let self else { return }
+                    guard let self, self.isInteractionEnabled else { return }
                     if isOn {
                         self.selectedKeys.insert(rowData.key)
                     } else {
@@ -359,13 +426,15 @@ extension AgentDataGridRepresentable {
                 textCell.configure(
                     text: rowData.isDeleted ? L("Deleted") : "",
                     color: theme?.warning ?? .systemOrange,
-                    font: .systemFont(ofSize: 9, weight: .semibold)
+                    font: theme?.captionFont ?? CustomizableTheme.light().nsFont(.micro, weight: .semibold)
                 )
+                textCell.applyInspection(theme, property: "caption")
                 return textCell
             case Self.openColumnId:
                 let cell = reusableCell(tableView, id: "open-cell") { DataGridOpenButtonCell() }
                 guard let openCell = cell as? DataGridOpenButtonCell else { return cell }
-                openCell.configure(tint: theme?.accent ?? .controlAccentColor) { [weak self] in
+                openCell.configure(tint: theme?.accent ?? .linkColor, enabled: isInteractionEnabled) { [weak self] in
+                    guard self?.isInteractionEnabled == true else { return }
                     self?.onRowOpen?(row)
                 }
                 return openCell
@@ -376,9 +445,10 @@ extension AgentDataGridRepresentable {
                 let text = (dataIndex.map { $0 < rowData.cells.count ? rowData.cells[$0] : "" }) ?? ""
                 textCell.configure(
                     text: text,
-                    color: theme?.primaryText ?? .labelColor,
-                    font: .monospacedSystemFont(ofSize: 11, weight: .regular)
+                    color: theme?.textPrimary ?? .labelColor,
+                    font: theme?.codeFont ?? CustomizableTheme.light().nsFont(.footnote, family: .code)
                 )
+                textCell.applyInspection(theme, property: "text")
                 return textCell
             }
         }
@@ -388,14 +458,14 @@ extension AgentDataGridRepresentable {
         // MARK: Actions
 
         @objc func didDoubleClickRow(_ sender: Any?) {
-            guard let tableView else { return }
+            guard isInteractionEnabled, let tableView else { return }
             let row = tableView.clickedRow
             guard row >= 0, row < rows.count else { return }
             onRowOpen?(row)
         }
 
         func openHighlightedRow() {
-            guard let tableView else { return }
+            guard isInteractionEnabled, let tableView else { return }
             let row = tableView.selectedRow
             guard row >= 0, row < rows.count else { return }
             onRowOpen?(row)
@@ -463,11 +533,29 @@ extension AgentDataGridRepresentable {
 // MARK: - Row view (zebra striping)
 
 private final class DataGridRowView: NSTableRowView {
+    var palette: DataGridThemeColors? { didSet { needsDisplay = true } }
+    var inspectionSelected = false { didSet { needsDisplay = true } }
+    private var inspectionHovered = false { didSet { needsDisplay = true } }
+    private var inspectionTracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let inspectionTracking { removeTrackingArea(inspectionTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.inVisibleRect, .mouseEnteredAndExited, .activeInKeyWindow], owner: self)
+        addTrackingArea(area); inspectionTracking = area
+    }
+    override func mouseEntered(with event: NSEvent) { inspectionHovered = true }
+    override func mouseExited(with event: NSEvent) { inspectionHovered = false }
     var zebraColor: NSColor? {
         didSet { needsDisplay = true }
     }
 
     override func drawBackground(in dirtyRect: NSRect) {
+        if let palette {
+            let t = palette.resolvedTheme
+            NSColor(inspectionSelected ? t.surface.selected : inspectionHovered ? t.surface.hover : t.surface.raised).setFill()
+            dirtyRect.fill()
+            return
+        }
         if let zebraColor {
             zebraColor.setFill()
             dirtyRect.fill()
@@ -479,6 +567,13 @@ private final class DataGridRowView: NSTableRowView {
 // MARK: - Cells
 
 private final class DataGridTextCell: NSView {
+    private var horizontalInset: CGFloat = 8
+    func applyInspection(_ palette: DataGridThemeColors?, property: String) {
+        guard let palette else { return }
+        horizontalInset = palette.padding
+        NativeComponentInspectionStyle.label(label, family: 53, property: property, theme: palette.resolvedTheme)
+        needsLayout = true
+    }
     private let label: NSTextField = {
         let tf = NSTextField(labelWithString: "")
         tf.isEditable = false
@@ -510,52 +605,65 @@ private final class DataGridTextCell: NSView {
 
     override func layout() {
         super.layout()
-        let size = label.sizeThatFits(NSSize(width: bounds.width - 16, height: bounds.height))
+        let size = label.sizeThatFits(NSSize(width: max(0, bounds.width - 2 * horizontalInset), height: bounds.height))
         label.frame = NSRect(
-            x: 8,
+            x: horizontalInset,
             y: (bounds.height - size.height) / 2,
-            width: bounds.width - 16,
+            width: max(0, bounds.width - 2 * horizontalInset),
             height: size.height
         )
     }
 }
 
 private final class DataGridCheckboxCell: NSView {
-    private let checkbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let hosting = NSHostingView(rootView: AnyView(EmptyView()))
+    private var palette: DataGridThemeColors?
+    private var isOn = false
+    private var enabled = true
+    private var visible = true
+    func applyInspection(_ palette: DataGridThemeColors?) { self.palette = palette }
+    private func updateControl() {
+        guard let palette else { return }
+        let theme = palette.resolvedTheme
+        let size = theme.assignedMetric("component.library.4.indicatorSize", fallback: 24)
+        hosting.isHidden = !visible
+        hosting.rootView = AnyView(Toggle("Select row", isOn: Binding(get: { [weak self] in self?.isOn ?? false },
+            set: { [weak self] value in
+                guard let self, self.enabled else { return }
+                self.isOn = value
+                self.onToggle?(value)
+                self.updateControl()
+            }))
+            .settingsCheckbox(showsLabel: false)
+            .accessibilityLabel("Select row")
+            .environment(\.theme, theme)
+            .disabled(!enabled)
+            .frame(width: size, height: size)
+            .frame(maxWidth: .infinity, maxHeight: .infinity))
+    }
     private var onToggle: ((Bool) -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        checkbox.target = self
-        checkbox.action = #selector(didToggle)
-        checkbox.controlSize = .small
-        checkbox.setAccessibilityLabel(L("Select row"))
-        addSubview(checkbox)
+        addSubview(hosting)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func configure(isOn: Bool, enabled: Bool, onToggle: @escaping (Bool) -> Void) {
-        checkbox.state = isOn ? .on : .off
-        checkbox.isEnabled = enabled
-        checkbox.isHidden = !enabled
+    func configure(isOn: Bool, enabled: Bool, visible: Bool = true, onToggle: @escaping (Bool) -> Void) {
         self.onToggle = onToggle
+        self.isOn = isOn; self.enabled = enabled; self.visible = visible
+        updateControl()
     }
 
-    @objc private func didToggle() {
-        onToggle?(checkbox.state == .on)
+    func setSelection(_ selected: Bool) {
+        isOn = selected; updateControl()
     }
 
     override func layout() {
         super.layout()
-        let size = checkbox.intrinsicContentSize
-        checkbox.frame = NSRect(
-            x: (bounds.width - size.width) / 2,
-            y: (bounds.height - size.height) / 2,
-            width: size.width,
-            height: size.height
-        )
+        hosting.frame = bounds
     }
 }
 
@@ -584,8 +692,9 @@ private final class DataGridOpenButtonCell: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func configure(tint: NSColor, onOpen: @escaping () -> Void) {
+    func configure(tint: NSColor, enabled: Bool = true, onOpen: @escaping () -> Void) {
         button.contentTintColor = tint
+        button.isEnabled = enabled
         self.onOpen = onOpen
     }
 
@@ -602,5 +711,33 @@ private final class DataGridOpenButtonCell: NSView {
             width: size.width,
             height: size.height
         )
+    }
+}
+
+/// Keep native column sizing/accessibility while drawing the assigned opaque header.
+private final class DataGridInspectionHeaderCell: NSTableHeaderCell {
+    var palette: DataGridThemeColors?
+    // NSCell's inherited copy does not safely retain Swift stored properties.
+    // AppKit copies header cells during redraw/resize; initialize the palette
+    // through Swift assignment rather than copying its existential storage.
+    override func copy(with zone: NSZone? = nil) -> Any {
+        let cell = DataGridInspectionHeaderCell(textCell: stringValue)
+        cell.font = font
+        cell.alignment = alignment
+        cell.lineBreakMode = lineBreakMode
+        cell.attributedStringValue = attributedStringValue
+        cell.palette = palette
+        return cell
+    }
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+        guard let palette else { super.draw(withFrame: cellFrame, in: controlView); return }
+        let t = palette.resolvedTheme
+        NSColor(t.surface.raised).setFill(); cellFrame.fill()
+        attributedStringValue.draw(in: cellFrame.insetBy(dx: palette.padding, dy: palette.padding))
+        let width = t.assignedMetric("component.library.53.borderWidth", fallback: 1)
+        if width > 0 {
+            NSColor(t.border.default).setFill()
+            NSRect(x: cellFrame.minX, y: cellFrame.maxY - width, width: cellFrame.width, height: width).fill()
+        }
     }
 }

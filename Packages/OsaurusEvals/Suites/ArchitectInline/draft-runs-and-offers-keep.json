@@ -1,0 +1,11 @@
+{
+  "id": "architect_inline.draft-runs-and-offers-keep",
+  "domain": "architect_inline",
+  "label": "architect_inline • a two-step request runs now and offers to keep it",
+  "notes": "Live. No network or files: the draft sorts and then writes. Scores time to the first running step against the shipped budgets (the draft's, from the model's measured speed, plus 10 s for the first step), at most five steps, an ephemeral run, and the keep offer.",
+  "query": "Here are my tasks: file taxes (due Friday), buy milk, call the landlord about the leak, book flights for the wedding next month. Sort them by urgency, then write me a short plan for today.",
+  "fixtures": {},
+  "expect": {
+    "architectInline": { "result": "completed" }
+  }
+}

@@ -66,10 +66,12 @@ enum ChatHistoryTestStorage {
             StorageKeyManager.shared._setKeyForTesting(
                 SymmetricKey(data: Data(repeating: 0x44, count: 32))
             )
+            SyncConfigurationStore.resetCacheForTests()
             AgentManager.shared.refresh()
             ChatSessionStore._resetForTesting()
             defer {
                 ChatSessionStore._resetForTesting()
+                SyncConfigurationStore.resetCacheForTests()
                 StorageKeyManager.shared.wipeCache()
                 ChatConfigurationStore.save(previousChatConfig)
                 OsaurusPaths.overrideRoot = previousRoot

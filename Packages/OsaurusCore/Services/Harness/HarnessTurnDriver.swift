@@ -33,11 +33,13 @@ enum HarnessTurnDriver {
         }
 
         let manager = AgentManager.shared
-        let systemPrompt = manager.effectiveSystemPrompt(for: agentId)
+        let systemPrompt = harnessSystemPrompt(for: agentId)
         let port = ServerConfigurationStore.load()?.port ?? 1337
         let reachable = await Task.detached { HarnessServerProbe.isListening(port: port) }.value
+        let features: ClaudeCodeCLIFeatures =
+            runtime.kind == .claudeCode ? await ClaudeCodeCLIFeatures.detect(runtime) : .none
 
-        return HarnessLaunchContext(
+        var context = HarnessLaunchContext(
             runtime: runtime,
             chatId: chatId,
             agentId: agentId,
@@ -49,6 +51,21 @@ enum HarnessTurnDriver {
             osaurusCLIPath: ClaudeCodeConfiguration.embeddedCLIPath(),
             apiBase: "http://127.0.0.1:\(port)",
             serverReachable: reachable
+        )
+        context.claudeCodeFeatures = features
+        return context
+    }
+
+    /// The instructions a harness gets for an agent. The Architect's
+    /// `effectiveSystemPrompt` is only the person's extra instructions; its
+    /// fixed persona is what makes it the Architect, on any loop.
+    static func harnessSystemPrompt(for agentId: UUID) -> String {
+        let manager = AgentManager.shared
+        guard agentId == Agent.architectId else { return manager.effectiveSystemPrompt(for: agentId) }
+        let config = ArchitectConfigurationStore.load()
+        return ArchitectSystemPromptBuilder.renderForHarness(
+            displayName: config.resolvedDisplayName,
+            instructions: config.systemPrompt
         )
     }
 

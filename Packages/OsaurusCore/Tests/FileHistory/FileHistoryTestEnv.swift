@@ -16,7 +16,9 @@ struct FileHistoryTestEnv {
     static let agent = "tester"
 
     let tmp: URL
-    let db: ChatHistoryDatabase
+    let db: FileHistoryDatabase
+    /// Stands in for the pre-sync chat-history database the journal imports from.
+    let legacyDB: ChatHistoryDatabase
     let journal: FileChangeJournal
     let agentsRoot: URL
     let agentHome: URL
@@ -41,8 +43,10 @@ struct FileHistoryTestEnv {
         try fm.createDirectory(at: agentHome, withIntermediateDirectories: true)
         try fm.createDirectory(at: sharedRoot, withIntermediateDirectories: true)
 
-        let db = ChatHistoryDatabase()
+        let db = FileHistoryDatabase()
         try db.openInMemory()
+        let legacyDB = ChatHistoryDatabase()
+        try legacyDB.openInMemory()
         let provider: @Sendable (String, SandboxWorkspaceRootKind) -> URL = override ?? { name, kind in
             switch kind {
             case .agentHome: return agentsRoot.appendingPathComponent(name, isDirectory: true)
@@ -51,16 +55,17 @@ struct FileHistoryTestEnv {
             }
         }
         let journal = FileChangeJournal(
-            database: db, storeRoot: storeRoot, hostRootProvider: provider,
+            database: db, legacyDatabase: legacyDB, storeRoot: storeRoot, hostRootProvider: provider,
             legacyBaselinesRoot: legacyBaselinesRoot, shadowEntryLimit: shadowEntryLimit)
         return FileHistoryTestEnv(
-            tmp: tmp, db: db, journal: journal, agentsRoot: agentsRoot, agentHome: agentHome,
-            sharedRoot: sharedRoot, storeRoot: storeRoot, provider: provider)
+            tmp: tmp, db: db, legacyDB: legacyDB, journal: journal, agentsRoot: agentsRoot,
+            agentHome: agentHome, sharedRoot: sharedRoot, storeRoot: storeRoot, provider: provider)
     }
 
     /// A fresh journal over the same DB + store: simulates an app relaunch.
     func relaunched() -> FileChangeJournal {
-        FileChangeJournal(database: db, storeRoot: storeRoot, hostRootProvider: provider)
+        FileChangeJournal(
+            database: db, legacyDatabase: legacyDB, storeRoot: storeRoot, hostRootProvider: provider)
     }
 
     /// Run `tool` the way the registry does: session bound, journal capture

@@ -6,6 +6,10 @@ final class OsaurusRouterAccountService: ObservableObject {
     static let shared = OsaurusRouterAccountService()
 
     @Published private(set) var balance: OsaurusRouterBalanceResponse?
+    /// The last balance returned by `/credits/balance`, untouched by the
+    /// optimistic post-request deductions applied to `balance`. Server values
+    /// only move up when credits land, so increases here are real credits.
+    @Published private(set) var lastFetchedBalance: OsaurusRouterBalanceResponse?
     @Published private(set) var usage: [OsaurusRouterUsageItem] = []
     @Published private(set) var nextUsageCursor: String?
     @Published private(set) var transactions: [OsaurusRouterTransactionItem] = []
@@ -103,6 +107,7 @@ final class OsaurusRouterAccountService: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.clearLocalAPIBalance()
                 self?.balanceFetchedAt = nil
+                self?.lastFetchedBalance = nil
             }
         }
         activationObserver = NotificationCenter.default.addObserver(
@@ -172,6 +177,7 @@ final class OsaurusRouterAccountService: ObservableObject {
         balanceFetchedAt = nil
         awaitingTopUpConfirmation = false
         balance = nil
+        lastFetchedBalance = nil
         usage = []
         nextUsageCursor = nil
         transactions = []
@@ -199,6 +205,7 @@ final class OsaurusRouterAccountService: ObservableObject {
         // needs a per-call `SecItemCopyMatching` here.
         guard identityExists() else {
             balance = nil
+            lastFetchedBalance = nil
             lastError = OsaurusRouterAPIError.noIdentity.localizedDescription
             return
         }
@@ -227,6 +234,7 @@ final class OsaurusRouterAccountService: ObservableObject {
             let previousMicro = balanceMicroValue
             let newBalance = try await client.balance()
             balance = newBalance
+            lastFetchedBalance = newBalance
             balanceFetchedAt = .now
             lastError = nil
             // Best-effort top-up confirmation: a balance increase after we

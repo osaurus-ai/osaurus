@@ -195,7 +195,7 @@ public enum EvalRemoteProviderBootstrap {
     /// Candidate model ids for bootstrap: the run model plus the resolved
     /// judge model — both route through `CoreModelService`. The judge is
     /// resolved via `EvalJudgeModel`, so an auto-selected strong judge
-    /// (e.g. `xai/grok-4.3` from `XAI_API_KEY` when `JUDGE_MODEL` is unset)
+    /// (e.g. `xai/grok-4.7` from `XAI_API_KEY` when `JUDGE_MODEL` is unset)
     /// also gets its provider connected, not just an explicit `JUDGE_MODEL`.
     public static func candidateModelIds(
         runModel: ModelSelection,

@@ -78,7 +78,8 @@ struct SeatbeltExecutorProcessTests {
     }
 
     @Test func pythonShimReturnsRealOutputAndExitStatus() async throws {
-        let result = try await execute("/usr/bin/python3 -c \"print('executor-python-ok')\"")
+        // The /usr/bin/python3 shim's first launch on a fresh CI runner takes 4-6 s.
+        let result = try await execute("/usr/bin/python3 -c \"print('executor-python-ok')\"", timeout: 30)
         #expect(result.exitCode == 0, "\(result.stderr)")
         #expect(result.stdout == "executor-python-ok\n")
     }

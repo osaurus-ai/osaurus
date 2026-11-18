@@ -229,7 +229,8 @@ struct AgentAbilityContextPreview: Equatable {
             redactionToolsEnabled: draft.redactionToolsEnabled ?? base.redactionToolsEnabled,
             taskChecklistEnabled: draft.taskChecklistEnabled ?? base.taskChecklistEnabled,
             clarifyEnabled: draft.clarifyEnabled ?? base.clarifyEnabled,
-            artifactsEnabled: draft.artifactsEnabled ?? base.artifactsEnabled
+            artifactsEnabled: draft.artifactsEnabled ?? base.artifactsEnabled,
+            workingFolderReadOnly: base.workingFolderReadOnly
         )
 
         // Mirror ChatView's optimistic execution-mode estimate: autonomous-on

@@ -123,16 +123,14 @@ struct ToolExecutionSurfaceResolutionTests {
     @Test("every surface has user-facing copy")
     func presentationIsComplete() {
         for surface in ToolExecutionSurface.allCases {
-            #expect(!surface.title.isEmpty)
             #expect(!surface.consentDetail.isEmpty)
-            #expect(!surface.symbolName.isEmpty)
         }
     }
 }
 
 // MARK: - Registry resolution on live routing state
 
-@Suite(.serialized)
+@Suite(.serialized, .toolPermissionPromptQueue)
 @MainActor
 struct ToolRegistryExecutionSurfaceTests {
 

@@ -1,0 +1,41 @@
+{
+  "id": "orchestrator.recovery-builder-not-a-repo",
+  "domain": "orchestrator",
+  "label": "orchestrator • recovery: Builder's folder is not a git repository",
+  "query": "What's uncommitted in my project right now?",
+  "notes": "Recovery after a failed call. Builder's project folder is a scratch folder that is not a git repository, so its git read fails with \"not a git repository\". A good turn routes to Builder and then tells the user honestly that the folder is not a git repository (and that Builder needs a project folder that is one). It never lists changed files.",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout",
+      "builder"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Builder"
+          }
+        }
+      ],
+      "rubric": [
+        "Says the project folder is not a git repository, or that the uncommitted changes could not be read.",
+        "Does not list any changed, added, or untracked files.",
+        "Tells the user what is needed: a project folder that is a git repository (for example, choosing one in Builder's settings)."
+      ],
+      "maxIterations": 6
+    }
+  }
+}

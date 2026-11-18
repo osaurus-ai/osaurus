@@ -48,31 +48,26 @@ else
   TEST_ROOT="$(mktemp -d "/private/tmp/osaurus-ui-proof-${BUNDLE_ID##*.}-XXXXXXXX")"
 fi
 
-cleanup_launch_environment() {
-  launchctl unsetenv OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS >/dev/null 2>&1 || true
-  launchctl unsetenv OSAURUS_TEST_ROOT >/dev/null 2>&1 || true
-  launchctl unsetenv OSU_MODELS_DIR >/dev/null 2>&1 || true
-}
-trap cleanup_launch_environment EXIT
-
 # A dedicated bundle id is the UserDefaults domain. Start it empty so the
 # proof cannot inherit settings from production or an earlier proof run.
 /usr/bin/defaults delete "$BUNDLE_ID" >/dev/null 2>&1 || true
-cleanup_launch_environment
 
 process_ids_for_binary() {
   ps -axo pid=,command= | awk -v binary="$BIN" 'index($0, binary) { print $1 }'
 }
 BEFORE_PIDS="$(process_ids_for_binary)"
 
-# LaunchServices is required for a foreground SwiftUI app on current macOS.
-# Set the keychain-disabled test environment in the user launchd namespace
-# before open(1), so the app inherits it without touching login Keychain.
-launchctl setenv OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS 1
-launchctl setenv OSAURUS_TEST_ROOT "$TEST_ROOT"
-launchctl setenv OSU_MODELS_DIR "$MODELS_DIR"
-
-/usr/bin/open -n "$APP"
+# Pass overrides in the per-launch context. Transient launchctl setenv values
+# can be gone before LaunchServices starts the process and affect other launches.
+STDOUT_LOG="$TEST_ROOT/osaurus.stdout.log"
+STDERR_LOG="$TEST_ROOT/osaurus.stderr.log"
+/usr/bin/open -n \
+  --env "OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1" \
+  --env "OSAURUS_TEST_ROOT=$TEST_ROOT" \
+  --env "OSU_MODELS_DIR=$MODELS_DIR" \
+  --stdout "$STDOUT_LOG" \
+  --stderr "$STDERR_LOG" \
+  "$APP"
 
 PID=""
 for _ in $(seq 1 100); do
@@ -96,3 +91,6 @@ echo "user_defaults_domain=$BUNDLE_ID"
 echo "models_dir=$MODELS_DIR"
 echo "test_root=$TEST_ROOT"
 echo "app=$APP"
+
+echo "stdout_log=$STDOUT_LOG"
+echo "stderr_log=$STDERR_LOG"

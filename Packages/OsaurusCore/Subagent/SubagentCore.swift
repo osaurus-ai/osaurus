@@ -38,6 +38,10 @@ public struct SubagentScope: Sendable, Equatable {
     /// own bundle default; true/false must survive every reconstructed step.
     public let enableThinking: Bool?
     public let reasoningEffort: String?
+    /// The tools the workflow step that started this run lists, when it
+    /// runs inside a workflow. Installing the workflow authorized them, so
+    /// a kind whose tool is here skips its per-agent enable flag.
+    public let workflowGrantedToolNames: Set<String>?
 
     public init(
         sessionId: String,
@@ -45,7 +49,8 @@ public struct SubagentScope: Sendable, Equatable {
         agentId: UUID,
         parentModelName: String? = nil,
         enableThinking: Bool? = nil,
-        reasoningEffort: String? = nil
+        reasoningEffort: String? = nil,
+        workflowGrantedToolNames: Set<String>? = nil
     ) {
         self.sessionId = sessionId
         self.toolCallId = toolCallId
@@ -53,6 +58,14 @@ public struct SubagentScope: Sendable, Equatable {
         self.parentModelName = parentModelName
         self.enableThinking = enableThinking
         self.reasoningEffort = reasoningEffort
+        self.workflowGrantedToolNames = workflowGrantedToolNames
+    }
+
+    /// Whether a workflow step listing one of `capability`'s tools started
+    /// this run.
+    public func isGrantedByWorkflow(_ capability: SubagentCapability) -> Bool {
+        guard let granted = workflowGrantedToolNames else { return false }
+        return capability.toolNames.contains(where: granted.contains)
     }
 
     /// Resolve from the active chat execution context. Outside chat we fall
@@ -62,11 +75,13 @@ public struct SubagentScope: Sendable, Equatable {
     ///
     /// The Default-agent fallback is NOT neutral for custom-agent-only kinds:
     /// `ComputerUseKind` / `BrowserUseKind` authorize against `agentId` and
-    /// refuse `Agent.defaultId`, so a surface that wants them must bind
-    /// `ChatExecutionContext.currentAgentId` to the owning custom agent
-    /// (the chat turn, `AgentDelegationDispatcher`, `/agents/{id}/run`, and
-    /// the Claude Code bridge grant all do). A bare `/v1` tool execution
-    /// with no agent binding is refused with the Default-agent message.
+    /// refuse `Agent.defaultId`. Two surfaces may run them: a custom agent
+    /// bound on `ChatExecutionContext.currentAgentId` with the kind enabled
+    /// (the chat turn, `AgentDelegationDispatcher`, `/agents/{id}/run`, the
+    /// Claude Code bridge grant), and a workflow step that lists the kind's
+    /// tool (`workflowGrantedToolNames`), whoever called the workflow. A
+    /// bare `/v1` tool execution with neither is refused with the
+    /// Default-agent message.
     public static func current() -> SubagentScope {
         SubagentScope(
             sessionId: ChatExecutionContext.currentSessionId ?? UUID().uuidString,
@@ -74,7 +89,8 @@ public struct SubagentScope: Sendable, Equatable {
             agentId: ChatExecutionContext.currentAgentId ?? Agent.defaultId,
             parentModelName: ChatExecutionContext.currentModelName,
             enableThinking: ChatExecutionContext.currentEnableThinking,
-            reasoningEffort: ChatExecutionContext.currentReasoningEffort
+            reasoningEffort: ChatExecutionContext.currentReasoningEffort,
+            workflowGrantedToolNames: ChatExecutionContext.workflowGrantedToolNames
         )
     }
 
@@ -176,7 +192,7 @@ public struct SubagentResult: @unchecked Sendable {
 /// Typed non-success outcomes a kind can throw. The host maps each to the
 /// canonical `ToolEnvelope` failure kind + retryable default, centralizing
 /// the envelope construction while letting each kind keep its own message.
-public enum SubagentError: Error, Sendable {
+public enum SubagentError: Error, Sendable, LocalizedError {
     /// Policy refusal (configuration / not-spawnable / handoff disabled).
     case denied(String)
     /// User declined an interactive approval / stopped the run.
@@ -199,15 +215,51 @@ public enum SubagentError: Error, Sendable {
     /// Generic runtime failure; `retryable` chosen by the kind.
     case executionFailed(message: String, retryable: Bool = true)
 
+    public var message: String {
+        switch self {
+        case .denied(let m), .userDenied(let m), .unavailable(let m), .timedOut(let m), .iterationCap(let m),
+            .toolRejected(let m), .overBudget(let m), .emptyExhausted(let m):
+            return m
+        case .invalidArgs(let m, _, _), .executionFailed(let m, _):
+            return m
+        }
+    }
+
+    public var errorDescription: String? { message }
+
+    /// The case name, snake_cased, for run records.
+    public var kindName: String {
+        switch self {
+        case .denied: return "denied"
+        case .userDenied: return "user_denied"
+        case .unavailable: return "unavailable"
+        case .invalidArgs: return "invalid_args"
+        case .timedOut: return "timed_out"
+        case .iterationCap: return "iteration_cap"
+        case .toolRejected: return "tool_rejected"
+        case .overBudget: return "over_budget"
+        case .emptyExhausted: return "empty_exhausted"
+        case .executionFailed: return "execution_failed"
+        }
+    }
+
+    public var retryable: Bool {
+        switch self {
+        case .denied, .userDenied, .unavailable, .invalidArgs, .toolRejected: return false
+        case .timedOut, .iterationCap, .overBudget, .emptyExhausted: return true
+        case .executionFailed(_, let retryable): return retryable
+        }
+    }
+
     /// Map to the canonical failure envelope JSON string.
     public func envelope(tool: String) -> String {
         switch self {
         case .denied(let m):
-            return ToolEnvelope.failure(kind: .rejected, message: m, tool: tool, retryable: false)
+            return ToolEnvelope.failure(kind: .rejected, message: m, tool: tool, retryable: retryable)
         case .userDenied(let m):
-            return ToolEnvelope.failure(kind: .userDenied, message: m, tool: tool, retryable: false)
+            return ToolEnvelope.failure(kind: .userDenied, message: m, tool: tool, retryable: retryable)
         case .unavailable(let m):
-            return ToolEnvelope.failure(kind: .unavailable, message: m, tool: tool, retryable: false)
+            return ToolEnvelope.failure(kind: .unavailable, message: m, tool: tool, retryable: retryable)
         case .invalidArgs(let m, let field, let expected):
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
@@ -217,16 +269,12 @@ public enum SubagentError: Error, Sendable {
                 tool: tool
             )
         case .timedOut(let m):
-            return ToolEnvelope.failure(kind: .timeout, message: m, tool: tool, retryable: true)
-        case .iterationCap(let m):
-            return ToolEnvelope.failure(kind: .executionError, message: m, tool: tool, retryable: true)
+            return ToolEnvelope.failure(kind: .timeout, message: m, tool: tool, retryable: retryable)
+        case .iterationCap(let m), .overBudget(let m), .emptyExhausted(let m):
+            return ToolEnvelope.failure(kind: .executionError, message: m, tool: tool, retryable: retryable)
         case .toolRejected(let m):
-            return ToolEnvelope.failure(kind: .rejected, message: m, tool: tool, retryable: false)
-        case .overBudget(let m):
-            return ToolEnvelope.failure(kind: .executionError, message: m, tool: tool, retryable: true)
-        case .emptyExhausted(let m):
-            return ToolEnvelope.failure(kind: .executionError, message: m, tool: tool, retryable: true)
-        case .executionFailed(let m, let retryable):
+            return ToolEnvelope.failure(kind: .rejected, message: m, tool: tool, retryable: retryable)
+        case .executionFailed(let m, _):
             return ToolEnvelope.failure(
                 kind: .executionError,
                 message: m,

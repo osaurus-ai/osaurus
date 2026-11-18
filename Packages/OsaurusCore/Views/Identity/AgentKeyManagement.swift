@@ -33,59 +33,51 @@ struct AgentKeyManagementRow: View {
     let accessKeys: [AccessKeyInfo]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             headerRow
             if isExpanded {
                 Divider()
-                    .background(theme.secondaryBorder)
-                    .padding(.vertical, 8)
+                    .background(theme.border.default)
+                    .padding(.vertical, theme.space.s8)
                 expansionBody
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     // MARK: - Header (always visible)
 
     private var headerRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: "person.fill")
-                .font(.system(size: 10))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(.micro)
+                .foregroundColor(theme.text.link)
                 .frame(width: 16)
 
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(agent.name)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
 
                     if isMismatched {
-                        Text(localized: "Stale")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(theme.errorColor)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.errorColor.opacity(0.12)))
+                        StatusChip(L("Stale"), tone: .error)
                     }
                 }
 
                 if let address = agent.agentAddress {
                     Text(address)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.primary)
                         .textSelection(.enabled)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else {
                     Text("No address", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
 
@@ -93,39 +85,28 @@ struct AgentKeyManagementRow: View {
 
             if let address = agent.agentAddress {
                 let isCopied = copiedAddress == address
-                Button(action: { onCopyAddress(address) }) {
-                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(isCopied ? theme.successColor : theme.secondaryText)
-                        .padding(5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(theme.tertiaryBackground)
-                        )
+                SettingsIconButton(
+                    isCopied ? "checkmark" : "doc.on.doc",
+                    help: "Copy address",
+                    size: .compact
+                ) {
+                    onCopyAddress(address)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .localizedHelp("Copy address")
             }
 
-            Button(action: onToggleExpanded) {
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(theme.tertiaryBackground)
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .help(isExpanded ? Text(localized: "Collapse") : Text(localized: "Manage agent key"))
+            SettingsIconButton(
+                isExpanded ? "chevron.up" : "chevron.down",
+                help: isExpanded ? "Collapse" : "Manage agent key",
+                size: .compact,
+                action: onToggleExpanded
+            )
         }
     }
 
     // MARK: - Expansion (rotate / revoke + access keys)
 
     private var expansionBody: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             if agent.agentAddress != nil {
                 rotateRevokeRow
                 accessKeysBlock
@@ -136,100 +117,69 @@ struct AgentKeyManagementRow: View {
     }
 
     private var rotateRevokeRow: some View {
-        HStack(spacing: 8) {
-            Button(action: onRotate) {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Rotate Key", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.tertiaryBackground)
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .localizedHelp("Derive a new agent address and revoke any access keys scoped to the previous one.")
+        HStack(spacing: theme.space.s8) {
+            SettingsButton(
+                .secondary,
+                "Rotate key",
+                icon: "arrow.triangle.2.circlepath",
+                size: .compact,
+                help: "Derive a new agent address and revoke any access keys scoped to the previous one.",
+                action: onRotate
+            )
 
-            Button(action: onRevoke) {
-                HStack(spacing: 4) {
-                    Image(systemName: "xmark.shield")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Revoke", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(theme.errorColor)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.errorColor.opacity(0.10))
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .localizedHelp("Clear this agent's address and revoke every access key scoped to it.")
+            SettingsButton(
+                .destructive,
+                "Revoke",
+                icon: "xmark.shield",
+                size: .compact,
+                help: "Clear this agent's address and revoke every access key scoped to it.",
+                action: onRevoke
+            )
 
             Spacer()
         }
     }
 
     private var noAddressRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "info.circle")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.text.tertiary)
             Text("Generate an address for this agent first.", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
             Spacer(minLength: 0)
         }
     }
 
     private var accessKeysBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text("ACCESS KEYS", bundle: .module)
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(0.6)
-                    .foregroundColor(theme.tertiaryText)
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
+                Text("Access keys", bundle: .module)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.tertiary)
                 Spacer(minLength: 0)
                 Button(action: onGenerateAccessKey) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "plus")
-                            .font(.system(size: 9, weight: .semibold))
                         Text("Generate", bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(theme.accentColor)
-                    )
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary, size: .compact)
             }
 
             if accessKeys.isEmpty {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "key.slash")
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.micro)
+                        .foregroundColor(theme.text.tertiary)
                     Text("No access keys for this agent yet.", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                     Spacer(minLength: 0)
                 }
-                .padding(8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.cardBackground.opacity(0.4))
-                )
+                .padding(theme.space.s8)
+                .settingsChrome(.surface)
             } else {
                 ForEach(accessKeys) { key in
                     accessKeyRow(key)
@@ -239,41 +189,41 @@ struct AgentKeyManagementRow: View {
     }
 
     private func accessKeyRow(_ key: AccessKeyInfo) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "key.fill")
-                .font(.system(size: 10))
-                .foregroundColor(key.isActive ? theme.accentColor : theme.tertiaryText)
+                .glyphSize(.micro)
+                .foregroundColor(key.isActive ? theme.text.link : theme.text.tertiary)
                 .frame(width: 14)
 
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(key.label)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(key.isActive ? theme.primaryText : theme.tertiaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(key.isActive ? theme.text.primary : theme.text.tertiary)
                     if key.revoked {
-                        statusBadge("Revoked", color: theme.errorColor)
+                        statusBadge("Revoked", color: theme.status.error.foreground)
                     } else if key.isExpired {
-                        statusBadge("Expired", color: theme.warningColor)
+                        statusBadge("Expired", color: theme.status.warning.foreground)
                     } else {
-                        statusBadge("Active", color: theme.successColor)
+                        statusBadge("Active", color: theme.status.success.foreground)
                     }
                 }
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Text(key.prefix + "…")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                     if let expiresAt = key.expiresAt {
                         Text(
                             key.isExpired
                                 ? "Expired \(identityMediumDateFormatter.string(from: expiresAt))"
                                 : "Expires \(identityMediumDateFormatter.string(from: expiresAt))"
                         )
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .textStyle(.micro)
+                        .foregroundColor(theme.text.tertiary)
                     } else {
                         Text("Never expires", bundle: .module)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.tertiary)
                     }
                 }
             }
@@ -281,34 +231,17 @@ struct AgentKeyManagementRow: View {
             Spacer()
 
             if !key.revoked {
-                Button(action: { onRevokeAccessKey(key.id) }) {
-                    Text("Revoke", bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.errorColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(theme.errorColor.opacity(0.10))
-                        )
+                SettingsButton(.destructive, "Revoke", size: .compact) {
+                    onRevokeAccessKey(key.id)
                 }
-                .buttonStyle(PlainButtonStyle())
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.cardBackground.opacity(0.4))
-        )
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s6)
+        .settingsChrome(.surface)
     }
 
     private func statusBadge(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundColor(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.12)))
+        StatusChip(text, tint: color)
     }
 }

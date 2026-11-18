@@ -603,7 +603,7 @@ public final class SearchProviderManager: ObservableObject {
         refreshConfiguredProviderIds()
     }
 
-    private func refreshConfiguredProviderIds() {
+    func refreshConfiguredProviderIds() {
         // `hasAllSecrets()` does a synchronous Keychain read per declared
         // secret, and securityd can stall for seconds on a cold launch —
         // this used to run inside the singleton's init on the main thread

@@ -80,9 +80,10 @@ struct XAIOAuthServiceTests {
         #expect(!XAIOAuthService.isTrustedEndpoint("not a url"))
     }
 
-    @Test func supportedModels_provideOAuthCatalogWithGrok46Default() {
+    @Test func supportedModels_provideOAuthCatalogWithGrok47Default() {
         let models = XAIOAuthService.supportedModels
-        #expect(models.first == "grok-4.6")
+        #expect(models.first == "grok-4.7")
+        #expect(models.contains("grok-4.6"))
         #expect(models.contains("grok-4.5"))
         #expect(models.contains("grok-4.3"))
         #expect(models.contains("grok-build-0.1"))

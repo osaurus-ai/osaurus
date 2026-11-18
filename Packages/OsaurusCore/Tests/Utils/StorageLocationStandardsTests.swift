@@ -245,6 +245,7 @@ struct StorageLocationStandardsTests {
             .rootOverriddenForTests: "root_overridden_for_tests",
             .rootEnvironmentOverride: "root_environment_override",
             .rootCustomLocation: "root_custom_location",
+            .rootSpace: "root_space",
             .legacyApplicationSupportRootPresent: "legacy_application_support_root_present",
             .migrationDecisionPending: "migration_decision_pending",
             .modelsRootHomeVisibleByDesign: "models_root_home_visible_by_design",

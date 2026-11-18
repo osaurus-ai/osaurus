@@ -11,6 +11,8 @@ import Foundation
 
 @MainActor
 public enum RemoteAgentStore {
+    /// Remote agent fields Osaurus Classic drops when it saves a pairing.
+    static let classicUnknownFields: [ClassicResaveRecovery.FieldPath] = [["accessRevokedAt"]]
 
     public static func loadAll() -> [RemoteAgent] {
         let directory = OsaurusPaths.remoteAgents()
@@ -24,7 +26,8 @@ public enum RemoteAgentStore {
         var result: [RemoteAgent] = []
         for file in files where file.pathExtension == "json" {
             do {
-                let data = try Data(contentsOf: file)
+                let data = ClassicResaveRecovery.restoring(
+                    try Data(contentsOf: file), at: file, fields: classicUnknownFields)
                 let agent = try decoder.decode(RemoteAgent.self, from: data)
                 result.append(agent)
             } catch {
@@ -41,7 +44,9 @@ public enum RemoteAgentStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(agent).write(to: url, options: [.atomic])
+            let data = try encoder.encode(agent)
+            ClassicResaveRecovery.recordWrite(data, to: url)
+            try data.write(to: url, options: [.atomic])
         } catch {
             print("[Osaurus] Failed to save remote agent \(agent.id): \(error)")
         }
@@ -51,6 +56,7 @@ public enum RemoteAgentStore {
     public static func delete(id: UUID) -> Bool {
         do {
             try FileManager.default.removeItem(at: fileURL(for: id))
+            ClassicResaveRecovery.forget(fileURL(for: id))
             return true
         } catch {
             print("[Osaurus] Failed to delete remote agent \(id): \(error)")

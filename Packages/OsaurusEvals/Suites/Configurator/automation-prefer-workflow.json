@@ -1,0 +1,51 @@
+{
+  "id": "configurator.automation-prefer-workflow",
+  "domain": "configurator",
+  "label": "configurator • prefers an installed workflow over a custom agent for an automation",
+  "query": "Send me my daily digest every day at 8am.",
+  "notes": "Both an agent (`Eval Reporter Agent`) and a matching workflow (`Daily Digest`) exist. The routing rule puts an installed workflow first, so the automation must run `Daily Digest` with `day` bound, not the agent.",
+  "fixtures": {
+    "seedAgents": [
+      {
+        "id": "e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079",
+        "name": "Eval Reporter Agent"
+      }
+    ],
+    "seedInstalledWorkflows": [
+      {
+        "id": "6f1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c44",
+        "name": "Daily Digest",
+        "summary": "Summarize the day's news and calendar.",
+        "inputs": [
+          "day"
+        ],
+        "required": [
+          "day"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "expectAutomations": [
+        {
+          "sourceKind": "schedule",
+          "action": "workflow",
+          "workflow": "Daily Digest",
+          "inputKeys": [
+            "day"
+          ]
+        }
+      ],
+      "expectAutomationCount": 1,
+      "maxIterations": 8
+    }
+  }
+}

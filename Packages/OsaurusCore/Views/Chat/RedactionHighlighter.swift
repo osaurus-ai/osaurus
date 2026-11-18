@@ -188,7 +188,7 @@ enum RedactionHighlighter {
             .sorted { $0.count > $1.count }
         guard !sortedKeys.isEmpty else { return [] }
 
-        let underlineColor = accentColor.withAlphaComponent(0.7)
+        let underlineColor = accentColor
 
         var applied: [AppliedRedactionRange] = []
         let storageString = storage.string as NSString

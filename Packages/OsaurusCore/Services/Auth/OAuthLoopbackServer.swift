@@ -96,11 +96,14 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
     ///   - port: Bind strategy — fixed for legacy Codex, ephemeral for new MCP flow.
     ///   - callbackPath: Path the server will accept; e.g. `/auth/callback` (Codex) or
     ///     `/callback` (recommended for MCP). Path-only; no leading host.
+    ///   - reuseAddress: Rebind a fixed port while connections from the last
+    ///     sign-in on it are still in TIME_WAIT.
     public init(
         expectedState: String,
         port: LoopbackPort,
         callbackPath: String = "/callback",
-        corsOriginAllowlist: [String] = []
+        corsOriginAllowlist: [String] = [],
+        reuseAddress: Bool = false
     ) throws {
         self.expectedState = expectedState
         self.callbackPath = callbackPath.hasPrefix("/") ? callbackPath : "/" + callbackPath
@@ -109,6 +112,7 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
             let parameters = NWParameters.tcp
             // RFC 8252 §7.3: bind to the loopback interface only — never all interfaces.
             parameters.requiredInterfaceType = .loopback
+            parameters.allowLocalEndpointReuse = reuseAddress
             switch port {
             case .fixed(let value):
                 let nwPort = NWEndpoint.Port(rawValue: value) ?? .any
@@ -326,11 +330,10 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
 
         // Per RFC 6749 §4.1.2.1: surface server-side errors with description.
         if let error = value("error"), !error.isEmpty {
-            return .deliver(
-                .failure(
-                    OAuthLoopbackError.oauthError(error: error, description: value("error_description"))
-                )
-            )
+            // The redirect query is form-encoded (RFC 6749 Appendix B), and
+            // GitHub writes spaces in the description as `+`.
+            let description = value("error_description")?.replacingOccurrences(of: "+", with: " ")
+            return .deliver(.failure(OAuthLoopbackError.oauthError(error: error, description: description)))
         }
         guard let state = value("state"), state == expectedState else {
             return .deliver(.failure(OAuthLoopbackError.stateMismatch))

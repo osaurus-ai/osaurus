@@ -1,0 +1,29 @@
+{
+  "id": "orchestrator.recovery-unknown-teammate",
+  "domain": "orchestrator",
+  "label": "orchestrator • recovery: a teammate that does not exist",
+  "query": "Ask Penny to check which emails still need a reply from me.",
+  "notes": "Recovery after a failed call. There is no Penny: `run_workflow` \"Penny\" returns an error that lists the visible workflows (Courier among them). A good turn retries with Courier, or tells the user there is no Penny and who can help. It never claims Penny did anything.",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "rubric": [
+        "Does not say or imply that a teammate named Penny exists or did any work.",
+        "Either reports what a real teammate (such as Courier) found, or tells the user there is no Penny and names a teammate or helper that can check email.",
+        "Does not invent specific emails, senders, or subjects that no tool result showed."
+      ],
+      "maxIterations": 6
+    }
+  }
+}

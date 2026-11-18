@@ -24,8 +24,8 @@ final class ModelUpdateSweep {
 
 /// Persist due times so repeated launches, view appearances and wakeups do not
 /// turn a publisher outage into an unbounded retry loop.
-struct ModelUpdatePollingSchedule: Codable {
-    struct Attempt: Codable {
+struct ModelUpdatePollingSchedule: Codable, Sendable {
+    struct Attempt: Codable, Sendable {
         var nextCheck: Date
         var failures: Int
         var observation: Observation?
@@ -33,7 +33,7 @@ struct ModelUpdatePollingSchedule: Codable {
 
     /// Remote observations survive the due-time throttle. Local files are always
     /// reread on restoration; this cache never certifies installed file contents.
-    struct Observation: Codable {
+    struct Observation: Codable, Sendable {
         let revision: String?
         let manifest: Data?
         let error: String?
@@ -67,7 +67,23 @@ struct ModelUpdatePollingSchedule: Codable {
     }
 
     static let interval: TimeInterval = 6 * 60 * 60
+    static let defaultsKey = "ModelUpdatePollingSchedule"
     var attempts: [String: Attempt] = [:]
+
+    /// Synchronous UserDefaults + JSON work. Callers on the main actor must run
+    /// this from a detached task so a slow first decode cannot hang the UI.
+    static func load(forKey key: String = defaultsKey, from defaults: UserDefaults = .standard) -> Self {
+        defaults.data(forKey: key)
+            .flatMap { try? JSONDecoder().decode(Self.self, from: $0) }
+            ?? Self()
+    }
+
+    /// Synchronous JSON + UserDefaults work; see `load(forKey:from:)`.
+    func persist(forKey key: String = Self.defaultsKey, to defaults: UserDefaults = .standard) {
+        if let data = try? JSONEncoder().encode(self) {
+            defaults.set(data, forKey: key)
+        }
+    }
 
     func isDue(_ repository: String, at now: Date) -> Bool {
         guard let attempt = attempts[repository.lowercased()] else { return true }
@@ -129,11 +145,12 @@ extension ModelManager {
         guard !Task.isCancelled else { return }
         await automaticModelUpdateSweep.run { [weak self] in
             guard let self else { return }
-            let key = "ModelUpdatePollingSchedule"
-            var schedule =
-                UserDefaults.standard.data(forKey: key)
-                .flatMap { try? JSONDecoder().decode(ModelUpdatePollingSchedule.self, from: $0) }
-                ?? ModelUpdatePollingSchedule()
+            // Keep persistence and decoding off the main actor: this sweep is
+            // @MainActor and a stalled decode here previously hung the app.
+            var schedule = await Task.detached(priority: .utility) {
+                ModelUpdatePollingSchedule.load()
+            }.value
+            guard !Task.isCancelled else { return }
             let installed = await Self.discoverLocalModelsOffMain()
             let registered = Set(self.suggestedModels.map { $0.id.lowercased() })
             let official = installed.filter { Self.isRegisteredOfficialUpdateRepository($0.id, registered: registered) }
@@ -167,9 +184,9 @@ extension ModelManager {
                     succeeded: result.error == nil && result.remote != nil,
                     observation: .init(result)
                 )
-                if let data = try? JSONEncoder().encode(schedule) {
-                    UserDefaults.standard.set(data, forKey: key)
-                }
+                let snapshot = schedule
+                // Awaited so successive writes stay ordered.
+                await Task.detached(priority: .utility) { snapshot.persist() }.value
             }
         }
     }

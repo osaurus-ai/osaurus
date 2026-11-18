@@ -1,0 +1,36 @@
+{
+  "id": "configurator.read-list-providers",
+  "domain": "configurator",
+  "label": "configurator • list providers (scope arg)",
+  "query": "List the cloud LLM providers I currently have configured.",
+  "notes": "Pure read. Pins that the model reaches osaurus_inspect with a providers list rather than describe or a write tool, and never uses capability search. The tool tolerantly executes {action:'list', filter:'providers'} as the providers list (deliberate API design), so either argument spelling satisfies the intent.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_inspect"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_inspect",
+          "args": {
+            "action": "list"
+          },
+          "argsAnyOf": [
+            {
+              "scope": "providers"
+            },
+            {
+              "filter": "providers"
+            }
+          ]
+        }
+      ],
+      "maxIterations": 3
+    }
+  }
+}

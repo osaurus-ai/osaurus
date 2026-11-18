@@ -181,16 +181,53 @@ enum ModelFamilyGuidance {
     ///
     /// `compact` selects the small-context variant where one exists (see
     /// `compactGuidance(for:)`); callers pass `sizeClass == .small`.
+    ///
+    /// `workspaceTools` is whether the schema can do shell, file, or
+    /// directory work. Without it, the lines that direct that work are
+    /// dropped, so a routing-only schema (the Orchestrator's) is never told
+    /// to run `date` or read a file it cannot reach.
     static func guidance(
         forModelId modelId: String?,
         modelType: String? = nil,
-        compact: Bool = false
+        compact: Bool = false,
+        workspaceTools: Bool = true
     ) -> String? {
         guard let raw = modelId?.trimmingCharacters(in: .whitespacesAndNewlines),
             !raw.isEmpty
         else { return nil }
         let resolved = family(for: raw, modelType: modelType)
-        return compact ? compactGuidance(for: resolved) : guidance(for: resolved)
+        let block = compact ? compactGuidance(for: resolved) : guidance(for: resolved)
+        return workspaceTools ? block : withoutWorkspaceLines(block)
+    }
+
+    /// Line prefixes, across every family block, that send the model to
+    /// shell, file, or directory work.
+    static let workspaceLinePrefixes: [String] = [
+        "Examples:",
+        "- \"What's in this directory?\"",
+        "- \"Is this command available?\"",
+        "- \"What's the current time?\"",
+        "If you used a shell command",
+        "- Use the appropriate lookup tool",
+        "- Use non-interactive flags",
+        "- **Verify before you act.**",
+        "- **Parallel tool calls when independent.** When you need to read three",
+        "- **Non-interactive flags.**",
+        "- Verify before you act:",
+        "- Prefer one rich shell invocation",
+        "- If the next step is to inspect files",
+        "- When NO listed tool directly fits a live-data request",
+        "- For local, reversible work",
+    ]
+
+    static func withoutWorkspaceLines(_ block: String) -> String {
+        block
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                return !workspaceLinePrefixes.contains { trimmed.hasPrefix($0) }
+            }
+            .joined(separator: "\n")
     }
 
     // MARK: - Family blocks
@@ -222,7 +259,8 @@ enum ModelFamilyGuidance {
 
         <act_dont_ask>
         When a question has an obvious default interpretation, act on it immediately \
-        instead of asking. Examples:
+        instead of asking.
+        Examples:
         - "What's in this directory?" → list it. Don't ask "which one?".
         - "Is this command available?" → check it. Don't guess.
         - "What's the current time?" → run `date`. Don't approximate.
@@ -262,7 +300,7 @@ enum ModelFamilyGuidance {
         - When a question has an obvious default interpretation, act on it \
         immediately instead of asking.
         - Before declaring done, check correctness, grounding, and format. \
-        After a change, run a follow-up command to confirm it took effect.
+        After a change, confirm it took effect.
         - If required context is missing, retrieve it with a tool; ask only \
         when it cannot be retrieved. Label assumptions if you must proceed.
         """
@@ -336,9 +374,9 @@ enum ModelFamilyGuidance {
         - Prefer one rich shell invocation over many small calls when the \
         steps are mechanical.
         - Keep going until the task is done. After a tool returns, take \
-        the next concrete action — read a file, write a file, run a \
-        command. Don't stop after a single exploration step to describe \
-        what you'll do next; just do the next step.
+        the next concrete action with a listed tool. Don't stop after a \
+        single exploration step to describe what you'll do next; just do \
+        the next step.
         - When you've genuinely finished, say so plainly and stop calling \
         tools. Don't invent extra steps to look thorough.
         """

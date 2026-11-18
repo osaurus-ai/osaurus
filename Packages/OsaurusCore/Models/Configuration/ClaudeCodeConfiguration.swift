@@ -161,18 +161,8 @@ public enum ClaudeCodeConfiguration {
     /// runtime. Only read to migrate agents and to refuse those ids.
     public static let modelPrefix = "claude-code/"
 
-    /// Claude's brand gradient, from Anthropic's published accent orange
-    /// (#D97757) to a darker shade of the same hue.
-    ///
-    /// Deliberately not the accent color: the picker's generic `.symbol` rows
-    /// all hover to the accent, so an accent-tinted Claude Code row was
-    /// indistinguishable from "Use an API key". Measured against every existing
-    /// row gradient, the nearest in the same list is OpenRouter at ΔE 22.7
-    /// (CIELAB) — comfortably distinguishable.
-    public static let brandGradient: [Color] = [
-        Color(red: 0.851, green: 0.467, blue: 0.341),
-        Color(red: 0.749, green: 0.373, blue: 0.259),
-    ]
+    /// Claude's brand gradient (`BrandPalette.claudeCode`).
+    public static var brandGradient: [Color] { BrandPalette.claudeCode }
 
     /// The command we look for on PATH.
     public static let executableName = "claude"
@@ -216,6 +206,20 @@ public enum ClaudeCodeConfiguration {
     /// Built-ins no toggle grants.
     public static let neverAllowedTools = ["WebFetch", "WebSearch"]
 
+    /// Permission-free built-ins kept on every agent run. Names a CLI no
+    /// longer has are ignored by `--tools`.
+    public static let permissionFreeTools = ["TodoWrite"]
+
+    /// The `--tools` value: the only built-ins the model sees. An allow list,
+    /// because new CLI releases add built-ins (agent teams, scheduling,
+    /// worktrees, `ToolSearch`) that a deny list never names.
+    public static func availableBuiltinTools(allowWrites: Bool, allowShell: Bool) -> [String] {
+        var tools = defaultAllowedTools + permissionFreeTools
+        if allowWrites { tools += writeTools }
+        if allowShell { tools += shellTools }
+        return tools
+    }
+
     /// Built-ins to remove from the model's tool list for this run.
     ///
     /// `dontAsk` refuses an un-allowlisted tool only after the model calls it,
@@ -247,6 +251,18 @@ public enum ClaudeCodeConfiguration {
         return L("Claude Code isn't allowed to use this tool for this agent.")
     }
 
+    /// What the chat shows when the model called a tool this run doesn't have.
+    public static func unavailableToolMessage(tool: String) -> String {
+        L("Claude Code doesn't have this tool on this run, so the call didn't happen.")
+    }
+
+    /// The name a tool card shows: Osaurus's own tools without the MCP
+    /// namespace Claude Code puts on them.
+    public static func displayToolName(_ name: String) -> String {
+        let prefix = "mcp__\(mcpServerName)__"
+        return name.hasPrefix(prefix) ? String(name.dropFirst(prefix.count)) : name
+    }
+
     // MARK: - Osaurus tools over MCP
 
     /// The MCP server name Osaurus registers itself under. Claude Code exposes
@@ -270,9 +286,19 @@ public enum ClaudeCodeConfiguration {
 
     /// Claude Code's namespaced spelling of the same set, for `--allowedTools`.
     public static func osaurusAllowedToolNames(allowConfigWrites: Bool) -> [String] {
-        osaurusToolPatterns(allowConfigWrites: allowConfigWrites)
-            .map { "mcp__\(mcpServerName)__\($0)" }
+        namespaced(osaurusToolPatterns(allowConfigWrites: allowConfigWrites))
     }
+
+    /// The Architect's Osaurus tools, sorted so the argv is stable.
+    static var architectToolPatterns: [String] { HarnessGrantStore.architectToolNames.sorted() }
+
+    static func namespaced(_ tools: [String]) -> [String] {
+        tools.map { "mcp__\(mcpServerName)__\($0)" }
+    }
+
+    /// Claude Code's own MCP tool timeout (milliseconds). `workflow_test`
+    /// runs a whole workflow, far past the CLI's default.
+    static let mcpToolTimeoutMilliseconds = 15 * 60 * 1000
 
     /// Why Osaurus's own tools aren't reachable on this run.
     public enum OsaurusToolsUnavailableReason: Sendable, Equatable {
@@ -336,6 +362,21 @@ public enum ClaudeCodeConfiguration {
         return note
     }
 
+    /// The Architect's note when its drafting tools can't attach, so it says
+    /// why instead of improvising with tools it doesn't have.
+    public static func architectToolsUnavailableNote(reason: OsaurusToolsUnavailableReason) -> String {
+        let cause =
+            reason == .serverNotRunning
+            ? L("the Osaurus server is not running — tell the person to start it from the Osaurus app")
+            : L("this copy of Osaurus is missing the bundled part that connects them")
+        return String(
+            format: L(
+                "Your workflow tools are NOT connected on this run, because %@. You cannot read or change the draft. Do not call any tool; say plainly that you can't build the workflow until this is fixed, then send a new message."
+            ),
+            cause
+        )
+    }
+
     /// Absolute path to the `osaurus` CLI shipped inside this app bundle.
     ///
     /// Mirrors `ConfigurationView.resolveCLIExecutableURL`'s order: the
@@ -367,7 +408,15 @@ public enum ClaudeCodeConfiguration {
         allowConfigWrites: Bool,
         bridgeGrant: String? = nil
     ) -> String? {
-        let patterns = osaurusToolPatterns(allowConfigWrites: allowConfigWrites)
+        mcpConfigJSON(
+            cliPath: cliPath,
+            patterns: osaurusToolPatterns(allowConfigWrites: allowConfigWrites),
+            bridgeGrant: bridgeGrant
+        )
+    }
+
+    /// The same, for an explicit tool set (the Architect's).
+    static func mcpConfigJSON(cliPath: String, patterns: [String], bridgeGrant: String?) -> String? {
         guard !patterns.isEmpty else { return nil }
         var server: [String: Any] = [
             "command": cliPath,

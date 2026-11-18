@@ -1,0 +1,84 @@
+{
+  "id": "workflow.team-default-meeting-prep",
+  "domain": "workflow",
+  "label": "workflow • Meeting Prep finds the next meeting, then its notes and mail by title and attendee",
+  "query": "Meeting Prep finds the next meeting, then its notes and mail by title and attendee",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "default-workflow-meeting-prep",
+      "input": {},
+      "toolResults": {
+        "next": {
+          "events": [
+            {
+              "id": "event-next-1",
+              "title": "Budget sync",
+              "start": "{{date:tomorrow_start+900m}}",
+              "end": "{{date:tomorrow_start+930m}}",
+              "attendees": [
+                {
+                  "name": "Priya Shah",
+                  "email": "priya@acme.test"
+                }
+              ]
+            }
+          ],
+          "count": 1
+        },
+        "notes": {
+          "notes": [
+            {
+              "id": "note-notes-1",
+              "title": "Budget sync prep",
+              "preview": "Ask about the Q1 travel cap"
+            }
+          ],
+          "count": 1
+        },
+        "mail": {
+          "messages": [
+            {
+              "id": "<mail-1@mail.test>",
+              "subject": "Re: budget numbers",
+              "sender": "Priya Shah",
+              "dateReceived": "{{date:yesterday_start+1120m}}"
+            }
+          ],
+          "count": 1
+        }
+      },
+      "toolArguments": {
+        "next": {
+          "start": "{{date:now}}",
+          "end": "{{date:days_ago:-7}}",
+          "include_all_day": false,
+          "limit": 1
+        },
+        "notes": {
+          "query": "Budget sync"
+        },
+        "mail": {
+          "query": "Priya Shah"
+        }
+      },
+      "outputKeys": [
+        "prep"
+      ],
+      "outputContains": {
+        "prep": [
+          "Priya"
+        ]
+      },
+      "outputExcludes": {
+        "prep": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

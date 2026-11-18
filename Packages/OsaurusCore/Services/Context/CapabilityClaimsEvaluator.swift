@@ -90,6 +90,54 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
     public let peakContextTokens: Int?
     /// Number of model requests included in the context-cost totals.
     public let modelSteps: Int?
+    /// Orchestrator turns only: `extracted` when `SessionStateExtraction`
+    /// wrote the object, nil when it did not.
+    public let stateSource: String?
+    /// Multi-turn runs only: each turn's `stateSource` (`none` for nil) and
+    /// visible answer, in order. `stateSource` and `finalText` are the last
+    /// turn's.
+    public var turnStateSources: [String]?
+    public var turnFinalTexts: [String]?
+
+    /// One transcript for a multi-turn run: every turn's tool calls in
+    /// order, summed step counts and token totals, token-weighted decode
+    /// rate, and the last turn's answer, state source and error.
+    public static func merging(_ turns: [CapabilityClaimsTranscript]) -> CapabilityClaimsTranscript {
+        guard let last = turns.last else {
+            return CapabilityClaimsTranscript(
+                toolCalls: [], finalText: "", iterations: 0, hitIterationCap: false, systemPrompt: "",
+                loadedToolNames: [], error: "no turns ran")
+        }
+        func sum(_ value: (CapabilityClaimsTranscript) -> Int?) -> Int? {
+            let values = turns.map(value)
+            return values.contains { $0 == nil } ? nil : values.reduce(0) { $0 + ($1 ?? 0) }
+        }
+        let weighted = turns.compactMap { turn -> (Double, Int)? in
+            guard let rate = turn.decodeTokensPerSecond, let count = turn.completionTokens, count > 0 else { return nil }
+            return (rate * Double(count), count)
+        }
+        let weight = weighted.reduce(0) { $0 + $1.1 }
+        var loaded: [String] = []
+        for name in turns.flatMap(\.loadedToolNames) where !loaded.contains(name) { loaded.append(name) }
+        var merged = CapabilityClaimsTranscript(
+            toolCalls: turns.flatMap(\.toolCalls),
+            finalText: last.finalText,
+            iterations: turns.reduce(0) { $0 + $1.iterations },
+            hitIterationCap: turns.contains { $0.hitIterationCap },
+            systemPrompt: turns[0].systemPrompt,
+            loadedToolNames: loaded,
+            error: last.error,
+            decodeTokensPerSecond: weight > 0 ? weighted.reduce(0) { $0 + $1.0 } / Double(weight) : nil,
+            completionTokens: sum(\.completionTokens),
+            promptTokensTotal: sum(\.promptTokensTotal),
+            peakContextTokens: turns.compactMap(\.peakContextTokens).max(),
+            modelSteps: sum(\.modelSteps),
+            stateSource: last.stateSource
+        )
+        merged.turnStateSources = turns.map { $0.stateSource ?? "none" }
+        merged.turnFinalTexts = turns.map(\.finalText)
+        return merged
+    }
 
     public init(
         toolCalls: [ToolInvocation],
@@ -103,7 +151,8 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
         completionTokens: Int? = nil,
         promptTokensTotal: Int? = nil,
         peakContextTokens: Int? = nil,
-        modelSteps: Int? = nil
+        modelSteps: Int? = nil,
+        stateSource: String? = nil
     ) {
         self.toolCalls = toolCalls
         self.finalText = finalText
@@ -117,6 +166,7 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
         self.promptTokensTotal = promptTokensTotal
         self.peakContextTokens = peakContextTokens
         self.modelSteps = modelSteps
+        self.stateSource = stateSource
     }
 }
 
@@ -163,6 +213,19 @@ public struct CapabilityClaimsJudgeAudit: Sendable, Codable {
     }
 }
 
+/// What one Orchestrator eval conversation carries from turn to turn, as
+/// `ChatSession` does: the session id state is kept under, the committed
+/// state the next turn's block shows, and the earlier exchanges, which
+/// `OrchestratorContextPolicy` trims on every request.
+@MainActor
+public final class OrchestratorEvalConversation {
+    public let sessionId = UUID().uuidString
+    public internal(set) var state: SessionState = .empty
+    var priorMessages: [ChatMessage] = []
+
+    public init() {}
+}
+
 // MARK: - Evaluator
 
 /// Public entry point for the capability-claims behaviour evals. Lives
@@ -192,7 +255,9 @@ public enum CapabilityClaimsEvaluator {
         model: String? = nil,
         toolExecutionTimeout: TimeInterval? = nil,
         autoApproveToolPrompts: Bool = false,
-        denyUnapprovedToolPrompts: Bool = false
+        denyUnapprovedToolPrompts: Bool = false,
+        conversation: OrchestratorEvalConversation? = nil,
+        workingFolder: URL? = nil
     ) async -> CapabilityClaimsTranscript {
         await runConversation(
             query: query,
@@ -202,10 +267,19 @@ public enum CapabilityClaimsEvaluator {
             toolExecutionTimeout: toolExecutionTimeout,
             autoApproveToolPrompts: autoApproveToolPrompts,
             denyUnapprovedToolPrompts: denyUnapprovedToolPrompts,
+            conversation: conversation,
+            workingFolder: workingFolder,
             engine: ChatEngine()
         )
     }
 
+    /// `conversation` makes this one turn of an Orchestrator chat: its
+    /// earlier exchanges ride before `query` under the Orchestrator context
+    /// policy, its state fills the turn block, and the turn's messages and
+    /// committed state are written back for the next turn.
+    ///
+    /// `workingFolder` attaches a folder to the chat, as the Folder chip does:
+    /// the turn composes in host-folder mode and workers inherit the folder.
     static func runConversation(
         query: String,
         agentId: UUID? = nil,
@@ -214,6 +288,8 @@ public enum CapabilityClaimsEvaluator {
         toolExecutionTimeout: TimeInterval? = nil,
         autoApproveToolPrompts: Bool = false,
         denyUnapprovedToolPrompts: Bool = false,
+        conversation: OrchestratorEvalConversation? = nil,
+        workingFolder: URL? = nil,
         engine: any ResponsesEngineProtocol
     ) async -> CapabilityClaimsTranscript {
         let resolvedAgentId = agentId ?? AgentManager.shared.activeAgent.id
@@ -221,8 +297,28 @@ public enum CapabilityClaimsEvaluator {
             model
             ?? ChatConfigurationStore.load().coreModelIdentifier
             ?? "foundation"
+        let priorMessages = conversation?.priorMessages ?? []
+        let contextWindow: Int? =
+            conversation == nil ? nil : await AgentLoopBudget.resolveContextWindow(modelId: resolvedModel)
+        func withPriorTurns(_ system: ChatMessage, _ current: [ChatMessage]) -> [ChatMessage] {
+            let messages = [system] + priorMessages + current
+            guard let contextWindow else { return messages }
+            return OrchestratorContextPolicy.apply(messages, contextWindow: contextWindow)
+        }
 
-        var history: [ChatMessage] = [ChatMessage(role: "user", content: query)]
+        // Production parity (`ChatView.freezeInjectedContextOntoLatestUserTurn`):
+        // every local turn is sent with the frozen `[Current Time]` prefix,
+        // and later turns replay it. Without it the harness is HARSHER than
+        // the app: a dated request sends the Orchestrator to a worker just to
+        // learn today's date.
+        let timePrefix =
+            SystemPromptComposer.composeInjectedUserPrefix(
+                memorySection: nil,
+                screenContext: nil,
+                timeContext: SystemPromptTemplates.timeContext(now: Date(), timeZone: .current)
+            ) ?? ""
+        let sentUserTurn = timePrefix + query
+        var history: [ChatMessage] = [ChatMessage(role: "user", content: sentUserTurn)]
         var pendingBatch = ResponsesToolBatchHistory()
         var toolCalls: [CapabilityClaimsTranscript.ToolInvocation] = []
         var loadedToolNames: [String] = []
@@ -271,6 +367,7 @@ public enum CapabilityClaimsEvaluator {
         // Token-weighted measured decode across typed model steps. Missing
         // usage/rates stay absent; prompt estimates are accounted separately.
         var decodeTpsWeightedSum = 0.0
+        var stateSource: String?
         var decodeTpsTokenWeight = 0
         var completionTokensTotal = 0
         var completionUsageComplete = true
@@ -280,7 +377,7 @@ public enum CapabilityClaimsEvaluator {
         // Stable per-run session id so the engine's content-addressed KV
         // grouping sees one coherent conversation instead of N anonymous
         // requests.
-        let runSessionId = UUID().uuidString
+        let runSessionId = conversation?.sessionId ?? UUID().uuidString
 
         // Bind the agent for the whole loop so capability-tool scoping,
         // `capabilities_load` agent grants, and agent-scoped tools see
@@ -299,17 +396,34 @@ public enum CapabilityClaimsEvaluator {
         launchingSession.agentId = resolvedAgentId
         let launchingSessionBox = WeakChatSessionBox(launchingSession)
         defer { withExtendedLifetime(launchingSession) {} }
+        // A chat turn binds the user's text (handoffs pass it verbatim) and a
+        // session id (state is kept under it); the Orchestrator needs both.
+        let isOrchestrator = resolvedAgentId == Agent.defaultId
+        var executionMode = ExecutionMode.none
+        if let workingFolder {
+            executionMode = .hostFolder(await FolderContextService.shared.buildContext(from: workingFolder))
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+        }
         do {
             result = try await ChatExecutionContext.$currentAgentId.withValue(resolvedAgentId) {
+              try await ChatExecutionContext.$currentFolderRoot.withValue(
+                  workingFolder ?? ChatExecutionContext.currentFolderRoot
+              ) {
+              try await ChatExecutionContext.$currentUserRequest.withValue(
+                  isOrchestrator ? query : ChatExecutionContext.currentUserRequest
+              ) {
+              try await ChatExecutionContext.$currentSessionId.withValue(
+                  isOrchestrator ? runSessionId : ChatExecutionContext.currentSessionId
+              ) {
               try await ChatExecutionContext.$currentChatSessionBox.withValue(launchingSessionBox) {
                 // Compose ONCE; prompt + tool schema stay frozen for the
                 // whole run (deferred-schema policy, same as production).
                 let composed = await SystemPromptComposer.composeChatContext(
                     agentId: resolvedAgentId,
-                    executionMode: .none,
+                    executionMode: executionMode,
                     model: resolvedModel,
                     query: query,
-                    messages: history
+                    messages: priorMessages + history
                 )
                 firstTurnPrompt = composed.prompt
                 // Frozen for the run, with ONE production-parity growth path:
@@ -325,11 +439,31 @@ public enum CapabilityClaimsEvaluator {
                 // patched into the schema).
                 var frozenTools = composed.tools
 
-                while iterations < maxIterations {
-                    var requestMessages: [ChatMessage] = [
-                        ChatMessage(role: "system", content: firstTurnPrompt)
-                    ]
-                    requestMessages.append(contentsOf: history)
+                // Production parity (`ChatSession.send`): the Orchestrator's
+                // latest user turn carries the session-state block.
+                if isOrchestrator {
+                    let block = OrchestratorTurnBlock.injectedBlock(
+                        state: (conversation?.state ?? .empty).rendered(), dispatchedTool: nil)
+                    history = [ChatMessage(role: "user", content: timePrefix + block + "\n\n" + query)]
+                }
+
+                // How the turn ended (`AgentLoopHooks.noteTurnEnding`).
+                var lastHandoff: HandoffResult?
+                var lastTurnEnding: TurnEnding?
+                func noteTurnEnding(_ ending: TurnEnding) {
+                    guard isOrchestrator else { return }
+                    var lastStep = ending
+                    if ending == .finalText, case .awaitingUser? = lastHandoff { lastStep = .awaitingUser }
+                    lastTurnEnding = lastStep
+                }
+
+                while true {
+                    if iterations >= maxIterations {
+                        noteTurnEnding(.iterationCap)
+                        break
+                    }
+                    var requestMessages = withPriorTurns(
+                        ChatMessage(role: "system", content: firstTurnPrompt), history)
                     var notices: [String] = []
                     if let notice = pendingEmptyTurnNotice {
                         notices.append(notice)
@@ -353,12 +487,13 @@ public enum CapabilityClaimsEvaluator {
                         )
                     }
 
+                    let stepTools = frozenTools
                     var request = ResponsesInferenceRequest(model: resolvedModel, input: requestMessages)
-                    request.tools = frozenTools
+                    request.tools = stepTools
                     request.toolChoice = .auto
                     request.sessionID = runSessionId
                     request.context.samplingParametersAreImplicit = true
-                    request.context.isAgentRequest = !frozenTools.isEmpty
+                    request.context.isAgentRequest = !stepTools.isEmpty
 
                     let stepInputTokens =
                         ContextBudgetManager.estimateTokens(for: requestMessages)
@@ -381,7 +516,8 @@ public enum CapabilityClaimsEvaluator {
                         }
                     } else { completionUsageComplete = false }
                     finalText = response.text
-                    let step = try ResponsesEvaluationStep.classify(response, toolsWereOffered: !frozenTools.isEmpty)
+                    let step = try ResponsesEvaluationStep.classify(
+                        response, toolsWereOffered: !stepTools.isEmpty)
                     switch step {
                     case .lengthExhausted, .incompleteReasoning:
                         throw ResponsesEvaluationStep.Failure.incomplete(response.completion.stopReason)
@@ -405,12 +541,11 @@ public enum CapabilityClaimsEvaluator {
                         // when the configure surface is in the offered schema.
                         if !visible.isEmpty,
                             groundedClaimRetries < AgentToolLoop.maxGroundedClaimRetries,
-                            frozenTools.contains(where: {
-                                $0.function.name == GroundedConfigClaimCheck.configToolName
-                            }),
+                            GroundedConfigClaimCheck.applies(toToolNames: frozenTools.map(\.function.name)),
                             let notice = GroundedConfigClaimCheck.notice(
                                 finalText: visible,
-                                hasGroundedApply: hasGroundedApply
+                                hasGroundedApply: hasGroundedApply,
+                                viaHandoff: resolvedAgentId == Agent.defaultId
                             )
                         {
                             // The ungrounded final never entered `history`
@@ -421,6 +556,7 @@ public enum CapabilityClaimsEvaluator {
                             pendingStateNotice = notice
                             continue
                         }
+                        noteTurnEnding(.finalText)
                         // Tool-call-free answer → the loop is done.
                         break
                     }
@@ -475,7 +611,8 @@ public enum CapabilityClaimsEvaluator {
                                         await executeTool(
                                             name: call.function.name,
                                             argumentsJSON: call.function.arguments,
-                                            timeout: toolExecutionTimeout
+                                            timeout: harnessTimeout(
+                                                for: call.function.name, default: toolExecutionTimeout)
                                         )
                                     }
                             }
@@ -484,6 +621,7 @@ public enum CapabilityClaimsEvaluator {
                             arguments: call.function.arguments,
                             resultPreview: String(toolResult.prefix(500))
                         )
+                        if let handoff = HandoffResult.parse(envelope: toolResult) { lastHandoff = handoff }
                         if !hasGroundedApply,
                             GroundedConfigClaimCheck.isGroundedApplyOutcome(
                                 toolName: call.function.name,
@@ -564,7 +702,7 @@ public enum CapabilityClaimsEvaluator {
                     // empty string the loop was cut off with.
                     var wrapUpRequest = ResponsesInferenceRequest(
                         model: resolvedModel,
-                        input: [ChatMessage(role: "system", content: firstTurnPrompt)] + history
+                        input: withPriorTurns(ChatMessage(role: "system", content: firstTurnPrompt), history)
                     )
                     wrapUpRequest.sessionID = runSessionId
                     wrapUpRequest.context.samplingParametersAreImplicit = true
@@ -594,7 +732,43 @@ public enum CapabilityClaimsEvaluator {
                             "post-cap wrap-up failed: \(error.localizedDescription)")
                     }
                 }
+                // Production parity (`ChatSession.finishOrchestratorTurn`).
+                var committed =
+                    isOrchestrator
+                    ? SessionStateRegistry.shared.finishTurn(sessionId: runSessionId, inFlight: []) : .empty
+                if isOrchestrator,
+                    SessionStateExtraction.applies(interrupted: Task.isCancelled, lastStepEndedOn: lastTurnEnding)
+                {
+                    var lines = [SessionStateExtraction.Line(speaker: "User", text: query)]
+                    for call in toolCalls {
+                        lines.append(.init(speaker: "Tool call", text: "\(call.name) \(call.arguments)"))
+                        if let result = call.resultPreview { lines.append(.init(speaker: "Tool result", text: result)) }
+                    }
+                    lines.append(.init(speaker: "Assistant", text: finalText))
+                    if let extracted = await SessionStateExtraction.extract(
+                        previous: committed, turn: lines, model: resolvedModel)
+                    {
+                        stateSource = "extracted"
+                        if let applied = SessionStateRegistry.shared.applyExtracted(
+                            sessionId: runSessionId, state: extracted)
+                        {
+                            committed = applied
+                        }
+                    }
+                }
+                if let conversation {
+                    var turnMessages = history
+                    turnMessages[0] = ChatMessage(role: "user", content: sentUserTurn)
+                    if !finalText.isEmpty {
+                        turnMessages.append(ChatMessage(role: "assistant", content: finalText))
+                    }
+                    conversation.priorMessages += turnMessages
+                    conversation.state = committed
+                }
                 return (finalText, toolCalls, loadedToolNames, iterations, hitCap, firstTurnPrompt, nil)
+              }
+              }
+              }
               }
             }
         } catch {
@@ -633,9 +807,27 @@ public enum CapabilityClaimsEvaluator {
             completionTokens: modelStepCount > 0 && completionUsageComplete ? completionTokensTotal : nil,
             promptTokensTotal: modelStepCount > 0 ? promptTokensTotal : nil,
             peakContextTokens: modelStepCount > 0 ? peakContextTokens : nil,
-            modelSteps: modelStepCount > 0 ? modelStepCount : nil
+            modelSteps: modelStepCount > 0 ? modelStepCount : nil,
+            stateSource: stateSource
         )
     }
+
+    /// The Configurator handoff runs a whole child loop (each of its own
+    /// tools already bounded), so the per-call live-service cap would
+    /// abandon a healthy run; it gets the handoff's own wall clock instead.
+    static func harnessTimeout(for tool: String, default bound: TimeInterval?) -> TimeInterval? {
+        guard let bound else { return nil }
+        switch tool {
+        case ConfiguratorHandoffTool.toolName: return max(bound, ConfiguratorHandoffTool.wallClockSeconds)
+        case RunWorkflowTool.toolName: return max(bound, delegatedRunSeconds)
+        default: return bound
+        }
+    }
+
+    /// `run_workflow` waits for a whole teammate turn and has no per-call
+    /// bound in the app (`bypassRegistryTimeout`); on a local model that
+    /// turn alone runs past the live-service bound.
+    static let delegatedRunSeconds: TimeInterval = 300
 
     /// Execute one tool call through `ToolRegistry`, optionally bounding it
     /// with a wall-clock `timeout`.
@@ -651,7 +843,7 @@ public enum CapabilityClaimsEvaluator {
     /// model a typed `executionError` envelope (mirroring a real tool
     /// failure) so the loop continues instead of hanging. `capability_claims`
     /// passes `nil` and keeps the original unbounded behavior.
-    private static func executeTool(
+    static func executeTool(
         name: String,
         argumentsJSON: String,
         timeout: TimeInterval?
@@ -788,12 +980,17 @@ public enum CapabilityClaimsEvaluator {
         )
         request.generation.temperature = 0
         request.generation.maxOutputTokens = 1024
+        // A reasoning judge spends this budget thinking and never reaches the verdict.
+        if let stored = ModelProfileRegistry.thinkingStoredOption(for: resolvedModel, enabled: false) {
+            request.context.modelOptions = [stored.id: stored.value]
+        }
         let judgeAttempt = DesktopResponsesAttempt()
         // Retry only transient transport failure before any typed output.
         // A deterministic judge is still a request: partial output, protocol,
         // auth, rate, incomplete and cancellation errors must not be replayed.
         let maxJudgeAttempts = 3
         var lastError: Error?
+        var lastIncompleteRaw: String?
         var attemptsUsed = 0
         for attempt in 1 ... maxJudgeAttempts {
             attemptsUsed = attempt
@@ -801,7 +998,13 @@ public enum CapabilityClaimsEvaluator {
                 let response = try await ResponsesEvaluationStep.collect(engine: engine, request: request) {
                     judgeAttempt.observe($0)
                 }
-                try ResponsesEvaluationStep.requireNaturalFinal(response)
+                do {
+                    try ResponsesEvaluationStep.requireNaturalFinal(response)
+                } catch {
+                    lastIncompleteRaw =
+                        "[incomplete: \(response.reasoning.count) reasoning chars] " + response.text
+                    throw error
+                }
                 let raw = response.text
                 if let parsed = parseVerdicts(raw, expected: conditions.count) {
                     return CapabilityClaimsJudgeAudit(
@@ -839,7 +1042,7 @@ public enum CapabilityClaimsEvaluator {
                 )
             },
             judgeModelId: resolvedModel,
-            raw: nil,
+            raw: lastIncompleteRaw,
             attempts: attemptsUsed
         )
     }

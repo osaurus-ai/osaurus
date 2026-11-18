@@ -766,6 +766,9 @@ public struct EvalReport: Sendable, Codable {
         var lines: [String] = []
         lines.append("Eval report")
         lines.append("  model:     \(modelId)")
+        if let embeddingModel = environment?.embeddingModel {
+            lines.append("  embedder:  \(embeddingModel)")
+        }
         lines.append("  startedAt: \(startedAt)")
         let c = counts
         lines.append(
@@ -806,6 +809,10 @@ public struct EvalReport: Sendable, Codable {
         if let contextLines = formatAggregatedContext() {
             lines.append("")
             lines.append(contentsOf: contextLines)
+        }
+        if let stateCalls = StateCallScorecard(rows: cases) {
+            lines.append("")
+            lines.append(contentsOf: stateCalls.formatLines())
         }
         return lines.joined(separator: "\n")
     }
