@@ -135,6 +135,28 @@ struct ChatSessionStoreDeferredSaveTests {
         }
     }
 
+    /// A delete made before the store opened outlives a quit: it's on disk
+    /// until the store applies it, and the row stays hidden meanwhile.
+    @Test func pendingDeleteIsPersistedAndHidesTheRowUntilApplied() async throws {
+        try await withOpenStores {
+            let session = ChatSessionData(
+                id: UUID(),
+                title: "Deleted before the store opened",
+                turns: [ChatTurnData(role: .user, content: "gone")]
+            )
+            try SyncConversationStore.shared.saveSession(session)
+            ChatSessionStore._enqueuePendingDeleteForTesting(session.id)
+
+            #expect(ChatSessionStore.PendingDeletesFile.load() == [session.id])
+            #expect(!ChatSessionStore.loadAll().contains { $0.id == session.id })
+
+            ChatSessionStore.flushPendingSaves()
+
+            #expect(ChatSessionStore.PendingDeletesFile.load().isEmpty)
+            #expect(SyncConversationStore.shared.loadSession(id: session.id) == nil)
+        }
+    }
+
     @Test func pendingDeleteRejectsDeferredSaveWhileDatabaseClosed() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSessionData(

@@ -42,6 +42,10 @@ enum ChatSessionStore {
 
     private static func overlayingPendingSaves(on rows: [ChatSessionData]) -> [ChatSessionData] {
         var sessions = rows
+        // A delete still waiting for the store hides its row now.
+        if !pendingDeletes.isEmpty {
+            sessions.removeAll { pendingDeletes.contains($0.id) }
+        }
         // Overlay writes still deferred behind a closed/rotating DB so a
         // notification-driven refresh can't drop a chat the user just
         // created: the disk snapshot doesn't have the row yet, but the
@@ -285,7 +289,38 @@ enum ChatSessionStore {
     /// yet. Keyed by id so repeated saves of the same session collapse to
     /// the latest snapshot. Drained by `flushPendingSaves()`.
     private static var pendingSaves: [UUID: ChatSessionData] = [:]
-    private static var pendingDeletes: Set<UUID> = []
+    /// Deletes waiting for the store. Kept on disk: a delete made before
+    /// the store opened must still apply after a quit and relaunch.
+    private static var pendingDeletes: Set<UUID> = PendingDeletesFile.load() {
+        didSet {
+            if pendingDeletes != oldValue { PendingDeletesFile.save(pendingDeletes) }
+        }
+    }
+
+    enum PendingDeletesFile {
+        static var url: URL {
+            OsaurusPaths.syncLocalState().appendingPathComponent("pending-deletes.json")
+        }
+
+        static func load() -> Set<UUID> {
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            return (try? JSONDecoder().decode(Set<UUID>.self, from: data)) ?? []
+        }
+
+        static func save(_ ids: Set<UUID>) {
+            do {
+                if ids.isEmpty {
+                    try? FileManager.default.removeItem(at: url)
+                    return
+                }
+                try FileManager.default.createDirectory(
+                    at: OsaurusPaths.syncLocalState(), withIntermediateDirectories: true)
+                try JSONEncoder().encode(ids).write(to: url, options: .atomic)
+            } catch {
+                print("[ChatSessionStore] Failed to persist pending deletes: \(error)")
+            }
+        }
+    }
 
     /// Re-attempt any saves that were deferred while the store was closed.
     /// Call once it opens (`SyncService.didOpenNotification`). No-op when
@@ -419,6 +454,7 @@ enum ChatSessionStore {
         #endif
         if store.isOpenNonBlocking {
             didOpen = true
+            flushPendingDeletes()
             return
         }
         if Thread.isMainThread, !RuntimeEnvironment.isUnderTests {
@@ -428,6 +464,7 @@ enum ChatSessionStore {
         do {
             try store.open()
             didOpen = true
+            flushPendingDeletes()
         } catch {
             print("[ChatSessionStore] Failed to open conversation store: \(error)")
         }

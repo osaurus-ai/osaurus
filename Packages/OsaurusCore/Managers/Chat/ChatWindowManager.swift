@@ -845,10 +845,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
     }
 
-    /// A chat is deleted from outside any window (the paired phone). Does
-    /// what History's Delete does for its own window, for every window:
-    /// cancel a registry-owned run, move each window off the chat (a save
-    /// from one would resurrect the row), delete, refresh every sidebar.
+    /// Deletes a chat everywhere: the sidebar, the tab strip, and the paired
+    /// phone all come through here. Cancels a registry-owned run,
+    /// moves every window off the chat (a save from one would resurrect the
+    /// row), deletes, refreshes every sidebar.
     func deleteSession(id: UUID) {
         if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
             BackgroundTaskManager.shared.cancelTask(liveTask.id)

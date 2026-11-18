@@ -1127,6 +1127,9 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
             removedHere[id] = nil
         }
         SyncLocalSessionStore.delete(id)
+        // Recorded before the old row is touched: that delete is best-effort,
+        // and a row it misses must not be imported again.
+        SyncLegacyImporter.Ledger.markDeleted(id)
         // The pre-sync copy and the session's file-change rows go too: a
         // deleted chat mustn't linger in the old database.
         let legacy = ChatHistoryDatabase.shared
