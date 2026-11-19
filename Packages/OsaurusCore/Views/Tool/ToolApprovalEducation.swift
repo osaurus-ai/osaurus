@@ -19,6 +19,7 @@ enum ToolApprovalEducation {
         [
             L("Tools set to Deny, which never run."),
             L("Sending messages or mail, and deleting events, reminders or knowledge. These ask every time."),
+            L("MCP tools their server marks as destructive, until you choose Always Allow for that tool."),
             L("Configuration changes, which show their own review card."),
             L("Delegating to other agents, image and video costs, AppleScript confirmation, and Computer or Browser Use."),
             L("Teammates and remote callers on a shared agent."),
@@ -27,7 +28,7 @@ enum ToolApprovalEducation {
 
     /// One-line form of `stillAsks` for captions and tooltips.
     static var stillAsksSummary: String {
-        L("Deny, send and delete, configuration changes, delegation, media costs, AppleScript, and Computer or Browser Use still ask.")
+        L("Deny, send and delete, destructive MCP tools, configuration changes, delegation, media costs, AppleScript, and Computer or Browser Use still ask.")
     }
 
     static var workflowNote: String {

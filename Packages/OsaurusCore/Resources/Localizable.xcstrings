@@ -112496,36 +112496,36 @@
         }
       }
     },
-    "Deny, send and delete, configuration changes, delegation, media costs, AppleScript, and Computer or Browser Use still ask." : {
+    "Deny, send and delete, destructive MCP tools, configuration changes, delegation, media costs, AppleScript, and Computer or Browser Use still ask." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "„Ablehnen“, Senden und Löschen, Konfigurationsänderungen, Delegierung, Medienkosten, AppleScript sowie Computer Use oder Browser Use fragen weiterhin."
+            "value" : "„Ablehnen“, Senden und Löschen, destruktive MCP-Tools, Konfigurationsänderungen, Delegierung, Medienkosten, AppleScript sowie Computer Use oder Browser Use fragen weiterhin."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "거부, 보내기 및 삭제, 설정 변경, 위임, 미디어 비용, AppleScript, 컴퓨터 제어 또는 Browser Use는 계속 묻습니다."
+            "value" : "거부, 보내기 및 삭제, 파괴적 MCP 도구, 설정 변경, 위임, 미디어 비용, AppleScript, 컴퓨터 제어 또는 Browser Use는 계속 묻습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Запреты, отправка и удаление, изменения конфигурации, делегирование, расходы на медиа, AppleScript и использование компьютера или браузера по-прежнему спрашиваются."
+            "value" : "Запреты, отправка и удаление, деструктивные инструменты MCP, изменения конфигурации, делегирование, расходы на медиа, AppleScript и использование компьютера или браузера по-прежнему спрашиваются."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "“拒绝”、发送和删除、配置更改、委派、媒体费用、AppleScript，以及电脑操控或浏览器使用仍会询问。"
+            "value" : "“拒绝”、发送和删除、破坏性 MCP 工具、配置更改、委派、媒体费用、AppleScript，以及电脑操控或浏览器使用仍会询问。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "「拒絕」、傳送和刪除、設定變更、委派、媒體費用、AppleScript，以及電腦操作或瀏覽器使用仍會詢問。"
+            "value" : "「拒絕」、傳送和刪除、破壞性 MCP 工具、設定變更、委派、媒體費用、AppleScript，以及電腦操作或瀏覽器使用仍會詢問。"
           }
         }
       }
@@ -190260,6 +190260,40 @@
     },
     "MCP tool call" : {
 
+    },
+    "MCP tools their server marks as destructive, until you choose Always Allow for that tool." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MCP-Tools, die ihr Server als destruktiv kennzeichnet, bis du für dieses Tool „Immer erlauben“ wählst."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서버가 파괴적이라고 표시한 MCP 도구. 해당 도구에 항상 허용을 선택할 때까지 묻습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты MCP, которые их сервер помечает как деструктивные, пока вы не выберете «Всегда разрешать» для этого инструмента."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器标记为破坏性的 MCP 工具，直到你为该工具选择“始终允许”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "伺服器標記為破壞性的 MCP 工具，直到你為該工具選擇「始終允許」。"
+          }
+        }
+      }
     },
     "Measured model files" : {
 

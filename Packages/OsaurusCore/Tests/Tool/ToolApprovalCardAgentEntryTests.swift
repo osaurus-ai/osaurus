@@ -49,6 +49,25 @@ private final class CardEntryPerCallProbeTool: OsaurusTool, PermissionedTool, Pe
     }
 }
 
+private final class CardEntryBlanketExemptProbeTool: OsaurusTool, PermissionedTool, BlanketApprovalExemptTool,
+    @unchecked Sendable
+{
+    let name: String
+    let description = "Test-only blanket-exempt probe."
+    let parameters: JSONValue? = nil
+    let requirements: [String] = []
+    let defaultPermissionPolicy: ToolPermissionPolicy = .ask
+    let isExemptFromBlanketApproval = true
+    private(set) var executions = 0
+
+    init(name: String) { self.name = name }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        executions += 1
+        return ToolEnvelope.success(tool: name, text: "ran")
+    }
+}
+
 private final class CardProbe: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [(id: UUID, toolName: String)] = []
@@ -266,6 +285,99 @@ struct ToolApprovalCardAgentEntryTests {
                 ToolPermissionPromptService.resolveForTesting(id: probe.presented[1].id, outcome: .denied)
                 await #expect(throws: (any Error).self) { _ = try await second.value }
                 #expect(perCall.executions == 0)
+            }
+        }
+    }
+
+    // MARK: Blanket-exempt tools (MCP tools declared destructive)
+
+    @Test func blanketExemptCardOffersAlwaysAllowButNotNeverAsk() async throws {
+        try await runFixture { fixture in
+            UserDefaults.standard.set(false, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+            let tool = CardEntryBlanketExemptProbeTool(name: probeName("exempt_allow"))
+            try fixture.register(tool)
+            try await withAgent { agent in
+                let probe = CardProbe()
+                let first = start(tool.name, agentId: agent.id, probe: probe)
+                await probe.waitForPresented(1)
+                #expect(
+                    ToolPermissionPromptService.presentedAgentChoiceForTesting
+                        == .init(agentId: agent.id, agentName: agent.displayName, offersNeverAsk: false))
+                ToolPermissionPromptService.resolveForTesting(id: probe.presented[0].id, outcome: .alwaysAllow)
+                _ = try await first.value
+                #expect(ToolRegistry.shared.configuredPolicy(for: tool.name) == .auto)
+
+                _ = try await start(tool.name, agentId: agent.id, probe: probe).value
+                #expect(tool.executions == 2)
+                #expect(probe.presented.count == 1, "Always Allow covers the next call")
+            }
+        }
+    }
+
+    /// A Never Ask answer the card did not offer is a single approval.
+    @Test func unofferedNeverAskOnABlanketExemptCardChangesNothing() async throws {
+        try await runFixture { fixture in
+            UserDefaults.standard.set(false, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+            let tool = CardEntryBlanketExemptProbeTool(name: probeName("exempt_never_ask"))
+            try fixture.register(tool)
+            try await withAgent { agent in
+                let probe = CardProbe()
+                let task = start(tool.name, agentId: agent.id, probe: probe)
+                await probe.waitForPresented(1)
+                ToolPermissionPromptService.resolveForTesting(id: probe.presented[0].id, outcome: .neverAskForAgent)
+                _ = try await task.value
+                #expect(tool.executions == 1)
+                #expect(settings(agent)?.toolApprovalMode == .useGlobal)
+            }
+        }
+    }
+
+    @Test func blanketExemptCardShowsWithTheGlobalSwitchOn() async throws {
+        try await runFixture { fixture in
+            UserDefaults.standard.set(true, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+            let tool = CardEntryBlanketExemptProbeTool(name: probeName("exempt_global"))
+            let plain = CardEntryProbeTool(name: probeName("exempt_global_plain"))
+            try fixture.register(tool)
+            try fixture.register(plain)
+            let probe = CardProbe()
+            _ = try await start(plain.name, agentId: nil, probe: probe).value
+            #expect(plain.executions == 1)
+            #expect(probe.presented.isEmpty, "the switch covers an ordinary Ask tool")
+
+            let task = start(tool.name, agentId: nil, probe: probe)
+            await probe.waitForPresented(1)
+            #expect(probe.presented.first?.toolName == tool.name)
+            ToolPermissionPromptService.resolveForTesting(id: probe.presented[0].id, outcome: .denied)
+            await #expect(throws: (any Error).self) { _ = try await task.value }
+            #expect(tool.executions == 0)
+        }
+    }
+
+    @Test func queuedBlanketExemptCardStillShowsAfterNeverAsk() async throws {
+        try await runFixture { fixture in
+            UserDefaults.standard.set(false, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+            let tool = CardEntryProbeTool(name: probeName("queued_plain"))
+            let exempt = CardEntryBlanketExemptProbeTool(name: probeName("queued_exempt"))
+            try fixture.register(tool)
+            try fixture.register(exempt)
+            try await withAgent { agent in
+                let probe = CardProbe()
+                let first = start(tool.name, agentId: agent.id, probe: probe)
+                await probe.waitForPresented(1)
+                let second = start(exempt.name, agentId: agent.id, probe: probe)
+                for _ in 0 ..< 200 where ToolPermissionPromptService.queuedPromptCountForTesting < 1 {
+                    try? await Task.sleep(for: .milliseconds(5))
+                }
+                ToolPermissionPromptService.resolveForTesting(id: probe.presented[0].id, outcome: .neverAskForAgent)
+                _ = try await first.value
+                #expect(settings(agent)?.toolApprovalMode == .neverAsk)
+
+                await probe.waitForPresented(2)
+                #expect(probe.presented.last?.toolName == exempt.name)
+                #expect(ToolPermissionPromptService.presentedAgentChoiceForTesting?.offersNeverAsk == false)
+                ToolPermissionPromptService.resolveForTesting(id: probe.presented[1].id, outcome: .allowOnce)
+                _ = try await second.value
+                #expect(exempt.executions == 1)
             }
         }
     }

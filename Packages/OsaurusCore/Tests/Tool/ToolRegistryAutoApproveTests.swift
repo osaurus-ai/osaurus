@@ -68,6 +68,27 @@ private final class PerCallProbeTool: OsaurusTool, PermissionedTool, PerCallAppr
     }
 }
 
+/// Same probe, but blanket-exempt (the shape of an MCP tool its server
+/// declares destructive).
+private final class BlanketExemptProbeTool: OsaurusTool, PermissionedTool, BlanketApprovalExemptTool,
+    @unchecked Sendable
+{
+    let name: String
+    let description = "Test-only blanket-exempt probe."
+    let parameters: JSONValue? = nil
+    let requirements: [String] = []
+    let defaultPermissionPolicy: ToolPermissionPolicy = .ask
+    let isExemptFromBlanketApproval = true
+    private(set) var executions = 0
+
+    init(name: String) { self.name = name }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        executions += 1
+        return ToolEnvelope.success(tool: name, text: "ran")
+    }
+}
+
 // MARK: - Tests
 
 @Suite(.serialized)
@@ -311,6 +332,64 @@ struct ToolRegistryAutoApproveTests {
                 _ = try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
                     try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
                 }
+            }
+            #expect(tool.executions == 0)
+        }
+    }
+
+    // MARK: Blanket-exempt tools take grants that name them
+
+    /// Always Allow on the card is `setPolicy(.auto)`; unlike a per-call
+    /// tool, the gate honours it and the pill says Auto.
+    @Test func blanketExemptToolHonoursAConfiguredAuto() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            let tool = BlanketExemptProbeTool(name: "test_blanket_exempt_auto_probe")
+            try fixture.register(tool)
+            #expect(!ToolRegistry.shared.requiresPerCallApproval(tool.name))
+            #expect(ToolRegistry.shared.policyInfo(for: tool.name)?.effectivePolicy == .ask)
+
+            ToolRegistry.shared.setPolicy(.auto, for: tool.name)
+            #expect(ToolRegistry.shared.policyInfo(for: tool.name)?.effectivePolicy == .auto)
+            let result = try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+            }
+            #expect(tool.executions == 1)
+            #expect(!ToolEnvelope.isError(result))
+        }
+    }
+
+    /// "For the Rest of This Reply" covers it; the same lease never covers a
+    /// per-call tool.
+    @Test func blanketExemptToolTakesARunLease() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            UserDefaults.standard.set(false, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+            let tool = BlanketExemptProbeTool(name: "test_blanket_exempt_lease_probe")
+            let perCall = PerCallProbeTool(name: "test_blanket_exempt_lease_per_call_probe")
+            try fixture.register(tool)
+            try fixture.register(perCall)
+            let lease = ToolPermissionRunScope()
+            lease.allow(tool.name)
+            lease.allow(perCall.name)
+            try await ChatExecutionContext.$toolPermissionRunScope.withValue(lease) {
+                _ = try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+                await #expect(throws: (any Error).self) {
+                    _ = try await ToolRegistry.shared.execute(name: perCall.name, argumentsJSON: "{}")
+                }
+            }
+            #expect(tool.executions == 1)
+            #expect(perCall.executions == 0)
+        }
+    }
+
+    /// Auto-Allow All Tool Calls never named the tool, so its card still
+    /// shows (a denial in this headless process).
+    @Test func blanketExemptToolIgnoresGlobalAutoAllow() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            let tool = BlanketExemptProbeTool(name: "test_blanket_exempt_global_probe")
+            try fixture.register(tool)
+            UserDefaults.standard.set(true, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+            await #expect(throws: (any Error).self) {
+                _ = try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
             }
             #expect(tool.executions == 0)
         }

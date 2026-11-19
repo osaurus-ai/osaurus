@@ -40,7 +40,7 @@ enum ConfigRisk {
         "Sets tool `\(tool)` to auto — drafts will run without asking; calls that send as the user still show an approval card every time."
     }
     static func neverAsk(_ agent: String) -> String {
-        "Sets agent `\(agent)` to never ask — its tools set to Ask run without an approval card, in chats and in its scheduled and watcher runs. Tools set to Deny, sends and deletes, configuration changes, and delegation still ask."
+        "Sets agent `\(agent)` to never ask — its tools set to Ask run without an approval card, in chats and in its scheduled and watcher runs. Tools set to Deny, sends and deletes, MCP tools their server marks destructive, configuration changes, and delegation still ask."
     }
     static func agentAutoPolicy(_ agent: String, _ tool: String) -> String {
         "Sets tool `\(tool)` to auto for agent `\(agent)` — it will run without asking in that agent's runs."

@@ -76,6 +76,25 @@ private final class GateProbeTool: OsaurusTool, PermissionedTool, @unchecked Sen
     }
 }
 
+private final class GateBlanketExemptProbeTool: OsaurusTool, PermissionedTool, BlanketApprovalExemptTool,
+    @unchecked Sendable
+{
+    let name: String
+    let description = "Test-only blanket-exempt owner approval probe."
+    let parameters: JSONValue? = nil
+    let requirements: [String] = []
+    let defaultPermissionPolicy: ToolPermissionPolicy = .ask
+    let isExemptFromBlanketApproval = true
+    private(set) var executions = 0
+
+    init(name: String) { self.name = name }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        executions += 1
+        return ToolEnvelope.success(tool: name, text: "ran")
+    }
+}
+
 @Suite("Owner approval gate", .serialized)
 @MainActor
 struct OwnerApprovalGateTests {
@@ -86,9 +105,13 @@ struct OwnerApprovalGateTests {
 
     /// The tool as a teammate's run on a shared agent set to Ask Me calls it.
     private func runShared(_ tool: GateProbeTool, route: OwnerApprovalRoute) async throws -> String {
+        try await runSharedTool(tool.name, route: route)
+    }
+
+    private func runSharedTool(_ name: String, route: OwnerApprovalRoute) async throws -> String {
         try await ChatExecutionContext.$isExternalSurface.withValue(true) {
             try await ChatExecutionContext.$ownerApprovalRoute.withValue(route) {
-                try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+                try await ToolRegistry.shared.execute(name: name, argumentsJSON: "{}")
             }
         }
     }
@@ -126,6 +149,31 @@ struct OwnerApprovalGateTests {
                 _ = try await runShared(tool, route: route())
             }
             #expect(tool.executions == 0)
+        }
+    }
+
+    /// A teammate's call to an MCP tool its server declares destructive is
+    /// approved one call at a time: the owner is never offered a lease.
+    @Test func blanketExemptToolsTakeNoConversationLease() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            let tool = GateBlanketExemptProbeTool(name: "test_owner_gate_exempt_\(UUID().uuidString.prefix(8))")
+            try fixture.register(tool)
+            let conversation = UUID().uuidString
+            let run = Task { @MainActor in
+                try await runSharedTool(tool.name, route: route(conversation: conversation))
+            }
+            var item: AttentionItem?
+            for _ in 0 ..< 300 {
+                item = AttentionCenter.shared.pending.first { $0.toolName == tool.name }
+                if item != nil { break }
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            let open = try #require(item)
+            #expect(!open.actions.contains(.allowForConversation))
+            #expect(AttentionCenter.shared.resolve(id: open.id, with: AttentionResolution(outcome: .approved, surface: .inline)))
+            _ = try await run.value
+            #expect(tool.executions == 1)
+            #expect(!OwnerApprovalService.shared.hasLease(conversationKey: conversation, toolName: tool.name))
         }
     }
 

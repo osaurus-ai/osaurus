@@ -1117,6 +1117,12 @@ public final class ToolRegistry: ObservableObject {
             if perCallApproval {
                 effectivePolicy = ToolPermissionPolicy.strictest(effectivePolicy, .ask)
             }
+            // A blanket-exempt tool (an MCP tool its server declares
+            // destructive) keeps the lease and Always Allow, which name it,
+            // but the global switch and an agent's Never Ask never cover it.
+            let blanketExempt =
+                perCallApproval
+                || (tool as? BlanketApprovalExemptTool)?.isExemptFromBlanketApproval == true
             switch effectivePolicy {
             case .deny:
                 throw NSError(
@@ -1152,7 +1158,7 @@ public final class ToolRegistry: ObservableObject {
                         route: route,
                         toolName: name,
                         callId: ChatExecutionContext.currentToolCallId,
-                        perCallApproval: perCallApproval
+                        perCallApproval: blanketExempt
                             || OwnerApprovalService.perCallOnSharedRuns.contains(name),
                         arguments: argumentsJSON
                     )
@@ -1197,14 +1203,14 @@ public final class ToolRegistry: ObservableObject {
                     // card nobody can answer.
                     approved = true
                 } else if let reason = ToolApprovalResolver.cardSkipReason(
-                    scope: agentScope, perCallApproval: perCallApproval)
+                    scope: agentScope, blanketExempt: blanketExempt)
                 {
                     // The global auto-allow switch, or this agent's Never
                     // Ask: skip the interactive card. Only reachable where a
                     // card would have been shown, so external/headless
-                    // denials above win. A per-call tool opts out: "auto-allow
-                    // tools" is not consent to destroy a knowledge collection
-                    // unseen.
+                    // denials above win. Per-call and blanket-exempt tools
+                    // opt out: "auto-allow tools" is not consent to destroy a
+                    // knowledge collection unseen.
                     skipReason = reason
                     approved = true
                 } else {
@@ -1223,12 +1229,14 @@ public final class ToolRegistry: ObservableObject {
                         knowledgeWritePreview: writePreview,
                         perCallApprovalOnly: perCallApproval,
                         executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON),
-                        agentChoice: perCallApproval ? nil : agentScope?.approvalChoice,
+                        agentChoice: perCallApproval
+                            ? nil : agentScope?.approvalChoice(offersNeverAsk: !blanketExempt),
                         revalidate: queuedCardRevalidation(
                             name: name,
                             defaultPolicy: defaultPolicy,
                             contextualPolicy: contextualPolicy,
                             perCallApproval: perCallApproval,
+                            blanketExempt: blanketExempt,
                             note: settled
                         )
                     )
@@ -1298,7 +1306,7 @@ public final class ToolRegistry: ObservableObject {
                     // approval card nobody can click (see task-local doc).
                     approved = false
                 } else if let reason = ToolApprovalResolver.cardSkipReason(
-                    scope: agentScope, perCallApproval: false)
+                    scope: agentScope, blanketExempt: false)
                 {
                     skipReason = reason
                     approved = true
@@ -1316,6 +1324,7 @@ public final class ToolRegistry: ObservableObject {
                             defaultPolicy: .auto,
                             contextualPolicy: nil,
                             perCallApproval: false,
+                            blanketExempt: false,
                             note: settled
                         )
                     )
@@ -1341,12 +1350,14 @@ public final class ToolRegistry: ObservableObject {
     /// Re-runs the gate's policy steps right before a queued card would show,
     /// so an answer given while it waited (Always Allow, an agent entry, a
     /// run lease, a policy changed to Deny) settles it without a second card.
-    /// Per-call tools always show theirs.
+    /// Per-call tools always show theirs; a blanket-exempt tool's settles
+    /// only on a grant that names it.
     private func queuedCardRevalidation(
         name: String,
         defaultPolicy: ToolPermissionPolicy,
         contextualPolicy: ToolPermissionPolicy?,
         perCallApproval: Bool,
+        blanketExempt: Bool,
         note: SilentSettleNote
     ) -> ToolPermissionPromptService.Revalidation? {
         guard !perCallApproval else { return nil }
@@ -1370,7 +1381,8 @@ public final class ToolRegistry: ObservableObject {
                 return .allowOnce
             case .ask:
                 if runScope?.allows(name) == true { return .allowOnce }
-                guard let reason = ToolApprovalResolver.cardSkipReason(scope: scope, perCallApproval: false)
+                guard
+                    let reason = ToolApprovalResolver.cardSkipReason(scope: scope, blanketExempt: blanketExempt)
                 else { return nil }
                 note.reason = reason
                 return .allowOnce
@@ -2624,7 +2636,6 @@ public final class ToolRegistry: ObservableObject {
     /// planner says the setting is inert.
     func requiresPerCallApproval(_ name: String) -> Bool {
         (toolsByName[name] as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
-            || (toolsByName[name] as? MCPProviderTool)?.hints.requiresApprovalEveryCall == true
     }
 
     /// Whether the registered tool asks on every call for SOME arguments
@@ -2632,8 +2643,7 @@ public final class ToolRegistry: ObservableObject {
     /// `send: true`). `auto` still applies to the other calls (drafts), so the
     /// menu keeps offering it; the planner adds the caveat.
     func mayRequirePerCallApproval(_ name: String) -> Bool {
-        if toolsByName[name] is MCPProviderTool { return false }
-        return toolsByName[name] is ArgumentAwarePerCallApprovalTool
+        toolsByName[name] is ArgumentAwarePerCallApprovalTool
     }
 
     /// Explicit per-tool enablement and policy overrides, for the

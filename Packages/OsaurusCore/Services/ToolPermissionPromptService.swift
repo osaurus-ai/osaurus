@@ -58,6 +58,8 @@ enum ToolPermissionPromptService {
     struct AgentApprovalChoice: Sendable, Equatable {
         let agentId: UUID
         let agentName: String
+        /// False for a blanket-exempt tool, which Never Ask would not cover.
+        var offersNeverAsk: Bool = true
     }
 
     /// Re-evaluated immediately before an entry is presented. A non-nil value
@@ -536,7 +538,7 @@ enum ToolPermissionPromptService {
             guard let agentChoice else { return }
             AgentManager.shared.updateToolPolicy(for: agentChoice.agentId, tool: toolName, policy: .auto)
         case .neverAskForAgent:
-            guard let agentChoice else { return }
+            guard let agentChoice, agentChoice.offersNeverAsk else { return }
             AgentManager.shared.updateToolApprovalMode(for: agentChoice.agentId, mode: .neverAsk)
         case .denied, .allowOnce, .allowForRun:
             break
@@ -903,7 +905,8 @@ enum ToolPermissionPromptService {
                 ToolPermissionView.AgentChoices(
                     agentName: choice.agentName,
                     onAlwaysAllowForAgent: { resolve(id: id, outcome: .alwaysAllowForAgent) },
-                    onNeverAskForAgent: { resolve(id: id, outcome: .neverAskForAgent) }
+                    onNeverAskForAgent: choice.offersNeverAsk
+                        ? { resolve(id: id, outcome: .neverAskForAgent) } : nil
                 )
             }
         )
