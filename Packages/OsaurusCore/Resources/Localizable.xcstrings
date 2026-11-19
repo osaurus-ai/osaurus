@@ -19175,28 +19175,6 @@
         }
       }
     },
-    "%lld run on their own." : {
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld runs on its own."
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld run on their own."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "%lld running" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20867,6 +20845,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld 个工作流失败"
+          }
+        }
+      }
+    },
+    "%lld workflows run on their own." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld workflow runs on its own."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld workflows run on their own."
+                }
+              }
+            }
           }
         }
       }
@@ -24756,9 +24756,6 @@
         }
       }
     },
-    "1 runs on its own." : {
-
-    },
     "1 seat left in this workspace." : {
       "localizations" : {
         "de" : {
@@ -25624,6 +25621,9 @@
           }
         }
       }
+    },
+    "1 workflow runs on its own." : {
+
     },
     "1 year" : {
 

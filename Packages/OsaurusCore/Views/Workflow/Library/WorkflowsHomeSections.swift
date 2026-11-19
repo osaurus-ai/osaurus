@@ -3,15 +3,16 @@
 //  osaurus
 //
 //  Home's sections under Running Now: what needs you, the pinned
-//  workflows as tiles with Run, and every automation that runs a workflow
-//  with its switch. Until the person has an automation, a few ways to
-//  start one instead. Each hides when it has nothing to show.
+//  workflows as tiles with Run, every other workflow the same way, and
+//  every automation that runs a workflow with its switch. Until the person
+//  has an automation, a few ways to start one instead. Each hides when it
+//  has nothing to show.
 //
 
 import AppKit
 import SwiftUI
 
-/// "1 running now. 4 run on their own." under Home's title.
+/// "1 running now. 4 workflows run on their own." under Home's title.
 struct WorkflowsHomeSubtitle: View {
     @Environment(\.theme) private var theme
     @ObservedObject var overview: WorkflowsOverviewModel
@@ -21,8 +22,9 @@ struct WorkflowsHomeSubtitle: View {
     var body: some View {
         let model = WorkflowsHomeModel.make(workflows: installed.workflows, automations: overview.automationFacts)
         Text(
-            verbatim: WorkflowsHomeModel.subtitle(
-                runOnOwn: model.runOnOwnCount, attention: model.attentionCount, running: live.going.count)
+            verbatim:             WorkflowsHomeModel.subtitle(
+                runOnOwn: model.runOnOwnCount, attention: model.attentionCount, running: live.going.count,
+                ready: model.readyCount)
         )
         .font(SettingsFont.rowDescription)
         .foregroundStyle(theme.text.secondary)
@@ -45,8 +47,10 @@ struct WorkflowsHomeSections: View {
     @State private var editorRequest: EventEditorRequest?
     /// Bumps once the recorded runs load, so the tiles read them.
     @State private var recordedCount = -1
+    @State private var showsAllWorkflows = false
 
     private static var wayLimit: Int { 4 }
+    private static var workflowLimit: Int { 6 }
 
     var body: some View {
         let _ = recordedCount
@@ -62,6 +66,7 @@ struct WorkflowsHomeSections: View {
         VStack(alignment: .leading, spacing: theme.space.s32) {
             if !attention.isEmpty { needsAttention(attention) }
             if !model.pinned.isEmpty { pinned(model.pinned) }
+            if !model.unpinned.isEmpty { yourWorkflows(model) }
             if !model.groups.isEmpty { automations(model) }
             if model.groups.isEmpty, model.otherAutomationCount == 0, !installed.workflows.isEmpty {
                 ways(Array(model.ways.prefix(Self.wayLimit)))
@@ -114,12 +119,37 @@ struct WorkflowsHomeSections: View {
 
     private func pinned(_ tiles: [WorkflowsHomeModel.Tile]) -> some View {
         SettingsSection(title: "Pinned", layout: .plain) {
-            WorkflowCardGrid(items: tiles) { tile in
-                WorkflowsPinnedTile(
-                    tile: tile,
-                    onOpen: { windowState.selectWorkflowsPage(.workflow(tile.id)) },
-                    onRun: { if let workflow = installed.workflow(id: tile.id) { onRun(workflow) } })
+            tileGrid(tiles)
+        }
+    }
+
+    // MARK: Your workflows
+
+    /// Every workflow not pinned, so a new setup sees what it can run.
+    private func yourWorkflows(_ model: WorkflowsHomeModel) -> some View {
+        let all = model.unpinned
+        let shown = showsAllWorkflows ? all : Array(all.prefix(Self.workflowLimit))
+        return SettingsSection(
+            title: "Your Workflows",
+            subtitle: "Run one now, or open it to see what it does.", layout: .plain
+        ) {
+            if all.count > Self.workflowLimit {
+                WorkflowTextLink(title: showsAllWorkflows ? L("Show fewer") : L("Show all \(all.count)")) {
+                    withAnimation(theme.motion.standard) { showsAllWorkflows.toggle() }
+                }
             }
+        } content: {
+            tileGrid(shown)
+        }
+        .settingsLandingAnchor("workflows.yourWorkflows")
+    }
+
+    private func tileGrid(_ tiles: [WorkflowsHomeModel.Tile]) -> some View {
+        WorkflowCardGrid(items: tiles) { tile in
+            WorkflowsHomeTile(
+                tile: tile,
+                onOpen: { windowState.selectWorkflowsPage(.workflow(tile.id)) },
+                onRun: { if let workflow = installed.workflow(id: tile.id) { onRun(workflow) } })
         }
     }
 
@@ -248,7 +278,8 @@ private struct WorkflowsAttentionBanner: View {
     }
 }
 
-private struct WorkflowsPinnedTile: View {
+/// A workflow on Home: its name, what it does, how it last went, and Run.
+private struct WorkflowsHomeTile: View {
     @Environment(\.theme) private var theme
     let tile: WorkflowsHomeModel.Tile
     let onOpen: () -> Void

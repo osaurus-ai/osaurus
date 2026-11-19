@@ -124,6 +124,24 @@ struct WorkflowAutomatePopover: View {
     // MARK: Actions
 
     private func choose(_ kind: AutomationPresets.Kind) {
+        WorkflowAutomationPresetAction.perform(kind, for: workflow, onClose: onClose, onOpenPage: onOpenPage)
+    }
+
+    private func pickFolder(startingAt path: String?) {
+        WorkflowAutomationPresetAction.pickFolder(startingAt: path, for: workflow, onClose: onClose, onOpenPage: onOpenPage)
+    }
+}
+
+/// A one-click preset: a schedule that needs nothing more is made at once
+/// and can be undone from the toast; a folder asks which first; anything
+/// else opens the workflow's page on the new automation.
+@MainActor
+enum WorkflowAutomationPresetAction {
+    static func perform(
+        _ kind: AutomationPresets.Kind, for workflow: InstalledWorkflow, onClose: () -> Void,
+        onOpenPage: @escaping (WorkflowAutomationIntent) -> Void
+    ) {
+        let manager = EventManager.shared
         switch kind {
         case .schedule(let frequency):
             let event = AutomationDefaults.event(for: workflow, source: .schedule(ScheduleSourceConfig(frequency: frequency)))
@@ -136,24 +154,25 @@ struct WorkflowAutomatePopover: View {
                 onOpenPage(.highlight(created.id))
             }
         case .folder(let path):
-            pickFolder(startingAt: path)
+            pickFolder(startingAt: path, for: workflow, onClose: onClose, onOpenPage: onOpenPage)
         case .pickDayAndTime:
             let created = manager.create(AutomationDefaults.event(for: workflow, source: AutomationDefaults.schedule), telemetryOrigin: "user")
             onOpenPage(.highlight(created.id))
         }
     }
 
-    /// The folder picker is a sheet of its own, so the popover closes first.
-    private func pickFolder(startingAt path: String?) {
+    /// The folder picker is a sheet of its own, so whatever offered it closes first.
+    static func pickFolder(
+        startingAt path: String?, for workflow: InstalledWorkflow, onClose: () -> Void,
+        onOpenPage: @escaping (WorkflowAutomationIntent) -> Void
+    ) {
         onClose()
-        let workflow = workflow
-        let open = onOpenPage
         Task { @MainActor in
             guard let picked = await WorkflowAutomationFolderPicker.pick(startingAt: path) else { return }
             let event = AutomationDefaults.event(
                 for: workflow, source: AutomationDefaults.folder(path: picked.path, bookmark: picked.bookmark))
             let created = EventManager.shared.create(event, telemetryOrigin: "user")
-            open(.highlight(created.id))
+            onOpenPage(.highlight(created.id))
         }
     }
 }

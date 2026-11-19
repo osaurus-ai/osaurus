@@ -66,28 +66,33 @@ struct ArchitectModelGuidanceNotice: View {
                     .textStyle(.caption)
                     .foregroundColor(connectFailed ? theme.status.warning.foreground : theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: theme.space.s8) {
-                    if connectFailed {
-                        SettingsButton(.primary, "Choose a model", size: .compact) {
-                            SettingsLanding.open(id: "settings.architect.model")
-                        }
-                    } else {
-                        SettingsButton(
-                            .primary,
-                            String(format: L("Use %@"), session.architectCloudModelDisplayName),
-                            isLoading: isConnecting,
-                            size: .compact,
-                            verbatim: true,
-                            action: useCloud
-                        )
-                    }
-                    SettingsButton(.tertiary, "Keep local model, I understand the trade-offs", size: .compact) {
-                        ArchitectConfigurationStore.update { $0.localModelAcknowledged = true }
-                        acknowledged = true
-                    }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: theme.space.s8) { buttons }
+                    VStack(alignment: .leading, spacing: theme.space.s6) { buttons }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder private var buttons: some View {
+        if connectFailed {
+            SettingsButton(.primary, "Choose a model", size: .compact) {
+                SettingsLanding.open(id: "settings.architect.model")
+            }
+        } else {
+            SettingsButton(
+                .primary,
+                String(format: L("Use %@"), session.architectCloudModelDisplayName),
+                isLoading: isConnecting,
+                size: .compact,
+                verbatim: true,
+                action: useCloud
+            )
+        }
+        SettingsButton(.tertiary, "Keep local model, I understand the trade-offs", size: .compact) {
+            ArchitectConfigurationStore.update { $0.localModelAcknowledged = true }
+            acknowledged = true
         }
     }
 

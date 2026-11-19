@@ -272,7 +272,7 @@ struct WorkflowCountWordsTests {
         let expected: [String: String] = [
             "%lld issues": "%lld issue",
             "%lld needs your attention.": "%lld needs your attention.",
-            "%lld run on their own.": "%lld runs on its own.",
+            "%lld workflows run on their own.": "%lld workflow runs on its own.",
             "%lld other automations run agents.": "%lld other automation runs an agent.",
             "On for %lld workflows": "On for %lld workflow",
             "runs every %lld minutes": "runs every minute",

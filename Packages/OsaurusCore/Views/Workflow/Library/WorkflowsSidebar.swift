@@ -37,6 +37,12 @@ struct WorkflowsSidebar: View {
 
     static let storeURL = URL(string: "https://store.osaurus.ai/")!
 
+    /// Opens the Osaurus Store in the browser; Get Started counts the visit.
+    static func openStore() {
+        NSWorkspace.shared.open(storeURL)
+        WorkflowsGetStartedStore.noteStoreVisited()
+    }
+
     @State private var searchText = ""
     @State private var query = ""
     @AppStorage("workflowsSidebar.pinnedCollapsed") private var pinnedCollapsed = false
@@ -375,7 +381,7 @@ struct WorkflowsSidebar: View {
     // MARK: Footer
 
     private var footer: some View {
-        WorkflowsSidebarStoreRow { NSWorkspace.shared.open(Self.storeURL) }
+        WorkflowsSidebarStoreRow { Self.openStore() }
             .settingsLandingAnchor("workflows.store")
             .padding(.horizontal, theme.space.s16)
             .padding(.top, theme.space.s8)
