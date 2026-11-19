@@ -1,6 +1,278 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Claude Code can use Osaurus tools and delegate, but can't change Osaurus settings. Turn on Allow Osaurus configuration changes below to let it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code kann Osaurus-Werkzeuge nutzen und delegieren, aber keine Osaurus-Einstellungen ändern. Aktiviere unten „Osaurus-Konfigurationsänderungen erlauben“, um das zu erlauben."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code는 Osaurus 도구를 사용하고 위임할 수 있지만 Osaurus 설정은 변경할 수 없습니다. 허용하려면 아래에서 Osaurus 구성 변경 허용을 켜세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code может использовать инструменты Osaurus и делегировать задачи, но не может менять настройки Osaurus. Чтобы разрешить это, включите ниже «Разрешить изменение конфигурации Osaurus»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code 可以使用 Osaurus 工具并委派任务，但不能更改 Osaurus 设置。如需允许，请在下方开启“允许更改 Osaurus 配置”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code 可以使用 Osaurus 工具並委派任務，但不能變更 Osaurus 設定。如需允許，請在下方開啟「允許變更 Osaurus 設定」。"
+          }
+        }
+      }
+    },
+    "Claude Code has only its own tools, so it can't delegate to your agents or use Osaurus tools. Turn on Use Osaurus Tools below." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code hat nur seine eigenen Werkzeuge und kann daher nicht an deine Agenten delegieren oder Osaurus-Werkzeuge nutzen. Aktiviere unten „Osaurus-Werkzeuge verwenden“."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code는 자체 도구만 있으므로 에이전트에게 위임하거나 Osaurus 도구를 사용할 수 없습니다. 아래에서 Osaurus 도구 사용을 켜세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У Claude Code есть только собственные инструменты, поэтому он не может делегировать задачи вашим агентам или использовать инструменты Osaurus. Включите ниже «Использовать инструменты Osaurus»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code 只有自己的工具，因此无法委派给你的智能体或使用 Osaurus 工具。请在下方开启“使用 Osaurus 工具”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code 只有自己的工具，因此無法委派給你的智能體或使用 Osaurus 工具。請在下方開啟「使用 Osaurus 工具」。"
+          }
+        }
+      }
+    },
+    "Model and context set by Claude Code" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell und Kontext werden von Claude Code festgelegt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델과 컨텍스트는 Claude Code가 설정합니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель и контекст задаёт Claude Code"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型和上下文由 Claude Code 设定"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型和上下文由 Claude Code 設定"
+          }
+        }
+      }
+    },
+    "Model and context set by the runtime" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell und Kontext werden von der Laufzeit festgelegt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델과 컨텍스트는 런타임이 설정합니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель и контекст задаёт среда выполнения"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型和上下文由运行时设定"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型和上下文由執行環境設定"
+          }
+        }
+      }
+    },
+    "Runs on a runtime that no longer exists" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Läuft auf einer Laufzeit, die nicht mehr existiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "더 이상 존재하지 않는 런타임에서 실행됩니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работает в среде выполнения, которой больше нет"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行于已不存在的运行时"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "執行於已不存在的執行環境"
+          }
+        }
+      }
+    },
+    "Text only mode gives Claude Code no tools, so it can't configure Osaurus or delegate. Set Execution mode to Agent below." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Im Modus „Nur Text“ hat Claude Code keine Werkzeuge und kann Osaurus daher weder konfigurieren noch delegieren. Stelle unten den Ausführungsmodus auf „Agent“."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "텍스트 전용 모드에서는 Claude Code에 도구가 없으므로 Osaurus를 구성하거나 위임할 수 없습니다. 아래에서 실행 모드를 에이전트로 설정하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В режиме «Только текст» у Claude Code нет инструментов, поэтому он не может настраивать Osaurus или делегировать задачи. Установите ниже режим выполнения «Агент»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“仅文本”模式下 Claude Code 没有任何工具，因此无法配置 Osaurus 或委派任务。请在下方将执行模式设为“智能体”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「僅文字」模式下 Claude Code 沒有任何工具，因此無法設定 Osaurus 或委派任務。請在下方將執行模式設為「智能體」。"
+          }
+        }
+      }
+    },
+    "The Orchestrator's runtime was removed. Pick a model in the chat model picker so it can run." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Laufzeit des Orchestrators wurde entfernt. Wähle in der Modellauswahl des Chats ein Modell, damit er laufen kann."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "오케스트레이터의 런타임이 제거되었습니다. 실행할 수 있도록 채팅 모델 선택기에서 모델을 고르세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Среда выполнения оркестратора удалена. Выберите модель в селекторе моделей чата, чтобы он мог работать."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编排器的运行时已被移除。请在聊天模型选择器中选择一个模型，以便它可以运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "協調器的執行環境已被移除。請在聊天模型選擇器中選擇一個模型，以便它可以執行。"
+          }
+        }
+      }
+    },
+    "This runtime runs its own model and tools. Osaurus tools and delegation need Claude Code or a built-in model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Laufzeit verwendet ihr eigenes Modell und eigene Werkzeuge. Osaurus-Werkzeuge und Delegation erfordern Claude Code oder ein integriertes Modell."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 런타임은 자체 모델과 도구를 사용합니다. Osaurus 도구와 위임에는 Claude Code 또는 내장 모델이 필요합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта среда выполнения использует собственную модель и инструменты. Для инструментов Osaurus и делегирования нужен Claude Code или встроенная модель."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此运行时使用自己的模型和工具。Osaurus 工具和委派需要 Claude Code 或内置模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此執行環境使用自己的模型和工具。Osaurus 工具和委派需要 Claude Code 或內建模型。"
+          }
+        }
+      }
+    },
     "" : {
       "shouldTranslate" : false
     },
@@ -3210,6 +3482,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use Default (%@)"
+          }
+        }
+      }
+    },
+    "Use Osaurus Tools" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Werkzeuge verwenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 도구 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать инструменты Osaurus"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Osaurus 工具"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Osaurus 工具"
           }
         }
       }
@@ -45885,40 +46191,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "允許變更 Osaurus 設定"
-          }
-        }
-      }
-    },
-    "Allow Osaurus read tools" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus-Lesewerkzeuge erlauben"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus 읽기 도구 허용"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Разрешить инструменты чтения Osaurus"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "允许 Osaurus 读取工具"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "允許 Osaurus 讀取工具"
           }
         }
       }
@@ -244334,6 +244606,9 @@
     "Picked up again after Osaurus relaunched." : {
 
     },
+    "Picking a model asks you to sign in to Claude Code first." : {
+
+    },
     "Picking up where you left off." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -354626,6 +354901,9 @@
     "this agent runs Claude Code in text-only mode, which disables all tools" : {
 
     },
+    "this agent's tools are turned off in its settings" : {
+
+    },
     "This agent runs on %@, which uses its own tools. Click to switch runtimes or models." : {
 
     },
@@ -358682,6 +358960,9 @@
           }
         }
       }
+    },
+    "This question closes %@ if unanswered." : {
+
     },
     "This question was open for a day, so it moved to the Mac: “%@” is still open there." : {
       "localizations" : {

@@ -282,6 +282,10 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
     public var hasRemoteReviewer: Bool
     /// A schedule or watcher run nobody is watching.
     public var isUnattendedDispatch: Bool
+    /// The call refuses any approval prompt instead of asking (an external
+    /// caller's `/mcp/call`). Steps rebind it from here, not from whichever
+    /// task started the run.
+    public var deniesUnapprovedPrompts: Bool = false
     /// The person is there to answer a macOS permission dialog.
     public var isAttended: Bool {
         !isUnattendedDispatch && !isExternalSurface && !background && onBehalfOf == nil
@@ -366,6 +370,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         case isExternalSurface = "external_surface"
         case hasRemoteReviewer = "remote_reviewer"
         case isUnattendedDispatch = "unattended"
+        case deniesUnapprovedPrompts = "denies_prompts"
         case folderPath = "folder_path"
         case parentRunID = "parent_run_id"
         case ancestors
@@ -388,6 +393,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         isExternalSurface = try c.decodeIfPresent(Bool.self, forKey: .isExternalSurface) ?? false
         hasRemoteReviewer = try c.decodeIfPresent(Bool.self, forKey: .hasRemoteReviewer) ?? false
         isUnattendedDispatch = try c.decodeIfPresent(Bool.self, forKey: .isUnattendedDispatch) ?? false
+        deniesUnapprovedPrompts = try c.decodeIfPresent(Bool.self, forKey: .deniesUnapprovedPrompts) ?? false
         folderPath = try c.decodeIfPresent(String.self, forKey: .folderPath)
         parentRunID = try c.decodeIfPresent(UUID.self, forKey: .parentRunID)
         ancestors = try c.decodeIfPresent([UUID].self, forKey: .ancestors) ?? []
@@ -410,6 +416,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         try c.encode(isExternalSurface, forKey: .isExternalSurface)
         try c.encode(hasRemoteReviewer, forKey: .hasRemoteReviewer)
         try c.encode(isUnattendedDispatch, forKey: .isUnattendedDispatch)
+        if deniesUnapprovedPrompts { try c.encode(true, forKey: .deniesUnapprovedPrompts) }
         try c.encodeIfPresent(folderPath, forKey: .folderPath)
         try c.encodeIfPresent(parentRunID, forKey: .parentRunID)
         if !ancestors.isEmpty { try c.encode(ancestors, forKey: .ancestors) }

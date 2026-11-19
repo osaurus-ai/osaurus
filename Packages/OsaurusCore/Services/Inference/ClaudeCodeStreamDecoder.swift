@@ -47,8 +47,9 @@ public enum ClaudeCodeStreamEvent: Sendable, Equatable {
     /// The CLI asks its host something (`can_use_tool` permission prompts)
     /// and waits for a `control_response` with the same `request_id`.
     case controlRequest(requestId: String, subtype: String)
-    /// Terminal usage frame.
-    case stats(outputTokens: Int, tokensPerSecond: Double, stopReason: String?)
+    /// Terminal usage frame. `promptTokens` is the turn's input, cached
+    /// reads included, summed over its API calls.
+    case stats(outputTokens: Int, tokensPerSecond: Double, stopReason: String?, promptTokens: Int? = nil)
     /// Subscription rate-limit notice. Surfaced verbatim rather than retried.
     case rateLimit(status: String, utilization: Double, resetsAt: Date?)
     /// The CLI reported a failed turn.
@@ -258,8 +259,12 @@ public struct ClaudeCodeStreamDecoder: Sendable {
         let tps = durationMs > 0 ? Double(outputTokens) / (durationMs / 1000.0) : 0
 
         let stopReason = (root["stop_reason"] as? String) ?? lastStopReason
+        let promptParts = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+            .compactMap { usage?[$0] as? Int }
         events.append(
-            .stats(outputTokens: outputTokens, tokensPerSecond: tps, stopReason: stopReason)
+            .stats(
+                outputTokens: outputTokens, tokensPerSecond: tps, stopReason: stopReason,
+                promptTokens: promptParts.isEmpty ? nil : promptParts.reduce(0, +))
         )
 
         if (root["is_error"] as? Bool) == true {

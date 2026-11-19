@@ -35,8 +35,25 @@ extension EvalRunner {
             outputKeys: exp.outputKeys ?? [], outputValues: exp.outputValues ?? [:],
             outputContains: exp.outputContains ?? [:], outputExcludes: exp.outputExcludes ?? [:],
             toolResults: exp.toolResults ?? [:], toolArguments: exp.toolArguments ?? [:])
+        var driver = WorkflowEvalHarness.TemplateDriver.direct
+        switch exp.via {
+        case nil, "direct": break
+        case "harness_bridge":
+            let server = await EvalHTTPServerHost.ensureStarted()
+            guard let port = server.port else {
+                return EvalCaseReport(
+                    id: testCase.id, label: label, domain: testCase.domain, query: testCase.query,
+                    outcome: .skipped, notes: ["BLOCKED: Osaurus server did not start: \(server.error ?? "no port")"],
+                    modelId: modelId, latencyMs: 0,
+                    blocker: EvalBlockerReason(
+                        kind: .unsupportedHarness, message: "Osaurus server did not start: \(server.error ?? "no port")"))
+            }
+            driver = .harnessBridge(apiPort: port)
+        case let other?:
+            return Self.errored(testCase, label: label, modelId: modelId, note: "unknown `via` `\(other)`")
+        }
         let started = Date()
-        let outcome = await WorkflowEvalHarness.runTemplate(spec, model: modelId)
+        let outcome = await WorkflowEvalHarness.runTemplate(spec, model: modelId, driver: driver)
         return report(testCase, label: label, modelId: modelId, outcome: outcome, started: started)
     }
 
@@ -120,7 +137,18 @@ extension EvalRunner {
             maxPromptTokens: exp.maxPromptTokens, needsImageModel: exp.needsImageModel ?? false,
             pickedFolder: filesDir.isEmpty ? nil : filesDir)
         let started = Date()
-        let result = await WorkflowEvalHarness.runArchitect(spec, model: modelId)
+        let driver: WorkflowEvalHarness.ArchitectDriver
+        switch await architectDriver() {
+        case .success(let picked):
+            driver = picked
+        case .failure(let blocked):
+            return EvalCaseReport(
+                id: testCase.id, label: label, domain: testCase.domain, query: brief, outcome: .skipped,
+                notes: ["BLOCKED: \(blocked.message)"], modelId: modelId,
+                latencyMs: Date().timeIntervalSince(started) * 1000,
+                blocker: EvalBlockerReason(kind: .unsupportedHarness, message: blocked.message))
+        }
+        let result = await WorkflowEvalHarness.runArchitect(spec, model: modelId, driver: driver)
         var outcome = result.outcome
         let transcript = result.transcript
         if let written = exp.fixtureFilesWritten, !written.isEmpty, outcome.blocked == nil {
@@ -168,6 +196,30 @@ extension EvalRunner {
             latencyMs: Date().timeIntervalSince(started) * 1000, toolUsage: toolUsageStats(transcript),
             telemetry: telemetry(from: transcript))
         return persistAgentLoopTranscript(transcript, for: row, query: brief, includeSuccessful: true)
+    }
+
+    struct ArchitectLaneBlocked: Error {
+        let message: String
+    }
+
+    /// `OSAURUS_EVALS_HARNESS=claude-code` designs on Claude Code
+    /// (`OSAURUS_EVALS_CLAUDE_MODEL`, default `sonnet`) against the shared
+    /// in-process server, with the MCP proxy at `OSAURUS_CLI_PATH`. Anything
+    /// else is Osaurus's own loop.
+    @MainActor
+    static func architectDriver(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) async -> Result<WorkflowEvalHarness.ArchitectDriver, ArchitectLaneBlocked> {
+        guard environment["OSAURUS_EVALS_HARNESS"] == "claude-code" else { return .success(.builtIn) }
+        let server = await EvalHTTPServerHost.ensureStarted()
+        guard let port = server.port else {
+            return .failure(ArchitectLaneBlocked(message: "Osaurus server unreachable: \(server.error ?? "no port")"))
+        }
+        let model = environment["OSAURUS_EVALS_CLAUDE_MODEL"].flatMap { $0.isEmpty ? nil : $0 } ?? "sonnet"
+        let cli = environment["OSAURUS_CLI_PATH"].flatMap { $0.isEmpty ? nil : $0 }
+        let timeout = environment["OSAURUS_EVALS_HARNESS_TURN_TIMEOUT"].flatMap(TimeInterval.init) ?? 1_800
+        return .success(
+            .claudeCode(.init(claudeModel: model, apiPort: port, osaurusCLIPath: cli, turnTimeout: timeout)))
     }
 
     private static func report(

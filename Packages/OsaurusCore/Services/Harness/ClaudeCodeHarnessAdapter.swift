@@ -21,20 +21,32 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
     func tokenToolScope(context: HarnessLaunchContext) -> Set<String>? {
         if context.isArchitect { return HarnessGrantStore.architectToolNames }
         let config = context.claudeCode
-        guard config.mode == .agent, config.allowOsaurusTools else { return [] }
-        return Set(ClaudeCodeConfiguration.osaurusToolPatterns(allowConfigWrites: Self.allowsConfigWrites(context)))
+        guard config.mode == .agent, config.osaurusTools else { return [] }
+        return context.osaurusToolNames
     }
 
     func tokenAllowsConfigWrites(context: HarnessLaunchContext) -> Bool {
         let config = context.claudeCode
-        return !context.isArchitect && config.mode == .agent && config.allowOsaurusTools
-            && Self.allowsConfigWrites(context)
+        return !context.isArchitect && config.mode == .agent && config.osaurusTools
+            && context.osaurusToolNames.contains(HarnessGrantStore.configWriteToolName)
     }
 
     /// `osaurus_config` only ever runs for the Default agent, so a custom
     /// agent's opt-in is ignored rather than handed a tool that always refuses.
-    static func allowsConfigWrites(_ context: HarnessLaunchContext) -> Bool {
-        context.claudeCode.allowOsaurusConfigWrites && context.agentId == Agent.defaultId
+    static func allowsConfigWrites(agentId: UUID, _ config: ClaudeCodeAgentConfig) -> Bool {
+        config.allowOsaurusConfigWrites && agentId == Agent.defaultId
+    }
+
+    /// Why an agent-mode run has no Osaurus tools; nil once they attach.
+    static func toolsUnavailableReason(
+        _ context: HarnessLaunchContext,
+        attached: Bool
+    ) -> ClaudeCodeConfiguration.OsaurusToolsUnavailableReason? {
+        if attached { return nil }
+        if !context.claudeCode.osaurusTools { return .notEnabled }
+        if context.osaurusToolNames.isEmpty { return .agentToolsOff }
+        if context.osaurusCLIPath == nil { return .bridgeMissing }
+        return .serverNotRunning
     }
 
     func launchPlan(context: HarnessLaunchContext, token: String?) throws -> HarnessLaunchPlan {
@@ -88,7 +100,8 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
                 let json = ClaudeCodeConfiguration.mcpConfigJSON(
                     cliPath: cliPath,
                     patterns: ClaudeCodeConfiguration.architectToolPatterns,
-                    bridgeGrant: token
+                    bridgeGrant: token,
+                    port: context.apiBase.flatMap { URL(string: $0)?.port }
                 )
             {
                 let url = try HarnessScratch.writePrivateFile(
@@ -113,11 +126,13 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
                 allowed.append(ClaudeCodeConfiguration.scopedWriteRule(root: context.workingDirectory))
             }
             if config.allowShell { allowed += ClaudeCodeConfiguration.shellTools }
-            if config.allowOsaurusTools, context.serverReachable, let cliPath = context.osaurusCLIPath,
+            let osaurusTools = context.osaurusToolNames.sorted()
+            if config.osaurusTools, context.serverReachable, let cliPath = context.osaurusCLIPath,
                 let json = ClaudeCodeConfiguration.mcpConfigJSON(
                     cliPath: cliPath,
-                    allowConfigWrites: Self.allowsConfigWrites(context),
-                    bridgeGrant: token
+                    patterns: osaurusTools,
+                    bridgeGrant: token,
+                    port: context.apiBase.flatMap { URL(string: $0)?.port }
                 )
             {
                 let url = try HarnessScratch.writePrivateFile(
@@ -127,9 +142,7 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
                 )
                 temporaryFiles.append(url)
                 arguments += ["--mcp-config", url.path]
-                allowed += ClaudeCodeConfiguration.osaurusAllowedToolNames(
-                    allowConfigWrites: Self.allowsConfigWrites(context)
-                )
+                allowed += ClaudeCodeConfiguration.namespaced(osaurusTools)
                 bridgeAttached = true
             }
             arguments += ["--allowedTools", allowed.joined(separator: ",")]
@@ -154,17 +167,19 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
         if architectBridgeMissing {
             promptParts.append(
                 ClaudeCodeConfiguration.architectToolsUnavailableNote(
-                    reason: context.osaurusCLIPath == nil ? .notEnabled : .serverNotRunning
+                    reason: context.osaurusCLIPath == nil ? .bridgeMissing : .serverNotRunning
                 )
             )
-        } else if !context.isArchitect, config.mode == .agent, config.allowOsaurusTools {
+        } else if !context.isArchitect, config.mode == .agent {
             promptParts.append(
                 ClaudeCodeConfiguration.osaurusToolsSystemNote(
-                    available: bridgeAttached,
-                    allowConfigWrites: Self.allowsConfigWrites(context),
-                    reason: bridgeAttached ? nil : (context.osaurusCLIPath == nil ? .notEnabled : .serverNotRunning)
+                    tools: bridgeAttached ? context.osaurusToolNames : [],
+                    reason: Self.toolsUnavailableReason(context, attached: bridgeAttached)
                 )
             )
+            if bridgeAttached, let routing = context.teammateRoutingNote {
+                promptParts.append(routing)
+            }
         }
         if !promptParts.isEmpty {
             // A file, not `--append-system-prompt`: argv is visible to every
@@ -294,8 +309,11 @@ final class ClaudeCodeHarnessCodec: HarnessCodec {
                 )
             case .controlRequest(let requestId, let subtype):
                 if let reply = Self.controlReply(requestId: requestId, subtype: subtype) { replies.append(reply) }
-            case .stats(let outputTokens, let tokensPerSecond, let stopReason):
-                events.append(.stats(outputTokens: outputTokens, tokensPerSecond: tokensPerSecond, stopReason: stopReason))
+            case .stats(let outputTokens, let tokensPerSecond, let stopReason, let promptTokens):
+                events.append(
+                    .stats(
+                        outputTokens: outputTokens, tokensPerSecond: tokensPerSecond, stopReason: stopReason,
+                        promptTokens: promptTokens))
                 turnEnded = true
             case .rateLimit(let status, let utilization, _):
                 guard status != "allowed" else { continue }

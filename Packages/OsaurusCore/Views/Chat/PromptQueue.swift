@@ -177,6 +177,9 @@ public final class ClarifyPromptState: ObservableObject {
     public let question: String
     public let options: [String]
     public let allowMultiple: Bool
+    /// When the asker stops waiting (a harness's tool-call timeout); the
+    /// card says so.
+    public let expiresAt: Date?
 
     private let onSubmit: (String) -> Void
     private let onCancel: () -> Void
@@ -187,12 +190,14 @@ public final class ClarifyPromptState: ObservableObject {
         question: String,
         options: [String] = [],
         allowMultiple: Bool = false,
+        expiresAt: Date? = nil,
         onSubmit: @escaping (String) -> Void,
         onCancel: @escaping () -> Void = {},
         onUserCancel: @escaping () -> Void = {}
     ) {
         self.question = question
         self.options = options
+        self.expiresAt = expiresAt
         // `allowMultiple` only makes sense alongside options; collapse
         // it defensively so callers can't end up with a single-tap chip
         // strip that pretends it accepts multi-select.

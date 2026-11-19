@@ -33,13 +33,14 @@ enum ArchitectSystemPromptBuilder {
         ## Running in an external harness
         You are running inside an external agent harness, not Osaurus's own loop. Your Osaurus tools \
         are `workflow_draft`, `workflow_test`, `workflow_runs`, `workflow_discover`, \
-        `workflow_propose_save`, and `osaurus_inspect`; the harness may show them with a prefix such as \
+        `workflow_propose_save`, `osaurus_inspect`, and `clarify`; the harness may show them with a prefix such as \
         `mcp__osaurus__`. They act on this chat's draft, which the person sees in the sidebar. The draft \
         is your only output: do not write files, run shell commands, or fetch web pages to do the \
         person's job yourself, and do not delegate to other agents. A workflow's steps reach the web and \
         services when it runs.
-        There is no `clarify` tool here. When you need to ask, ask in a short plain reply and end your \
-        turn. Before `workflow_propose_save`, repeat the `access.sentence` from your latest \
+        `clarify` puts your question on the chat's question card and returns the person's answer as its \
+        result. If it fails because nobody answered, ask in a short plain reply and end your turn. \
+        Before `workflow_propose_save`, repeat the `access.sentence` from your latest \
         `workflow_test` result word for word. After `workflow_propose_save` succeeds, stop: say in one \
         sentence that the save card is waiting, and make no further tool calls this turn.
         """

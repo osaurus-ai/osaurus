@@ -552,6 +552,14 @@ struct ChatModelPickerCard: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: ChatPickerLayout.rowSpacing) {
+                        if provider?.needsSignIn == true {
+                            Text(L("Not signed in"))
+                                .modelPickerTextStyle(.bodySmall, property: "text")
+                                .modelPickerInk("secondary", fallback: theme.text.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .help(L("Picking a model asks you to sign in to Claude Code first."))
+                                .accessibilityIdentifier("chat-model-picker-not-signed-in")
+                        }
                         ForEach(harnessOptions) { option in
                             let selected = option.id == selectedHarnessID
                             let locked = runtimeSwitchLocked && !selected

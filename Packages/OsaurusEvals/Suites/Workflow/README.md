@@ -39,6 +39,7 @@ wall time.
 | `workflow.wait-state-join-all` | no | Two parallel `wait` steps (1 s, 2 s) feed a `join: all` state step; a `state increment` counts the run from 0. |
 | `workflow.condition-ops-route` | no | Edge `when` with `greater_than`, `contains`, `less_or_equal`, `not_contains`, and `all` groups picks one of three branches. |
 | `workflow.retry-recovers-flaky-step` | no | A code step that throws on its first attempt is retried (`max_attempts: 2`) and the run completes. |
+| `workflow.harness-bridge-run-workflow` | no | `via: harness_bridge`: the Default agent's harness token for an open chat calls `run_workflow` on the in-process server's `/mcp/call` with a tool-use id, as Claude Code does. The run belongs to that chat and id, runs attended, its output comes back, and the call is recorded for its tool card. |
 
 ### Day-one team workflows (`workflow.team-*`)
 

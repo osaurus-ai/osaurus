@@ -26,6 +26,10 @@ struct OrchestratorSettingsView: View {
     @State private var tempTemperature: String = ""
     @State private var tempMaxTokens: String = ""
 
+    /// Saved on each change by `ClaudeCodeOptionsSection`, outside the
+    /// debounced identity save.
+    @State private var claudeCodeConfig: ClaudeCodeAgentConfig = .default
+
     @State private var successMessage: String?
 
     /// Baseline of the save-relevant identity fields as last loaded or
@@ -46,6 +50,13 @@ struct OrchestratorSettingsView: View {
                 identitySection
                 instructionsSection
                 generationSection
+                if runsOnClaudeCode {
+                    ClaudeCodeOptionsSection(
+                        agentId: Agent.defaultId,
+                        config: $claudeCodeConfig,
+                        anchorPrefix: "settings.orchestrator.claudeCode"
+                    )
+                }
                 OrchestratorWorkingFolderSection()
                 subagentsLink
                 OrchestratorDelegationsSection()
@@ -116,6 +127,13 @@ struct OrchestratorSettingsView: View {
         ])
     }
 
+    private var runsOnClaudeCode: Bool {
+        if case .resolved(let runtime) = agentManager.effectiveHarness(for: Agent.defaultId) {
+            return runtime.kind == .claudeCode
+        }
+        return false
+    }
+
     // MARK: - Subagents Link
 
     /// The Orchestrator's allowed subagents and delegation limits live on
@@ -162,7 +180,7 @@ struct OrchestratorSettingsView: View {
 
     @ViewBuilder private var generationSection: some View {
         SettingsSection(title: "Model & Generation") {
-            OrchestratorModelReadinessRow()
+            OrchestratorModelReadinessRow(claudeCodeConfig: claudeCodeConfig)
 
             SettingsSliderRow(
                 label: "Temperature",
@@ -211,6 +229,7 @@ struct OrchestratorSettingsView: View {
             tempSystemPrompt = defaultAgent.systemPrompt
             tempTemperature = defaultAgent.temperature.map { String($0) } ?? ""
             tempMaxTokens = defaultAgent.maxTokens.map(String.init) ?? ""
+            claudeCodeConfig = defaultAgent.claudeCode ?? .default
             // Capture the pristine baseline so the auto-save stays idle
             // until the user actually edits something.
             savedFormState = currentFormState

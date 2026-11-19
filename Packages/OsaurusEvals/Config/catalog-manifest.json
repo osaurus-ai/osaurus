@@ -816,6 +816,7 @@
       "workflow.condition-ops-route",
       "workflow.decide-routes-branch",
       "workflow.dialog-then-inference",
+      "workflow.harness-bridge-run-workflow",
       "workflow.http-error-edge-fallback",
       "workflow.invalid-input-fails-early",
       "workflow.map-fans-out-code-step",

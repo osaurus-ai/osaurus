@@ -1082,7 +1082,7 @@ public enum SystemPromptTemplates {
 
     /// The Orchestrator's Team section: who `run_workflow` can hand a task
     /// to, the user's agents first. Nil when there is nothing to run.
-    public static func orchestratorTeam(_ team: OrchestratorTeam) -> String? {
+    public static func orchestratorTeam(_ team: OrchestratorTeam, canHandOffToConfigurator: Bool = true) -> String? {
         guard !team.isEmpty else { return nil }
         var lines: [String] = ["## Team", ""]
         lines.append(
@@ -1117,7 +1117,8 @@ public enum SystemPromptTemplates {
             lines.append(
                 "The user has no agents of their own yet, so nothing here reads their calendar, reminders, "
                     + "mail, or notes. For a request that needs one of those, say so: Create starter agents "
-                    + "(Settings → Agents → Delegation) adds them, or `configurator_handoff` can set one up.")
+                    + "(Settings → Agents → Delegation) adds them"
+                    + (canHandOffToConfigurator ? ", or `configurator_handoff` can set one up." : "."))
         }
         return lines.joined(separator: "\n")
     }
