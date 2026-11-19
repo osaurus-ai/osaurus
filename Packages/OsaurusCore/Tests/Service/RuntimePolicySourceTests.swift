@@ -299,14 +299,6 @@ struct RuntimePolicySourceTests {
         #expect(background.lowerBound < synchronous.lowerBound)
     }
 
-    @Test("chat history writer persists through the conversation store without the storage key")
-    func chatHistoryWriterPersistsThroughTheConversationStore() throws {
-        let source = try Self.source("Storage/ChatHistoryWriter.swift")
-        #expect(source.contains("ConversationStores.current"))
-        #expect(!source.contains("ChatHistoryDatabase.shared"))
-        #expect(!source.contains("prewarmCurrentKey()"))
-    }
-
     @Test("memory ingest fails fast when memory is disabled")
     func memoryIngestFailsFastWhenMemoryDisabled() throws {
         let source = try Self.source("Networking/HTTPHandler.swift")
@@ -458,12 +450,19 @@ struct RuntimePolicySourceTests {
         #expect(http.contains("let maxIterations = max(1, min(configuredMaxToolAttempts, 120))"))
     }
 
-    @Test("HTTP chat persistence runs after response path")
-    func httpChatPersistenceRunsAfterResponsePath() throws {
-        let source = try Self.source("Networking/HTTPHandler.swift")
+    @Test("raw inference surfaces never write chat history")
+    func rawInferenceSurfacesNeverWriteChatHistory() throws {
+        let http = try Self.source("Networking/HTTPHandler.swift")
+        let start = try #require(http.range(of: "private func handleChatCompletions("))
+        let end = try #require(http.range(of: "private func handleChatNDJSON(", range: start.upperBound ..< http.endIndex))
+        let chatCompletions = http[start.lowerBound ..< end.lowerBound]
+        #expect(!chatCompletions.contains("ChatHistoryWriter"))
+        #expect(!chatCompletions.contains("X-Persist"))
 
-        #expect(source.contains("ChatHistoryWriter.persistInBackground("))
-        #expect(!source.contains("ChatHistoryWriter.persist(\n                            source: .http"))
+        let plugin = try Self.source("Services/Plugin/PluginHostAPI.swift")
+        #expect(!plugin.contains("ChatHistoryWriter"))
+        #expect(!plugin.contains("persistInference"))
+        #expect(!plugin.contains("persistStreamingInference"))
     }
 
     @Test("chat session manager loads synchronously on init so first read sees populated sessions")
@@ -1882,8 +1881,6 @@ struct RuntimePolicySourceTests {
         let chatCompletions = handler[start.lowerBound ..< end.lowerBound]
         #expect(chatCompletions.contains("let enrichedReq = req"))
         #expect(chatCompletions.contains("http_context_passthrough_done"))
-        #expect(chatCompletions.contains("X-Osaurus-Agent-Id"))
-        #expect(chatCompletions.contains("agentId: resolvedAgentUUID"))
         #expect(!chatCompletions.contains("enrichWithAgentContext("))
         #expect(!chatCompletions.contains("composeChatContext("))
         #expect(!chatCompletions.contains("injectMemoryPrefix("))

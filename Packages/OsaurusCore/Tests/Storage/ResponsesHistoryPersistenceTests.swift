@@ -260,8 +260,7 @@ struct ResponsesHistoryPersistenceTests {
     }
 
     @MainActor
-    @Test(arguments: [SessionSource.http, .plugin, .workspace])
-    func realHTTPPluginAndWorkspaceWriterPreservesNativeHistory(source: SessionSource) async throws {
+    @Test func rawTranscriptTurnsPreserveNativeHistoryThroughTheStore() async throws {
         try await ChatHistoryTestStorage.run {
             try ConversationStores.current.open()
             let externalKey = "native-writer-\(UUID().uuidString)"
@@ -280,18 +279,14 @@ struct ResponsesHistoryPersistenceTests {
                 ChatMessage(role: "tool", content: "file a", tool_calls: nil, tool_call_id: "call_a"),
                 ChatMessage(role: "tool", content: "seven", tool_calls: nil, tool_call_id: "call_b"), signed,
             ]
-            if source == .plugin {
-                PluginHostContext.persistInference(pluginId: "native-plugin", agentId: nil,
-                    externalSessionKey: externalKey, finalMessages: messages, model: "fixture-native")
-            } else {
-                ChatHistoryWriter.persist(source: source,
-                    sourcePluginId: source == .workspace ? ChatHistoryWriter.workspacePseudoPluginId : nil,
-                    agentId: nil, externalKey: externalKey, finalMessages: messages, model: "fixture-native")
-            }
             let db = ConversationStores.current
+            try db.saveSession(ChatSessionData(
+                selectedModel: "fixture-native", turns: ChatHistoryWriter.turns(from: messages), source: .workspace,
+                sourcePluginId: ChatHistoryWriter.workspacePseudoPluginId, externalSessionKey: externalKey
+            ))
             let metadata = try #require(db.loadAllMetadata().first { $0.externalSessionKey == externalKey })
             let loaded = try #require(db.loadSession(id: metadata.id))
-            #expect(loaded.source == source)
+            #expect(loaded.source == .workspace)
             #expect(loaded.turns.map(\.role) == [.user, .assistant, .tool, .tool, .assistant])
             let actual = loaded.turns[1]
             #expect(actual.thinking == "actual reasoning")

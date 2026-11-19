@@ -238,6 +238,15 @@ extension ChatSessionData {
         return !workspace.isServedForTeammate
     }
 
+    /// A row an earlier version wrote for a raw inference call (HTTP
+    /// `/v1/chat/completions`, plugin `complete` / `complete_stream`).
+    /// Those calls belong in Insights, so the rows stay out of every chat
+    /// list. Dispatched API and plugin runs carry a `dispatchTaskId` and
+    /// remain ordinary chats.
+    public var isRawInferenceRecord: Bool {
+        (source == .http || source == .plugin) && dispatchTaskId == nil
+    }
+
     /// The Mac that served this chat when it isn't `me`.
     func servedElsewhere(me: String?) -> String? {
         guard let servedBy, !servedBy.isEmpty, servedBy != me else { return nil }
