@@ -642,30 +642,36 @@
         }
       }
     },
-    "Keep my setup" : {
+    "Higher values vary the delivery more. The default is what the model was tuned for." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Meine Einrichtung behalten"
+            "value" : "Höhere Werte variieren den Vortrag stärker. Der Standard ist der Wert, auf den das Modell abgestimmt wurde."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "기존 설정 유지"
+            "value" : "값이 높을수록 말투가 더 다양해집니다. 기본값은 모델이 조정된 값입니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Оставить как есть"
+            "value" : "Чем выше значение, тем разнообразнее подача. По умолчанию используется значение, под которое настроена модель."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保留我的设置"
+            "value" : "数值越高，语调变化越大。默认值是模型调校时使用的值。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "數值越高，語調變化越大。預設值是模型調校時使用的值。"
           }
         }
       }
@@ -694,6 +700,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "“保留我的设置”不会做任何更改。你之后可以在设置中添加团队。"
+          }
+        }
+      }
+    },
+    "Keep my setup" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meine Einrichtung behalten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기존 설정 유지"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оставить как есть"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留我的设置"
           }
         }
       }
@@ -823,6 +857,46 @@
     },
     "Normal" : {
 
+    },
+    "Not downloaded — about 530 MB" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht heruntergeladen – etwa 530 MB"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Not downloaded — about 530 MB"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다운로드되지 않음 — 약 530 MB"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не скачано — около 530 MB"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未下载——约 530 MB"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未下載——約 530 MB"
+          }
+        }
+      }
     },
     "Not enough memory" : {
 
@@ -1572,6 +1646,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use Default (%@)"
+          }
+        }
+      }
+    },
+    "Use Model Default" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modellstandard verwenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 기본값 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать значение модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用模型默认值"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用模型預設值"
           }
         }
       }
@@ -215967,46 +216075,6 @@
     },
     "Not copied into the log — only counts and sizes" : {
 
-    },
-    "Not downloaded — about 700 MB" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nicht heruntergeladen – etwa 700 MB"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Not downloaded — about 700 MB"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "다운로드되지 않음 — 약 700 MB"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не скачано — около 700 MB"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未下载——约 700 MB"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未下載——約 700 MB"
-          }
-        }
-      }
     },
     "Not downloaded yet" : {
       "comment" : "Subtitle for an image model row that is available to download but has not yet been downloaded.",

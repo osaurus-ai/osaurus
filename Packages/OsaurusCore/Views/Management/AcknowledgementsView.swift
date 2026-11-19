@@ -166,7 +166,7 @@ struct AcknowledgementsView: View {
         Acknowledgement(
             name: "FluidAudio",
             identity: "fluidaudio",
-            version: "0.12",
+            version: "0.18",
             repository: "https://github.com/FluidInference/FluidAudio",
             license: "Apache 2.0",
             licenseUrl: "https://github.com/FluidInference/FluidAudio/blob/main/LICENSE"

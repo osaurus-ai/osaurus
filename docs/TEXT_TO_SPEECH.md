@@ -2,7 +2,7 @@
 
 Osaurus can read assistant replies aloud. Two engines are supported:
 
-- **On-Device (PocketTTS)** — the default. Fully local synthesis via [FluidAudio PocketTTS](https://github.com/FluidInference/FluidAudio) (kyutai/pocket-tts). English only, ~700 MB one-time model download, no network needed after that.
+- **On-Device (PocketTTS)** — the default. Fully local synthesis via [FluidAudio PocketTTS](https://github.com/FluidInference/FluidAudio) (kyutai/pocket-tts, the `english_2026-10` checkpoint). English only, ~530 MB one-time model download, no network needed after that. Files live under `~/.cache/fluidaudio/Models/pocket-tts/v2.1/english_2026-10/`; the pre-0.18 files left at the `pocket-tts/` root are removed after the new pack first loads.
 - **OpenAI-Compatible Server** — any server implementing the OpenAI `/v1/audio/speech` API: [openai-edge-tts](https://github.com/travisvn/openai-edge-tts), [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI), LocalAI, or OpenAI itself. Use this for more voices, other languages, or a shared TTS box on your network.
 
 Playback streams as audio is synthesized — speech starts before the full utterance is ready.
@@ -24,8 +24,8 @@ Playback streams as audio is synthesized — speech starts before the full utter
 1. Open Settings… (`⌘,`) → **Voice** → **Text to Speech**
 2. Enable **Text-to-Speech**
 3. Leave **Engine** on *On-Device (PocketTTS)*
-4. Click **Download** on the PocketTTS Model card (~700 MB, one time)
-5. Pick a voice and temperature, then use **Preview** to test
+4. Click **Download** on the PocketTTS Model card (~530 MB, one time)
+5. Pick a voice, then use **Preview** to test. **Temperature** starts at the value the checkpoint was tuned for (0.3); move the slider to override it, or **Use Model Default** to go back.
 
 ### OpenAI-Compatible Server
 
@@ -83,9 +83,9 @@ Settings persist to `~/.osaurus/voice/tts.json` (API key excluded — Keychain o
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Master toggle; hides speaker buttons when off |
-| `provider` | `pocketTTS` | `pocketTTS` or `openAICompatible` |
+| `provider` | `pocketTTS` | `pocketTTS` or `openAICompatible`. An unknown value falls back to `pocketTTS` and keeps the other keys. |
 | `voice` | `alba` | PocketTTS voice |
-| `temperature` | `0.7` | PocketTTS generation temperature (0.1–1.2) |
+| `pocketTemperature` | absent | PocketTTS generation temperature (0.1–1.2). Absent uses the checkpoint's own default. Builds before FluidAudio 0.18 wrote `temperature`; a legacy `0.7` (the old Osaurus default) is read as "model default", any other legacy value is kept. |
 | `remoteEndpoint` | `http://localhost:5050` | OpenAI-compatible server base URL |
 | `remoteModel` | `tts-1` | Model name sent to the server |
 | `remoteVoice` | `alloy` | Voice name sent to the server |

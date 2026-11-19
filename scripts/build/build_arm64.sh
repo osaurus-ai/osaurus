@@ -128,6 +128,9 @@ chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus-js-host"
 echo "Bundling sandbox kernel into Resources/SandboxRuntime..."
 ./scripts/build/fetch_sandbox_kernel.sh "$ARCHIVE_APP/Contents/Resources/SandboxRuntime"
 
+echo "Stripping unused GPL LuxTTS G2P data..."
+./scripts/build/strip_luxtts_g2p.sh "$ARCHIVE_APP"
+
 # Re-sign the archived app (now carrying the embedded CLI) with the same
 # entitlements used for the archive. `--deep` also signs the nested CLI binary
 # so Helpers/osaurus carries the hardened runtime before export seals the

@@ -89,6 +89,7 @@ if [[ ! -x "$CLI" ]]; then
 fi
 mkdir -p "$APP/Contents/Helpers"
 cp "$CLI" "$APP/Contents/Helpers/osaurus"
+"$ROOT/scripts/build/strip_luxtts_g2p.sh" "$APP"
 
 # macOS 26 rejects the raw CODE_SIGNING_ALLOWED=NO bundle for UI launch
 # because app resources are not sealed. This ad-hoc seal uses no identity,

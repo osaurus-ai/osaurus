@@ -27,8 +27,9 @@ public struct TTSConfiguration: Codable, Equatable, Sendable {
     /// PocketTTS voice identifier.
     public var voice: String
 
-    /// Generation temperature (0.1 – 1.2). Higher = more variation. PocketTTS only.
-    public var temperature: Double
+    /// PocketTTS generation temperature (0.1 – 1.2). Higher = more variation.
+    /// `nil` uses the checkpoint's own default (`PocketTTSVoiceCatalog.defaultTemperature`).
+    public var temperature: Double?
 
     /// Base URL of the OpenAI-compatible server, without the `/v1/audio/speech`
     /// path (e.g. `http://localhost:5050`).
@@ -49,15 +50,33 @@ public struct TTSConfiguration: Codable, Equatable, Sendable {
     public static let defaultRemoteModel = "tts-1"
     public static let defaultRemoteVoice = "alloy"
 
+    /// Builds before FluidAudio 0.18 wrote this value whether or not the user
+    /// touched the slider. It was an Osaurus default, not the checkpoint's.
+    static let legacyDefaultTemperature = 0.7
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, provider, voice, remoteEndpoint, remoteModel, remoteVoice, remoteSpeed
+        /// Explicit user temperature. Absent means "model default".
+        case temperature = "pocketTemperature"
+        /// Pre-0.18 key, read once for migration and never written.
+        case legacyTemperature = "temperature"
+    }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = TTSConfiguration.default
         self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
-        self.provider =
-            try container.decodeIfPresent(TTSProvider.self, forKey: .provider) ?? defaults.provider
+        // An engine this build doesn't know (written by a newer version) falls
+        // back to the default engine instead of discarding every other field.
+        let rawProvider = try container.decodeIfPresent(String.self, forKey: .provider)
+        self.provider = rawProvider.flatMap(TTSProvider.init(rawValue:)) ?? defaults.provider
         self.voice = try container.decodeIfPresent(String.self, forKey: .voice) ?? defaults.voice
-        self.temperature =
-            try container.decodeIfPresent(Double.self, forKey: .temperature) ?? defaults.temperature
+        if container.contains(.temperature) {
+            self.temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
+        } else {
+            let legacy = try container.decodeIfPresent(Double.self, forKey: .legacyTemperature)
+            self.temperature = legacy == Self.legacyDefaultTemperature ? nil : legacy
+        }
         self.remoteEndpoint =
             try container.decodeIfPresent(String.self, forKey: .remoteEndpoint)
             ?? defaults.remoteEndpoint
@@ -69,11 +88,23 @@ public struct TTSConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Double.self, forKey: .remoteSpeed) ?? defaults.remoteSpeed
     }
 
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(provider, forKey: .provider)
+        try container.encode(voice, forKey: .voice)
+        try container.encodeIfPresent(temperature, forKey: .temperature)
+        try container.encode(remoteEndpoint, forKey: .remoteEndpoint)
+        try container.encode(remoteModel, forKey: .remoteModel)
+        try container.encode(remoteVoice, forKey: .remoteVoice)
+        try container.encode(remoteSpeed, forKey: .remoteSpeed)
+    }
+
     public init(
         enabled: Bool = true,
         provider: TTSProvider = .pocketTTS,
         voice: String = TTSConfiguration.defaultVoice,
-        temperature: Double = 0.7,
+        temperature: Double? = nil,
         remoteEndpoint: String = TTSConfiguration.defaultRemoteEndpoint,
         remoteModel: String = TTSConfiguration.defaultRemoteModel,
         remoteVoice: String = TTSConfiguration.defaultRemoteVoice,

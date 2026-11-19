@@ -88,7 +88,7 @@ struct TTSModeSettingsTab: View {
                 loadSettings()
                 hasLoadedSettings = true
             }
-            // Probe only: loading compiles a ~700 MB CoreML model, which
+            // Probe only: loading compiles a ~530 MB CoreML model, which
             // happens on first speak or from the Load button.
             ttsService.probeModelFiles()
         }
@@ -144,7 +144,7 @@ struct TTSModeSettingsTab: View {
         case .notReady:
             return ttsService.modelFilesOnDisk
                 ? L("Downloaded — loads the first time Osaurus speaks")
-                : L("Not downloaded — about 700 MB")
+                : L("Not downloaded — about 530 MB")
         case .downloading(let fraction):
             if let fraction {
                 return String(format: "%@ %d%%", L("Downloading"), Int(fraction * 100))
@@ -207,15 +207,41 @@ struct TTSModeSettingsTab: View {
 
             SettingsSlider(
                 title: "Temperature",
-                valueText: String(format: "%.2f", config.temperature),
-                value: $config.temperature,
+                valueText: temperatureValueText,
+                description: "Higher values vary the delivery more. The default is what the model was tuned for.",
+                value: temperatureBinding,
                 range: 0.1 ... 1.2,
                 step: 0.05,
                 anchorId: "voice.tts.temperature"
             ) { editing in
                 if !editing { saveSettings() }
             }
+
+            if config.temperature != nil {
+                HStack {
+                    Spacer()
+                    SettingsButton(.secondary, "Use Model Default", size: .compact) {
+                        config.temperature = nil
+                        saveSettings()
+                    }
+                }
+            }
         }
+    }
+
+    /// The slider shows the model's own default until the user moves it.
+    private var temperatureBinding: Binding<Double> {
+        Binding(
+            get: { config.temperature ?? PocketTTSVoiceCatalog.defaultTemperature },
+            set: { config.temperature = $0 }
+        )
+    }
+
+    private var temperatureValueText: String {
+        guard let temperature = config.temperature else {
+            return String(format: "%.2f · %@", PocketTTSVoiceCatalog.defaultTemperature, L("Default"))
+        }
+        return String(format: "%.2f", temperature)
     }
 
     // MARK: - Advanced (engine + remote server)

@@ -26,7 +26,7 @@ Voice → Transcription → **Enable Transcription Mode** turns on system-wide d
 ## Text-to-speech
 
 - Voice → Text to Speech: enable, pick a voice, and Preview. The engine (Pocket TTS or an OpenAI-compatible server) is under Advanced.
-- Default engine: On-Device (PocketTTS) — English, ~700 MB one-time download, offline afterwards; choose a voice (default `alba`).
+- Default engine: On-Device (PocketTTS) — English, ~530 MB one-time download, offline afterwards; choose a voice (default `alba`). **Temperature** uses the model's own default until you move it; **Use Model Default** resets it.
 - Voice models load on first use, not at launch: the first spoken reply (or the first mic tap) loads the model before it starts, and Text to Speech shows **Load Now** to load it ahead of time. Only under critical memory pressure do idle voice models unload; they reload on next use.
 - Alternative: any OpenAI-compatible TTS server (`/v1/audio/speech`) — endpoint, model, voice, speed, optional API key (Keychain).
 - In chat, a speaker button appears on assistant messages when TTS is on; agents can also be granted a `speak` tool with **Speak Tool** in the agent's Abilities settings.
