@@ -110,6 +110,7 @@ struct WorkflowsSidebarModel: Equatable {
         sort: WorkflowsSidebarSort = .name,
         lastRunAt: [UUID: Date] = [:],
         manualOrder: [String] = [],
+        now: Date = Date(),
         style: AutomationSentence.Style = .current
     ) -> WorkflowsSidebarModel {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
@@ -118,7 +119,8 @@ struct WorkflowsSidebarModel: Equatable {
         func row(_ workflow: InstalledWorkflow) -> Row {
             installedRow(
                 workflow, automations: automations[workflow.id] ?? [],
-                isPublished: publishedTemplateIDs.contains(workflow.templateID), style: style)
+                isPublished: publishedTemplateIDs.contains(workflow.templateID), lastRunAt: lastRunAt[workflow.id],
+                now: now, style: style)
         }
 
         var model = WorkflowsSidebarModel()
@@ -201,13 +203,13 @@ struct WorkflowsSidebarModel: Equatable {
     }
 
     static func installedRow(
-        _ workflow: InstalledWorkflow, automations: [AutomationFacts], isPublished: Bool,
-        style: AutomationSentence.Style = .current
+        _ workflow: InstalledWorkflow, automations: [AutomationFacts], isPublished: Bool, lastRunAt: Date? = nil,
+        now: Date = Date(), style: AutomationSentence.Style = .current
     ) -> Row {
         let status = status(workflow, automations: automations)
         return Row(
             kind: .installed(workflow.id), name: workflow.name,
-            subtitle: subtitle(status: status, automations: automations, style: style),
+            subtitle: subtitle(status: status, automations: automations, lastRunAt: lastRunAt, now: now, style: style),
             status: status, isPinned: workflow.isPinned, isPublished: isPublished)
     }
 
@@ -220,12 +222,19 @@ struct WorkflowsSidebarModel: Equatable {
         return on.isEmpty ? .manual : .automated
     }
 
+    /// A workflow only the person runs says when it last did: "Last run
+    /// today", "Not run yet".
     static func subtitle(
-        status: Status, automations: [AutomationFacts], style: AutomationSentence.Style = .current
+        status: Status, automations: [AutomationFacts], lastRunAt: Date? = nil, now: Date = Date(),
+        style: AutomationSentence.Style = .current
     ) -> String {
         if status == .problem { return L("Needs attention") }
         let on = automations.filter(\.event.isEnabled)
-        guard let first = on.first else { return status == .needsSetup ? L("Finish setup to run") : L("Run by hand") }
+        guard let first = on.first else {
+            if status == .needsSetup { return L("Finish setup to run") }
+            guard let lastRunAt else { return L("Not run yet") }
+            return L("Last run \(WorkflowRunWords.day(lastRunAt, now: now, style: style))")
+        }
         let words = AutomationSentence.short(first.event, style: style)
         let more = on.count - 1
         return more > 0 ? L("\(words) +\(more) more") : words

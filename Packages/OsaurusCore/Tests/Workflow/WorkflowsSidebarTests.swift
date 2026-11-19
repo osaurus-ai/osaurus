@@ -191,13 +191,15 @@ struct WorkflowsSidebarModelTests {
                 Self.facts(many, .hourly(minute: 0), enabled: false),
             ],
         ]
+        let now = Date()
         let model = WorkflowsSidebarModel.make(
-            workflows: [manual, on, off, broken, missing, many, setup], automations: automations, style: us)
+            workflows: [manual, on, off, broken, missing, many, setup], automations: automations,
+            lastRunAt: [off.id: now], now: now, style: us)
         func row(_ name: String) -> WorkflowsSidebarModel.Row { model.all.first { $0.name == name }! }
-        #expect(row("Manual").status == .manual && row("Manual").subtitle == "Run by hand")
+        #expect(row("Manual").status == .manual && row("Manual").subtitle == "Not run yet")
         #expect(row("On").status == .automated && plain(row("On").subtitle) == "Weekdays at 8:00 AM")
         #expect(row("Off").status == .manual, "one turned off by the person counts for nothing")
-        #expect(row("Off").subtitle == "Run by hand")
+        #expect(row("Off").subtitle == "Last run today")
         #expect(row("Broken").status == .problem && row("Broken").subtitle == "Needs attention")
         #expect(row("Missing").status == .problem)
         #expect(row("Many").status == .automated && plain(row("Many").subtitle) == "Daily at 9:00 AM +1 more")
