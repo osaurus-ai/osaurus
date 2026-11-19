@@ -313,6 +313,34 @@ struct ChannelAccountTests {
         }
     }
 
+    @Test @MainActor func slackWorkspaceIdsAreServedFromMemoryAndKeptCoherent() async throws {
+        try await withIsolatedChannelFiles { _ in
+            #expect(SlackConnectionConfigurationStore.accountConnectionIds().isEmpty)
+
+            try SlackConnectionConfigurationStore.save(
+                SlackConnectionConfiguration(configuredTeamIds: ["T0BETA"]), connectionId: "slack-t0beta")
+            try SlackConnectionConfigurationStore.save(
+                SlackConnectionConfiguration(configuredTeamIds: ["T0ACME"]), connectionId: "slack-t0acme")
+            try SlackConnectionConfigurationStore.save(SlackConnectionConfiguration())
+            #expect(SlackConnectionConfigurationStore.accountConnectionIds() == ["slack-t0acme", "slack-t0beta"])
+
+            // A file written behind the store's back stays invisible until
+            // the cache is reset: the list is not re-read from disk.
+            let stray = SlackConnectionConfigurationStore.configurationFileURL(connectionId: "slack-t0stray")
+            try Data("{}".utf8).write(to: stray)
+            #expect(SlackConnectionConfigurationStore.accountConnectionIds() == ["slack-t0acme", "slack-t0beta"])
+            SlackConnectionConfigurationStore.resetCache()
+            #expect(
+                SlackConnectionConfigurationStore.accountConnectionIds()
+                    == ["slack-t0acme", "slack-t0beta", "slack-t0stray"])
+
+            SlackConnectionConfigurationStore.delete(connectionId: "slack-t0beta")
+            SlackConnectionConfigurationStore.delete(connectionId: "slack-t0stray")
+            #expect(SlackConnectionConfigurationStore.accountConnectionIds() == ["slack-t0acme"])
+            SlackConnectionConfigurationStore.delete(connectionId: "slack-t0acme")
+        }
+    }
+
     // MARK: - Declarative accounts[]
 
     @Test func accountsEntriesAreTargetsWithTheirOwnPath() {

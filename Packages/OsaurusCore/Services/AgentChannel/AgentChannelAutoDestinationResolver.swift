@@ -163,7 +163,7 @@ enum AgentChannelAutoDestinationResolver {
             AgentChannelKind.discord, .slack, .telegram,
         ].flatMap { kind in
             ChannelAccounts.accounts(kind: kind).map {
-                ($0.connectionId, kind, availability.hasCredential(connectionId: $0.connectionId))
+                ($0.connectionId, kind, availability.hasCredential(account: $0))
             }
         }
         natives += [

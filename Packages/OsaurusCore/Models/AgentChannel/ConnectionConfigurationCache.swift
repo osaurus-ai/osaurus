@@ -47,6 +47,16 @@ final class ConnectionConfigurationCache<Value>: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Rewrite the cached value for `url` in place. A no-op when nothing is
+    /// cached, so the next `value(for:load:)` still reads the truth from disk.
+    func update(for url: URL, _ transform: (Value) -> Value) {
+        lock.lock()
+        if let value = values[url] {
+            values[url] = transform(value)
+        }
+        lock.unlock()
+    }
+
     /// Drop the cached value for a file that was deleted.
     func remove(for url: URL) {
         lock.lock()

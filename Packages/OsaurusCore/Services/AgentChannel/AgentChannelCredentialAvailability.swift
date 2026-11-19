@@ -90,6 +90,13 @@ final class AgentChannelCredentialAvailability: @unchecked Sendable {
     /// send that later fails is reported by the provider.
     func hasCredential(connectionId: String) -> Bool {
         guard let account = ChannelAccounts.account(connectionId: connectionId) else { return false }
+        return hasCredential(account: account)
+    }
+
+    /// Credential for an account the caller already resolved, so a loop over
+    /// `ChannelAccounts.accounts(kind:)` doesn't re-derive every account per
+    /// item (re-reading account settings on the main thread).
+    func hasCredential(account: ChannelAccount) -> Bool {
         guard account.isPrimary else { return true }
         return Provider(rawValue: account.kind.rawValue).map { hasCredential($0) } ?? false
     }
