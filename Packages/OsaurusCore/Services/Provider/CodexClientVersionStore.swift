@@ -257,25 +257,17 @@ public final class CodexClientVersionStore: @unchecked Sendable {
         if !listRead {
             line = L("ChatGPT's model list couldn't be read just now. Try again in a moment.")
         } else if !added.isEmpty {
-            line = String(format: L("Added %@."), names(added))
+            line = L("Added \(ListFormatter.localizedString(byJoining: added)).")
         } else {
             line = L("Up to date. No new models from ChatGPT.")
         }
         if listRead, !removed.isEmpty {
-            line += " " + String(format: L("No longer offered: %@."), names(removed))
+            line += " " + L("No longer offered: \(ListFormatter.localizedString(byJoining: removed)).")
         }
         if outcome == .unreachable || outcome == .rejected {
-            line += " " + String(format: L("Couldn't check osaurus.ai for a newer Codex version, so %@ was used."), version)
+            line += " " + L("Couldn't check osaurus.ai for a newer Codex version, so \(version) was used.")
         }
         return line
-    }
-
-    private static func names(_ ids: [String]) -> String {
-        switch ids.count {
-        case 1: return ids[0]
-        case 2: return "\(ids[0]) and \(ids[1])"
-        default: return ids.dropLast().joined(separator: ", ") + " and " + ids[ids.count - 1]
-        }
     }
 
     /// One GET, 15 seconds, 200 only, at most `maxBytes`.

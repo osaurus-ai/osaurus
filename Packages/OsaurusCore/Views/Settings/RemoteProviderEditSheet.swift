@@ -1641,10 +1641,8 @@ private struct EditProviderFlow: View {
         }
     }
 
-    // MARK: - Provider Re-authorization
+    // MARK: - ChatGPT Models
 
-    /// Reuse browser sign-in for existing providers. Stage the refreshed
-    /// credential until Save, preserving the provider ID and configuration.
     /// ChatGPT lists a new model only to a Codex client version at or above that model's
     /// floor. Osaurus publishes a newer version at osaurus.ai/clients/codex.json once it
     /// has checked one, and this Mac reads it once a day; this asks now.
@@ -1656,10 +1654,10 @@ private struct EditProviderFlow: View {
 
             HStack(spacing: theme.space.s12) {
                 Text(codexCheckResult ?? L("New ChatGPT models appear within a day. Check now if one is missing."))
-                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
-                .foregroundColor(theme.text.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.updatesFrequently)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.updatesFrequently)
 
                 Spacer()
 
@@ -1698,6 +1696,10 @@ private struct EditProviderFlow: View {
         }
     }
 
+    // MARK: - Provider Re-authorization
+
+    /// Reuse browser sign-in for existing providers. Stage the refreshed
+    /// credential until Save, preserving the provider ID and configuration.
     private var providerReauthorizeSection: some View {
         VStack(alignment: .leading, spacing: theme.space.s10) {
             Text("Account", bundle: .module)
