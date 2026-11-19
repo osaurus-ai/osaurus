@@ -1508,17 +1508,62 @@ public enum SettingsSearchIndex {
             id: "voice.tts.voice",
             tab: .voice,
             section: "Text to Speech",
-            title: "Spoken Voice",
-            keywords: ["tts", "read aloud", "speech synthesis", "voice"],
-            subTab: "Text To Speech"
+            title: "Voice",
+            keywords: ["tts", "read aloud", "speech synthesis", "spoken voice", "tts voice"],
+            subTab: "Text To Speech",
+            disambiguation: "The voice replies are read in. Per-agent voices are in each agent's Voice section."
         ),
         .init(
             id: "voice.tts.engine",
             tab: .voice,
             section: "Text to Speech",
             title: "Engine",
-            keywords: ["tts engine", "pockettts", "on-device tts", "openai compatible tts"],
+            keywords: ["tts engine", "pockettts", "kokoro", "on-device tts", "openai compatible tts"],
             subTab: "Text To Speech"
+        ),
+        .init(
+            id: "voice.tts.kokoro.language",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Language",
+            keywords: [
+                "kokoro language", "tts language", "mandarin", "chinese", "japanese", "spanish", "french",
+            ],
+            subTab: "Text To Speech",
+            disambiguation:
+                "The language Kokoro speaks, shown once Advanced → Engine is On-Device (Kokoro). Not the app's display language."
+        ),
+        .init(
+            id: "voice.tts.kokoro.runtime",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Runtime",
+            keywords: ["kokoro runtime", "fast (v3)", "kokoro v3", "kokoro speed up"],
+            subTab: "Text To Speech",
+            disambiguation: "Kokoro only. Standard has every voice; Fast (v3) is quicker with fewer voices."
+        ),
+        .init(
+            id: "voice.tts.kokoro.speed",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Speed",
+            keywords: ["kokoro speed", "speaking rate", "talk faster", "talk slower"],
+            subTab: "Text To Speech",
+            disambiguation:
+                "How fast Kokoro speaks. A remote server's speed is in Advanced with its other server fields."
+        ),
+        .init(
+            id: "voice.tts.downloads",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Downloads",
+            keywords: [
+                "delete kokoro downloads", "delete model", "delete tts model", "remove voice model",
+                "tts disk space", "free up space", "kokoro downloads",
+            ],
+            subTab: "Text To Speech",
+            disambiguation:
+                "Deletes the on-device voice engine's files: every Kokoro language at once, or the PocketTTS model. Shown once something is downloaded."
         ),
         .init(
             id: "voice.tts.remote",
@@ -1535,8 +1580,8 @@ public enum SettingsSearchIndex {
             id: "voice.tts.temperature",
             tab: .voice,
             section: "Text to Speech",
-            title: "Voice Temperature",
-            keywords: ["tts temperature", "expressiveness", "variation"],
+            title: "Temperature",
+            keywords: ["tts temperature", "voice temperature", "expressiveness", "variation", "use model default"],
             subTab: "Text To Speech"
         ),
         .init(

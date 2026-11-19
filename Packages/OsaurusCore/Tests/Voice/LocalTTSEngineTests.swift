@@ -34,6 +34,37 @@ struct LocalTTSEngineTests {
         #expect((0.1 ... 1.2).contains(PocketTTSVoiceCatalog.defaultTemperature))
     }
 
+    @Test("Delete removes only the engine's own folders, never the shared Models root")
+    func downloadDirectoriesPerProvider() throws {
+        let kokoro = LocalTTSEngines.downloadDirectories(for: .kokoro)
+        let pocket = LocalTTSEngines.downloadDirectories(for: .pocketTTS)
+        #expect(kokoro.map(\.lastPathComponent) == ["kokoro-82m-coreml", "kokoro"])
+        #expect(pocket.map(\.lastPathComponent) == ["pocket-tts"])
+        #expect(LocalTTSEngines.downloadDirectories(for: .openAICompatible).isEmpty)
+
+        let models = try #require(kokoro.first).deletingLastPathComponent()
+        #expect(models.lastPathComponent == "Models")
+        for directory in kokoro + pocket {
+            #expect(directory.deletingLastPathComponent() == models)
+        }
+    }
+
+    @Test("allocated bytes sum regular files in nested folders; missing folders count zero")
+    func allocatedBytesSumsNestedFiles() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tts-bytes-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let nested = root.appendingPathComponent("a/b", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data(count: 100_000).write(to: root.appendingPathComponent("top.bin"))
+        try Data(count: 50_000).write(to: nested.appendingPathComponent("deep.bin"))
+
+        let missing = root.appendingPathComponent("absent", isDirectory: true)
+        let bytes = LocalTTSEngines.allocatedBytes(in: [root, missing])
+        #expect(bytes >= 150_000)
+        #expect(LocalTTSEngines.allocatedBytes(in: [missing]) == 0)
+    }
+
     @Test("sample re-streaming preserves order and propagates errors")
     func sampleStreamMapsAndFails() async throws {
         struct Boom: Error {}

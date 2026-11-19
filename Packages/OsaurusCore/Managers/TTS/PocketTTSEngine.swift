@@ -84,6 +84,12 @@ actor PocketTTSEngine: LocalTTSEngine {
 
     // MARK: - Disk layout
 
+    /// Everything PocketTTS downloads, including files an older FluidAudio
+    /// left at the repo root.
+    nonisolated static func downloadDirectories() -> [URL] {
+        repoRoot().map { [$0] } ?? []
+    }
+
     /// `~/.cache/fluidaudio/Models/pocket-tts`, as FluidAudio resolves it.
     nonisolated private static func repoRoot() -> URL? {
         guard let cache = try? TtsCacheDirectory.ensure() else { return nil }

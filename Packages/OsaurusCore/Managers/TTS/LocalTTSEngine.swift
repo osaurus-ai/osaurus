@@ -53,22 +53,61 @@ enum LocalTTSEngines {
     /// The engine for `config`, or nil when the configured provider is not on-device.
     static func make(for config: TTSConfiguration) -> (any LocalTTSEngine)? {
         switch config.provider {
-        case .pocketTTS: return PocketTTSEngine()
-        case .openAICompatible: return nil
+        case .pocketTTS:
+            return PocketTTSEngine()
+        case .kokoro:
+            let runtime = KokoroVoiceCatalog.effectiveRuntime(for: config)
+            let voice = KokoroVoiceCatalog.resolveVoice(
+                override: nil, configured: config.kokoroVoice, language: config.kokoroLanguage, runtime: runtime
+            ).voice
+            return KokoroTTSEngine(language: config.kokoroLanguage, runtime: runtime, preloadVoice: voice)
+        case .openAICompatible:
+            return nil
         }
     }
 
     /// `modelId` of the engine `make(for:)` would build, without building it.
     static func modelId(for config: TTSConfiguration) -> String? {
         switch config.provider {
-        case .pocketTTS: return PocketTTSEngine.id
-        case .openAICompatible: return nil
+        case .pocketTTS:
+            return PocketTTSEngine.id
+        case .kokoro:
+            return KokoroTTSEngine.id(
+                language: config.kokoroLanguage, runtime: KokoroVoiceCatalog.effectiveRuntime(for: config))
+        case .openAICompatible:
+            return nil
         }
     }
 
     /// Whether `config`'s on-device model is on disk. False for remote engines.
     static func filesOnDisk(for config: TTSConfiguration) -> Bool {
         make(for: config)?.filesOnDisk() ?? false
+    }
+
+    /// Every directory `provider` downloads into, across all the models it
+    /// can load. Empty for remote engines.
+    static func downloadDirectories(for provider: TTSProvider) -> [URL] {
+        switch provider {
+        case .pocketTTS: return PocketTTSEngine.downloadDirectories()
+        case .kokoro: return KokoroTTSEngine.downloadDirectories()
+        case .openAICompatible: return []
+        }
+    }
+
+    /// Bytes allocated on disk under `directories`.
+    static func allocatedBytes(in directories: [URL]) -> Int64 {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .isRegularFileKey]
+        var total: Int64 = 0
+        for directory in directories {
+            guard let walker = fm.enumerator(at: directory, includingPropertiesForKeys: keys) else { continue }
+            for case let url as URL in walker {
+                guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true
+                else { continue }
+                total += Int64(values.totalFileAllocatedSize ?? 0)
+            }
+        }
+        return total
     }
 
     /// Re-emit an upstream stream as plain sample buffers. Ending the consumer

@@ -13504,7 +13504,7 @@ extension ChatView {
         session.regenerate(turnId: session.regenerationTarget(for: turnId))
     }
 
-    /// Read the assistant turn aloud via PocketTTS. If the model isn't downloaded,
+    /// Read the assistant turn aloud via the configured TTS engine. If the model isn't downloaded,
     /// TTSService posts a notification that opens the TTS settings tab.
     private func speakTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
