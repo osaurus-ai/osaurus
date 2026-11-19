@@ -289,24 +289,28 @@ struct WorkflowStarterCard: View {
 
     static func detail(for template: Template) -> String {
         switch template.id.uuidString.lowercased() {
-        case "0f5c1a4e-6b7d-4c1a-9a01-000000000103": return "Paste an email and get a reply in your tone."
-        case "0f5c1a4e-6b7d-4c1a-9a01-000000000102": return "Paste meeting notes, receive deliverables and follow-up email"
-        case "0f5c1a4e-6b7d-4c1a-9a01-000000000101": return "Turns a topic into a post for any platform you pick, with hashtags."
+        case "0f5c1a4e-6b7d-4c1a-9a01-000000000103": return "Paste an email, get a reply in your tone."
+        case "0f5c1a4e-6b7d-4c1a-9a01-000000000102": return "Paste notes, get action items and a follow-up."
+        case "0f5c1a4e-6b7d-4c1a-9a01-000000000101": return "Give it a topic, get a post with hashtags."
         default: return template.summary ?? ""
         }
     }
 
     var body: some View {
+        let titleLineHeight = CGFloat(theme.typography.styles.body.lineHeight) * theme.fontScale
         Button(action: action) {
             VStack(alignment: .leading, spacing: theme.space.s8) {
-                HStack(spacing: theme.space.s6) {
+                // Top-aligned so a wrapped title keeps the badge on its first line.
+                HStack(alignment: .top, spacing: theme.space.s6) {
                     Image(systemName: icon)
                         .glyphSize(.micro)
                         .foregroundStyle(theme.text.inverse)
                         .frame(width: theme.space.s16 + theme.space.s4, height: theme.space.s16 + theme.space.s4)
                         .background(WorkflowCanvasGrid.primitive("sky/300", theme: theme, fallback: theme.status.info.foreground), in: Circle())
+                        .frame(minHeight: titleLineHeight)
                     Text(verbatim: title).textStyle(.body).foregroundStyle(theme.text.primary)
-                }.frame(minHeight: CGFloat(theme.typography.styles.body.lineHeight) * theme.fontScale)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.frame(minHeight: titleLineHeight)
                 Text(verbatim: detail).textStyle(.caption).foregroundStyle(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }

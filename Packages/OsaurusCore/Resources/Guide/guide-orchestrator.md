@@ -117,7 +117,7 @@ default_agent:
 - "Run Daily Digest every weekday at 8." — an `automations:` entry that runs the installed workflow on a schedule.
 - "Build me a workflow that triages new GitHub issues when the webhook fires." — hands off to the Architect; the save card offers the webhook automation.
 - "Every morning, send me a motivational quote." — an automation with instructions only, no agent.
-- "Run Meeting Action Items on these notes." — `run_workflow`, for a workflow marked **Osaurus can run this for you**.
+- "Run Meeting Recap on these notes." — `run_workflow`, for a workflow marked **Osaurus can run this for you**.
 - "What's running right now?" — `status`.
 
 ## Where its settings are stored

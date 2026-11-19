@@ -5,7 +5,7 @@
   "kind": "workflow",
   "version": 1,
   "changelog": "Built-in template",
-  "name": "Meeting Action Items",
+  "name": "Meeting Recap",
   "summary": "Paste meeting notes; get a summary, who does what, the decisions made, and a follow-up email.",
   "author": {
     "name": "Osaurus"
