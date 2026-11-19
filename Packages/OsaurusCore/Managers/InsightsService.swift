@@ -91,6 +91,10 @@ final class InsightsService: ObservableObject {
     /// Rows logged before the background open finished; appended in order
     /// once the store is available so they aren't lost from the store.
     private var pendingAppends: [RequestLog] = []
+    /// Set when `clear()` runs while the store is still opening; the store
+    /// is cleared before `pendingAppends` are flushed so cleared rows don't
+    /// come back on the post-open reload.
+    private var clearOnOpen = false
     private var pagesLoaded = 1
     private var cancellables = Set<AnyCancellable>()
     /// Fired on every append / clear so the dashboard refreshes (debounced).
@@ -180,9 +184,51 @@ final class InsightsService: ObservableObject {
     }
 
     private func finishOpeningStore(_ result: Result<Void, Error>) {
-        storeOpening = false
         switch result {
         case .success:
+            if clearOnOpen {
+                // A clear arrived mid-open. Clear the store and flush the rows
+                // logged after it in one task, in that order, before any live
+                // append can run; `storeOpening` stays true so rows logged in
+                // the meantime keep queuing.
+                clearOnOpen = false
+                let pending = pendingAppends
+                pendingAppends.removeAll()
+                let store = self.store
+                Task.detached(priority: .utility) { [weak self] in
+                    do {
+                        try store.clear()
+                    } catch {
+                        NSLog("[Osaurus][Insights] clear failed: %@", "\(error)")
+                    }
+                    var chainedRows: [RequestLog] = []
+                    var appendError: Error?
+                    for record in pending {
+                        do {
+                            chainedRows.append(try store.append(record))
+                        } catch {
+                            NSLog("[Osaurus][Insights] append failed: %@", "\(error)")
+                            appendError = error
+                        }
+                    }
+                    let failure = appendError
+                    await MainActor.run { [weak self] in
+                        guard let self else { return }
+                        for chained in chainedRows {
+                            if let index = self.logs.firstIndex(where: { $0.id == chained.id }) {
+                                self.logs[index] = chained
+                            }
+                        }
+                        self.resetPresence()
+                        // Re-enter: completes the open, or clears again if
+                        // another clear arrived during this task.
+                        self.finishOpeningStore(.success(()))
+                        if let failure { self.storeError = failure.localizedDescription }
+                    }
+                }
+                return
+            }
+            storeOpening = false
             storeAvailable = true
             storeError = nil
             let pending = pendingAppends
@@ -191,7 +237,9 @@ final class InsightsService: ObservableObject {
             startRetention()
             reload()
         case .failure(let error):
+            storeOpening = false
             storeAvailable = false
+            clearOnOpen = false
             pendingAppends.removeAll()
             storeError = error.localizedDescription
             NSLog("[Osaurus][Insights] activity log unavailable: %@", "\(error)")
@@ -265,7 +313,12 @@ final class InsightsService: ObservableObject {
         totalRequestCount = 0
         hasLogs = false
         pendingAppends.removeAll()
-        guard storeAvailable else { return }
+        guard storeAvailable else {
+            // The store is still opening: clear it once the open finishes,
+            // before rows logged after this point are flushed.
+            if storeOpening { clearOnOpen = true }
+            return
+        }
         let store = self.store
         Task.detached(priority: .utility) { [weak self] in
             do {
