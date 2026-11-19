@@ -1148,7 +1148,7 @@ public enum SettingsSearchIndex {
             ],
             subTab: "All",
             disambiguation:
-                "Global switch for every agent: tools set to Ask run without an approval card. Tools set to Deny, sends and deletes, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. To turn approvals off or keep them on for one custom agent instead, use Tool Approvals on that agent's Tools tab, which can override this switch either way."
+                "Global switch for every agent: tools set to Ask run without an approval card. Tools set to Deny, sends and deletes, MCP tools their server marks destructive, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. To turn approvals off or keep them on for one custom agent instead, use Tool Approvals on that agent's Tools tab, which can override this switch either way."
         ),
         .init(
             id: "settings.chat.spellCheck",
@@ -3961,7 +3961,7 @@ public enum SettingsSearchIndex {
             ],
             subTab: "capabilities",
             disambiguation:
-                "At the top of a custom agent's Tools tab: Use Global Setting (follows Auto-Allow All Tool Calls under Tools & MCP → All Tools), Ask (always show approval cards for this agent, even with that switch on), or Never Ask (skip approval cards for this agent, after a confirmation). Never Ask skips only the standard card: tools set to Deny, sends and deletes, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. Does not apply inside workflow runs or to built-in agents. Turning on Never Ask through a configuration change is marked high risk on its review card.",
+                "At the top of a custom agent's Tools tab: Use Global Setting (follows Auto-Allow All Tool Calls under Tools & MCP → All Tools), Ask (always show approval cards for this agent, even with that switch on), or Never Ask (skip approval cards for this agent, after a confirmation). Never Ask skips only the standard card: tools set to Deny, sends and deletes, MCP tools their server marks destructive, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. Does not apply inside workflow runs or to built-in agents. Turning on Never Ask through a configuration change is marked high risk on its review card.",
             declarativeSection: "agents"
         ),
         .init(

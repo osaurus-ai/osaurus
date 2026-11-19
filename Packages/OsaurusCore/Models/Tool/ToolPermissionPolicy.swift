@@ -80,7 +80,11 @@ struct AgentToolApprovalScope: Sendable, Equatable {
     let policies: [String: ToolPermissionPolicy]
 
     var approvalChoice: ToolPermissionPromptService.AgentApprovalChoice {
-        .init(agentId: agentId, agentName: agentName)
+        approvalChoice(offersNeverAsk: true)
+    }
+
+    func approvalChoice(offersNeverAsk: Bool) -> ToolPermissionPromptService.AgentApprovalChoice {
+        .init(agentId: agentId, agentName: agentName, offersNeverAsk: offersNeverAsk)
     }
 }
 
@@ -139,13 +143,13 @@ enum ToolApprovalResolver {
     }
 
     /// Whether an `.ask` card that would otherwise be shown is skipped.
-    /// Per-call tools never are.
+    /// Per-call and blanket-exempt tools never are.
     static func cardSkipReason(
         scope: AgentToolApprovalScope?,
-        perCallApproval: Bool,
+        blanketExempt: Bool,
         globalAutoAllow: Bool = ToolApprovalSettings.autoAllowAll
     ) -> ToolApprovalSkipReason? {
-        guard !perCallApproval else { return nil }
+        guard !blanketExempt else { return nil }
         switch scope?.mode ?? .useGlobal {
         case .neverAsk: return .agentNeverAsk
         case .ask: return nil
@@ -161,7 +165,7 @@ enum ToolApprovalResolver {
     ) -> ToolApprovalSkipReason? {
         cardSkipReason(
             scope: scope(agentId: agentId, inWorkflowRun: false),
-            perCallApproval: false,
+            blanketExempt: false,
             globalAutoAllow: globalAutoAllow
         )
     }
@@ -316,4 +320,16 @@ extension PerCallApprovalTool {
 /// side-effect free: it runs before approval and before execution.
 protocol ArgumentAwarePerCallApprovalTool {
     func requiresApprovalEveryCall(argumentsJSON: String) -> Bool
+}
+
+/// Covered by a grant given to this tool by name (task lease, Always Allow,
+/// an agent's own policy), never by a blanket switch (Auto-Allow All Tool
+/// Calls, an agent's Never Ask).
+///
+/// Exists for MCP tools a server declares destructive. Unlike
+/// `PerCallApprovalTool`, the user may still pre-grant the tool itself: a
+/// connector the user trusts should not cost a click per call. What it
+/// refuses is consent that never named it.
+protocol BlanketApprovalExemptTool {
+    var isExemptFromBlanketApproval: Bool { get }
 }

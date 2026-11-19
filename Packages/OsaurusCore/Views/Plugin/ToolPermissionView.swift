@@ -39,7 +39,8 @@ struct ToolPermissionView: View {
     struct AgentChoices {
         let agentName: String
         let onAlwaysAllowForAgent: () -> Void
-        let onNeverAskForAgent: () -> Void
+        /// Nil for a tool Never Ask would not cover.
+        let onNeverAskForAgent: (() -> Void)?
     }
 
     private enum Confirmation {
@@ -267,9 +268,11 @@ struct ToolPermissionView: View {
                         confirmation = .thisAgent(agentChoices.agentName)
                     }
                     Button(L("Always Allow for Every Agent…")) { confirmation = .everyAgent }
-                    Divider()
-                    Button(L("Never Ask for \(agentChoices.agentName)…")) {
-                        confirmation = .neverAsk(agentChoices.agentName)
+                    if agentChoices.onNeverAskForAgent != nil {
+                        Divider()
+                        Button(L("Never Ask for \(agentChoices.agentName)…")) {
+                            confirmation = .neverAsk(agentChoices.agentName)
+                        }
                     }
                 }
                 .fixedSize()
