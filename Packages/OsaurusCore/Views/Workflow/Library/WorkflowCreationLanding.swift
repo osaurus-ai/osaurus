@@ -162,7 +162,7 @@ struct WorkflowArchitectComposer: View {
             isContinuousVoiceMode: $draft.isContinuousVoiceMode,
             voiceInputState: $draft.voiceInputState, showVoiceOverlay: $draft.showVoiceOverlay,
             pickerItems: draft.pickerItems, activeModelOptions: $draft.activeModelOptions,
-            isStreaming: false, supportsImages: draft.selectedModelSupportsImages,
+            isStreaming: false, supportsImages: draft.composerSupportsImages,
             estimatedContextTokens: draft.estimatedContextTokens,
             imageComposerSettings: $draft.imageComposerSettings,
             onSend: submit, onStop: {}, focusTrigger: focusTrigger,
