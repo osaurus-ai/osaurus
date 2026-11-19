@@ -3,6 +3,32 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>1.0.8</title>
+            <pubDate>Thu, 19 Nov 2026 10:41:36 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.8</sparkle:version>
+            <sparkle:shortVersionString>1.0.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.8/Osaurus-1.0.8.dmg" length="124568038" type="application/octet-stream" sparkle:edSignature="I0MPJ+nC4+LXOQ/ugspTjaU05QvNFDcTtwgcFScz63xSMS6Sja8+kzRM7Ho0dx79Zh5UAX11kZDXnYheOlWoDA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Onboarding: welcome Classic upgraders with an optional starter team and Raptor 0.7 by @tpae in https://github.com/osaurus-ai/osaurus/pull/3468
+* Chat: stop reading safetensors headers on main thread during composer render by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3473
+* Workflows: first-run Home with Get Started, and a focused New Workflow page by @tpae in https://github.com/osaurus-ai/osaurus/pull/3475
+* Voice: FluidAudio 0.18.3 + on-device TTS engine seam (part 1 of #3461) by @tpae in https://github.com/osaurus-ai/osaurus/pull/3469
+* Voice: Kokoro-82M on-device TTS (#3461, part 2) by @tpae in https://github.com/osaurus-ai/osaurus/pull/3470
+* Workflows: UI polish for Home, New Workflow, and the shared kit by @tpae in https://github.com/osaurus-ai/osaurus/pull/3476
+* ChatGPT sign-in: read the Codex client version Osaurus publishes by @GSonofNun in https://github.com/osaurus-ai/osaurus/pull/3471
+* Insights: open activity log store in the background to avoid main-thread hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3474
+
+## New Contributors
+* @GSonofNun made their first contribution in https://github.com/osaurus-ai/osaurus/pull/3471
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.7...1.0.8
+]]></description>
+        </item>
+        <item>
             <title>1.0.7</title>
             <pubDate>Wed, 18 Nov 2026 05:01:22 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
