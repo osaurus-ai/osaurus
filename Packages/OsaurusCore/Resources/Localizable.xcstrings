@@ -552,6 +552,40 @@
         }
       }
     },
+    "Added %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hinzugefügt: %@."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "추가됨: %@."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Добавлено: %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已添加：%@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已新增：%@。"
+          }
+        }
+      }
+    },
     "Always in this chat" : {
       "localizations" : {
         "en" : {
@@ -723,6 +757,108 @@
         }
       }
     },
+    "ChatGPT's model list couldn't be read just now. Try again in a moment." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Modellliste von ChatGPT konnte gerade nicht gelesen werden. Versuche es gleich noch einmal."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "지금은 ChatGPT의 모델 목록을 읽을 수 없습니다. 잠시 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сейчас не удалось прочитать список моделей ChatGPT. Повторите попытку чуть позже."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "暂时无法读取 ChatGPT 的模型列表，请稍后再试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "暫時無法讀取 ChatGPT 的模型列表，請稍後再試。"
+          }
+        }
+      }
+    },
+    "Check for new models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nach neuen Modellen suchen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "새 모델 확인"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Проверить новые модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "检查新模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "檢查新模型"
+          }
+        }
+      }
+    },
+    "Checking for new models…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suche nach neuen Modellen…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "새 모델 확인 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Проверка новых моделей…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在检查新模型…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在檢查新模型…"
+          }
+        }
+      }
+    },
     "Close other apps or unload models, then try again." : {
 
     },
@@ -731,6 +867,40 @@
     },
     "Continuous Batching is off" : {
 
+    },
+    "Couldn't check osaurus.ai for a newer Codex version, so %@ was used." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf osaurus.ai konnte nicht nach einer neueren Codex-Version gesucht werden, daher wurde %@ verwendet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "osaurus.ai에서 최신 Codex 버전을 확인할 수 없어 %@ 버전을 사용했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удалось проверить на osaurus.ai наличие новой версии Codex, поэтому использована версия %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法在 osaurus.ai 上检查更新的 Codex 版本，因此使用了 %@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法在 osaurus.ai 上檢查較新的 Codex 版本，因此使用了 %@。"
+          }
+        }
+      }
     },
     "Critical" : {
 
@@ -1040,6 +1210,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "快速 (v3) 合成更快，但聲音較少。標準包含所有聲音。"
+          }
+        }
+      }
+    },
+    "New ChatGPT models appear within a day. Check now if one is missing." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neue ChatGPT-Modelle erscheinen innerhalb eines Tages. Prüfe jetzt, falls eines fehlt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "새 ChatGPT 모델은 하루 안에 표시됩니다. 누락된 모델이 있으면 지금 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Новые модели ChatGPT появляются в течение дня. Если какой-то модели не хватает, проверьте сейчас."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新的 ChatGPT 模型会在一天内出现。如有缺失，可立即检查。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新的 ChatGPT 模型會在一天內出現。如有缺少，可立即檢查。"
+          }
+        }
+      }
+    },
+    "No longer offered: %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht mehr angeboten: %@."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "더 이상 제공되지 않음: %@."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Больше не предлагаются: %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "不再提供：%@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "不再提供：%@。"
+          }
+        }
+      }
+    },
+    "Up to date. No new models from ChatGPT." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf dem neuesten Stand. Keine neuen Modelle von ChatGPT."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "최신 상태입니다. ChatGPT의 새 모델이 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Всё актуально. Новых моделей от ChatGPT нет."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已是最新。ChatGPT 没有新模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已是最新。ChatGPT 沒有新模型。"
           }
         }
       }

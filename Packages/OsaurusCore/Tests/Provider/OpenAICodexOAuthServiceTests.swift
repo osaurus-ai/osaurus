@@ -103,7 +103,7 @@ struct OpenAICodexOAuthServiceTests {
             ) != nil,
             "User-Agent \(userAgent) does not match the Codex CLI format"
         )
-        #expect(userAgent.contains("/\(OpenAICodexOAuthService.codexClientVersion) "))
+        #expect(userAgent.contains("/\(OpenAICodexOAuthService.activeClientVersion) "))
     }
 
     @Test func supportedModels_containsCurrentCatalog() {

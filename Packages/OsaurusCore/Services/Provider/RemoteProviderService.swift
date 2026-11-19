@@ -3880,7 +3880,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         [
             "session-id": sessionId,
             "x-session-affinity": sessionId,
-            "version": OpenAICodexOAuthService.codexClientVersion,
+            "version": OpenAICodexOAuthService.activeClientVersion,
             "x-openai-internal-codex-responses-lite": "true",
         ]
     }

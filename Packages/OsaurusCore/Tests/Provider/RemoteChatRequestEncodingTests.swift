@@ -1588,7 +1588,7 @@ struct RemoteChatRequestEncodingTests {
 
         #expect(headers["session-id"] == sessionId)
         #expect(headers["x-session-affinity"] == sessionId)
-        #expect(headers["version"] == OpenAICodexOAuthService.codexClientVersion)
+        #expect(headers["version"] == OpenAICodexOAuthService.activeClientVersion)
         #expect(headers["x-openai-internal-codex-responses-lite"] == "true")
     }
 
