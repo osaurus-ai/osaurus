@@ -2,17 +2,21 @@
 //  TTSModeSettingsTab.swift
 //  osaurus
 //
-//  Settings UI for text-to-speech (PocketTTS).
-//  Toggle TTS, pick voice/temperature, download model, preview.
+//  Settings UI for text-to-speech.
+//  Toggle TTS, choose the engine, download its model, pick a voice, preview.
 //
 
 import SwiftUI
 
 struct TTSModeSettingsTab: View {
     @Environment(\.theme) private var theme
+    @Environment(\.settingsLandingPending) private var pendingLanding
     @ObservedObject private var ttsService = TTSService.shared
 
-    @State private var config: TTSConfiguration = .default
+    // Seeded from the store, not `.default`: which cards render (and which
+    // search anchors are hidden) depends on the engine, and a landing scroll
+    // or Advanced expansion is decided against the first render.
+    @State private var config: TTSConfiguration = TTSConfigurationStore.load()
     @State private var hasLoadedSettings = false
     @State private var remoteAPIKey: String = ""
 
@@ -23,6 +27,7 @@ struct TTSModeSettingsTab: View {
     @State private var connectionTest: ConnectionTestState = .idle
     @State private var previewText: String = "Hello from Osaurus. Text to speech is now ready."
     @State private var previewMessageId = UUID()
+    @State private var showDeleteDownloadsConfirm = false
 
     private func displayName(for voice: String) -> String {
         PocketTTSVoiceCatalog.displayName(for: voice)
@@ -35,6 +40,14 @@ struct TTSModeSettingsTab: View {
             return [current] + builtIn
         }
         return builtIn
+    }
+
+    private var isOnDevice: Bool { config.provider != .openAICompatible }
+
+    private var kokoroRuntime: KokoroRuntime { KokoroVoiceCatalog.effectiveRuntime(for: config) }
+
+    private var kokoroVoiceOptions: [String] {
+        KokoroVoiceCatalog.voices(language: config.kokoroLanguage, runtime: kokoroRuntime)
     }
 
     private func loadSettings() {
@@ -62,12 +75,16 @@ struct TTSModeSettingsTab: View {
             SettingsPageContent {
                 enableCard
 
-                if config.provider == .pocketTTS {
+                if isOnDevice {
                     modelCard
                 }
 
                 if config.enabled && config.provider == .pocketTTS {
                     voiceCard
+                }
+
+                if config.enabled && config.provider == .kokoro {
+                    kokoroVoiceCard
                 }
 
                 if config.enabled && ttsService.isModelReady {
@@ -88,8 +105,8 @@ struct TTSModeSettingsTab: View {
                 loadSettings()
                 hasLoadedSettings = true
             }
-            // Probe only: loading compiles a ~700 MB CoreML model, which
-            // happens on first speak or from the Load button.
+            // Probe only: loading compiles a Core ML model of up to ~530 MB,
+            // which happens on first speak or from the Load button.
             ttsService.probeModelFiles()
         }
         .onReceive(NotificationCenter.default.publisher(for: .ttsConfigurationChanged)) { _ in
@@ -115,8 +132,14 @@ struct TTSModeSettingsTab: View {
     // MARK: - Model Card
 
     private var modelCard: some View {
-        SettingsSection(title: "PocketTTS Model") {
-            SettingsRow(title: "PocketTTS", description: modelStatusText, verbatimTitle: true, verbatimDescription: true) {
+        SettingsSection(title: config.provider == .kokoro ? "Kokoro Model" : "PocketTTS Model") {
+            SettingsRow(
+                title: config.provider == .kokoro ? "Kokoro-82M" : "PocketTTS",
+                description: modelStatusText,
+                // With nothing downloaded there's no Downloads row to land on.
+                anchorId: showsDownloadsRow ? nil : "voice.tts.downloads",
+                verbatimTitle: true, verbatimDescription: true
+            ) {
                 Image(systemName: modelIconName)
                     .glyphSize(.medium, weight: .medium)
                     .foregroundColor(modelIconColor)
@@ -127,7 +150,117 @@ struct TTSModeSettingsTab: View {
             if case .downloading(let fraction) = ttsService.modelState {
                 downloadProgressBar(fraction: fraction)
             }
+
+            if config.provider == .kokoro && KokoroVoiceCatalog.osMayCrashDuringSynthesis() {
+                InlineBanner(
+                    kind: .warning,
+                    title: L("macOS 26.4 and 26.5 can crash Kokoro"),
+                    caption: L(
+                        "A Core ML bug in these versions can quit Osaurus while Kokoro speaks. Updating to macOS 26.6 or later fixes it."
+                    )
+                )
+            }
+
+            if config.provider == .kokoro {
+                kokoroModelRows
+            }
+
+            if showsDownloadsRow {
+                downloadsRow
+            }
         }
+        .themedAlert(
+            config.provider == .kokoro ? L("Delete Kokoro Downloads?") : L("Delete PocketTTS Model?"),
+            isPresented: $showDeleteDownloadsConfirm,
+            message: deleteDownloadsMessage,
+            primaryButton: .destructive(L("Delete")) {
+                Task { await ttsService.deleteDownloads() }
+            },
+            secondaryButton: .cancel(L("Cancel"))
+        )
+    }
+
+    private var showsDownloadsRow: Bool {
+        if case .downloading = ttsService.modelState { return false }
+        return ttsService.downloadedBytes > 0 || ttsService.isDeletingDownloads
+    }
+
+    private var downloadedSize: String {
+        ByteCountFormatter.string(fromByteCount: ttsService.downloadedBytes, countStyle: .file)
+    }
+
+    private var downloadsRow: some View {
+        SettingsRow(
+            title: "Downloads",
+            description: config.provider == .kokoro
+                ? L("\(downloadedSize) on disk, for every Kokoro language you've used.")
+                : L("\(downloadedSize) on disk."),
+            anchorId: "voice.tts.downloads",
+            verbatimDescription: true
+        ) {
+            SettingsButton(
+                .destructive,
+                config.provider == .kokoro ? "Delete Kokoro Downloads" : "Delete Model",
+                icon: "trash",
+                isLoading: ttsService.isDeletingDownloads,
+                size: .compact
+            ) { showDeleteDownloadsConfirm = true }
+            .disabled(ttsService.isDeletingDownloads)
+        }
+    }
+
+    private var deleteDownloadsMessage: String {
+        config.provider == .kokoro
+            ? L(
+                "Removes \(downloadedSize) of Kokoro models, voices, and dictionaries for every language. Osaurus downloads the current language again the next time it speaks."
+            )
+            : L("Removes the \(downloadedSize) PocketTTS model. Osaurus downloads it again the next time it speaks.")
+    }
+
+    /// Language and runtime pick which Kokoro pack is downloaded and loaded.
+    @ViewBuilder
+    private var kokoroModelRows: some View {
+        SettingsPickerRow(
+            title: "Language",
+            description: "Each language is its own download with its own voices.",
+            anchorId: "voice.tts.kokoro.language",
+            style: .menu,
+            selection: $config.kokoroLanguage,
+            options: KokoroLanguage.allCases.map { .init($0, KokoroVoiceCatalog.displayName(for: $0), verbatim: true) }
+        )
+        .onChange(of: config.kokoroLanguage) { _, language in
+            // Spanish and French have no fast pack; say so by switching the
+            // saved runtime rather than silently running another one.
+            if !language.supportsFastRuntime { config.kokoroRuntime = .standard }
+            keepKokoroVoiceAvailable()
+            saveSettings()
+        }
+
+        SettingsPickerRow(
+            title: "Runtime",
+            description: config.kokoroLanguage.supportsFastRuntime
+                ? "Fast (v3) synthesizes quicker but offers fewer voices. Standard has every voice."
+                : "Spanish and French run on Standard only.",
+            anchorId: "voice.tts.kokoro.runtime",
+            style: .menu,
+            selection: $config.kokoroRuntime,
+            options: [
+                .init(KokoroRuntime.standard, L("Standard")),
+                .init(KokoroRuntime.fast, L("Fast (v3)")),
+            ]
+        )
+        .disabled(!config.kokoroLanguage.supportsFastRuntime)
+        .onChange(of: config.kokoroRuntime) { _, _ in
+            keepKokoroVoiceAvailable()
+            saveSettings()
+        }
+    }
+
+    /// After a language or runtime change, move off a voice the new pack
+    /// doesn't have to that pack's default.
+    private func keepKokoroVoiceAvailable() {
+        guard !KokoroVoiceCatalog.isAvailable(config.kokoroVoice, for: config) else { return }
+        config.kokoroVoice = KokoroVoiceCatalog.defaultVoice(language: config.kokoroLanguage)
     }
 
     @ViewBuilder
@@ -142,15 +275,22 @@ struct TTSModeSettingsTab: View {
     private var modelStatusText: String {
         switch ttsService.modelState {
         case .notReady:
-            return ttsService.modelFilesOnDisk
-                ? L("Downloaded — loads the first time Osaurus speaks")
-                : L("Not downloaded — about 700 MB")
+            guard !ttsService.modelFilesOnDisk else {
+                return L("Downloaded — loads the first time Osaurus speaks")
+            }
+            guard config.provider == .kokoro else { return L("Not downloaded — about 530 MB") }
+            let megabytes = KokoroVoiceCatalog.approximateDownloadMB(
+                language: config.kokoroLanguage, runtime: config.kokoroRuntime)
+            return L("Not downloaded — about \(megabytes) MB")
         case .downloading(let fraction):
             if let fraction {
                 return String(format: "%@ %d%%", L("Downloading"), Int(fraction * 100))
             }
             return L("Preparing…")
-        case .ready: return L("Runs on this Mac. English only. Streams audio as it's synthesized.")
+        case .ready:
+            return config.provider == .kokoro
+                ? L("Runs on this Mac. Speaks a sentence at a time.")
+                : L("Runs on this Mac. English only. Streams audio as it's synthesized.")
         case .failed(let msg): return msg
         }
     }
@@ -186,7 +326,10 @@ struct TTSModeSettingsTab: View {
             SettingsButton(.primary, "Download", icon: "arrow.down") { ttsService.ensureModelLoaded() }
 
         case .downloading:
-            SettingsSpinner()
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner()
+                SettingsButton(.secondary, "Cancel", size: .compact) { ttsService.cancelModelLoad() }
+            }
 
         case .ready:
             StatusChip(L("Ready"), tone: .success, showsDot: true)
@@ -207,39 +350,136 @@ struct TTSModeSettingsTab: View {
 
             SettingsSlider(
                 title: "Temperature",
-                valueText: String(format: "%.2f", config.temperature),
-                value: $config.temperature,
+                valueText: temperatureValueText,
+                description: "Higher values vary the delivery more. The default is what the model was tuned for.",
+                value: temperatureBinding,
                 range: 0.1 ... 1.2,
                 step: 0.05,
                 anchorId: "voice.tts.temperature"
             ) { editing in
                 if !editing { saveSettings() }
             }
+
+            if config.temperature != nil {
+                HStack {
+                    Spacer()
+                    SettingsButton(.secondary, "Use Model Default", size: .compact) {
+                        config.temperature = nil
+                        saveSettings()
+                    }
+                }
+            }
         }
+    }
+
+    /// The slider shows the model's own default until the user moves it.
+    private var temperatureBinding: Binding<Double> {
+        Binding(
+            get: { config.temperature ?? PocketTTSVoiceCatalog.defaultTemperature },
+            set: { config.temperature = $0 }
+        )
+    }
+
+    private var temperatureValueText: String {
+        guard let temperature = config.temperature else {
+            return String(format: "%.2f · %@", PocketTTSVoiceCatalog.defaultTemperature, L("Default"))
+        }
+        return String(format: "%.2f", temperature)
+    }
+
+    private var kokoroVoiceCard: some View {
+        SettingsSection(title: "Voice", anchorId: "voice.tts.voice") {
+            SettingsPickerRow(
+                title: "Voice",
+                style: .menu,
+                selection: $config.kokoroVoice,
+                options: kokoroVoiceMenuOptions
+            )
+            .onChange(of: config.kokoroVoice) { _, _ in saveSettings() }
+
+            SettingsSlider(
+                title: "Speed",
+                valueText: String(format: "%.2fx", config.kokoroSpeed),
+                value: $config.kokoroSpeed,
+                range: TTSConfiguration.kokoroSpeedRange,
+                step: 0.05,
+                anchorId: "voice.tts.kokoro.speed"
+            ) { editing in
+                if !editing { saveSettings() }
+            }
+        }
+    }
+
+    /// A saved voice the current pack lacks (e.g. edited by hand) stays
+    /// visible, labelled with the voice playback uses instead.
+    private var kokoroVoiceMenuOptions: [SettingsPickerRow<String>.Option] {
+        let options = kokoroVoiceOptions.map {
+            SettingsPickerRow<String>.Option($0, KokoroVoiceCatalog.displayName(for: $0), verbatim: true)
+        }
+        guard !kokoroVoiceOptions.contains(config.kokoroVoice) else { return options }
+        let fallback = KokoroVoiceCatalog.displayName(
+            for: KokoroVoiceCatalog.defaultVoice(language: config.kokoroLanguage))
+        let label = "\(config.kokoroVoice) — \(L("unavailable, uses \(fallback)"))"
+        return [.init(config.kokoroVoice, label, verbatim: true)] + options
     }
 
     // MARK: - Advanced (engine + remote server)
 
-    private static let advancedAnchorIds: Set<String> = ["voice.tts.engine", "voice.tts.remote"]
+    private static let kokoroAnchorIds: Set<String> = [
+        "voice.tts.kokoro.language", "voice.tts.kokoro.runtime", "voice.tts.kokoro.speed",
+    ]
+
+    /// Controls the current engine doesn't render: the Kokoro rows unless
+    /// Kokoro is the engine, and Downloads while a server is.
+    private var hiddenAnchorIds: Set<String> {
+        var ids: Set<String> = config.provider == .kokoro ? [] : Self.kokoroAnchorIds
+        if !isOnDevice { ids.insert("voice.tts.downloads") }
+        return ids
+    }
+
+    private var advancedAnchorIds: Set<String> {
+        hiddenAnchorIds.union(["voice.tts.engine", "voice.tts.remote"])
+    }
+
+    /// Search results for hidden controls land on the picker that reveals them.
+    private var hiddenEngineLanding: String? {
+        guard let pendingLanding, hiddenAnchorIds.contains(pendingLanding) else { return nil }
+        return pendingLanding
+    }
+
+    private var engineDescription: String {
+        switch config.provider {
+        case .pocketTTS:
+            return L("On-device PocketTTS needs no setup. Choose a server to use any OpenAI-compatible speech API.")
+        case .kokoro:
+            return L("On-device Kokoro speaks English, Mandarin, Japanese, Spanish, and French.")
+        case .openAICompatible:
+            return L(
+                "Sends text to any server implementing the OpenAI /v1/audio/speech API, such as openai-edge-tts or Kokoro."
+            )
+        }
+    }
 
     private var advancedSection: some View {
-        SettingsAdvancedDisclosure(anchorIds: Self.advancedAnchorIds) {
-            SettingsPickerRow(
-                title: "Engine",
-                description: config.provider == .openAICompatible
-                    ? "Sends text to any server implementing the OpenAI /v1/audio/speech API, such as openai-edge-tts or Kokoro."
-                    : "On-device PocketTTS needs no setup. Choose a server to use any OpenAI-compatible speech API.",
-                anchorId: "voice.tts.engine",
-                style: .menu,
-                selection: $config.provider,
-                options: [
-                    .init(TTSProvider.pocketTTS, L("On-Device (PocketTTS)")),
-                    .init(TTSProvider.openAICompatible, L("OpenAI-Compatible Server")),
-                ]
-            )
-            // The server fields only render for the remote engine; until then
-            // their search result lands on the picker that reveals them.
-            .settingsLandingAnchor(config.provider == .openAICompatible ? nil : "voice.tts.remote")
+        SettingsAdvancedDisclosure(anchorIds: advancedAnchorIds) {
+            VStack(spacing: 0) {
+                SettingsPickerRow(
+                    title: "Engine",
+                    description: engineDescription,
+                    anchorId: "voice.tts.engine",
+                    style: .menu,
+                    selection: $config.provider,
+                    options: [
+                        .init(TTSProvider.pocketTTS, L("On-Device (PocketTTS)")),
+                        .init(TTSProvider.kokoro, L("On-Device (Kokoro)")),
+                        .init(TTSProvider.openAICompatible, L("OpenAI-Compatible Server")),
+                    ]
+                )
+                // The server fields only render for the remote engine; until then
+                // their search result lands on the picker that reveals them.
+                .settingsLandingAnchor(config.provider == .openAICompatible ? nil : "voice.tts.remote")
+            }
+            .settingsLandingAnchor(hiddenEngineLanding)
 
             if config.provider == .openAICompatible {
                 remoteServerCard

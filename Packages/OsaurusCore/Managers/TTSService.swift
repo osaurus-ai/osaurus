@@ -2,14 +2,14 @@
 //  TTSService.swift
 //  osaurus
 //
-//  PocketTTS (FluidAudio) text-to-speech service. Streams 80 ms audio frames
-//  from the model into an AVAudioEngine player node for real-time playback.
+//  Text-to-speech playback. Synthesis comes from the configured engine — an
+//  on-device `LocalTTSEngine` or an OpenAI-compatible server — and is played
+//  through an AVAudioEngine player node as it arrives.
 //
 
 import AVFoundation
 import Combine
 import OSLog
-@preconcurrency import FluidAudio
 import Foundation
 
 /// TTS diagnostics. A synthesis failure used to be a bare `print`, which meant a user whose
@@ -23,7 +23,7 @@ public enum TTSPlaybackError: Error {
     case modelNotReady
 }
 
-/// Model-readiness state for PocketTTS.
+/// Model-readiness state of the configured on-device engine.
 public enum TTSModelState: Equatable {
     case notReady
     /// `fraction` is in [0, 1]. `nil` means indeterminate (e.g. compile phase).
@@ -166,7 +166,7 @@ final class TTSAudioPipeline: @unchecked Sendable {
     }
 }
 
-/// Singleton that owns the PocketTTS manager, audio engine, and playback lifecycle.
+/// Singleton that owns the on-device engine, audio pipeline, and playback lifecycle.
 @MainActor
 public final class TTSService: ObservableObject {
     public static let shared = TTSService()
@@ -185,7 +185,8 @@ public final class TTSService: ObservableObject {
         }
     }
 
-    /// Tracks whether the PocketTTS model is initialized and usable.
+    /// Whether the configured on-device engine's model is loaded and usable.
+    /// Resets to `.notReady` when the configuration switches engines.
     @Published public private(set) var modelState: TTSModelState = .notReady
 
     /// Tool-call id driving the current playback (`nil` for the manual
@@ -201,9 +202,14 @@ public final class TTSService: ObservableObject {
 
     // MARK: - Private state
 
-    private var manager: PocketTtsManager?
+    /// Engine for the current configuration; rebuilt when its `modelId` changes.
+    private var engine: (any LocalTTSEngine)?
     private var playbackTask: Task<Void, Never>?
     private var initTask: Task<Void, Never>?
+    /// A cancelled load still winding down. The next load waits for it, so
+    /// two loads never download into the same directory or hold two models.
+    private var abandonedLoad: Task<Void, Never>?
+    private var unloadTask: Task<Void, Never>?
     /// Playback requested before the model was resident; runs once it is.
     private var pendingPlayback: (() -> Void)?
 
@@ -235,6 +241,36 @@ public final class TTSService: ObservableObject {
                 TTSService.shared.handleRouteChange()
             }
         }
+        NotificationCenter.default.addObserver(
+            forName: .ttsConfigurationChanged, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { TTSService.shared.syncEngineWithConfiguration() }
+        }
+    }
+
+    /// The engine for the current configuration, building it on first use or
+    /// after the configuration moved to a different model. Nil for remote.
+    private func currentEngine() -> (any LocalTTSEngine)? {
+        syncEngineWithConfiguration()
+        return engine
+    }
+
+    /// Drop the resident engine when the configuration now names a different
+    /// model: stop anything it is doing, free its weights, and start the new
+    /// engine from `.notReady`.
+    private func syncEngineWithConfiguration() {
+        let config = TTSConfigurationStore.load()
+        guard engine?.modelId != LocalTTSEngines.modelId(for: config) else { return }
+
+        if let old = engine {
+            if playingMessageId != nil { stop() }
+            abandonLoad()
+            pendingPlayback = nil
+            Task { await old.unload() }
+        }
+        engine = LocalTTSEngines.make(for: config)
+        modelState = .notReady
+        probeModelFiles()
     }
 
     // MARK: - Public API
@@ -277,18 +313,35 @@ public final class TTSService: ObservableObject {
     /// True when playback can start without a download: the model is
     /// resident, or its files are on disk and load on first use.
     public var canSpeakWithoutDownload: Bool {
-        isModelReady || Self.pocketTtsModelsExistOnDisk()
+        isModelReady || currentEngine()?.filesOnDisk() == true
     }
 
-    /// Whether the PocketTTS files are downloaded, as of the last
+    /// Whether the configured on-device model is downloaded, as of the last
     /// `probeModelFiles()`. Lets settings show voice as available without
     /// loading the model into memory.
     @Published public private(set) var modelFilesOnDisk = false
 
+    /// Bytes the configured on-device engine's downloads take, across every
+    /// model it can load (all Kokoro languages, for example).
+    @Published public private(set) var downloadedBytes: Int64 = 0
+
+    @Published public private(set) var isDeletingDownloads = false
+
     public func probeModelFiles() {
+        guard let engine = currentEngine() else {
+            modelFilesOnDisk = false
+            downloadedBytes = 0
+            return
+        }
+        let directories = LocalTTSEngines.downloadDirectories(for: TTSConfigurationStore.load().provider)
         Task.detached(priority: .utility) {
-            let exists = Self.pocketTtsModelsExistOnDisk()
-            await MainActor.run { TTSService.shared.modelFilesOnDisk = exists }
+            let exists = engine.filesOnDisk()
+            let bytes = LocalTTSEngines.allocatedBytes(in: directories)
+            await MainActor.run {
+                guard TTSService.shared.engine === engine else { return }
+                TTSService.shared.modelFilesOnDisk = exists
+                TTSService.shared.downloadedBytes = bytes
+            }
         }
     }
 
@@ -298,10 +351,11 @@ public final class TTSService: ObservableObject {
     /// opens TTS settings when the model has never been downloaded.
     @discardableResult
     private func loadThenPlay(text: String, messageId: UUID, callId: String?, voiceOverride: String?) -> Bool {
-        guard Self.pocketTtsModelsExistOnDisk() else {
+        guard currentEngine()?.filesOnDisk() == true else {
             NotificationCenter.default.post(name: .openTTSSettingsRequested, object: nil)
             return false
         }
+        guard !isDeletingDownloads else { return false }
         stop()
         playingMessageId = messageId
         activeSpeakCallId = callId
@@ -367,42 +421,42 @@ public final class TTSService: ObservableObject {
 
     /// Begin a background download/initialize. Safe to call multiple times.
     public func ensureModelLoaded() {
+        guard let engine = currentEngine(), !isDeletingDownloads else { return }
         if case .ready = modelState { return }
         if initTask != nil { return }
 
         modelState = .downloading(fraction: nil)
-        let voice = TTSConfigurationStore.load().voice
-        CoreMLLoadSentinel.begin(.tts, modelId: "pocket-tts")
+        CoreMLLoadSentinel.begin(.tts, modelId: engine.modelId)
+        let pendingUnload = unloadTask
+        let previousLoad = abandonedLoad
         initTask = Task { [weak self] in
             defer { CoreMLLoadSentinel.end(.tts) }
             do {
-                // Route through the downloader explicitly so we get progress callbacks.
-                // When models are already cached this returns nearly instantly.
-                _ = try await PocketTtsResourceDownloader.ensureModels(
-                    directory: nil,
-                    progressHandler: { progress in
-                        Task { @MainActor in
-                            guard let self else { return }
-                            let fraction: Double?
-                            switch progress.phase {
-                            case .downloading:
-                                fraction = progress.fractionCompleted
-                            case .listing, .compiling:
-                                fraction = nil
-                            }
-                            self.modelState = .downloading(fraction: fraction)
-                        }
+                // A memory-pressure unload still in flight would otherwise
+                // free the model this load is about to report as ready.
+                await pendingUnload?.value
+                await previousLoad?.value
+                try await engine.load(progress: { fraction in
+                    Task { @MainActor in
+                        guard let self, self.engine === engine, self.initTask != nil else { return }
+                        self.modelState = .downloading(fraction: fraction)
                     }
-                )
-
-                let mgr = PocketTtsManager(defaultVoice: voice)
-                try await mgr.initialize()
+                })
                 await MainActor.run {
                     guard let self else { return }
-                    self.manager = mgr
+                    // Cancelled after the engine finished: whoever cancelled
+                    // already reset the state, so just free the model.
+                    guard !Task.isCancelled else {
+                        Task { await engine.unload() }
+                        return
+                    }
+                    // The configuration moved to another engine mid-load;
+                    // `syncEngineWithConfiguration` already unloads this one.
+                    guard self.engine === engine else { return }
                     self.modelState = .ready
                     self.modelFilesOnDisk = true
                     self.initTask = nil
+                    self.probeModelFiles()
                     if let play = self.pendingPlayback {
                         self.pendingPlayback = nil
                         play()
@@ -410,9 +464,10 @@ public final class TTSService: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    guard let self else { return }
+                    guard let self, self.engine === engine, !Task.isCancelled else { return }
                     self.modelState = .failed(error.localizedDescription)
                     self.initTask = nil
+                    self.probeModelFiles()
                     if self.pendingPlayback != nil {
                         self.pendingPlayback = nil
                         self.playingMessageId = nil
@@ -423,46 +478,93 @@ public final class TTSService: ObservableObject {
         }
     }
 
-    /// Frees the PocketTTS model when nothing is speaking or loading. The next
+    /// Frees the on-device model when nothing is speaking or loading. The next
     /// speak loads it again. Called under critical memory pressure.
     public func unloadIfIdle() {
-        guard case .ready = modelState, initTask == nil, playingMessageId == nil, let mgr = manager else { return }
-        manager = nil
+        guard case .ready = modelState, initTask == nil, playingMessageId == nil, let engine else { return }
         modelState = .notReady
-        Task { await mgr.cleanup() }
+        unloadTask = Task { await engine.unload() }
     }
 
-    nonisolated private static func pocketTtsModelsExistOnDisk() -> Bool {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let repoDir =
-            home
-            .appendingPathComponent(".cache", isDirectory: true)
-            .appendingPathComponent("fluidaudio", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
-            .appendingPathComponent("pocket-tts", isDirectory: true)
-        let required = ModelNames.PocketTTS.requiredModels
-        let fm = FileManager.default
-        return required.allSatisfy { fm.fileExists(atPath: repoDir.appendingPathComponent($0).path) }
+    /// Cancel the in-flight download/load; nothing stays resident. Partial
+    /// downloads resume on the next Download. A reply waiting on this load
+    /// doesn't play.
+    public func cancelModelLoad() {
+        guard initTask != nil else { return }
+        if playingMessageId != nil { stop() }
+        abandonLoad()
+        modelState = .notReady
+        probeModelFiles()
+    }
+
+    private func abandonLoad() {
+        guard let task = initTask else { return }
+        task.cancel()
+        initTask = nil
+        let earlier = abandonedLoad
+        abandonedLoad = Task {
+            await earlier?.value
+            await task.value
+        }
+    }
+
+    /// Remove every download of the configured on-device engine (all Kokoro
+    /// languages and runtimes, or the PocketTTS model), after stopping
+    /// playback and freeing the model. The next speak downloads again.
+    public func deleteDownloads() async {
+        let provider = TTSConfigurationStore.load().provider
+        let directories = LocalTTSEngines.downloadDirectories(for: provider)
+        guard !directories.isEmpty, !isDeletingDownloads else { return }
+        isDeletingDownloads = true
+        defer { isDeletingDownloads = false }
+
+        if playingMessageId != nil { stop() }
+        abandonLoad()
+        let resident = engine
+        let pendingLoad = abandonedLoad
+        let pendingUnload = unloadTask
+        modelState = .notReady
+        await pendingLoad?.value
+        await pendingUnload?.value
+        await resident?.unload()
+
+        let failure: String? = await Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            for directory in directories where fm.fileExists(atPath: directory.path) {
+                do {
+                    try fm.removeItem(at: directory)
+                } catch {
+                    return error.localizedDescription
+                }
+            }
+            return nil
+        }.value
+        if let failure {
+            TTSLogger.service.error("Couldn't delete TTS downloads: \(failure, privacy: .public)")
+            modelState = .failed(failure)
+        }
+        probeModelFiles()
     }
 
     // MARK: - Playback
 
     private func startPlayback(text: String, messageId: UUID, voiceOverride: String? = nil) {
         let config = TTSConfigurationStore.load()
-        switch config.provider {
-        case .pocketTTS:
-            startPocketPlayback(
-                text: text, messageId: messageId, voiceOverride: voiceOverride, config: config)
-        case .openAICompatible:
+        if let engine = currentEngine() {
+            startLocalPlayback(
+                engine: engine, text: text, messageId: messageId, voiceOverride: voiceOverride,
+                config: config)
+        } else {
             startRemotePlayback(
                 text: text, messageId: messageId, voiceOverride: voiceOverride, config: config)
         }
     }
 
-    private func startPocketPlayback(
-        text: String, messageId: UUID, voiceOverride: String?, config: TTSConfiguration
+    private func startLocalPlayback(
+        engine: any LocalTTSEngine, text: String, messageId: UUID, voiceOverride: String?,
+        config: TTSConfiguration
     ) {
-        guard let manager else {
+        guard case .ready = modelState else {
             playingMessageId = nil
             return
         }
@@ -470,21 +572,13 @@ public final class TTSService: ObservableObject {
         streamFinished = false
         pendingBufferCount = 0
 
-        let trimmedOverride = voiceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let requestedVoice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.voice)
-        // Fall back to the default when the configured/overridden voice isn't a
-        // known PocketTTS voice. A stale or invalid value (e.g. a renamed voice)
-        // otherwise 404s fetching its voice prompt and playback dies silently.
-        let voice =
-            PocketTTSVoiceCatalog.availableVoices.contains(requestedVoice)
-            ? requestedVoice : TTSConfiguration.defaultVoice
-        let temperature = Float(config.temperature)
+        let voice = engine.resolveVoice(override: voiceOverride, config: config)
         // Activity log: local synthesis, one row per utterance.
         let activity = MediaActivityLogger.beginSpeech(
             text: text,
-            model: "kyutai/pocket-tts",
+            model: engine.activityModel,
             voice: voice,
-            provider: "PocketTTS",
+            provider: engine.activityProvider,
             endpoint: nil,
             trigger: activeSpeakCallId != nil ? .speakTool : .readAloud
         )
@@ -509,17 +603,21 @@ public final class TTSService: ObservableObject {
             var totalAudioSec = 0.0
             do {
                 // Synthesize one utterance at a time instead of handing the
-                // whole paste to a single streaming call. PocketTTS keeps a
-                // continuous Mimi decoder state for the length of a call, and
-                // that state drifts on long runs — the voice slurs, slows, and
-                // drops pitch after ~30 s ("quaaludes"). A fresh call per chunk
-                // resets the decoder, so each sentence group starts clean. The
-                // player node still plays the chunks back-to-back, so prosody
-                // stays continuous as long as synthesis keeps up.
+                // whole paste to a single call. PocketTTS keeps a continuous
+                // Mimi decoder state for the length of a call, and that state
+                // drifts on long runs — the voice slurs, slows, and drops
+                // pitch after ~30 s ("quaaludes"); engines that return whole
+                // utterances would otherwise make the listener wait for all
+                // of it. The player node plays the chunks back-to-back, so
+                // prosody stays continuous as long as synthesis keeps up.
                 let chunks = TTSTextChunker.split(text)
+                let sampling =
+                    config.provider == .kokoro
+                    ? "speed=\(String(format: "%.2f", config.kokoroSpeed))"
+                    : "temperature=\(config.temperature.map { String(format: "%.2f", $0) } ?? "default")"
                 TTSDebugLog.log(
-                    "playback start id=\(messageId) voice=\(voice) temp=\(temperature) "
-                        + "textChars=\(text.count) chunks=\(chunks.count)")
+                    "playback start id=\(messageId) engine=\(engine.modelId) voice=\(voice) "
+                        + "\(sampling) textChars=\(text.count) chunks=\(chunks.count)")
                 let playbackStart = Date()
                 for (index, chunk) in chunks.enumerated() {
                     if Task.isCancelled { break }
@@ -530,19 +628,15 @@ public final class TTSService: ObservableObject {
                     TTSDebugLog.log(
                         "  chunk \(index + 1)/\(chunks.count) begin chars=\(chunk.count) "
                             + "text=\(TTSDebugLog.preview(chunk))")
-                    let stream = try await manager.synthesizeStreaming(
-                        text: chunk,
-                        voice: voice,
-                        temperature: temperature
-                    )
-                    for try await frame in stream {
+                    let stream = try await engine.synthesize(chunk: chunk, voice: voice, config: config)
+                    for try await samples in stream {
                         if Task.isCancelled { break }
                         if firstFrameAt == nil {
                             firstFrameAt = Date().timeIntervalSince(chunkStart)
                         }
                         frameCount += 1
-                        sampleCount += frame.samples.count
-                        self?.schedule(samples: frame.samples)
+                        sampleCount += samples.count
+                        self?.schedule(samples: samples)
                     }
                     // audioSec: playable duration this chunk produced (24 kHz mono).
                     // synthSec: wall-clock to generate it. rtf < 1 means synthesis
@@ -649,7 +743,7 @@ public final class TTSService: ObservableObject {
         TTSLogger.service.error(
             "Remote TTS synthesis failed: \(error.localizedDescription, privacy: .public)")
         // Unlike the local path, don't touch `modelState`: that tracks the
-        // PocketTTS download and a network hiccup shouldn't flip it to failed.
+        // on-device model and a network hiccup shouldn't flip it to failed.
         lastRemoteError = error.localizedDescription
         if playingMessageId == messageId {
             stop()
@@ -707,23 +801,6 @@ public final class TTSService: ObservableObject {
         _ = ToastManager.shared.error(L("Couldn't read the reply aloud"), message: reason)
     }
 
-}
-
-/// built-in PocketTTS voices (kyutai/pocket-tts on HuggingFace). shared by
-/// the TTS settings tab and the per-agent voice picker.
-public enum PocketTTSVoiceCatalog {
-    public static let availableVoices: [String] = [
-        "alba", "anna", "azelma", "bill_boerst", "caro_davy", "charles",
-        "cosette", "eponine", "eve", "fantine", "george", "jane",
-        "javert", "jean", "marius", "mary", "michael", "paul",
-        "peter_yearsley", "stuart_bell", "vera",
-    ]
-
-    public static func displayName(for voice: String) -> String {
-        voice.split(separator: "_")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
-    }
 }
 
 /// Appends TTS diagnostics to a plain-text log file so the sentence-chunking
@@ -800,7 +877,7 @@ enum TTSDebugLog {
     }
 }
 
-/// Splits text into utterance-sized chunks for PocketTTS.
+/// Splits text into utterance-sized chunks for the on-device engines.
 ///
 /// PocketTTS carries a continuous decoder state for the length of a single
 /// `synthesizeStreaming` call, and that state drifts audibly on long runs.
@@ -834,10 +911,12 @@ enum TTSTextChunker {
 
         for paragraph in paragraphs(in: text) {
             for sentence in sentences(in: paragraph) {
+                // Chinese and Japanese don't put spaces between sentences.
+                let separator = current.last.map(fullwidthTerminators.contains) == true ? "" : " "
                 if current.isEmpty {
                     current = sentence
-                } else if current.count + 1 + sentence.count <= maxChars {
-                    current += " " + sentence
+                } else if current.count + separator.count + sentence.count <= maxChars {
+                    current += separator + sentence
                 } else {
                     flush()
                     current = sentence
@@ -876,14 +955,20 @@ enum TTSTextChunker {
         return result
     }
 
-    /// Break a single paragraph into sentence-ish spans on `.`, `!`, and `?`,
-    /// keeping the terminating punctuation with its sentence.
+    /// Chinese/Japanese sentence enders: `。`, `！`, `？`.
+    private static let fullwidthTerminators: Set<Character> = ["。", "！", "？"]
+
+    /// Break a single paragraph into sentence-ish spans on `.`, `!`, and `?`
+    /// (and their fullwidth forms), keeping the terminating punctuation with
+    /// its sentence.
     private static func sentences(in paragraph: String) -> [String] {
         var result: [String] = []
         var current = ""
         for character in paragraph {
             current.append(character)
-            if character == "." || character == "!" || character == "?" {
+            if character == "." || character == "!" || character == "?"
+                || fullwidthTerminators.contains(character)
+            {
                 let piece = current.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !piece.isEmpty { result.append(piece) }
                 current = ""

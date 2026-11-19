@@ -24,6 +24,10 @@ public enum TeamSeeder {
     /// Repo Digest reads Builder's project, so it ships only with Builder.
     nonisolated static let repoDigestTemplateID = UUID(uuidString: "0f5c1a4e-6b7d-4c1a-9a01-000000000207")!
 
+    /// The bundled default workflows' template ids.
+    nonisolated static let defaultWorkflowTemplateIDs: Set<UUID> = Set(
+        (201...207).compactMap { UUID(uuidString: "0f5c1a4e-6b7d-4c1a-9a01-000000000\($0)") })
+
     static let defaultWorkflowResourceNames = [
         "default-workflow-morning-brief",
         "default-workflow-meeting-prep",

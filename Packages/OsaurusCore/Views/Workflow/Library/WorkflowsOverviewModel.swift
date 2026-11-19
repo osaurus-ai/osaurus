@@ -57,6 +57,10 @@ final class WorkflowsOverviewModel: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+        WorkflowRunStore.shared.$recentPersisted
+            .dropFirst()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.refreshFinishedRuns() } }
+            .store(in: &cancellables)
         refresh()
         Task { [weak self] in
             await WorkflowRunStore.shared.loadRecentRunsIfNeeded()

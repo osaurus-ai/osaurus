@@ -362,7 +362,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var customAvatarFilename: String?
     /// auto-speak assistant turns after streaming. overrides per-chat toggle.
     public var autoSpeak: Bool?
-    /// per-agent PocketTTS voice override. nil = use global voice.
+    /// per-agent voice override for the active TTS engine. nil = use global voice.
     public var ttsVoice: String?
     /// Opt-in feature settings (Agent DB + self-scheduling). Agents created before
     /// the feature shipped decode with `.defaultDisabled`, leaving the surface dormant.

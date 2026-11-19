@@ -1508,17 +1508,62 @@ public enum SettingsSearchIndex {
             id: "voice.tts.voice",
             tab: .voice,
             section: "Text to Speech",
-            title: "Spoken Voice",
-            keywords: ["tts", "read aloud", "speech synthesis", "voice"],
-            subTab: "Text To Speech"
+            title: "Voice",
+            keywords: ["tts", "read aloud", "speech synthesis", "spoken voice", "tts voice"],
+            subTab: "Text To Speech",
+            disambiguation: "The voice replies are read in. Per-agent voices are in each agent's Voice section."
         ),
         .init(
             id: "voice.tts.engine",
             tab: .voice,
             section: "Text to Speech",
             title: "Engine",
-            keywords: ["tts engine", "pockettts", "on-device tts", "openai compatible tts"],
+            keywords: ["tts engine", "pockettts", "kokoro", "on-device tts", "openai compatible tts"],
             subTab: "Text To Speech"
+        ),
+        .init(
+            id: "voice.tts.kokoro.language",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Language",
+            keywords: [
+                "kokoro language", "tts language", "mandarin", "chinese", "japanese", "spanish", "french",
+            ],
+            subTab: "Text To Speech",
+            disambiguation:
+                "The language Kokoro speaks, shown once Advanced → Engine is On-Device (Kokoro). Not the app's display language."
+        ),
+        .init(
+            id: "voice.tts.kokoro.runtime",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Runtime",
+            keywords: ["kokoro runtime", "fast (v3)", "kokoro v3", "kokoro speed up"],
+            subTab: "Text To Speech",
+            disambiguation: "Kokoro only. Standard has every voice; Fast (v3) is quicker with fewer voices."
+        ),
+        .init(
+            id: "voice.tts.kokoro.speed",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Speed",
+            keywords: ["kokoro speed", "speaking rate", "talk faster", "talk slower"],
+            subTab: "Text To Speech",
+            disambiguation:
+                "How fast Kokoro speaks. A remote server's speed is in Advanced with its other server fields."
+        ),
+        .init(
+            id: "voice.tts.downloads",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Downloads",
+            keywords: [
+                "delete kokoro downloads", "delete model", "delete tts model", "remove voice model",
+                "tts disk space", "free up space", "kokoro downloads",
+            ],
+            subTab: "Text To Speech",
+            disambiguation:
+                "Deletes the on-device voice engine's files: every Kokoro language at once, or the PocketTTS model. Shown once something is downloaded."
         ),
         .init(
             id: "voice.tts.remote",
@@ -1535,8 +1580,8 @@ public enum SettingsSearchIndex {
             id: "voice.tts.temperature",
             tab: .voice,
             section: "Text to Speech",
-            title: "Voice Temperature",
-            keywords: ["tts temperature", "expressiveness", "variation"],
+            title: "Temperature",
+            keywords: ["tts temperature", "voice temperature", "expressiveness", "variation", "use model default"],
             subTab: "Text To Speech"
         ),
         .init(
@@ -4737,7 +4782,7 @@ public enum SettingsSearchIndex {
                 "my workflows",
             ],
             subTab: "workflows",
-            disambiguation: "Main window ▸ Workflows: a sidebar (search, Home, Activity, Pinned, All Workflows with + for New Workflow, Drafts, Workspaces, then Osaurus Store at the foot) beside the page picked there. Home has New Workflow (⌘N) and a ⋯ menu (Import a Workflow File…, Connections, All Automations, Browse the Store) in its header, with one line saying what is running and what runs on its own; then Running Now, Needs Attention, Pinned and Your Automations, each only when it has something, Ways to Automate until you have an automation, and your author page at the foot. Picking a workflow opens its page; a row's Run starts it at once when it needs nothing, else asks for its input. The toolbar's sidebar button (⌘B) hides or shows the sidebar. With no workflows and no drafts the page is New Workflow alone, without a sidebar."
+            disambiguation: "Main window ▸ Workflows: a sidebar (search, Home, Activity, Pinned, All Workflows with + for New Workflow, Drafts, Workspaces, then Osaurus Store at the foot) beside the page picked there. Home has New Workflow (⌘N) and a ⋯ menu (Import a Workflow File…, Connections, All Automations, Browse the Store) in its header, with one line saying what is running and what runs on its own (or how many workflows are ready to run); then Get Started until its steps are done or you hide it, Running Now, Needs Attention, Pinned, Your Workflows and Your Automations, each only when it has something, Ways to Automate until you have an automation, Find more in the Osaurus Store, and your author page at the foot. Picking a workflow opens its page; a row's Run starts it at once when it needs nothing, else asks for its input. The toolbar's sidebar button (⌘B) hides or shows the sidebar. With no workflows and no drafts the page is New Workflow alone, without a sidebar."
         ),
         .init(
             id: "workflows.runningNow",
@@ -4750,6 +4795,31 @@ public enum SettingsSearchIndex {
             ],
             subTab: "workflows",
             disambiguation: "On Workflows Home, under the title, while any workflow is running: each run with the step it is on (Step 4 of 6) and how long it has been going, Stop, and Answer when it waits on you. A run that just ended stays a few seconds, then leaves. The same live state shows in the sidebar row (a spinner and Running · Step 4 of 6) and at the top of the workflow's page."
+        ),
+        .init(
+            id: "workflows.getStarted",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Get Started",
+            keywords: [
+                "first workflow", "getting started", "checklist", "what to do next", "next step", "try a workflow",
+                "let one run on its own", "describe your own", "find more in the store", "you're all set", "hide get started",
+                "onboarding", "first time",
+            ],
+            subTab: "workflows",
+            disambiguation: "The card at the top of Workflows Home on a new setup: four steps, each with one button, that check themselves off when they happen anywhere in Osaurus. Try a workflow (Run Morning Brief, or Set Up when it needs setup first), Let one run on its own (Turn it on makes the suggested schedule, with Undo), Describe your own (New Workflow), and Find more in the Store (Browse the Store). It shows how many are done; × hides it for good, and it says You're all set once all four are done, then leaves after the next relaunch. Done steps and the hide stay on this Mac."
+        ),
+        .init(
+            id: "workflows.yourWorkflows",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Your Workflows",
+            keywords: [
+                "every workflow", "default workflows", "starter workflows", "workflows on home", "run a workflow",
+                "show all", "show fewer", "not run yet", "ready to run", "workflow tiles",
+            ],
+            subTab: "workflows",
+            disambiguation: "On Workflows Home: every workflow that is not pinned, as a tile with what it does, how its last run went (Not run yet, Ran today, Failed yesterday) and Run (Set Up while it needs setup). The ones run most recently come first, then your own, then the default workflows. Six show at first; Show all N shows the rest. Click a tile for the workflow's page. Pinned workflows show under Pinned instead."
         ),
         .init(
             id: "workflows.activity",
@@ -4807,11 +4877,12 @@ public enum SettingsSearchIndex {
             title: "All Workflows",
             keywords: [
                 "every workflow", "ready to run", "installed workflows", "needs setup", "set up", "run by hand",
+                "last run today",
                 "needs attention", "runs on its own", "run now", "automate", "workflow list", "collapse", "fold", "hide workflows",
                 "show workflows", "sort", "sort by", "order", "reorder", "drag", "my order", "last run", "date added",
             ],
             subTab: "workflows",
-            disambiguation: "The Workflows sidebar's list of every workflow not pinned, in the order Sort By picks (the arrows beside All Workflows on hover: Name, Last Run, Date Added or My Order; drag a row to a new place and it switches to My Order); click All Workflows to fold or unfold it (Pinned, Drafts and Workspaces fold the same way, and a search opens them all), and its + is New Workflow, with teammates' workflows (their owner's Mac on the second line). Each row: a dot that is filled when an automation runs it, marked when its last automated run failed, hollow when you run it by hand, and a setup mark while it needs setup; the few words that say how it runs (Run by hand, Weekdays at 8:00 AM, Needs attention), or a spinner and Step 4 of 6 while it runs; Automate (bolt) and Run (play, Set Up first when needed) appear on hover. Click the row for its page; right-click for Pin, Automate, Share, Run, Rename, Publish, Save as File, Uninstall and the rest."
+            disambiguation: "The Workflows sidebar's list of every workflow not pinned, in the order Sort By picks (the arrows beside All Workflows on hover: Name, Last Run, Date Added or My Order; drag a row to a new place and it switches to My Order); click All Workflows to fold or unfold it (Pinned, Drafts and Workspaces fold the same way, and a search opens them all), and its + is New Workflow, with teammates' workflows (their owner's Mac on the second line). Each row: a dot that is filled when an automation runs it, marked when its last automated run failed, hollow when you run it by hand, and a setup mark while it needs setup; the few words that say how it runs (Not run yet or Last run today when you run it by hand, Weekdays at 8:00 AM, Needs attention), or a spinner and Step 4 of 6 while it runs; Automate (bolt) and Run (play, Set Up first when needed) appear on hover. Click the row for its page; right-click for Pin, Automate, Share, Run, Rename, Publish, Save as File, Uninstall and the rest."
         ),
         .init(
             id: "workflows.new",
@@ -4822,10 +4893,23 @@ public enum SettingsSearchIndex {
                 "describe a task", "new workflow", "start something new", "create a workflow", "ready-made workflows",
                 "or add a ready-made workflow", "add a workflow", "starter workflows", "templates to add",
                 "create your first workflow", "ready to add", "what would you like to automate",
-                "or start from a ready-made one",
+                "or start from a ready-made one", "ideas", "organize my downloads", "monthly expense report",
+                "research a company", "compare two contracts", "browse more in the osaurus store",
             ],
             subTab: "new",
-            disambiguation: "The New Workflow page, titled What would you like to automate?, opened from New Workflow in the Workflows header, the + beside All Workflows in the sidebar, or ⌘N (with no workflows and no drafts it is the whole Workflows page): the Architect's composer (sending starts a new draft with your words as its first message), then Or start from a ready-made one, the templates not set up yet, each opening a preview with Add, and Import a Workflow."
+            disambiguation: "The New Workflow page, titled What would you like to automate?, opened from New Workflow in the Workflows header, the + beside All Workflows in the sidebar, Describe your own in Get Started, or ⌘N (with no workflows and no drafts it is the whole Workflows page): the Architect's composer (sending starts a new draft with your words as its first message); under it a few ideas (Organize my Downloads, Monthly expense report, Research a company, Compare two contracts), each putting its sentence in the box to finish, and How it works; then Or start from a ready-made one, the templates not set up yet, each opening a preview with Add; and at the foot Browse more in the Osaurus Store and Import a Workflow."
+        ),
+        .init(
+            id: "workflows.newHowItWorks",
+            tab: .workflows,
+            section: "Workflows",
+            title: "How it works",
+            keywords: [
+                "what can a workflow touch", "your files in", "work in the sandbox", "results out", "sandbox",
+                "what does a workflow read", "where results go", "is it safe",
+            ],
+            subTab: "new",
+            disambiguation: "The How it works button under the ideas on the New Workflow page: a popover saying Osaurus builds the workflow from your words and tries it with you, then Your files in → Work in the sandbox → Results out: a workflow reads only the folders you choose, works in the sandbox, and saves results where it says, and each lists what it reads and saves before you run it."
         ),
         .init(
             id: "workflows.drafts",
@@ -4881,7 +4965,16 @@ public enum SettingsSearchIndex {
                 "find workflows", "community workflows",
             ],
             subTab: "workflows",
-            disambiguation: "At the foot of the Workflows sidebar (and Browse the Store in Home's ⋯ menu): opens store.osaurus.ai in your browser. Add on a listing there comes back to Osaurus and opens setup, which shows what the workflow does and what it can use before anything is installed."
+            disambiguation: "At the foot of the Workflows sidebar (and Browse the Store in Home's ⋯ menu, Find more in the Osaurus Store on Home, Find more in the Store in Get Started, and Browse more in the Osaurus Store on the New Workflow page): opens store.osaurus.ai in your browser. Add on a listing there comes back to Osaurus and opens setup, which shows what the workflow does and what it can use before anything is installed."
+        ),
+        .init(
+            id: "workflows.storeCard",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Find more in the Osaurus Store",
+            keywords: ["browse the store", "more workflows", "workflows other people made", "store card"],
+            subTab: "workflows",
+            disambiguation: "The card near the foot of Workflows Home: Browse the Store opens store.osaurus.ai in your browser, the same as Osaurus Store at the foot of the sidebar."
         ),
         .init(
             id: "workflows.addHosted",

@@ -2119,6 +2119,17 @@ final class ChatSession: ObservableObject {
         return Self.modelSupportsImages(modelId: model, pickerItems: pickerItems)
     }
 
+    /// View-facing counterpart of `selectedModelSupportsImages` for SwiftUI
+    /// bodies (the composer's `supportsImages:`). Never reads the bundle on
+    /// the calling thread: a cold `LocalVisionEvidence` cache used to open
+    /// every safetensors shard on main during layout and hang the window.
+    /// A pending read resolves as false until `evidenceReady` re-renders the
+    /// composer. Send paths must keep using `selectedModelSupportsImages`.
+    var composerSupportsImages: Bool {
+        guard let model = selectedModel else { return false }
+        return Self.modelSupportsImagesSnapshot(modelId: model, pickerItems: pickerItems)
+    }
+
     /// Whether `modelId` can accept image input. Local models are gated on
     /// detected VLM capability; remote provider models are trusted to accept
     /// images. A plain remote provider exposes a flat model list with no
@@ -2129,9 +2140,23 @@ final class ChatSession: ObservableObject {
     /// far worse than the alternative failure, where a text-only remote
     /// model rejects the image part with a visible provider error.
     nonisolated static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
+        resolveSupportsImages(modelId: modelId, pickerItems: pickerItems, readsBundle: true)
+    }
+
+    /// Cache-only variant of `modelSupportsImages` for SwiftUI getters. Local
+    /// bundle evidence comes from `mediaCapabilitiesSnapshot`, which never
+    /// touches disk on the calling thread; nil (read pending) means false.
+    nonisolated static func modelSupportsImagesSnapshot(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
+        resolveSupportsImages(modelId: modelId, pickerItems: pickerItems, readsBundle: false)
+    }
+
+    private nonisolated static func resolveSupportsImages(
+        modelId: String, pickerItems: [ModelPickerItem], readsBundle: Bool
+    ) -> Bool {
         if modelId.lowercased() == "foundation" { return false }
         if let local = ModelManager.findInstalledMLXModelFromCache(named: modelId) {
-            return local.mediaCapabilities.supportsImage
+            if readsBundle { return local.mediaCapabilities.supportsImage }
+            return local.mediaCapabilitiesSnapshot?.supportsImage ?? false
         }
         guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
         // Image-edit models accept image input (osaurus image-edit feature).
@@ -12068,7 +12093,7 @@ struct ChatView: View {
                                     // long pause a big model spends loading from
                                     // disk while the typing-indicator shimmer is up.
                                     isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
-                                    supportsImages: observedSession.selectedModelSupportsImages,
+                                    supportsImages: observedSession.composerSupportsImages,
                                     estimatedContextTokens: observedSession.estimatedContextTokens,
                                     appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
                                     contextBreakdown: observedSession.estimatedContextBreakdown,
@@ -13479,7 +13504,7 @@ extension ChatView {
         session.regenerate(turnId: session.regenerationTarget(for: turnId))
     }
 
-    /// Read the assistant turn aloud via PocketTTS. If the model isn't downloaded,
+    /// Read the assistant turn aloud via the configured TTS engine. If the model isn't downloaded,
     /// TTSService posts a notification that opens the TTS settings tab.
     private func speakTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }

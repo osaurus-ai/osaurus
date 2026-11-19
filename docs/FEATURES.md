@@ -67,7 +67,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Voice Input (FluidAudio)         | Stable    | VOICE_INPUT.md                | Managers/SpeechService.swift, Managers/Model/SpeechModelManager.swift                  |
 | VAD Mode                         | Stable    | VOICE_INPUT.md                | Services/Voice/VADService.swift, Views/Voice/VADModeSettingsTab.swift                     |
 | Transcription Mode               | Stable    | VOICE_INPUT.md                | Services/Voice/TranscriptionModeService.swift, Views/Voice/TranscriptionOverlayView.swift         |
-| Text-to-Speech (PocketTTS + OpenAI-compatible servers) | Stable | TEXT_TO_SPEECH.md | Managers/TTSService.swift, Managers/OpenAICompatibleTTSClient.swift, Views/Voice/TTSModeSettingsTab.swift |
+| Text-to-Speech (PocketTTS, Kokoro-82M, OpenAI-compatible servers) | Stable | TEXT_TO_SPEECH.md | Managers/TTSService.swift, Managers/TTS/, Managers/OpenAICompatibleTTSClient.swift, Views/Voice/TTSModeSettingsTab.swift |
 | Sandbox                          | macOS 26+ | SANDBOX.md                    | Services/Sandbox/SandboxManager.swift, Tools/BuiltinSandboxTools.swift, Managers/Plugin/SandboxPluginManager.swift, Views/Sandbox/SandboxView.swift |
 | Computer Use                     | Experimental | COMPUTER_USE.md            | ComputerUse/ (Tool, Loop, Policy, Perception, Recipes, Driver, Feed), Views/Settings/ComputerUseSettingsView.swift |
 | Browser Use                      | Stable    | BROWSER.md                    | Browser/, Subagent/Kinds/BrowserUseKind.swift, Views/Settings/BrowserSettingsView.swift |

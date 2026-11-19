@@ -408,10 +408,38 @@ struct WorkflowsHomeModelTests {
 
     @Test func subtitleCountsWhatRunsOnItsOwn() {
         #expect(WorkflowsHomeModel.subtitle(runOnOwn: 0, attention: 0) == "Nothing runs on its own yet.")
-        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 4, attention: 0) == "4 run on their own.")
-        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 4, attention: 1) == "4 run on their own. 1 needs your attention.")
+        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 4, attention: 0) == "4 workflows run on their own.")
+        #expect(
+            WorkflowsHomeModel.subtitle(runOnOwn: 4, attention: 1) == "4 workflows run on their own. 1 needs your attention.")
         #expect(WorkflowsHomeModel.subtitle(runOnOwn: 0, attention: 0, running: 2) == "2 running now.")
-        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 1, attention: 0, running: 1) == "1 running now. 1 runs on its own.")
+        #expect(
+            WorkflowsHomeModel.subtitle(runOnOwn: 1, attention: 0, running: 1)
+                == "1 running now. 1 workflow runs on its own.")
+        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 0, attention: 0, ready: 7) == "7 workflows ready to run.")
+        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 0, attention: 0, ready: 1) == "1 workflow ready to run.")
+        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 2, attention: 0, ready: 7) == "2 workflows run on their own.")
+    }
+
+    @Test func everyWorkflowNotPinnedIsATile() {
+        func defaultTemplate(_ n: Int, _ name: String) -> Template {
+            Template(
+                id: UUID(uuidString: "0f5c1a4e-6b7d-4c1a-9a01-000000000\(n)")!, name: name, summary: "Default",
+                payload: .workflow(WF.intake()))
+        }
+        let brief = InstalledWorkflow(template: defaultTemplate(201, "Morning Brief"), bindings: InstallBindings())
+        let triage = InstalledWorkflow(template: defaultTemplate(203, "Mail Triage"), bindings: InstallBindings())
+        let research = InstalledWorkflow(template: defaultTemplate(206, "Research Brief"), bindings: InstallBindings())
+        let mine = Self.workflow("Mine")
+        let pinned = Self.workflow("Pinned", pinned: true)
+        var ran = run(.completed)
+        ran.workflowID = triage.id
+        let model = WorkflowsHomeModel.make(
+            workflows: [brief, triage, research, mine, pinned], automations: [:], workflowRuns: [ran], now: wednesday,
+            style: us)
+        #expect(model.pinned.map(\.name) == ["Pinned"])
+        #expect(model.unpinned.map(\.name) == ["Mail Triage", "Mine", "Morning Brief", "Research Brief"])
+        #expect(plain(model.unpinned.first?.lastRun ?? "") == "Ran today")
+        #expect(model.readyCount == 5)
     }
 
     @Test func countsGroupsAndWays() {
