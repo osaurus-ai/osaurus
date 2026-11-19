@@ -1,0 +1,196 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-09-01T07:21:00.301Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0,
+      "agentLoopDiagnostics" : {
+        "exitCounts" : {
+          "errored" : 140,
+          "overBudget" : 1
+        },
+        "exitOriginCounts" : {
+          "unrecorded" : 141
+        },
+        "measuredRows" : 141,
+        "recoveryRetriesTotal" : 0,
+        "rowsWithExitTelemetry" : 141
+      },
+      "cacheTotals" : {
+        "diskL2Evictions" : 0,
+        "diskL2Hits" : 48,
+        "diskL2Misses" : 1374,
+        "diskL2Stores" : 212,
+        "kvPrefixHits" : 0,
+        "kvPrefixMisses" : 0,
+        "pagedEvictions" : 0,
+        "ssmCompanionHits" : 0,
+        "ssmCompanionMisses" : 0,
+        "ssmCompanionReDerives" : 0
+      },
+      "chatModelPassed" : 80,
+      "chatModelScored" : 126,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "1bbd959",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/VibeThinker-3B-MXFP8",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 0,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.0070921985815602835,
+      "meanAgentLoopWallTimeMs" : 2.959786577427641,
+      "meanCpuPercent" : 45.08965510493879,
+      "meanDecodeTokensPerSecond" : 94.79029642857145,
+      "meanFirstStepContextTokens" : 3281.6714285714284,
+      "meanFrictionCalls" : 0,
+      "meanPromptTokensPerTask" : 3166.15,
+      "meanTotalTokensPerTask" : 2931.6203703703704,
+      "meanTtftMs" : 317.75649388631183,
+      "medianModelSteps" : 1,
+      "modelId" : "OsaurusAI/VibeThinker-3B-MXFP8",
+      "peakCpuPercent" : 198.33517761414163,
+      "peakPhysFootprintMb" : 1534.8141250610352,
+      "perDomain" : {
+        "agent_loop" : {
+          "errorCategories" : {
+            "parser_or_protocol" : 7,
+            "permission" : 1,
+            "process_termination" : 7,
+            "runtime_other" : 125
+          },
+          "errored" : 140,
+          "passed" : 1,
+          "scored" : 1,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3
+          },
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 14,
+          "scored" : 32,
+          "skipReasons" : {
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 3
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 9,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errorCategories" : {
+            "process_termination" : 2,
+            "runtime_other" : 9
+          },
+          "errored" : 11,
+          "passed" : 0,
+          "scored" : 0,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errorCategories" : {
+            "parser_or_protocol" : 1,
+            "runtime_other" : 48
+          },
+          "errored" : 49,
+          "passed" : 0,
+          "scored" : 0,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 15,
+          "skipReasons" : {
+            "other: scenario: multimodal_image · port 52773" : 1,
+            "other: scenario: multimodal_video · port 52773" : 1
+          },
+          "skipped" : 2
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 2,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 6,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 5,
+          "scored" : 11,
+          "skipReasons" : {
+            "other: SKIP: case requires a reasoning channel but the resolved model has none (LocalReasoningCapability detection)" : 2
+          },
+          "skipped" : 2
+        },
+        "subagent" : {
+          "errorCategories" : {
+            "runtime_other" : 1
+          },
+          "errored" : 1,
+          "passed" : 29,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-09-01T07:13:16Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 16,
+      "topContextContributors" : [
+        "tool:redact_file=491",
+        "tool:search_and_extract=371",
+        "tool:detect_pii=353",
+        "tool:file_read=279",
+        "tool:render_chart=275",
+        "tool:share_artifact=266"
+      ],
+      "totalPassed" : 80,
+      "totalScored" : 142
+    }
+  ]
+}
