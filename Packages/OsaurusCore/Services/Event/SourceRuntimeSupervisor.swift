@@ -170,6 +170,8 @@ actor SourceRuntimeSupervisor {
     private var generation = 0
     /// Scopes sleeping until their next tick.
     private var wakeups: [String: Waiter] = [:]
+    /// Poll scopes asked to tick again while a tick was in progress.
+    private var pendingTicks: Set<String> = []
 
     init(
         host: SourceRuntimeHost,
@@ -210,9 +212,17 @@ actor SourceRuntimeSupervisor {
         for key in Array(running.keys) { stop(key) }
     }
 
-    /// Ends the wait before a scope's next tick.
+    /// Ends the wait before a scope's next tick. A poll scope that is mid-tick
+    /// ticks again as soon as the current tick ends.
     func tickNow(_ key: String) {
-        wakeups.removeValue(forKey: key)?.resume()
+        if let waiter = wakeups.removeValue(forKey: key) {
+            waiter.resume()
+            return
+        }
+        switch running[key]?.scope.mode {
+        case .poll, .maintenance: pendingTicks.insert(key)
+        case .stream, nil: break
+        }
     }
 
     // MARK: - Lifecycle
@@ -235,6 +245,7 @@ actor SourceRuntimeSupervisor {
     private func stop(_ key: String) {
         guard let entry = running.removeValue(forKey: key) else { return }
         entry.task.cancel()
+        pendingTicks.remove(key)
         wakeups.removeValue(forKey: key)?.resume()
         let driver = entry.scope.driver
         Task { await driver.report(.stopped, scope: key) }
@@ -303,9 +314,10 @@ actor SourceRuntimeSupervisor {
         max(Self.minInterval / 2, delay * (1 + Self.jitterFraction * jitter()))
     }
 
-    /// Sleeps `delay` unless `tickNow` or `stop` ends the wait first.
+    /// Sleeps `delay` unless `tickNow` or `stop` ends the wait first; skipped
+    /// when `tickNow` arrived during the tick.
     private func wait(_ delay: TimeInterval, key: String, generation: Int) async {
-        guard current(key, generation) != nil else { return }
+        guard current(key, generation) != nil, pendingTicks.remove(key) == nil else { return }
         let sleeper = self.sleeper
         let token = UUID()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
