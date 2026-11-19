@@ -824,7 +824,7 @@ extension ContentBlock {
                             call: call,
                             result: turn.remoteToolResults[call.id],
                             unobservedResult: turn.remoteToolUnobservedResults[call.id],
-                            duration: nil
+                            duration: turn.toolCallDurations[call.id]
                         )
                     }
                 if !remoteItems.isEmpty {

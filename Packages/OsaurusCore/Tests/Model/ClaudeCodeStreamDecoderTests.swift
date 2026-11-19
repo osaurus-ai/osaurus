@@ -143,7 +143,7 @@ struct ClaudeCodeStreamDecoderTests {
         }
         #expect(trace.endRun)
 
-        guard case .stats(let tokens, let tps, let stop) = events[1] else {
+        guard case .stats(let tokens, let tps, let stop, _) = events[1] else {
             Issue.record("expected stats, got \(events[1])")
             return
         }
@@ -160,7 +160,7 @@ struct ClaudeCodeStreamDecoderTests {
             #"{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":9}}}"#,
             #"{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"usage":{"output_tokens":9}}"#,
         ])
-        guard case .stats(_, _, let stop) = events.last else {
+        guard case .stats(_, _, let stop, _) = events.last else {
             Issue.record("expected stats, got \(String(describing: events.last))")
             return
         }
@@ -171,12 +171,24 @@ struct ClaudeCodeStreamDecoderTests {
         let events = decode([
             #"{"type":"result","subtype":"success","is_error":false,"duration_ms":10000,"duration_api_ms":2000,"usage":{"output_tokens":40}}"#
         ])
-        guard case .stats(let tokens, let tps, _)? = events.last else {
+        guard case .stats(let tokens, let tps, _, _)? = events.last else {
             Issue.record("expected stats, got \(String(describing: events.last))")
             return
         }
         #expect(tokens == 40)
         #expect(abs(tps - 20.0) < 0.001)
+    }
+
+    @Test func statsSumPromptTokensWithCacheReads() {
+        let events = decode([
+            #"{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"usage":{"input_tokens":12,"cache_creation_input_tokens":300,"cache_read_input_tokens":4000,"output_tokens":9}}"#,
+            #"{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"usage":{"output_tokens":9}}"#,
+        ])
+        let prompts = events.compactMap { event -> Int?? in
+            guard case .stats(_, _, _, let prompt) = event else { return nil }
+            return prompt
+        }
+        #expect(prompts == [4312, nil])
     }
 
     @Test func errorResultSurfacesFailure() {

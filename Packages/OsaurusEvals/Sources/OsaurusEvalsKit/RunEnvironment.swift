@@ -224,6 +224,7 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
             commit: nonEmpty(environment["OSAURUS_EVALS_COMMIT"]),
             runModel: runModel,
             harness: nonEmpty(environment["OSAURUS_EVALS_HARNESS"]) ?? "osaurus",
+            harnessVersion: nonEmpty(environment["OSAURUS_EVALS_HARNESS_VERSION"]),
             judge: judgeResolution.isSelfJudge ? "self-judge" : judgeResolution.modelId,
             kvRegime: nonEmpty(environment["OSAURUS_EVALS_KV_REGIME"]),
             catalogHash: catalogHash(forCaseIDs: caseIDs),

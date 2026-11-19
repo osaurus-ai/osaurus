@@ -132,6 +132,9 @@ extension ChatSession {
                         isError: isError,
                         failureMessage: message
                     )
+                    if let callId, let record = await HarnessBridgeCalls.shared.record(chatId: chatId, toolCallId: callId) {
+                        turn.noteRemoteToolDetail(callId: callId, arguments: record.arguments, result: record.result)
+                    }
                     rebuildVisibleBlocks()
                 case .notice(let text, _):
                     appendNotice(text)
@@ -139,7 +142,7 @@ extension ChatSession {
                     if let state = presentHarnessDialog(request, session: session) {
                         openDialogs[request.id] = state
                     }
-                case .stats(let outputTokens, let tokensPerSecond, let stopReason):
+                case .stats(let outputTokens, let tokensPerSecond, let stopReason, _):
                     if outputTokens > 0 { turn.generationTokenCount = outputTokens }
                     if tokensPerSecond.isFinite, tokensPerSecond > 0 { authoritativeRate = tokensPerSecond }
                     if let stopReason { turn.terminalStopReason = stopReason }
@@ -155,6 +158,10 @@ extension ChatSession {
                 failHarnessTurn(error, on: turn)
             }
         }
+
+        // Nothing waits for an Osaurus tool call once the turn is over
+        // (Stop, a failure, or a harness that exited mid-call).
+        await HarnessBridgeCalls.shared.cancelAll(chatId: chatId)
 
         // Questions the harness stopped waiting for must not stay on screen.
         if !openDialogs.isEmpty {
@@ -257,6 +264,10 @@ extension ChatSession {
     /// when the runtime supports it).
     func closeHarnessSession(for chatId: UUID? = nil) {
         guard let id = chatId ?? sessionId else { return }
-        Task { await HarnessSessionManager.shared.close(chatId: id) }
+        Task {
+            await HarnessBridgeCalls.shared.cancelAll(chatId: id)
+            await HarnessBridgeCalls.shared.clearRecords(chatId: id)
+            await HarnessSessionManager.shared.close(chatId: id)
+        }
     }
 }

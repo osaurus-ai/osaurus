@@ -25,10 +25,12 @@ struct ClaudeCodeHarnessAdapterTests {
         runtime: HarnessRuntime? = nil,
         token: String? = "osh_token",
         agentId: UUID = UUID(),
+        osaurusTools: Set<String> = [],
+        teammateNote: String? = nil,
         in directory: URL
     ) throws -> (HarnessLaunchPlan, HarnessLaunchContext) {
         let runtime = runtime ?? self.runtime
-        let context = HarnessFixtures.context(
+        var context = HarnessFixtures.context(
             runtime: runtime,
             agentId: agentId,
             workingDirectory: directory,
@@ -39,8 +41,12 @@ struct ClaudeCodeHarnessAdapterTests {
             serverReachable: serverReachable,
             sessionMode: sessionMode
         )
+        context.osaurusToolNames = osaurusTools
+        context.teammateRoutingNote = teammateNote
         return (try ClaudeCodeHarnessAdapter(runtime: runtime).launchPlan(context: context, token: token), context)
     }
+
+    private let agentTools: Set<String> = ["osaurus_inspect", "osaurus_help", "calendar_list", "status"]
 
     private func value(after flag: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else { return nil }
@@ -188,8 +194,9 @@ struct ClaudeCodeHarnessAdapterTests {
     @Test func textOnlyModeDisablesEveryTool() throws {
         let directory = try HarnessFixtures.temporaryDirectory("claude-text")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let config = ClaudeCodeAgentConfig(mode: .textOnly, allowWrites: true, allowShell: true, allowOsaurusTools: true)
-        let (plan, context) = try plan(config, cliPath: "/tmp/osaurus", serverReachable: true, in: directory)
+        let config = ClaudeCodeAgentConfig(mode: .textOnly, allowWrites: true, allowShell: true, osaurusTools: true)
+        let (plan, context) = try plan(
+            config, cliPath: "/tmp/osaurus", serverReachable: true, osaurusTools: agentTools, in: directory)
         defer { cleanup(plan) }
         let args = plan.spec.arguments
 
@@ -225,7 +232,7 @@ struct ClaudeCodeHarnessAdapterTests {
         #expect(!args.contains("--append-system-prompt"))
         #expect(!args.contains("--system-prompt"))
         let path = try #require(value(after: "--append-system-prompt-file", in: args))
-        #expect(try String(contentsOfFile: path, encoding: .utf8) == secret)
+        #expect(try String(contentsOfFile: path, encoding: .utf8).hasPrefix(secret + "\n\n"))
         let attributes = try FileManager.default.attributesOfItem(atPath: path)
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
         #expect(plan.temporaryFiles.map(\.path).contains(path))
@@ -235,7 +242,7 @@ struct ClaudeCodeHarnessAdapterTests {
     @Test func blankInstructionsWriteNoFile() throws {
         let directory = try HarnessFixtures.temporaryDirectory("claude-blank")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let (plan, _) = try plan(systemPrompt: "   \n", in: directory)
+        let (plan, _) = try plan(ClaudeCodeAgentConfig(mode: .textOnly), systemPrompt: "   \n", in: directory)
         #expect(!plan.spec.arguments.contains("--append-system-prompt-file"))
         #expect(plan.temporaryFiles.isEmpty)
     }
@@ -280,8 +287,8 @@ struct ClaudeCodeHarnessAdapterTests {
     @Test func osaurusToolsAttachThroughATokenInAPrivateMCPConfig() throws {
         let directory = try HarnessFixtures.temporaryDirectory("claude-mcp")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let config = ClaudeCodeAgentConfig(allowOsaurusTools: true)
-        let (plan, context) = try plan(config, cliPath: "/Apps/osaurus", serverReachable: true, in: directory)
+        let (plan, context) = try plan(
+            cliPath: "/Apps/osaurus", serverReachable: true, osaurusTools: agentTools, in: directory)
         defer { cleanup(plan) }
         let args = plan.spec.arguments
 
@@ -290,32 +297,60 @@ struct ClaudeCodeHarnessAdapterTests {
         let server = try #require((root["mcpServers"] as? [String: Any])?["osaurus"] as? [String: Any])
         #expect(server["command"] as? String == "/Apps/osaurus")
         #expect((server["env"] as? [String: String])?[HarnessGrantStore.environmentKey] == "osh_token")
+        #expect(server["args"] as? [String] == ["mcp", "--tools", agentTools.sorted().joined(separator: ",")])
         #expect(!args.contains { $0.contains("osh_token") })
 
-        let allowed = try #require(value(after: "--allowedTools", in: args)).split(separator: ",").map(String.init)
-        #expect(allowed.contains("mcp__osaurus__osaurus_inspect"))
-        #expect(allowed.contains("mcp__osaurus__osaurus_help"))
+        let allowed = Set(try #require(value(after: "--allowedTools", in: args)).split(separator: ",").map(String.init))
+        #expect(allowed.isSuperset(of: agentTools.map { "mcp__osaurus__\($0)" }))
         #expect(!allowed.contains("mcp__osaurus__osaurus_config"))
 
         let adapter = ClaudeCodeHarnessAdapter(runtime: runtime)
-        #expect(adapter.tokenToolScope(context: context) == ["osaurus_inspect", "osaurus_help"])
+        #expect(adapter.tokenToolScope(context: context) == agentTools)
         #expect(!adapter.tokenAllowsConfigWrites(context: context))
 
         let promptPath = try #require(value(after: "--append-system-prompt-file", in: args))
         let note = try String(contentsOfFile: promptPath, encoding: .utf8)
-        #expect(note.contains("osaurus_inspect"))
+        #expect(note.contains("mcp__osaurus__"))
+        #expect(note.contains("cannot change Osaurus's configuration"))
         #expect(!note.contains("do NOT"))
     }
 
-    @Test func configWritesNeedTheirOwnOptIn() throws {
+    @Test func useOsaurusToolsOffAttachesNothingAndSaysWhere() throws {
+        let directory = try HarnessFixtures.temporaryDirectory("claude-mcp-off")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (plan, context) = try plan(
+            ClaudeCodeAgentConfig(osaurusTools: false),
+            cliPath: "/Apps/osaurus", serverReachable: true, osaurusTools: agentTools, in: directory)
+        defer { cleanup(plan) }
+
+        #expect(!plan.spec.arguments.contains("--mcp-config"))
+        #expect(ClaudeCodeHarnessAdapter(runtime: runtime).tokenToolScope(context: context) == [])
+        let promptPath = try #require(value(after: "--append-system-prompt-file", in: plan.spec.arguments))
+        #expect(try String(contentsOfFile: promptPath, encoding: .utf8).contains("Use Osaurus Tools"))
+    }
+
+    @Test func anAgentWithNoToolsAttachesNoBridge() throws {
+        let directory = try HarnessFixtures.temporaryDirectory("claude-mcp-empty")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (plan, _) = try plan(cliPath: "/Apps/osaurus", serverReachable: true, in: directory)
+        defer { cleanup(plan) }
+
+        #expect(!plan.spec.arguments.contains("--mcp-config"))
+        #expect(value(after: "--allowedTools", in: plan.spec.arguments) == "Read,Grep,Glob")
+        let promptPath = try #require(value(after: "--append-system-prompt-file", in: plan.spec.arguments))
+        #expect(try String(contentsOfFile: promptPath, encoding: .utf8).contains("tools are turned off"))
+    }
+
+    @Test func configWritesFollowTheResolvedSurface() throws {
         let directory = try HarnessFixtures.temporaryDirectory("claude-config-writes")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let config = ClaudeCodeAgentConfig(allowOsaurusTools: true, allowOsaurusConfigWrites: true)
+        let config = ClaudeCodeAgentConfig(allowOsaurusConfigWrites: true)
         let (plan, context) = try plan(
             config,
             cliPath: "/Apps/osaurus",
             serverReachable: true,
             agentId: Agent.defaultId,
+            osaurusTools: agentTools.union(["osaurus_config"]),
             in: directory
         )
         defer { cleanup(plan) }
@@ -325,32 +360,44 @@ struct ClaudeCodeHarnessAdapterTests {
         let adapter = ClaudeCodeHarnessAdapter(runtime: runtime)
         #expect(adapter.tokenAllowsConfigWrites(context: context))
         #expect(adapter.tokenToolScope(context: context)?.contains("osaurus_config") == true)
+        let promptPath = try #require(value(after: "--append-system-prompt-file", in: plan.spec.arguments))
+        #expect(!(try String(contentsOfFile: promptPath, encoding: .utf8)).contains("cannot change"))
     }
 
     /// `osaurus_config` only runs for the Default agent, so a custom agent's
-    /// opt-in must not attach a tool that would always refuse.
-    @Test func configWritesAreIgnoredForCustomAgents() throws {
-        let directory = try HarnessFixtures.temporaryDirectory("claude-config-writes-custom")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let config = ClaudeCodeAgentConfig(allowOsaurusTools: true, allowOsaurusConfigWrites: true)
-        let (plan, context) = try plan(config, cliPath: "/Apps/osaurus", serverReachable: true, in: directory)
-        defer { cleanup(plan) }
+    /// opt-in must not reach the surface that would list it.
+    @Test func configWritesAreIgnoredForCustomAgents() {
+        let config = ClaudeCodeAgentConfig(allowOsaurusConfigWrites: true)
+        #expect(ClaudeCodeHarnessAdapter.allowsConfigWrites(agentId: Agent.defaultId, config))
+        #expect(!ClaudeCodeHarnessAdapter.allowsConfigWrites(agentId: UUID(), config))
+        #expect(!ClaudeCodeHarnessAdapter.allowsConfigWrites(agentId: Agent.defaultId, .default))
+    }
 
-        let allowed = try #require(value(after: "--allowedTools", in: plan.spec.arguments))
-        #expect(allowed.contains("mcp__osaurus__osaurus_help"))
-        #expect(!allowed.contains("mcp__osaurus__osaurus_config"))
-        let mcpPath = try #require(value(after: "--mcp-config", in: plan.spec.arguments))
-        #expect(!(try String(contentsOfFile: mcpPath, encoding: .utf8)).contains("osaurus_config"))
-        let adapter = ClaudeCodeHarnessAdapter(runtime: runtime)
-        #expect(!adapter.tokenAllowsConfigWrites(context: context))
-        #expect(adapter.tokenToolScope(context: context) == ["osaurus_inspect", "osaurus_help"])
+    @Test func theDefaultAgentGetsItsTeammateNoteOnlyWithTheBridge() throws {
+        let directory = try HarnessFixtures.temporaryDirectory("claude-team-note")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let teammates = "## Team\n\n- **Calendar Helper**"
+        let (attached, _) = try plan(
+            cliPath: "/Apps/osaurus", serverReachable: true, agentId: Agent.defaultId,
+            osaurusTools: agentTools, teammateNote: teammates, in: directory)
+        let (down, _) = try plan(
+            cliPath: "/Apps/osaurus", serverReachable: false, agentId: Agent.defaultId,
+            osaurusTools: agentTools, teammateNote: teammates, in: directory)
+        defer { [attached, down].forEach(cleanup) }
+
+        func prompt(_ plan: HarnessLaunchPlan) throws -> String {
+            let path = try #require(value(after: "--append-system-prompt-file", in: plan.spec.arguments))
+            return try String(contentsOfFile: path, encoding: .utf8)
+        }
+        #expect(try prompt(attached).contains("Calendar Helper"))
+        #expect(!(try prompt(down)).contains("Calendar Helper"))
     }
 
     @Test func aStoppedServerSaysSoInsteadOfAttaching() throws {
         let directory = try HarnessFixtures.temporaryDirectory("claude-server-down")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let config = ClaudeCodeAgentConfig(allowOsaurusTools: true)
-        let (plan, _) = try plan(config, cliPath: "/Apps/osaurus", serverReachable: false, in: directory)
+        let (plan, _) = try plan(
+            cliPath: "/Apps/osaurus", serverReachable: false, osaurusTools: agentTools, in: directory)
         defer { cleanup(plan) }
 
         #expect(!plan.spec.arguments.contains("--mcp-config"))
@@ -365,7 +412,7 @@ struct ClaudeCodeHarnessAdapterTests {
     /// The Architect's job is the draft, so its run sees exactly its Osaurus
     /// tools and no built-ins, whatever its Claude Code options say.
     @Test(arguments: [ClaudeCodeAgentConfig.default, ClaudeCodeAgentConfig(
-        mode: .textOnly, allowWrites: true, allowShell: true, allowOsaurusTools: false)])
+        mode: .textOnly, allowWrites: true, allowShell: true, osaurusTools: false)])
     func architectSeesOnlyItsDraftTools(config: ClaudeCodeAgentConfig) throws {
         let directory = try HarnessFixtures.temporaryDirectory("claude-architect")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -387,7 +434,7 @@ struct ClaudeCodeHarnessAdapterTests {
         #expect(allowed == Set(HarnessGrantStore.architectToolNames.map { "mcp__osaurus__\($0)" }))
         #expect(allowed.contains("mcp__osaurus__workflow_draft"))
         #expect(allowed.contains("mcp__osaurus__workflow_propose_save"))
-        #expect(!allowed.contains("mcp__osaurus__clarify"), "clarify needs the native chat UI")
+        #expect(allowed.contains("mcp__osaurus__clarify"), "asks on the chat's question card")
 
         let mcpPath = try #require(value(after: "--mcp-config", in: args))
         let root = HarnessFixtures.json(try Data(contentsOf: URL(fileURLWithPath: mcpPath)))

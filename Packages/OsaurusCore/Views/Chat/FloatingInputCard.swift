@@ -339,6 +339,10 @@ struct FloatingInputCard: View {
     // Observe managers for reactive updates
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var harnessRuntimeStore = HarnessRuntimeStore.shared
+    @ObservedObject private var harnessAvailability = HarnessRuntimeAvailability.shared
+    /// A Claude Code row picked while signed out; applied only once the
+    /// sign-in sheet completes.
+    @State private var pendingHarnessSignIn: PendingHarnessSignIn?
     @State private var showHarnessFolderWarning = false
     @State private var showSandboxPopover = false
     @State private var pendingHarnessFolderChange: (() -> Void)?
@@ -1079,6 +1083,7 @@ struct FloatingInputCard: View {
                     folderState.clearFolder()
                 }
                 refreshMTPLayoutAdvisory()
+                harnessAvailability.refresh(pickerHarnessRuntimes)
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
                 if text.isEmpty { onWillRehydrate?() }
                 localText = text
@@ -3266,6 +3271,18 @@ extension FloatingInputCard {
     /// chat and later ones. Nil moves it back to the built-in loop.
     private func selectHarness(_ option: ChatHarnessPickerOption?) {
         let agentId = effectiveAgentId
+        if let option, let runtime = harnessRuntimeStore.runtime(id: option.runtimeId),
+            ChatHarnessPickerOption.needsSetup(runtime, state: harnessAvailability.state(of: runtime.id))
+        {
+            dismissModelPicker()
+            let pending = PendingHarnessSignIn(option: option, runtime: runtime, agentId: agentId)
+            DispatchQueue.main.async { pendingHarnessSignIn = pending }
+            return
+        }
+        applyHarness(option, for: agentId)
+    }
+
+    private func applyHarness(_ option: ChatHarnessPickerOption?, for agentId: UUID) {
         guard let option else {
             agentManager.updateRuntime(.builtIn, for: agentId)
             harnessConfigRevision &+= 1
@@ -3400,6 +3417,21 @@ extension FloatingInputCard {
                 onSizeChange: { modelPickerCardSize = $0 }
             )
         }
+        .sheet(item: $pendingHarnessSignIn) { pending in
+            ClaudeCodeSetupStep(
+                onBack: { pendingHarnessSignIn = nil },
+                onDone: {
+                    pendingHarnessSignIn = nil
+                    applyHarness(pending.option, for: pending.agentId)
+                    harnessAvailability.refresh([pending.runtime], force: true)
+                },
+                completionTitle: "Use Claude Code",
+                requiresUsableCLI: true,
+                runtime: pending.runtime
+            )
+            .frame(width: SettingsSheetWidth.regular, height: 560)
+            .environment(\.theme, theme)
+        }
         .sheet(isPresented: $showCloudModelBrowser) {
             CloudModelBrowserDialog(
                 options: cloudPickerItems,
@@ -3416,6 +3448,7 @@ extension FloatingInputCard {
             if isShowing {
                 // Snapshot options when popover opens to prevent refresh during streaming
                 cachedPickerItems = pickerItems
+                harnessAvailability.refresh(pickerHarnessRuntimes)
                 // Residency and the saved MTP mode both change outside this
                 // view; a stale set would hide the depth row on a capable
                 // model, which reads as "this model has no MTP".
@@ -3469,13 +3502,23 @@ extension FloatingInputCard {
         let shortlist = Set(cachedPickerItems.filter {
             chatModelFavorites.isFavorite($0.favoriteKey) || $0.id == selectedModel
         }.map(\.id))
-        let current = harnessRuntime.map {
-            (runtimeId: $0.id, claudeModel: agentManager.effectiveClaudeCodeConfig(for: effectiveAgentId).resolvedModel)
-        }
         return ChatModelPickerProvider.groups(
             from: cachedPickerItems,
             cloudModelIDs: shortlist,
-            harnesses: ChatModelPickerProvider.harnessProviders(runtimes: pickerHarnessRuntimes, current: current)
+            harnesses: pickerHarnessProviders
+        )
+    }
+
+    /// Harness columns, without Claude Code runtimes whose CLI isn't
+    /// installed (the agent's current runtime always keeps its column).
+    private var pickerHarnessProviders: [ChatModelPickerProvider] {
+        let current = harnessRuntime.map {
+            (runtimeId: $0.id, claudeModel: agentManager.effectiveClaudeCodeConfig(for: effectiveAgentId).resolvedModel)
+        }
+        return ChatModelPickerProvider.harnessProviders(
+            runtimes: pickerHarnessRuntimes,
+            current: current,
+            availability: harnessAvailability.states
         )
     }
 
@@ -3695,7 +3738,7 @@ extension FloatingInputCard {
     /// when the selected model's window is too small (e.g. Foundation at
     /// 4K), configuration genuinely can't run and the send is blocked.
     private var configContextTooSmall: Bool {
-        guard isDefaultConfigAgent, !isRemoteAgentRun, let model = selectedModel else { return false }
+        guard isDefaultConfigAgent, !isRemoteAgentRun, !isHarnessAgent, let model = selectedModel else { return false }
         return ContextSizeResolver.resolve(modelId: model).sizeClass.disablesTools
     }
 
@@ -6169,7 +6212,7 @@ extension FloatingInputCard {
         HStack(spacing: theme.catalogLayoutMetric("component.library.22.elements.layout.floatingInputCard.buttonBar.horizontalGap", inheriting: theme.assignedMetric("component.library.22.gap", fallback: theme.space.s8))) {
             HStack(spacing: theme.catalogLayoutMetric("component.library.22.elements.layout.floatingInputCard.buttonBar.horizontalGap2", inheriting: theme.assignedMetric("component.library.22.gap", fallback: theme.space.s6))) {
                 mediaButton
-                if !pickerItems.isEmpty || isModelPinned || isHarnessAgent || !pickerHarnessRuntimes.isEmpty {
+                if !pickerItems.isEmpty || isModelPinned || isHarnessAgent || !pickerHarnessProviders.isEmpty {
                     modelSelectorChip
                 }
                 PrivacyComposerChip()
@@ -6511,6 +6554,16 @@ struct CachedImageThumbnail: View {
             cachedImage = NSImage(data: imageData)
         }
     }
+}
+
+/// A Claude Code row picked while its CLI isn't signed in. The agent is
+/// captured at pick time, so a chat that switches agents mid-sign-in still
+/// moves the agent that was picked for.
+private struct PendingHarnessSignIn: Identifiable {
+    let option: ChatHarnessPickerOption
+    let runtime: HarnessRuntime
+    let agentId: UUID
+    var id: String { option.id }
 }
 
 /// A pending image attachment selected for full-size preview. Carries the raw

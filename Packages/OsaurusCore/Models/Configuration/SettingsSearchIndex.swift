@@ -2564,6 +2564,65 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
+            id: "settings.orchestrator.claudeCode.model",
+            tab: .orchestrator,
+            section: "Claude Code Options",
+            title: "Claude model",
+            keywords: ["orchestrator claude code model", "default agent claude code", "sonnet", "opus", "fable", "haiku"],
+            disambiguation:
+                "Shown only when the Default agent runs on Claude Code. Custom agents set theirs in Agents → Configure. Declarative key: `claude_code.model` on default_agent.",
+            declarativeSection: "default_agent"
+        ),
+        .init(
+            id: "settings.orchestrator.claudeCode.effort",
+            tab: .orchestrator,
+            section: "Claude Code Options",
+            title: "Claude effort",
+            keywords: ["orchestrator claude code effort", "default agent effort", "thinking effort", "--effort"],
+            disambiguation:
+                "Shown only when the Default agent runs on Claude Code. Default leaves Claude Code on its own per-model default. Declarative key: `claude_code.effort` on default_agent.",
+            declarativeSection: "default_agent"
+        ),
+        .init(
+            id: "settings.orchestrator.claudeCode",
+            tab: .orchestrator,
+            section: "Claude Code Options",
+            title: "Allow file changes",
+            keywords: [
+                "orchestrator claude code permissions", "default agent claude code", "execution mode", "text only",
+                "allow shell commands", "bash",
+            ],
+            disambiguation:
+                "The Default agent's Claude Code permission switches, shown only when it runs on Claude Code. Declarative block: `claude_code` on default_agent.",
+            declarativeSection: "default_agent"
+        ),
+        .init(
+            id: "settings.orchestrator.claudeCode.osaurusTools",
+            tab: .orchestrator,
+            section: "Claude Code Options",
+            title: "Use Osaurus Tools",
+            keywords: [
+                "orchestrator osaurus tools", "default agent osaurus tools", "claude code delegation",
+                "claude code teammates", "run_workflow", "mcp bridge",
+            ],
+            disambiguation:
+                "Shown only when the Default agent runs on Claude Code. Gives Claude the Default agent's Osaurus tools and its teammates through run_workflow; on by default. Declarative key: `claude_code.osaurus_tools` on default_agent.",
+            declarativeSection: "default_agent"
+        ),
+        .init(
+            id: "settings.orchestrator.claudeCode.configWrites",
+            tab: .orchestrator,
+            section: "Claude Code Options",
+            title: "Allow Osaurus configuration changes",
+            keywords: [
+                "osaurus_config", "claude code config writes", "let claude code change settings",
+                "orchestrator configuration changes",
+            ],
+            disambiguation:
+                "Shown only when the Default agent runs on Claude Code with Use Osaurus Tools on. Attaches osaurus_config so Claude can change agents, providers, models, plugins, and MCP servers. Declarative key: `claude_code.allow_osaurus_config_writes` on default_agent.",
+            declarativeSection: "default_agent"
+        ),
+        .init(
             id: "settings.orchestrator.workingFolder",
             tab: .orchestrator,
             section: "Working Folder",
@@ -3677,11 +3736,24 @@ public enum SettingsSearchIndex {
             section: "Claude Code Options",
             title: "Allow file changes",
             keywords: [
-                "execution mode", "text only", "allow shell commands", "bash", "allow osaurus read tools",
-                "allow osaurus configuration changes", "claude code permissions", "claude code tools", "mcp bridge",
+                "execution mode", "text only", "allow shell commands", "bash",
+                "allow osaurus configuration changes", "claude code permissions", "claude code tools",
             ],
             disambiguation:
-                "Claude Code permission switches on an agent whose runtime is Claude Code. File changes are scoped to the chat folder; shell commands can't be confined. Declarative block: `claude_code` on agents[] and default_agent.",
+                "Claude Code permission switches on a custom agent whose runtime is Claude Code; the Default agent's are in Settings → Orchestrator. File changes are scoped to the chat folder; shell commands can't be confined. Declarative block: `claude_code` on agents[] and default_agent.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.claudeCode.osaurusTools",
+            tab: .agents,
+            section: "Claude Code Options",
+            title: "Use Osaurus Tools",
+            keywords: [
+                "osaurus tools", "allow osaurus read tools", "mcp bridge", "claude code osaurus tools",
+                "claude code plugins", "claude code delegation", "run_workflow", "osaurus_inspect",
+            ],
+            disambiguation:
+                "Shown only when a custom agent's runtime is Claude Code; the Default agent's is in Settings → Orchestrator. Hands Claude the tools this agent already has in Osaurus (its own tool settings decide which) over an MCP bridge, on by default. Not the agent's own Tools settings. Declarative key: `claude_code.osaurus_tools`.",
             declarativeSection: "agents"
         ),
         // MARK: Agent Runtimes

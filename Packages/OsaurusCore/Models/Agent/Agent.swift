@@ -802,11 +802,11 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
     /// the Osaurus sandbox — Claude Code's shell runs unconfined on the host
     /// under the user's own account.
     public var allowShell: Bool
-    /// Agent mode: attach Osaurus's own config tools over MCP, so the run can
-    /// read this app's state. Defaults `false` — the tool definitions cost
-    /// context on every turn and only work while the Osaurus server is up.
-    public var allowOsaurusTools: Bool
-    /// Nested under `allowOsaurusTools`: also expose the Osaurus tools that
+    /// Agent mode: attach the Osaurus tools this agent's own settings allow
+    /// (`HarnessToolSurface`) over MCP. Defaults `true`; they only work while
+    /// the Osaurus server is up.
+    public var osaurusTools: Bool
+    /// Nested under `osaurusTools`: also expose the Osaurus tools that
     /// *change* configuration (agents, providers, models, plugins). Defaults
     /// `false`, so the grant starts read-only like every other switch here.
     public var allowOsaurusConfigWrites: Bool
@@ -820,7 +820,7 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
         mode: ClaudeCodeMode = .agent,
         allowWrites: Bool = false,
         allowShell: Bool = false,
-        allowOsaurusTools: Bool = false,
+        osaurusTools: Bool = true,
         allowOsaurusConfigWrites: Bool = false,
         model: String? = nil,
         effort: String? = nil
@@ -828,7 +828,7 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
         self.mode = mode
         self.allowWrites = allowWrites
         self.allowShell = allowShell
-        self.allowOsaurusTools = allowOsaurusTools
+        self.osaurusTools = osaurusTools
         self.allowOsaurusConfigWrites = allowOsaurusConfigWrites
         self.model = model
         self.effort = effort
@@ -848,7 +848,7 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case mode, allowWrites, allowShell, allowOsaurusTools, allowOsaurusConfigWrites, model, effort
+        case mode, allowWrites, allowShell, osaurusTools, allowOsaurusConfigWrites, model, effort
     }
 
     /// Custom decode so a missing key — or a `mode` written by a future build
@@ -863,7 +863,9 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
         }
         allowWrites = try c.decodeIfPresent(Bool.self, forKey: .allowWrites) ?? false
         allowShell = try c.decodeIfPresent(Bool.self, forKey: .allowShell) ?? false
-        allowOsaurusTools = try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusTools) ?? false
+        // The older `allowOsaurusTools` key is not read: its `false` meant
+        // "no inspect/help", not "no agent tools".
+        osaurusTools = try c.decodeIfPresent(Bool.self, forKey: .osaurusTools) ?? true
         allowOsaurusConfigWrites =
             try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusConfigWrites) ?? false
         model = try c.decodeIfPresent(String.self, forKey: .model)

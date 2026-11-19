@@ -1068,6 +1068,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `{{date:today_start}}` and the other date tokens are this Mac's
         /// calendar at run time.
         public let toolArguments: [String: [String: JSONValue]]?
+        /// `harness_bridge`: start the run the way a Claude Code chat
+        /// delegates, `run_workflow` on the in-process server's `/mcp/call`
+        /// with the Default agent's harness token. Model-free cases only.
+        public let via: String?
     }
 
     /// Expectation for `domain == "architect"` cases. The case `query` is

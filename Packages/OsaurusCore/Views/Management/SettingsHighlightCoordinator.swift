@@ -83,7 +83,8 @@ private struct SettingsLandingAnchorModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .id(anchorId)
-            .preference(key: SettingsLandingAnchorsKey.self, value: [anchorId])
+            // `preference(key:value:)` would hide anchors nested inside this one.
+            .transformPreference(SettingsLandingAnchorsKey.self) { $0.insert(anchorId) }
             .settingsSearchHighlight(pending == anchorId)
     }
 }

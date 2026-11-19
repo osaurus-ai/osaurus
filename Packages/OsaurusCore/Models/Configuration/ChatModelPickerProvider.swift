@@ -28,6 +28,9 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
     let availableModels: [ModelPickerItem]
     /// Rows for a harness runtime column; empty for model providers.
     var harnessOptions: [ChatHarnessPickerOption] = []
+    /// A Claude Code column whose CLI isn't signed in: picking a row signs
+    /// in first.
+    var needsSignIn = false
 
     var isActive: Bool { !models.isEmpty || !harnessOptions.isEmpty }
     var isLocal: Bool { kind == .local }
@@ -36,24 +39,38 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
         if case .harness = kind { return true }
         return false
     }
-    var rowCount: Int { models.count + harnessOptions.count }
+    var rowCount: Int { models.count + harnessOptions.count + (needsSignIn ? 1 : 0) }
 
     /// One column per registered harness runtime. `current` is the agent's
     /// runtime and Claude Code model, so a full model id the agent runs on
     /// still has a row to mark.
+    ///
+    /// With `availability`, a Claude Code column shows only once its CLI is
+    /// known to be installed, except for the agent's current runtime, which
+    /// always keeps its column so the choice stays visible and reversible.
+    /// Nil skips that filter.
     static func harnessProviders(
         runtimes: [HarnessRuntime],
-        current: (runtimeId: UUID, claudeModel: String)? = nil
+        current: (runtimeId: UUID, claudeModel: String)? = nil,
+        availability: [UUID: HarnessRuntimeAvailability.State]? = nil
     ) -> [ChatModelPickerProvider] {
-        runtimes.map { runtime in
-            let claudeModel = current?.runtimeId == runtime.id ? current?.claudeModel : nil
+        runtimes.compactMap { runtime in
+            let isCurrent = current?.runtimeId == runtime.id
+            let state = availability?[runtime.id]
+            if runtime.kind == .claudeCode, availability != nil, !isCurrent,
+                state == nil || state == .notInstalled
+            {
+                return nil
+            }
+            let claudeModel = isCurrent ? current?.claudeModel : nil
             return ChatModelPickerProvider(
                 id: "harness-\(runtime.id.uuidString)",
                 title: runtime.displayName,
                 kind: .harness(runtime.kind),
                 models: [],
                 availableModels: [],
-                harnessOptions: ChatHarnessPickerOption.options(for: runtime, currentClaudeModel: claudeModel)
+                harnessOptions: ChatHarnessPickerOption.options(for: runtime, currentClaudeModel: claudeModel),
+                needsSignIn: runtime.kind == .claudeCode && state == .needsSignIn
             )
         }
     }

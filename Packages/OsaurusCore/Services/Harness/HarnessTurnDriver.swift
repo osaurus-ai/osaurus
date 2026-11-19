@@ -34,11 +34,12 @@ enum HarnessTurnDriver {
 
         let manager = AgentManager.shared
         let systemPrompt = harnessSystemPrompt(for: agentId)
-        let port = ServerConfigurationStore.load()?.port ?? 1337
+        let port = apiPortOverride ?? ServerConfigurationStore.load()?.port ?? 1337
         let reachable = await Task.detached { HarnessServerProbe.isListening(port: port) }.value
         let features: ClaudeCodeCLIFeatures =
             runtime.kind == .claudeCode ? await ClaudeCodeCLIFeatures.detect(runtime) : .none
 
+        let claudeCode = manager.effectiveClaudeCodeConfig(for: agentId)
         var context = HarnessLaunchContext(
             runtime: runtime,
             chatId: chatId,
@@ -47,14 +48,32 @@ enum HarnessTurnDriver {
             workingDirectory: workingDirectory,
             isUserFolder: folderRoot != nil,
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : systemPrompt,
-            claudeCode: manager.effectiveClaudeCodeConfig(for: agentId),
-            osaurusCLIPath: ClaudeCodeConfiguration.embeddedCLIPath(),
+            claudeCode: claudeCode,
+            osaurusCLIPath: osaurusCLIPathOverride ?? ClaudeCodeConfiguration.embeddedCLIPath(),
             apiBase: "http://127.0.0.1:\(port)",
             serverReachable: reachable
         )
         context.claudeCodeFeatures = features
+        if runtime.kind == .claudeCode, agentId != Agent.architectId, claudeCode.mode == .agent,
+            claudeCode.osaurusTools
+        {
+            context.osaurusToolNames = HarnessToolSurface.names(
+                agentId: agentId,
+                allowsConfigWrites: ClaudeCodeHarnessAdapter.allowsConfigWrites(agentId: agentId, claudeCode)
+            )
+            if agentId == Agent.defaultId {
+                context.teammateRoutingNote = ClaudeCodeConfiguration.teammateRoutingNote(
+                    tools: context.osaurusToolNames)
+            }
+        }
         return context
     }
+
+    /// Eval seam: the `osaurus` CLI to proxy MCP through when the process
+    /// runs outside an app bundle.
+    static var osaurusCLIPathOverride: String?
+    /// Eval seam: the in-process server's ephemeral port.
+    static var apiPortOverride: Int?
 
     /// The instructions a harness gets for an agent. The Architect's
     /// `effectiveSystemPrompt` is only the person's extra instructions; its

@@ -82,6 +82,7 @@ enum ConfigSchemaReference {
           `auto_reply_enabled:` become `channels.<platform>.routing` rules.
           `automations` entries with `source.kind: email` are retired: they
           are ignored with a note (write `channels.email` instead).
+          `claude_code.allow_osaurus_tools:` is read as `osaurus_tools`.
         - harness_runtimes apply before agents, so `runtime:` may name a
           runtime the same document adds. An unknown runtime name is an error,
           never a fallback to `builtin`.

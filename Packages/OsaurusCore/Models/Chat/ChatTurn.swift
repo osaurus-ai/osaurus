@@ -612,6 +612,10 @@ final class ChatTurn: ObservableObject, Identifiable {
             toolCallLogs[callId] = log
             SubagentRunLogArchive.shared.store(log, for: callId)
         }
+        stampToolDuration(callId)
+    }
+
+    private func stampToolDuration(_ callId: String) {
         guard toolCallDurations[callId] == nil, let start = toolCallStartedAt[callId] else { return }
         let elapsed = Date().timeIntervalSince(start)
         if elapsed >= Self.minDisplayableToolDuration {
@@ -639,6 +643,7 @@ final class ChatTurn: ObservableObject, Identifiable {
                 function: ToolCallFunction(name: trimmed, arguments: "")
             )
         )
+        toolCallStartedAt[callId] = Date()
         remoteToolActivityTick &+= 1
     }
 
@@ -669,6 +674,23 @@ final class ChatTurn: ObservableObject, Identifiable {
                 tool: trimmed.isEmpty ? nil : trimmed
             )
             : Self.remoteToolSuccessResult
+        stampToolDuration(callId)
+        remoteToolActivityTick &+= 1
+    }
+
+    /// Osaurus's own record of a call it served a local harness over
+    /// `/mcp/call`: the real arguments and result, which the harness's
+    /// stream doesn't carry. Display-only, like the rest of this trace.
+    @MainActor
+    func noteRemoteToolDetail(callId: String, arguments: String, result: String) {
+        guard let index = remoteToolActivity.firstIndex(where: { $0.id == callId }) else { return }
+        let call = remoteToolActivity[index]
+        remoteToolActivity[index] = ToolCall(
+            id: call.id, type: call.type,
+            function: ToolCallFunction(name: call.function.name, arguments: arguments),
+            geminiThoughtSignature: call.geminiThoughtSignature)
+        remoteToolUnobservedResults.removeValue(forKey: callId)
+        remoteToolResults[callId] = result
         remoteToolActivityTick &+= 1
     }
 

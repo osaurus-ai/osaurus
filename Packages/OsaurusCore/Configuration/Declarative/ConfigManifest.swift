@@ -928,8 +928,8 @@ public enum ConfigManifest {
                 "allow_shell", .scalar(.boolean, example: "false"),
                 comment: "HIGH RISK: unconfined shell on this Mac"),
             ConfigKeySpec(
-                "allow_osaurus_tools", .scalar(.boolean, example: "false"),
-                comment: "osaurus_help / osaurus_inspect over MCP"),
+                "osaurus_tools", .scalar(.boolean, example: "true"),
+                comment: "this agent's Osaurus tools over MCP"),
         ]
         if includeConfigWrites {
             keys.append(
@@ -971,6 +971,9 @@ public enum ConfigManifest {
         }
         for platform in ConfigChannelPlatform.allCases {
             out["channels.\(platform.rawValue)", default: []].formUnion(legacyChannelPlatformKeys)
+        }
+        for path in out.keys where path.hasSuffix(".claude_code") {
+            out[path]?.formUnion(AgentClaudeCodeEntry.importAliases.keys)
         }
         return out
     }()
