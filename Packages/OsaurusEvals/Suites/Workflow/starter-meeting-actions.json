@@ -1,8 +1,8 @@
 {
   "id": "workflow.starter-meeting-actions",
   "domain": "workflow",
-  "label": "workflow • built-in starter 'Meeting Action Items' runs its own example",
-  "query": "built-in starter Meeting Action Items runs its example",
+  "label": "workflow • built-in starter 'Meeting Recap' runs its own example",
+  "query": "built-in starter Meeting Recap runs its example",
   "notes": "Definition and input are copied from Resources/Templates/workflow-template-meeting-actions.json (the example a new user runs from the starter preview). Pins every step finishing and every titled output field being filled.",
   "fixtures": {},
   "expect": {

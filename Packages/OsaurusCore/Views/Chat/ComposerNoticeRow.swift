@@ -11,11 +11,14 @@ import SwiftUI
 
 struct ComposerNoticeRow<Content: View>: View {
     let tone: ThemeStatusSet<Color>
+    /// `.firstTextBaseline` pins a leading glyph to the first line of a
+    /// multi-line notice.
+    var alignment: VerticalAlignment = .center
     @ViewBuilder let content: () -> Content
 
     @Environment(\.theme) private var theme
 
     var body: some View {
-        RemoteAgentNoticeRow(tone: tone, baseTheme: theme, content: content)
+        RemoteAgentNoticeRow(tone: tone, baseTheme: theme, alignment: alignment, content: content)
     }
 }

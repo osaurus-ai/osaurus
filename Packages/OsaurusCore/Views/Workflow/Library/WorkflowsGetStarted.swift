@@ -80,33 +80,37 @@ struct WorkflowsGetStarted: View {
     // MARK: Card
 
     private func card(_ model: WorkflowsGetStartedModel) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.s16) {
-            HStack(alignment: .top, spacing: theme.space.s12) {
-                VStack(alignment: .leading, spacing: theme.space.s4) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(alignment: .center, spacing: theme.space.s8) {
                     Text(verbatim: model.isComplete ? L("You're all set") : L("Get Started"))
                         .font(SettingsFont.sectionTitle)
                         .foregroundStyle(theme.text.primary)
                         .accessibilityAddTraits(.isHeader)
-                    Text(
-                        verbatim: model.isComplete
-                            ? L("Your workflows are ready. Run one any time, or let Osaurus run it for you.")
-                            : L("A few small steps to get your first workflows working for you.")
-                    )
-                    .font(SettingsFont.rowDescription)
-                    .foregroundStyle(theme.text.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(verbatim: L("\(model.doneCount) of \(Step.allCases.count) done"))
+                        .font(SettingsFont.footnote.monospacedDigit())
+                        .foregroundStyle(theme.text.tertiary)
+                    SettingsIconButton("xmark", help: "Hide", size: .extraSmall, role: .tertiary) {
+                        withAnimation(theme.motion.standard) { dismissed = true }
+                    }
+                    .accessibilityLabel(Text("Hide Get Started", bundle: .module))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Text(verbatim: L("\(model.doneCount) of \(Step.allCases.count) done"))
-                    .font(SettingsFont.footnote.monospacedDigit())
-                    .foregroundStyle(theme.text.tertiary)
-                SettingsIconButton("xmark", help: "Hide", size: .extraSmall, role: .tertiary) {
-                    withAnimation(theme.motion.standard) { dismissed = true }
-                }
-                .accessibilityLabel(Text("Hide Get Started", bundle: .module))
+                Text(
+                    verbatim: model.isComplete
+                        ? L("Your workflows are ready. Run one any time, or let Osaurus run it for you.")
+                        : L("A few small steps to get your first workflows working for you.")
+                )
+                .font(SettingsFont.rowDescription)
+                .foregroundStyle(theme.text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
+            // Rows carry s10 vertical padding, so these pair with it to make
+            // s16 above the first step and s20 below the last.
             SettingsProgressBar(
                 value: Double(model.doneCount) / Double(Step.allCases.count), tint: theme.statusInk(.success))
+                .padding(.top, theme.space.s16)
+                .padding(.bottom, theme.space.s6)
             VStack(spacing: theme.space.s0) {
                 ForEach(Array(Step.allCases.enumerated()), id: \.element) { index, step in
                     if index > 0 { ThemeHairlineDivider(color: theme.border.subtle) }
@@ -114,7 +118,9 @@ struct WorkflowsGetStarted: View {
                 }
             }
         }
-        .padding(theme.space.s16)
+        .padding(.horizontal, theme.space.s20)
+        .padding(.top, theme.space.s20)
+        .padding(.bottom, theme.space.s10)
         .settingsChrome(.card)
         .settingsLandingAnchor("workflows.getStarted")
         .transition(.opacity.combined(with: .move(edge: .top)))

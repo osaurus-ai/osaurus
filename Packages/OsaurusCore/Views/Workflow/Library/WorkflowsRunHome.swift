@@ -37,7 +37,7 @@ extension WorkflowsView {
         VStack(alignment: .leading, spacing: theme.space.s8) {
             homeTitle(L("Workflows")) {
                 SettingsButton(
-                    .primary, "New Workflow", icon: "plus", size: .extraSmall,
+                    .primary, "New Workflow", icon: "plus",
                     help: "Describe a task and Osaurus builds it (⌘N)"
                 ) {
                     withAnimation(theme.motion.quick) { windowState.showNewWorkflow() }

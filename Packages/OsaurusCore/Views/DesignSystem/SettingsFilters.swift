@@ -212,12 +212,17 @@ struct FilterChipScroller<Content: View>: View {
             // The bleed sits outside the row so the first chip still lines
             // up with the content above and below it.
             .padding(.horizontal, -bleed)
+            // The mask takes the row's inset frame; it reaches into the bleed
+            // too, or the outer chips' rings are cut off at the row's edge.
             .mask {
                 HStack(spacing: theme.space.s0) {
+                    Rectangle().opacity(metrics.overflow.leading ? 0 : 1).frame(width: bleed)
                     edgeFade(fading: metrics.overflow.leading, toward: .leading)
                     Rectangle()
                     edgeFade(fading: metrics.overflow.trailing, toward: .trailing)
+                    Rectangle().opacity(metrics.overflow.trailing ? 0 : 1).frame(width: bleed)
                 }
+                .padding(.horizontal, -bleed)
             }
             .overlay(alignment: .leading) {
                 if metrics.overflow.leading {

@@ -404,7 +404,8 @@ struct SettingsButton: View {
 
     private var labeled: some View {
         Button(action: action) {
-            HStack(spacing: theme.assignedMetric(size.assignment("gap"), fallback: theme.space.s6)) {
+            // Centered, a symbol's box sits low against the label's capitals.
+            HStack(alignment: .firstTextBaseline, spacing: theme.assignedMetric(size.assignment("gap"), fallback: theme.space.s6)) {
                 if let icon, !isLoading {
                     Image(systemName: icon)
                         .font(size == .regular ? SettingsFont.glyph : SettingsFont.glyphSmall)
@@ -670,7 +671,7 @@ struct SettingsMenuButton<Content: View>: View {
 
     private var labeled: some View {
         SettingsActionMenu(accessibilityLabel: verbatim ? title : String(localized: .init(title), bundle: .module), content: content) {
-            HStack(spacing: theme.assignedMetric(size.assignment("gap"), fallback: theme.space.s6)) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.assignedMetric(size.assignment("gap"), fallback: theme.space.s6)) {
                 if let icon {
                     Image(systemName: icon)
                         .font(size == .regular ? SettingsFont.glyph : SettingsFont.glyphSmall)

@@ -1,8 +1,8 @@
 {
   "id": "workflow.starter-social-post",
   "domain": "workflow",
-  "label": "workflow • built-in starter 'Social Post Writer' runs its own example",
-  "query": "built-in starter Social Post Writer runs its example",
+  "label": "workflow • built-in starter 'Social Post' runs its own example",
+  "query": "built-in starter Social Post runs its example",
   "notes": "Definition and input are copied from Resources/Templates/workflow-template-social-post.json (the example a new user runs from the starter preview). Pins every step finishing and every titled output field being filled.",
   "fixtures": {},
   "expect": {

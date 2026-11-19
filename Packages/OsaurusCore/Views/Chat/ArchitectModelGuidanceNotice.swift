@@ -54,7 +54,7 @@ struct ArchitectModelGuidanceNotice: View {
     }
 
     private var notice: some View {
-        ComposerNoticeRow(tone: theme.status.info) {
+        ComposerNoticeRow(tone: theme.status.info, alignment: .firstTextBaseline) {
             Image(systemName: "sparkles")
                 .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(theme.status.info.foreground)
