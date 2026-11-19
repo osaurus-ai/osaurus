@@ -8,7 +8,7 @@ order: 92
 
 A **task** is one unit of work that runs without you at the keyboard: an automation run, a background agent turn (plugin or HTTP dispatch, an agent's own wake-up), a workflow run, or a helper an agent started. Every task waits in a **queue** until a slot frees up, runs, and keeps a timeline of what happened.
 
-Chats you type into, and API or plugin requests to a model, are not tasks and are never queued: you are already watching them, and the chat history and Insights already record them. While one is answering on a local model, tasks that need a different local model wait for it to finish ("Waiting for the chat to finish"). What a chat starts on its own (a helper, a dispatched agent, a workflow run) is a task, and remembers the chat it came from.
+Chats you type into, and API or plugin requests to a model, are not tasks and are never queued: you are already watching them, and the chat history (for chats) and Insights already record them. API and plugin requests to a model are not saved as chats; Insights records each one. While one is answering on a local model, tasks that need a different local model wait for it to finish ("Waiting for the chat to finish"). What a chat starts on its own (a helper, a dispatched agent, a workflow run) is a task, and remembers the chat it came from.
 
 Open it from Settings… (⌘,) → **Developer Tools** → **Tasks**, or from any link that names a task (Automations → **History**, an agent's or workflow's **See All**, Insights → **Open Task**, a chat's **Tasks from This Chat**). The sidebar badge counts tasks that are waiting or running, and lights up when one needs you.
 

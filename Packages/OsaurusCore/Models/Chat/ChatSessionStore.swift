@@ -41,7 +41,7 @@ enum ChatSessionStore {
     }
 
     private static func overlayingPendingSaves(on rows: [ChatSessionData]) -> [ChatSessionData] {
-        var sessions = rows
+        var sessions = rows.filter { !$0.isRawInferenceRecord }
         // A delete still waiting for the store hides its row now.
         if !pendingDeletes.isEmpty {
             sessions.removeAll { pendingDeletes.contains($0.id) }

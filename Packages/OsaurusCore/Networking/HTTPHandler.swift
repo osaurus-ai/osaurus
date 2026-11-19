@@ -15415,30 +15415,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         httpTrace.set("http_input_audio_count", req.messages.reduce(0) { $0 + $1.audioInputs.count })
         httpTrace.set("http_input_video_count", req.messages.reduce(0) { $0 + $1.videoUrls.count })
 
-        // The Default (built-in) agent is unreachable from external HTTP.
-        // Silently drop the header if it points at the Default id so that
-        // memory writes and per-agent persistence never touch the built-in
-        // agent's data. Inference itself is unaffected — model selection
-        // and tools still work, just unattributed to the default.
-        let rawMemoryAgentId = head.headers.first(name: "X-Osaurus-Agent-Id")
-        let memoryAgentId: String? = {
-            guard let raw = rawMemoryAgentId else { return nil }
-            if let uuid = UUID(uuidString: raw), uuid == Agent.defaultId { return nil }
-            return raw
-        }()
-
-        // HTTP-specific persistence knobs:
-        //   X-Persist: false   → skip writing the conversation to chat history
-        //   X-Session-Id: <id> → group repeat calls under one session row
-        //                       (falls back to request.session_id when absent)
-        let persistDisabled =
-            (head.headers.first(name: "X-Persist") ?? "").lowercased() == "false"
-        let externalSessionKey: String? =
-            head.headers.first(name: "X-Session-Id") ?? req.session_id
-        let resolvedAgentUUID = memoryAgentId.flatMap { UUID(uuidString: $0) }
-        let priorMessages = req.messages
-        let persistOnSuccess = !persistDisabled
-
         // HTTP inference admission control. A real concurrency ceiling keyed to
         // the batch engine's capacity so a burst of concurrent streams can't
         // fan out unbounded into MLX and oversubscribe unified memory. When
@@ -15603,11 +15579,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if case .completed = completion.status {
                         let assistant = try response.completedAssistantInput()
                         if let error = Self.emptyToolTaskCompletionError(requestMessages: enrichedReq.messages, responseMessage: assistant) { throw error }
-                        if persistOnSuccess {
-                            ChatHistoryWriter.persistInBackground(source: .http, sourcePluginId: nil,
-                                agentId: resolvedAgentUUID, externalKey: externalSessionKey,
-                                finalMessages: priorMessages + [assistant], model: model)
-                        }
                     }
                     let finish = Self.openResponsesFinishReason(completion).rawValue
                     let includeUsage = req.stream_options?.include_usage == true
@@ -15710,11 +15681,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         let assistant = try response.completedAssistantInput()
                         if let error = Self.emptyToolTaskCompletionError(requestMessages: enrichedReq.messages, responseMessage: assistant) {
                             throw error
-                        }
-                        if persistOnSuccess {
-                            ChatHistoryWriter.persistInBackground(source: .http, sourcePluginId: nil,
-                                agentId: resolvedAgentUUID, externalKey: externalSessionKey,
-                                finalMessages: priorMessages + [assistant], model: model)
                         }
                     }
                     let body = try response.chatCompletionsHTTPBody(model: model, prefixHash: prefixHash)

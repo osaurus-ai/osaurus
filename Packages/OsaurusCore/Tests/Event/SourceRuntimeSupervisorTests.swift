@@ -114,6 +114,25 @@ actor FakeRuntimeDriver: SourceRuntimeDriver {
     }
 }
 
+/// A poll driver whose tick waits until the test lets it finish.
+actor GatedTickDriver: SourceRuntimeDriver {
+    var ticks = 0
+    private var gate: CheckedContinuation<Void, Never>?
+
+    var isTicking: Bool { gate != nil }
+
+    func tick(_ context: SourceTickContext) async throws -> SourceTickResult {
+        ticks += 1
+        await withCheckedContinuation { gate = $0 }
+        return SourceTickResult(state: .number(Double(ticks)))
+    }
+
+    func finishTick() {
+        gate?.resume()
+        gate = nil
+    }
+}
+
 /// A clock the test moves.
 final class TestClock: @unchecked Sendable {
     private let lock = NSLock()
@@ -277,6 +296,46 @@ struct SourceRuntimeSupervisorTests {
         #expect(await eventually { await sleeper.pending == [600] })
         await supervisor.tickNow("t:a")
         #expect(await eventually { await driver.ticks == 2 })
+        await supervisor.stopAll()
+    }
+
+    @Test func tickNowDuringATickTicksAgainRightAfter() async throws {
+        let log = RuntimeLog()
+        let sleeper = ManualSleeper()
+        let driver = GatedTickDriver()
+        let supervisor = make(log, sleeper)
+        await supervisor.register([SourceRuntimeScope(key: "t:a", mode: .poll(interval: 600), driver: driver)], owner: "t:")
+        #expect(await eventually { await driver.isTicking })
+        await supervisor.tickNow("t:a")
+        await driver.finishTick()
+        #expect(await eventually { await driver.ticks == 2 })
+        #expect(await sleeper.requested.isEmpty)
+
+        // Only one extra tick: afterwards the scope waits out its interval.
+        await driver.finishTick()
+        #expect(await eventually { await sleeper.pending == [600] })
+        #expect(await driver.ticks == 2)
+        await supervisor.stopAll()
+    }
+
+    @Test func tickNowDuringATickOfAStoppedScopeDoesNotCarryOver() async throws {
+        let log = RuntimeLog()
+        let sleeper = ManualSleeper()
+        let driver = GatedTickDriver()
+        let supervisor = make(log, sleeper)
+        let scope = SourceRuntimeScope(key: "t:a", mode: .poll(interval: 600), driver: driver)
+        await supervisor.register([scope], owner: "t:")
+        #expect(await eventually { await driver.isTicking })
+        await supervisor.tickNow("t:a")
+        await supervisor.register([], owner: "t:")
+        await driver.finishTick()
+
+        await supervisor.register([scope], owner: "t:")
+        #expect(await eventually { await driver.isTicking })
+        #expect(await driver.ticks == 2)
+        await driver.finishTick()
+        #expect(await eventually { await sleeper.pending == [600] })
+        #expect(await driver.ticks == 2)
         await supervisor.stopAll()
     }
 
