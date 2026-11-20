@@ -9,8 +9,9 @@
 //  at a local or staging router, never production.
 //
 //  It proves what the unit suites cannot: that the two repositories agree on
-//  the signed paths, the empty-body `/read` call, the JSON shapes in both
-//  directions, and the unread / reopen / open-limit rules.
+//  the signed paths, the empty-body `/read` and `/close` calls, the JSON
+//  shapes in both directions (category, details, extras, images), and the
+//  unread / resolve / reopen / open-limit rules.
 //
 //  Run with a router whose `ADMIN_WALLETS` contains the admin key's address:
 //    OSAURUS_SUPPORT_LIVE_ROUTER_URL=http://127.0.0.1:8791 \
@@ -31,8 +32,11 @@
 //  is replaced.
 //
 
+import CoreGraphics
 import Foundation
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 
 @testable import OsaurusCore
 
@@ -98,8 +102,10 @@ struct SupportLiveRouterTests {
                 list: { try await client.supportThreads() },
                 create: { try await client.createSupportThread($0) },
                 detail: { try await client.supportThread(id: $0) },
-                reply: { try await client.replyToSupportThread(id: $0, body: $1) },
-                markRead: { try await client.markSupportThreadRead(id: $0) }
+                reply: { try await client.replyToSupportThread(id: $0, body: $1, attachments: $2) },
+                markRead: { try await client.markSupportThreadRead(id: $0) },
+                close: { try await client.closeSupportThread(id: $0) },
+                attachment: { try await client.supportAttachment(threadId: $0, attachmentId: $1) }
             ),
             isRouterEnabled: { true },
             hasIdentity: { true }
@@ -162,6 +168,28 @@ struct SupportLiveRouterTests {
             bundle: bundle, profile: MacProfile(modelName: "MacBook Air", chip: "M4", memoryGB: 24))
     }
 
+    private func draft(_ description: String, category: SupportCategory = .bug) -> SupportReportDraft {
+        var draft = SupportReportDraft()
+        draft.select(category: category)
+        draft.description = description
+        return draft
+    }
+
+    /// A small screenshot-like PNG, through the same encoder Help uses.
+    private func screenshot(width: Int = 320, height: Int = 200) throws -> SupportImageAttachment {
+        let context = try #require(
+            CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return try SupportImageEncoder.encode(data: data as Data)
+    }
+
     // MARK: - Scenario
 
     @Test func reportReplyReadAnswerCloseReopenAndOpenLimit() async throws {
@@ -182,14 +210,30 @@ struct SupportLiveRouterTests {
         #expect(support.threads.isEmpty)
         #expect(!support.hasOpenThreads)
 
-        // 1. The user sends a report.
+        // 1. The user sends a workflow report with a screenshot and extras.
         let sent = report()
         let description = "Chat freezes when I attach a PDF (\(marker)).\nSecond line with more detail."
-        let created = try await support.submit(description: description, report: sent)
+        var first = draft(description, category: .workflow)
+        first.workflow = SupportPick(id: UUID().uuidString, name: "Invoice Sorter")
+        first.problemId = "stalls"
+        let image = try screenshot()
+        first.images = [image]
+        let extras = JSONValue.object([
+            "workflow_runs": .array([.object(["status": .string("failed"), "failed_step": .string("fetch")])])
+        ])
+        let created = try await support.submit(draft: first, report: sent, extras: extras)
         #expect(created.status == .open)
+        #expect(created.category == .workflow)
         #expect(created.subject == "Chat freezes when I attach a PDF (\(marker)).")
         #expect(created.messages?.map(\.body) == [description])
         #expect(created.messages?.first?.isFromUser == true)
+        let sentImage = try #require(created.messages?.first?.attachments.first)
+        #expect(sentImage.mimeType == image.mimeType)
+        #expect(sentImage.width == image.width && sentImage.height == image.height)
+        #expect(sentImage.byteSize == image.byteSize)
+        #expect(try await support.attachmentData(threadId: created.id, attachmentId: sentImage.id) == image.data)
+        await support.refreshIfDue(trigger: .helpOpened)
+        #expect(support.threads.first?.category == .workflow)
         #expect(support.hasOpenThreads)
         #expect(support.openThreadCount == 1)
 
@@ -198,6 +242,7 @@ struct SupportLiveRouterTests {
         #expect(queue.status == 200)
         let row = object(array(queue.json["data"]).first)
         #expect(row["id"] == .string(created.id))
+        #expect(row["category"] == .string("workflow"))
         #expect(row["wallet_address"] == .string(wallet))
         #expect(row["app_version"] == .string("9.9.9"))
         #expect(row["app_build"] == .string("999"))
@@ -209,7 +254,10 @@ struct SupportLiveRouterTests {
         let adminDetail = try await admin("GET", "/admin/support/threads/\(created.id)")
         #expect(adminDetail.status == 200)
         // The diagnostics the router stored are the value the user previewed.
-        #expect(adminDetail.json["diagnostics"] == sent.diagnostics)
+        #expect(adminDetail.json["diagnostics"] == sent.diagnostics(with: extras))
+        #expect(adminDetail.json["details"] == first.details)
+        let adminImages = array(object(array(adminDetail.json["messages"]).first)["attachments"])
+        #expect(adminImages.count == 1)
         let stored = String(decoding: try JSONEncoder.osaurusCanonical().encode(JSONValue.object(adminDetail.json)), as: UTF8.self)
         #expect(!stored.contains("do-not-store"))
         #expect(!stored.contains("live-session-raw-id"))
@@ -238,10 +286,23 @@ struct SupportLiveRouterTests {
         #expect(support.unreadCount == 0, "the router did not accept the app's empty-body /read call")
         #expect(support.threads.first?.status == .answered)
 
-        // 5. The user answers: back in the team's queue.
-        let answered = try await support.reply(threadId: created.id, body: "It was exported from Preview.")
+        // 5. The user answers with another screenshot: back in the team's queue.
+        let answered = try await support.reply(
+            threadId: created.id, body: "It was exported from Preview.", images: [try screenshot(width: 200)])
         #expect(answered.status == .open)
         #expect(answered.messages?.map(\.author) == ["user", "staff", "user"])
+        #expect(answered.messages?.last?.attachments.count == 1)
+
+        // 5b. The user marks it resolved; writing again reopens it.
+        let resolved = try await support.close(threadId: created.id)
+        #expect(resolved.status == .closed)
+        #expect(support.openThreadCount == 0)
+        #expect(!support.hasOpenThreads)
+        let resolvedDetail = try await admin("GET", "/admin/support/threads/\(created.id)")
+        #expect(resolvedDetail.json["closed_by"] == .string("user"))
+        let again = try await support.reply(threadId: created.id, body: "Actually, one more thing.")
+        #expect(again.status == .open)
+        #expect(support.hasOpenThreads)
 
         // 6. Staff close it: no open report left, so background checks stop.
         let closed = try await admin(
@@ -260,17 +321,19 @@ struct SupportLiveRouterTests {
 
         // 8. The open-report limit: three open, the fourth is refused with
         //    the sentence the page shows.
-        _ = try await support.submit(description: "Second problem for the limit check (\(marker)).", report: sent)
-        _ = try await support.submit(description: "Third problem for the limit check (\(marker)).", report: sent)
+        _ = try await support.submit(
+            draft: draft("Second problem for the limit check (\(marker))."), report: sent, extras: nil)
+        _ = try await support.submit(
+            draft: draft("Third problem for the limit check (\(marker))."), report: sent, extras: nil)
         #expect(support.openThreadCount == OsaurusRouterSupportLimits.maxOpenThreads)
         do {
             _ = try await support.submit(
-                description: "Fourth problem for the limit check (\(marker)).", report: sent)
+                draft: draft("Fourth problem for the limit check (\(marker))."), report: sent, extras: nil)
             Issue.record("the router accepted a fourth open report")
         } catch {
             #expect(
                 SupportService.userMessage(for: error)
-                    == L("You already have 3 open reports. Add to one of them, or wait until one is closed."))
+                    == L("You already have 3 open reports. Add to one of them, or mark one as resolved."))
         }
         await support.refreshIfDue(trigger: .helpOpened)
         #expect(support.threads.count == 3)
@@ -288,8 +351,11 @@ struct SupportLiveRouterTests {
     @Test func anotherWalletCannotReachTheReport() async throws {
         let owner = try userClient(key: Self.randomKey())
         let stranger = try userClient(key: Self.randomKey())
-        let thread = try await owner.createSupportThread(
-            report().body(description: "Private report for the isolation check."))
+        var privateDraft = draft("Private report for the isolation check.")
+        privateDraft.images = [try screenshot()]
+        let thread = try await owner.createSupportThread(report().body(draft: privateDraft, extras: nil))
+        let imageId = try #require(thread.messages?.first?.attachments.first?.id)
+        #expect(try await owner.supportAttachment(threadId: thread.id, attachmentId: imageId).data != nil)
 
         await #expect(throws: OsaurusRouterAPIError.self) { _ = try await stranger.supportThread(id: thread.id) }
         await #expect(throws: OsaurusRouterAPIError.self) {
@@ -298,6 +364,13 @@ struct SupportLiveRouterTests {
         await #expect(throws: OsaurusRouterAPIError.self) {
             _ = try await stranger.markSupportThreadRead(id: thread.id)
         }
+        await #expect(throws: OsaurusRouterAPIError.self) {
+            _ = try await stranger.closeSupportThread(id: thread.id)
+        }
+        await #expect(throws: OsaurusRouterAPIError.self) {
+            _ = try await stranger.supportAttachment(threadId: thread.id, attachmentId: imageId)
+        }
+        #expect(try await owner.supportThread(id: thread.id).status == .open)
         let listed = try await stranger.supportThreads()
         #expect(listed.data.isEmpty)
     }

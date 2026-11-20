@@ -9,7 +9,7 @@
 //  Two rules shape this file:
 //  - The user sees exactly what is sent. Diagnostics are serialized once into
 //    a `JSONValue`; the "What's Included" preview and the request body are
-//    both rendered from that one value.
+//    both rendered from that one value plus the same draft and extras.
 //  - The router rejects diagnostics over 200 KB. Rather than fail the report,
 //    the builder drops the oldest recent requests until the bundle fits, and
 //    sends the report without diagnostics if it still cannot.
@@ -28,25 +28,65 @@ struct SupportReport: Equatable, Sendable {
 
     /// The request body for `POST /support/threads`. Only call once the
     /// user has ticked the Terms and Privacy box: `consent` is sent as true.
-    func body(description: String) -> OsaurusRouterSupportReportBody {
+    /// `extras` is `SupportReportExtras.current(for:)`, captured once so the
+    /// preview and the send agree.
+    func body(draft: SupportReportDraft, extras: JSONValue?) -> OsaurusRouterSupportReportBody {
         OsaurusRouterSupportReportBody(
-            description: description,
+            description: draft.trimmedDescription,
             consent: true,
             app: app,
             hardware: hardware,
-            diagnostics: diagnostics
+            diagnostics: diagnostics(with: extras),
+            category: draft.category?.rawValue,
+            details: draft.details,
+            attachments: draft.images.map(\.upload)
         )
     }
 
+    /// The bundle with `extras` added under `diagnostics.extras`. Extras are
+    /// a few hundred bytes, well inside the gap `maxDiagnosticsBytes` leaves
+    /// under the router's cap.
+    func diagnostics(with extras: JSONValue?) -> JSONValue? {
+        guard let extras else { return diagnostics }
+        guard case .object(var object)? = diagnostics else { return .object(["extras": extras]) }
+        object["extras"] = extras
+        return .object(object)
+    }
+
     /// Pretty-printed JSON of everything sent alongside the description, for
-    /// the "What's Included" disclosure. Same values as `body(description:)`.
-    var previewJSON: String {
+    /// the "What's Included" disclosure. Same values as `body(draft:extras:)`,
+    /// with each image as its type, size and pixel dimensions.
+    func previewJSON(draft: SupportReportDraft, extras: JSONValue?) -> String {
+        struct Image: Encodable {
+            let mimeType: String
+            let width: Int
+            let height: Int
+            let bytes: Int
+
+            enum CodingKeys: String, CodingKey {
+                case mimeType = "mime_type"
+                case width, height, bytes
+            }
+        }
         struct Preview: Encodable {
+            let category: String?
+            let details: JSONValue?
+            let images: [Image]?
             let app: OsaurusRouterSupportReportBody.App
             let hardware: OsaurusRouterSupportReportBody.Hardware
             let diagnostics: JSONValue?
         }
-        let preview = Preview(app: app, hardware: hardware, diagnostics: diagnostics)
+        let images = draft.images.map {
+            Image(mimeType: $0.mimeType, width: $0.width, height: $0.height, bytes: $0.byteSize)
+        }
+        let preview = Preview(
+            category: draft.category?.rawValue,
+            details: draft.details,
+            images: images.isEmpty ? nil : images,
+            app: app,
+            hardware: hardware,
+            diagnostics: diagnostics(with: extras)
+        )
         guard let data = try? JSONEncoder.osaurusCanonical(prettyPrinted: true).encode(preview),
             let text = String(bytes: data, encoding: .utf8)
         else { return "{}" }

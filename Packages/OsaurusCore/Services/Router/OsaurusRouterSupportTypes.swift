@@ -33,6 +33,9 @@ struct OsaurusRouterSupportThread: Decodable, Identifiable, Equatable, Sendable 
     /// First line of the description, at most 120 characters. Router-derived.
     let subject: String
     let statusRaw: String
+    /// What the user said the report is about (`SupportCategory` raw value).
+    /// Nil for reports sent before categories, and from older routers.
+    let categoryRaw: String?
     /// True when a staff message is newer than the last time the user read
     /// or answered the thread.
     let unread: Bool
@@ -46,6 +49,7 @@ struct OsaurusRouterSupportThread: Decodable, Identifiable, Equatable, Sendable 
         case id
         case subject
         case statusRaw = "status"
+        case categoryRaw = "category"
         case unread
         case lastUserMessageAt = "last_user_message_at"
         case lastStaffMessageAt = "last_staff_message_at"
@@ -58,6 +62,7 @@ struct OsaurusRouterSupportThread: Decodable, Identifiable, Equatable, Sendable 
         id: String,
         subject: String,
         statusRaw: String,
+        categoryRaw: String? = nil,
         unread: Bool,
         lastUserMessageAt: String,
         lastStaffMessageAt: String? = nil,
@@ -68,6 +73,7 @@ struct OsaurusRouterSupportThread: Decodable, Identifiable, Equatable, Sendable 
         self.id = id
         self.subject = subject
         self.statusRaw = statusRaw
+        self.categoryRaw = categoryRaw
         self.unread = unread
         self.lastUserMessageAt = lastUserMessageAt
         self.lastStaffMessageAt = lastStaffMessageAt
@@ -77,6 +83,7 @@ struct OsaurusRouterSupportThread: Decodable, Identifiable, Equatable, Sendable 
     }
 
     var status: Status { Status(rawValue: statusRaw) ?? .open }
+    var category: SupportCategory? { categoryRaw.flatMap(SupportCategory.init(rawValue:)) }
     /// Counts toward the router's cap of three reports that are not closed,
     /// and is what keeps the launch / foreground unread check running.
     var isOpen: Bool { status != .closed }
@@ -97,9 +104,18 @@ struct OsaurusRouterSupportThread: Decodable, Identifiable, Equatable, Sendable 
     /// The same thread without its messages, as the list endpoint returns it.
     var summary: OsaurusRouterSupportThread {
         OsaurusRouterSupportThread(
-            id: id, subject: subject, statusRaw: statusRaw, unread: unread,
+            id: id, subject: subject, statusRaw: statusRaw, categoryRaw: categoryRaw, unread: unread,
             lastUserMessageAt: lastUserMessageAt, lastStaffMessageAt: lastStaffMessageAt,
             createdAt: createdAt, updatedAt: updatedAt, messages: nil)
+    }
+
+    /// The same thread with a different unread flag (the badge drops before
+    /// the router confirms the read).
+    func withUnread(_ unread: Bool) -> OsaurusRouterSupportThread {
+        OsaurusRouterSupportThread(
+            id: id, subject: subject, statusRaw: statusRaw, categoryRaw: categoryRaw, unread: unread,
+            lastUserMessageAt: lastUserMessageAt, lastStaffMessageAt: lastStaffMessageAt,
+            createdAt: createdAt, updatedAt: updatedAt, messages: messages)
     }
 }
 
@@ -109,23 +125,93 @@ struct OsaurusRouterSupportMessage: Decodable, Identifiable, Equatable, Sendable
     let author: String
     let body: String
     let createdAt: String
+    /// Images sent with the message, oldest first. Metadata only; the bytes
+    /// are fetched one at a time (`OsaurusRouterAPIClient.supportAttachment`).
+    let attachments: [OsaurusRouterSupportAttachment]
 
     enum CodingKeys: String, CodingKey {
         case id
         case author
         case body
         case createdAt = "created_at"
+        case attachments
     }
 
-    init(id: String, author: String, body: String, createdAt: String) {
+    init(
+        id: String,
+        author: String,
+        body: String,
+        createdAt: String,
+        attachments: [OsaurusRouterSupportAttachment] = []
+    ) {
         self.id = id
         self.author = author
         self.body = body
         self.createdAt = createdAt
+        self.attachments = attachments
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        author = try container.decode(String.self, forKey: .author)
+        body = try container.decode(String.self, forKey: .body)
+        createdAt = try container.decode(String.self, forKey: .createdAt)
+        // Routers before image attachments omit the key.
+        attachments =
+            try container.decodeIfPresent([OsaurusRouterSupportAttachment].self, forKey: .attachments) ?? []
     }
 
     var isFromUser: Bool { author == "user" }
     var createdDate: Date? { OsaurusRouterSupportDate.parse(createdAt) }
+}
+
+/// An image on a message, without its bytes.
+struct OsaurusRouterSupportAttachment: Decodable, Identifiable, Equatable, Hashable, Sendable {
+    let id: String
+    let mimeType: String
+    let width: Int
+    let height: Int
+    let byteSize: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case mimeType = "mime_type"
+        case width
+        case height
+        case byteSize = "byte_size"
+    }
+}
+
+/// `GET /support/threads/:id/attachments/:attachmentId`: one image.
+struct OsaurusRouterSupportAttachmentData: Decodable, Equatable, Sendable {
+    let mimeType: String
+    let dataBase64: String
+
+    enum CodingKeys: String, CodingKey {
+        case mimeType = "mime_type"
+        case dataBase64 = "data_base64"
+    }
+
+    var data: Data? { Data(base64Encoded: dataBase64) }
+}
+
+/// One image as sent with a report or a reply. The router reads the type
+/// and pixel size from the bytes themselves.
+struct OsaurusRouterSupportAttachmentUpload: Encodable, Equatable, Sendable {
+    let mimeType: String
+    let dataBase64: String
+
+    enum CodingKeys: String, CodingKey {
+        case mimeType = "mime_type"
+        case dataBase64 = "data_base64"
+    }
+}
+
+/// `POST /support/threads/:id/messages`.
+struct OsaurusRouterSupportReplyBody: Encodable, Equatable, Sendable {
+    let body: String
+    let attachments: [OsaurusRouterSupportAttachmentUpload]
 }
 
 /// `GET /support/threads`: the user's reports, newest first.
@@ -190,6 +276,32 @@ struct OsaurusRouterSupportReportBody: Encodable, Equatable, Sendable {
     /// Metadata-only support bundle, already serialized so the preview the
     /// user saw and the bytes sent are the same value.
     let diagnostics: JSONValue?
+    /// `SupportCategory` raw value. Omitted when nil.
+    let category: String?
+    /// What the user picked for the category (which agent, model, kind of
+    /// problem). Omitted when nil.
+    let details: JSONValue?
+    let attachments: [OsaurusRouterSupportAttachmentUpload]
+
+    init(
+        description: String,
+        consent: Bool,
+        app: App,
+        hardware: Hardware,
+        diagnostics: JSONValue?,
+        category: String? = nil,
+        details: JSONValue? = nil,
+        attachments: [OsaurusRouterSupportAttachmentUpload] = []
+    ) {
+        self.description = description
+        self.consent = consent
+        self.app = app
+        self.hardware = hardware
+        self.diagnostics = diagnostics
+        self.category = category
+        self.details = details
+        self.attachments = attachments
+    }
 }
 
 enum OsaurusRouterSupportDate {
@@ -212,4 +324,7 @@ enum OsaurusRouterSupportLimits {
     static let maxMessageLength = 5000
     static let maxDiagnosticsBytes = 200 * 1024
     static let maxOpenThreads = 3
+    static let maxAttachmentsPerMessage = 3
+    static let maxAttachmentBytes = 2 * 1024 * 1024
+    static let maxAttachmentsPerThread = 20
 }

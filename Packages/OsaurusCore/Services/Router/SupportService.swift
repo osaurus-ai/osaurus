@@ -4,7 +4,8 @@
 //
 //  Help: bug reports the user sends to the Osaurus team and the replies that
 //  come back. Owns the list of the user's reports, the unread count behind
-//  the Help badge, and the send / reply / mark-read calls.
+//  the Help badge, the send / reply / mark-read / mark-resolved calls, and
+//  the images attached to messages.
 //
 //  Request budget (see docs/OSAURUS_ROUTER.md, "Help and Bug Reports"):
 //  - There is no push. Replies are discovered by asking.
@@ -46,15 +47,26 @@ final class SupportService: ObservableObject {
         var list: @Sendable () async throws -> OsaurusRouterSupportThreadsResponse
         var create: @Sendable (OsaurusRouterSupportReportBody) async throws -> OsaurusRouterSupportThread
         var detail: @Sendable (String) async throws -> OsaurusRouterSupportThread
-        var reply: @Sendable (String, String) async throws -> OsaurusRouterSupportThread
+        var reply:
+            @Sendable (String, String, [OsaurusRouterSupportAttachmentUpload]) async throws ->
+                OsaurusRouterSupportThread
         var markRead: @Sendable (String) async throws -> OsaurusRouterSupportThread
+        var close: @Sendable (String) async throws -> OsaurusRouterSupportThread
+        /// Thread id, attachment id: the image bytes.
+        var attachment: @Sendable (String, String) async throws -> OsaurusRouterSupportAttachmentData
 
         static let live = API(
             list: { try await OsaurusRouterAPIClient.shared.supportThreads() },
             create: { try await OsaurusRouterAPIClient.shared.createSupportThread($0) },
             detail: { try await OsaurusRouterAPIClient.shared.supportThread(id: $0) },
-            reply: { try await OsaurusRouterAPIClient.shared.replyToSupportThread(id: $0, body: $1) },
-            markRead: { try await OsaurusRouterAPIClient.shared.markSupportThreadRead(id: $0) }
+            reply: {
+                try await OsaurusRouterAPIClient.shared.replyToSupportThread(id: $0, body: $1, attachments: $2)
+            },
+            markRead: { try await OsaurusRouterAPIClient.shared.markSupportThreadRead(id: $0) },
+            close: { try await OsaurusRouterAPIClient.shared.closeSupportThread(id: $0) },
+            attachment: {
+                try await OsaurusRouterAPIClient.shared.supportAttachment(threadId: $0, attachmentId: $1)
+            }
         )
     }
 
@@ -85,11 +97,18 @@ final class SupportService: ObservableObject {
     /// next success. Background triggers never surface it anywhere else.
     @Published private(set) var refreshError: String?
 
-    /// What the user has typed into "Report a Problem" but not sent. Kept
+    /// What the user has filled into "Report a Problem" but not sent. Kept
     /// here, in memory only, so leaving Help to check something does not
-    /// throw the description away. Not published: only the form reads it,
-    /// once, when it appears.
-    var draftDescription = ""
+    /// throw the report away. Not published: only the form reads it, once,
+    /// when it appears.
+    var draft = SupportReportDraft()
+
+    /// Image bytes already fetched, by attachment id. Attachments never
+    /// change, so a hit is always current; the cap keeps a long session
+    /// from holding every image it ever showed.
+    private var attachmentCache: [String: Data] = [:]
+    private var attachmentCacheOrder: [String] = []
+    nonisolated static let attachmentCacheLimit = 40
 
     /// Last successful list fetch, by the injected clock.
     private(set) var lastFetchedAt: Date?
@@ -205,10 +224,12 @@ final class SupportService: ObservableObject {
     // MARK: - Sending
 
     /// Send a new report. Call only after the user ticked the Terms and
-    /// Privacy box; `report.body(description:)` carries `consent: true`.
+    /// Privacy box; `report.body(draft:extras:)` carries `consent: true`.
     @discardableResult
-    func submit(description: String, report: SupportReport) async throws -> OsaurusRouterSupportThread {
-        let thread = try await api.create(report.body(description: description))
+    func submit(draft: SupportReportDraft, report: SupportReport, extras: JSONValue?) async throws
+        -> OsaurusRouterSupportThread
+    {
+        let thread = try await api.create(report.body(draft: draft, extras: extras))
         store(conversation: thread)
         return thread
     }
@@ -223,13 +244,37 @@ final class SupportService: ObservableObject {
         return thread
     }
 
-    /// The user answers. The router moves the thread back to `open`, which
-    /// also reopens a closed one.
+    /// The user answers, optionally with images. The router moves the
+    /// thread back to `open`, which also reopens a closed one.
     @discardableResult
-    func reply(threadId: String, body: String) async throws -> OsaurusRouterSupportThread {
-        let thread = try await api.reply(threadId, body)
+    func reply(threadId: String, body: String, images: [SupportImageAttachment] = []) async throws
+        -> OsaurusRouterSupportThread
+    {
+        let thread = try await api.reply(threadId, body, images.map(\.upload))
         store(conversation: thread)
         return thread
+    }
+
+    /// The user marks a report resolved. Frees one of the three open slots;
+    /// writing to it again reopens it.
+    @discardableResult
+    func close(threadId: String) async throws -> OsaurusRouterSupportThread {
+        let thread = try await api.close(threadId)
+        store(conversation: thread)
+        return thread
+    }
+
+    /// The bytes of one attached image, from memory when already fetched.
+    func attachmentData(threadId: String, attachmentId: String) async throws -> Data {
+        if let cached = attachmentCache[attachmentId] { return cached }
+        let response = try await api.attachment(threadId, attachmentId)
+        guard let data = response.data else { throw OsaurusRouterAPIError.invalidResponse }
+        attachmentCache[attachmentId] = data
+        attachmentCacheOrder.append(attachmentId)
+        while attachmentCacheOrder.count > Self.attachmentCacheLimit {
+            attachmentCache.removeValue(forKey: attachmentCacheOrder.removeFirst())
+        }
+        return data
     }
 
     /// Clear the unread flag for a report the user is looking at. The badge
@@ -274,12 +319,7 @@ final class SupportService: ObservableObject {
 
     private func setUnread(_ unread: Bool, threadId: String) {
         guard let index = threads.firstIndex(where: { $0.id == threadId }) else { return }
-        let current = threads[index]
-        threads[index] = OsaurusRouterSupportThread(
-            id: current.id, subject: current.subject, statusRaw: current.statusRaw, unread: unread,
-            lastUserMessageAt: current.lastUserMessageAt,
-            lastStaffMessageAt: current.lastStaffMessageAt,
-            createdAt: current.createdAt, updatedAt: current.updatedAt, messages: nil)
+        threads[index] = threads[index].withUnread(unread)
         unreadCount = threads.filter(\.unread).count
     }
 
@@ -314,10 +354,10 @@ final class SupportService: ObservableObject {
             return L("Your Osaurus account is on hold, so reports cannot be sent from the app right now.")
         case .server(let code, _, let status):
             if code == "INVALID_STATE" {
-                return L("You already have 3 open reports. Add to one of them, or wait until one is closed.")
+                return L("You already have 3 open reports. Add to one of them, or mark one as resolved.")
             }
             if status == 413 {
-                return L("This report is too large to send. Shorten the description and try again.")
+                return L("This is too large to send. Remove an image or shorten the text, then try again.")
             }
             if status == 404 {
                 return L("This report is no longer available.")
