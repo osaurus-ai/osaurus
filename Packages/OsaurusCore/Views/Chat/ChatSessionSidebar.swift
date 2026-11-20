@@ -73,12 +73,8 @@ struct ChatSessionSidebar: View {
     var onStop: ((UUID) -> Void)? = nil
     /// Open a chat in a new tab of this window (browser-style).
     var onOpenInNewTab: ((ChatSessionData) -> Void)? = nil
-    /// Select an agent for this window (agents-focused sidebar prototype —
-    /// replaces the removed agent-selector pill; same effect as picking an
-    /// agent from it).
-    var onSelectAgent: ((UUID) -> Void)? = nil
-    /// Start a fresh chat with a local agent straight from its row (hover
-    /// "+" / context menu), without selecting the agent first.
+    /// Start a fresh chat with a local agent: its row's click (when
+    /// closed), its `New chat` row and its menu's New Chat.
     var onNewChatWithAgent: ((UUID) -> Void)? = nil
     /// Lowercased address of the workspace teammate's agent the window's
     /// active tab is chatting with, or nil for a local chat. While set, the
@@ -260,11 +256,6 @@ struct ChatSessionSidebar: View {
                     let activity = activityStatus(for: agent)
                     AgentSidebarRow(
                         agent: agent,
-                        // A team-agent or network-agent tab owns the
-                        // selection: no local row is highlighted while one
-                        // is active.
-                        isSelected: agent.id == agentId && workspaceAgentAddress == nil
-                            && activeHostedAgent == nil,
                         isExpanded: isAgentExpanded(agent),
                         activityStatus: activity,
                         activityStep: activity == nil ? nil : activityStep(for: agent),
@@ -281,15 +272,13 @@ struct ChatSessionSidebar: View {
                         isNew: newAgentHighlight.isNew(localAgentId: agent.id),
                         onSelect: {
                             newAgentHighlight.markSeen(localAgentId: agent.id)
-                            // An agent with no chats has nothing to browse, so
-                            // the click starts one. Otherwise it only browses the
-                            // history: it never selects the agent or starts a chat.
-                            if historyItems(for: agent.id).isEmpty, let start = onNewChatWithAgent {
-                                start(agent.id)
-                                return
+                            switch Self.agentRowClick(isOpen: isAgentExpanded(agent)) {
+                            case .close:
+                                agentExpansion[agent.id] = false
+                            case .openToNewChat:
+                                agentExpansion[agent.id] = true
+                                showNewChat(with: agent)
                             }
-                            let wasExpanded = agentExpansion[agent.id] ?? (agent.id == agentId)
-                            agentExpansion[agent.id] = !wasExpanded
                         },
                         onNewChat: onNewChatWithAgent.map { start in
                             {
@@ -298,6 +287,22 @@ struct ChatSessionSidebar: View {
                             }
                         },
                         onStop: activity == nil ? nil : { stopActivity(for: agent) },
+                        onRename: agent.isBuiltIn ? nil : { AgentSidebarActions.rename(agent, to: $0) },
+                        onDelete: agent.isBuiltIn ? nil : {
+                            AgentSidebarActions.requestDelete(
+                                agent, chatCount: Self.agentChatCount(conversations.sessions, agentId: agent.id),
+                                scope: alertScope)
+                        },
+                        onShowAllChats: onShowAllChats.map { show in { show(AllChatsRequest(agentId: agent.id)) } },
+                        onSelectChats: chatSelection.flatMap { binding in
+                            onShowAllChats.map { show in
+                                {
+                                    binding.wrappedValue.select(
+                                        Self.allChatsIds(conversations.sessions, agentId: agent.id))
+                                    show(AllChatsRequest(agentId: agent.id))
+                                }
+                            }
+                        },
                         // A filtered list is not the real order: no reordering
                         // until the query clears.
                         isReorderable: !agent.isBuiltIn && !isFilteringNavigator,
@@ -314,6 +319,14 @@ struct ChatSessionSidebar: View {
                         }
                     )
         if isAgentExpanded(agent) {
+            if !isFilteringNavigator {
+                NavigatorLinkRow(
+                    icon: "plus",
+                    title: L("New chat"),
+                    isSelected: navigatorHighlight == .newChat(agent.id)
+                ) { showNewChat(with: agent) }
+                .accessibilityLabel(Text(verbatim: L("New chat with \(agent.displayName)")))
+            }
             let recent = navigatorChats(for: agent.id)
             let visible = Self.navigatorVisibleChats(
                 recent, cap: Self.chatsPerAgent, activeIds: Set(activityMonitor.statuses.keys))
@@ -338,8 +351,23 @@ struct ChatSessionSidebar: View {
         }
     }
 
+    /// The agent's new chat screen: its untouched chat when one is on
+    /// screen, else a fresh one.
+    private func showNewChat(with agent: Agent) {
+        newAgentHighlight.markSeen(localAgentId: agent.id)
+        keepAgentExpansion(for: [agentId, agent.id])
+        if navigatorHighlight == .newChat(agent.id) { return }
+        onNewChatWithAgent?(agent.id)
+    }
+
     /// Chats listed under an open agent; the rest are on the All chats page.
     static let chatsPerAgent = 5
+
+    /// Every saved chat of the agent, archived included: what deleting the
+    /// agent removes.
+    nonisolated static func agentChatCount(_ sessions: [ChatSessionData], agentId: UUID) -> Int {
+        sessions.reduce(0) { $0 + (($1.agentId ?? Agent.defaultId) == agentId ? 1 : 0) }
+    }
 
     /// Pure rule (testable): the chats the All chats page counts, archived
     /// ones aside, for one agent or (nil) everyone.
@@ -490,6 +518,54 @@ struct ChatSessionSidebar: View {
             sessions: conversations.sessions, scope: alertScope)
     }
 
+    /// The one sidebar row that reads as current.
+    enum NavigatorHighlight: Equatable {
+        case allChats
+        /// The `New chat` row of this local agent.
+        case newChat(UUID)
+        /// A chat row, by its list id (session id, else tab id).
+        case chat(UUID)
+        case none
+    }
+
+    /// Pure rule (testable): All chats while the page is on screen, else
+    /// the `New chat` row of the agent whose untouched chat is on screen,
+    /// else the chat on screen. Agent rows are never highlighted.
+    nonisolated static func highlightedRow(
+        showingAllChats: Bool, activeChatId: UUID?, untouchedChatAgentId: UUID?
+    ) -> NavigatorHighlight {
+        if showingAllChats { return .allChats }
+        if let untouchedChatAgentId { return .newChat(untouchedChatAgentId) }
+        return activeChatId.map(NavigatorHighlight.chat) ?? .none
+    }
+
+    /// What clicking an agent row does.
+    enum AgentRowClick: Equatable {
+        /// Fold it; nothing on screen changes.
+        case close
+        /// Unfold it and show its new chat.
+        case openToNewChat
+    }
+
+    nonisolated static func agentRowClick(isOpen: Bool) -> AgentRowClick {
+        isOpen ? .close : .openToNewChat
+    }
+
+    private var navigatorHighlight: NavigatorHighlight {
+        let activeTab = openChats.first { $0.id == activeOpenTabId }
+        var untouchedAgentId: UUID?
+        if let activeTab, Self.isUntouchedChat(activeTab),
+            !(activeTab.session.projectId.map(existingProjectIds.contains) ?? false),
+            case .local(let id) = ChatTabScope.of(activeTab.session)
+        {
+            untouchedAgentId = id
+        }
+        return Self.highlightedRow(
+            showingAllChats: isShowingAllChats,
+            activeChatId: activeSessionId ?? activeOpenTabId,
+            untouchedChatAgentId: untouchedAgentId)
+    }
+
     /// Pure rule (testable): the selectable rows' ids as reported top to
     /// bottom, each once. Rows of folded groups never render, so they
     /// never report.
@@ -541,7 +617,7 @@ struct ChatSessionSidebar: View {
                 && !($0.session.projectId.map(projectIds.contains) ?? false)
                 && !($0.session.workspaceContext.map { $0.isServedForTeammate && served.contains($0.workspaceId) } ?? false)
         }
-        return mergedHistory(saved: saved, live: live)
+        return mergedHistory(saved: saved, live: live, underAgent: true)
     }
 
     /// A project's chats, from every local agent, merged the same way.
@@ -562,19 +638,29 @@ struct ChatSessionSidebar: View {
             && !session.isStreaming && session.awaitingClarify == nil
     }
 
-    private func mergedHistory(saved: [ChatSessionData], live: [ChatTab]) -> [HistoryItem] {
+    /// Pure rule (testable): whether a live tab gets its own row. An
+    /// untouched chat under an agent is that agent's `New chat` row; in a
+    /// project or workspace list, which has no such row, it is listed only
+    /// while it is the chat on screen. Any chat with a message is listed.
+    nonisolated static func listsLiveChat(isUntouched: Bool, isOnScreen: Bool, underAgent: Bool) -> Bool {
+        guard isUntouched else { return true }
+        return !underAgent && isOnScreen
+    }
+
+    private func mergedHistory(saved: [ChatSessionData], live: [ChatTab], underAgent: Bool = false) -> [HistoryItem] {
         let activeIds = Set(activityMonitor.statuses.keys)
+        let highlight = navigatorHighlight
         var items = saved.map { data in
             let tab = live.first { $0.session.sessionId == data.id }
             return HistoryItem(id: data.id, title: data.title, updatedAt: data.updatedAt,
-                saved: data, openTabId: tab?.id, isSelected: data.id == activeSessionId,
+                saved: data, openTabId: tab?.id, isSelected: highlight == .chat(data.id),
                 agentId: data.agentId ?? Agent.defaultId)
         }
         let savedIds = Set(saved.map(\.id))
         for tab in live where tab.session.sessionId.map({ !savedIds.contains($0) }) ?? true {
-            // A New Chat nothing happened in is listed only while it is the
-            // chat on screen.
-            if Self.isUntouchedChat(tab), tab.id != activeOpenTabId { continue }
+            guard Self.listsLiveChat(
+                isUntouched: Self.isUntouchedChat(tab), isOnScreen: tab.id == activeOpenTabId, underAgent: underAgent)
+            else { continue }
             // Archived sessions stay out of the recent list even if still
             // alive in memory, unless a run is live on them.
             if let id = tab.session.sessionId,
@@ -582,9 +668,10 @@ struct ChatSessionSidebar: View {
                     $0.id == id && (($0.archived && !activeIds.contains(id)) || $0.pinned)
                 })
             { continue }
-            items.append(HistoryItem(id: tab.session.sessionId ?? tab.id, title: tab.session.title,
+            let id = tab.session.sessionId ?? tab.id
+            items.append(HistoryItem(id: id, title: tab.session.title,
                 updatedAt: tab.session.updatedAt, saved: nil, openTabId: tab.id,
-                isSelected: tab.id == activeOpenTabId, agentId: tab.session.agentId ?? Agent.defaultId))
+                isSelected: highlight == .chat(id), agentId: tab.session.agentId ?? Agent.defaultId))
         }
         return items.sorted {
             $0.updatedAt == $1.updatedAt ? $0.id.uuidString < $1.id.uuidString : $0.updatedAt > $1.updatedAt
@@ -596,13 +683,14 @@ struct ChatSessionSidebar: View {
     /// Pinned chats across local agents and workspaces, newest first, each
     /// with the agent its row shows: a local agent, or a teammate's.
     private var pinnedItems: [(item: HistoryItem, agent: Agent?, shared: SharedAgentIdentity?)] {
-        Self.pinnedSessions(
+        let highlight = navigatorHighlight
+        return Self.pinnedSessions(
             conversations.sessions, keepingArchived: Set(activityMonitor.statuses.keys))
             .compactMap { data in
                 let tab = openChats.first { $0.kind == .chat && $0.session.sessionId == data.id }
                 let item = HistoryItem(
                     id: data.id, title: data.title, updatedAt: data.updatedAt,
-                    saved: data, openTabId: tab?.id, isSelected: data.id == activeSessionId,
+                    saved: data, openTabId: tab?.id, isSelected: highlight == .chat(data.id),
                     agentId: data.agentId ?? Agent.defaultId)
                 if data.isWorkspaceAgentChat, let context = data.workspace {
                     let shared = SharedAgentIdentity.resolve(
@@ -856,6 +944,15 @@ struct ChatSessionSidebar: View {
     @ViewBuilder
     private var agentsHeaderMenuItems: some View {
         Button {
+            AgentCreatorLauncher.open(source: .sidebar)
+        } label: {
+            Label {
+                Text("New Agent…", bundle: .module)
+            } icon: {
+                Image(systemName: "plus")
+            }
+        }
+        Button {
             ConversationImportRequest.present(agentId: agentId, scope: alertScope, onOpen: onSelect)
         } label: {
             Label {
@@ -974,7 +1071,8 @@ struct ChatSessionSidebar: View {
                     entry: entry,
                     hostName: host.name,
                     isOnline: hostedRunMonitor.isConnected(host.device),
-                    isSelected: activeHostedAgent.map { $0.device == host.device && $0.agentId == agentId } ?? false,
+                    isSelected: !isShowingAllChats
+                        && (activeHostedAgent.map { $0.device == host.device && $0.agentId == agentId } ?? false),
                     onSelect: {
                         guard let agentId else { return }
                         onSelectHostedAgent?(host.device, agentId)
@@ -1685,7 +1783,7 @@ struct ChatSessionSidebar: View {
     /// Only the row whose workspace matches the active tab's stamped
     /// workspace highlights when an agent is shared into several.
     private func isWorkspaceRowSelected(address: String, workspaceId: String) -> Bool {
-        guard workspaceAgentAddress == address else { return false }
+        guard !isShowingAllChats, workspaceAgentAddress == address else { return false }
         return (workspaceAgentWorkspaceId ?? "") == workspaceId
     }
 
@@ -2052,11 +2150,11 @@ struct NavigatorGroupHeader<Trailing: View>: View {
     }
 }
 
-/// Row in the agents-focused sidebar. Mirrors `SessionRow`'s hover and
-/// selection treatment: avatar, name, hover-only gear to the agent's settings.
+/// Row in the agents-focused sidebar: avatar, name, and one hover-only ⋯
+/// holding the agent's actions (Stop while a run is live). Never
+/// highlighted: its `New chat` row or a chat row is.
 private struct AgentSidebarRow: View {
     let agent: Agent
-    let isSelected: Bool
     var isExpanded: Bool = false
     /// Live activity rolled up from the agent's sessions: `.working`
     /// animates the avatar ring exactly like the old session rows.
@@ -2086,6 +2184,10 @@ private struct AgentSidebarRow: View {
     /// Stop every live run on this agent. Shown on hover while
     /// `activityStatus` is non-nil.
     var onStop: (() -> Void)? = nil
+    /// Rename in place (custom agents only).
+    var onRename: ((String) -> Void)? = nil
+    /// Ask to delete the agent (custom agents only).
+    var onDelete: (() -> Void)? = nil
     /// The All chats page filtered to this agent.
     var onShowAllChats: (() -> Void)? = nil
     /// The same page with every one of the agent's chats selected.
@@ -2103,28 +2205,56 @@ private struct AgentSidebarRow: View {
     private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @State private var isHovered = false
     @State private var hoverControlsWidth: CGFloat = 0
+    @State private var isRenaming = false
+    @State private var renameText = ""
+    @FocusState private var isRenameFocused: Bool
 
-    /// Stop while a run is live on this agent, otherwise New Chat and the
-    /// gear opening this agent's settings in Settings: the
-    /// Agents detail page for a user agent, Settings → Orchestrator for the
-    /// built-in Osaurus agent. Always laid out and revealed on hover, so
-    /// showing them never changes the row's layout.
+    /// Stop while a run is live on this agent, otherwise the ⋯ menu. Always
+    /// laid out and revealed on hover, so showing it never changes the
+    /// row's layout.
     @ViewBuilder private var hoverControls: some View {
         if activityStatus != nil, let onStop {
             SessionStopButton(action: onStop)
         } else {
-            HStack(spacing: theme.space.s4) {
-                if let onNewChat {
-                    // The compose square carries its ink low and to the
-                    // left; lifted, it lines up with the gear beside it.
-                    SettingsIconButton("square.and.pencil", help: "New Chat",
-                                       size: .extraSmall, role: .tertiary,
-                                       glyphNudge: CGSize(width: 0, height: -0.75), action: onNewChat)
-                }
-                SettingsIconButton("gearshape", help: agent.id == Agent.defaultId ? "Orchestrator settings" : "Agent settings",
-                                   size: .extraSmall, role: .tertiary, action: openAgentSettings)
+            let size = environmentTheme.assignedMetric(
+                SettingsButtonSize.extraSmall.assignment("height"), fallback: environmentTheme.space.s24)
+            AssignedActionMenu(accessibilityLabel: L("More actions"), appearance: .chatContext) {
+                agentContextMenu
+            } label: {
+                Image(systemName: "ellipsis")
             }
+            .buttonStyle(ConversationEllipsisStyle())
+            .frame(width: size, height: size)
+            .help(Text("More actions", bundle: .module))
         }
+    }
+
+    private var renameField: some View {
+        TextField(text: $renameText, prompt: Text("Name", bundle: .module)) {
+            Text("Name", bundle: .module)
+        }
+        .textFieldStyle(.plain)
+        .textStyle(.label, weight: 500)
+        .foregroundStyle(environmentTheme.text.primary)
+        .focused($isRenameFocused)
+        .onSubmit(commitRename)
+        .onExitCommand { isRenaming = false }
+        .onChange(of: isRenameFocused) { _, focused in
+            if !focused, isRenaming { commitRename() }
+        }
+        .onAppear {
+            // After the menu that started the rename has closed, or AppKit
+            // hands first responder back to the previous field.
+            DispatchQueue.main.async { isRenameFocused = true }
+        }
+    }
+
+    /// Return commits; an empty or unchanged name cancels.
+    private func commitRename() {
+        let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        isRenaming = false
+        guard !name.isEmpty, name != agent.name else { return }
+        onRename?(name)
     }
 
     var body: some View {
@@ -2152,10 +2282,14 @@ private struct AgentSidebarRow: View {
                 // Baseline-aligned so the Orchestrator star sits on the
                 // name's line like an inline glyph, not on the row's center.
                 HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.agentSidebarRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s4, theme))) {
-                    Text(agent.displayName)
-                        .componentInspectionText(41, role: .label, fallback: .caption, weight: 500, theme: theme)
-                        .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
-                        .lineLimit(1)
+                    if isRenaming {
+                        renameField
+                    } else {
+                        Text(agent.displayName)
+                            .componentInspectionText(41, role: .label, fallback: .caption, weight: 500, theme: theme)
+                            .foregroundColor(theme.text.primary)
+                            .lineLimit(1)
+                    }
                     if agent.id == Agent.defaultId {
                         Image(systemName: "star.circle")
                             .componentInspectionText(41, role: .label, fallback: .label, theme: theme)
@@ -2195,8 +2329,8 @@ private struct AgentSidebarRow: View {
         .overlay(alignment: .trailing) {
             hoverControls
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { hoverControlsWidth = $0 }
-                .opacity(isHovered ? 1 : 0)
-                .allowsHitTesting(isHovered)
+                .opacity(isHovered && !isRenaming ? 1 : 0)
+                .allowsHitTesting(isHovered && !isRenaming)
         }
         .padding(.leading, NavigatorRowMetrics.leadingInset)
         .padding(.trailing, NavigatorRowMetrics.trailingInset)
@@ -2210,7 +2344,7 @@ private struct AgentSidebarRow: View {
         .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
         .offset(y: dragOffset)
         .zIndex(isDragging ? 1 : 0)
-        .onTapGesture(perform: onSelect)
+        .onTapGesture { if !isRenaming { onSelect() } }
         .accessibilityAction(named: Text(isExpanded ? "Collapse chats" : "Expand chats"), onSelect)
         .assignedContextMenu { agentContextMenu }
         // Same threshold as the tab strip: a short travel keeps clicks as
@@ -2232,12 +2366,6 @@ private struct AgentSidebarRow: View {
             // Hover reveals controls; it must not animate the row's geometry.
             isHovered = hovering
         }
-        .animation(theme.motion.quick, value: isSelected)
-    }
-
-    private var settingsHelpKey: LocalizedStringKey {
-        if agent.id == Agent.architectId { return "Architect Settings" }
-        return agent.isBuiltIn ? "Orchestrator Settings" : "Agent Settings"
     }
 
     /// Where this agent is configured: a user agent's detail page under
@@ -2255,8 +2383,9 @@ private struct AgentSidebarRow: View {
         }
     }
 
-    /// Parity with session / project rows: settings, address, and the
-    /// share/unshare actions that otherwise live only in Settings.
+    /// The ⋯ and right-click menu: New Chat, Open Settings, the agent's
+    /// chats, Rename, the share/unshare actions that otherwise live only
+    /// in Settings, and Delete Agent… last.
     @ViewBuilder
     private var agentContextMenu: some View {
         if let onNewChat {
@@ -2266,6 +2395,14 @@ private struct AgentSidebarRow: View {
         }
         Button(action: openAgentSettings) {
             Label(LCached("Open Settings"), systemImage: "gearshape")
+        }
+        if onRename != nil {
+            Button {
+                renameText = agent.name
+                isRenaming = true
+            } label: {
+                Label(LCached("Rename"), systemImage: "pencil")
+            }
         }
         if let onShowAllChats {
             Button(action: onShowAllChats) {
@@ -2294,6 +2431,12 @@ private struct AgentSidebarRow: View {
                 } label: {
                     Label(String(format: LCached("Unshare from %@"), workspace.name), systemImage: "person.2.slash")
                 }
+            }
+        }
+        if let onDelete {
+            Divider()
+            Button(role: .destructive, action: onDelete) {
+                Label(LCached("Delete Agent…"), systemImage: "trash")
             }
         }
     }

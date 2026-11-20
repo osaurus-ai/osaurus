@@ -63,14 +63,33 @@ Rules that follow from this:
   Pinned group below it, where its row carries the agent's avatar;
   unpinning returns it.
 - The Agents header's ⋯ (hover-only, the same trigger and plain-text menu
-  as a chat row's) holds the sidebar's list-level actions: Import
+  as a chat row's)   holds the sidebar's list-level actions: New Agent…, Import
   Conversations… (into the agent on screen), Select chats (selection
   mode with nothing ticked) and Archived chats (the All chats page on its
   Archived chip). The sidebar never lists archived chats, except one a
   run is live on; they are found on the All chats page. Workflow runs
   are in the Workflows destination, not here.
-- An agent row's menu adds All chats with <Agent> (the page filtered to
-  it) and Select chats (the same, with all its chats ticked).
+- An open agent's first row is `New chat` (plus glyph in the icon
+  column; hidden while searching), then its chats. An untouched chat
+  (`ChatSessionSidebar.isUntouchedChat`) is that row, never a row of its
+  own under the agent; it gets its own row once it has a message. An
+  agent with no chats shows only `New chat`. Clicking a closed agent
+  opens it and shows its new chat; clicking an open agent folds it and
+  navigates nowhere.
+- Exactly one row is highlighted (`ChatSessionSidebar.highlightedRow`):
+  All chats while that page is on screen, else the `New chat` row of the
+  agent whose untouched chat is on screen, else the chat on screen.
+  Local agent rows are never highlighted.
+- An agent row shows one hover-only ⋯ (Stop while a run is live); the
+  gear and pencil are gone. Its menu, also on right-click: New Chat,
+  Open Settings, All chats with <Agent> (the page filtered to it),
+  Select chats (the same, with all its chats ticked), Rename (custom
+  agents; in place, Return commits, Escape or an empty name cancels),
+  Share to Workspace… / Unshare from …, and Delete Agent… (custom agents;
+  one confirmation: "<Agent>, its memory and its N chats are removed
+  from this Mac. This cannot be undone."). Deleting moves every window
+  off the agent's chats first (`AgentSidebarActions`).
+- The composer's placeholder names the local agent: "Message <Agent>...".
 - Chats are selected in place (`ChatWindowState.chatSelection`, pure
   rules in `ChatSelection`). Hovering a saved chat row puts a checkbox in
   its icon column (over the avatar in Pinned); ticked rows keep it. A

@@ -11832,10 +11832,6 @@ struct ChatView: View {
                 windowState.openSessionInNewTab(sessionData)
                 closeCompactDrawer()
             },
-            onSelectAgent: { newAgentId in
-                windowState.switchAgent(to: newAgentId)
-                closeCompactDrawer()
-            },
             onNewChatWithAgent: { newAgentId in
                 windowState.startNewChat(with: newAgentId)
                 isPinnedToBottom = true
