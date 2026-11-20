@@ -115,6 +115,144 @@ struct WorkflowFailureTests {
         #expect(unknown.errorType == "PlainFailure")
     }
 
+    @Test
+    func classify_providerErrors_byStatus() {
+        func provider(_ error: RemoteProviderServiceError) -> NodeRunFailure { WorkflowFailure.classify(error) }
+        let auth = provider(.requestFailed("HTTP 401: invalid api key"))
+        #expect(auth.kind == "provider_auth" && auth.fixIn == .setup && !auth.retryable)
+        #expect(auth.errorType == "RemoteProviderServiceError.requestFailed")
+        #expect(provider(.requestFailed("HTTP 403: forbidden")).kind == "provider_auth")
+        let funds = provider(.requestFailed(#"HTTP 402: {"error":{"code":"INSUFFICIENT_FUNDS"}}"#))
+        #expect(funds.kind == "insufficient_funds" && funds.fixIn == .person && !funds.retryable)
+        #expect(
+            provider(.requestFailed(#"HTTP 402: {"error":{"code":"WORKSPACE_INSUFFICIENT_FUNDS"}}"#)).kind
+                == "workspace_insufficient_funds")
+        let server = provider(.requestFailed("HTTP 502: bad gateway"))
+        #expect(server.kind == "provider_http_5xx" && server.fixIn == .retry && server.retryable)
+        let refused = provider(.requestFailed("HTTP 400: context too long"))
+        #expect(refused.kind == "provider_http_4xx" && refused.fixIn == .workflow && !refused.retryable)
+        #expect(provider(.requestFailed("connection reset")).kind == "provider_error")
+        #expect(provider(.rateLimited(retryAfter: 2, statusCode: 429)).kind == "provider_rate_limited")
+        #expect(provider(.notConnected).kind == "provider_disconnected")
+        #expect(provider(.outputTruncated(finishReason: "length")).kind == "output_truncated")
+        #expect(provider(.invalidURL).fixIn == .setup)
+
+        #expect(!WorkflowNodeError.isRetryable(RemoteProviderServiceError.requestFailed("HTTP 401: no")))
+        #expect(WorkflowNodeError.isRetryable(RemoteProviderServiceError.requestFailed("HTTP 503: down")))
+        #expect(WorkflowFailure.httpStatus(in: "Request failed: HTTP 429: slow down") == 429)
+        #expect(WorkflowFailure.httpStatus(in: "no status here") == nil)
+    }
+
+    @Test
+    func classify_engineAndRouterErrors() {
+        let missing = WorkflowFailure.classify(ChatEngine.EngineError(kind: .modelNotFound(requested: "x/y")))
+        #expect(missing.kind == "model_unavailable" && missing.fixIn == .setup && !missing.retryable)
+        #expect(missing.errorType == "ChatEngine.EngineError.modelNotFound")
+        #expect(
+            WorkflowFailure.classify(ChatEngine.EngineError(kind: .routerSpendNotAuthorized)).fixIn == .settings)
+
+        #expect(WorkflowFailure.classify(OsaurusRouterAPIError.insufficientFunds).kind == "insufficient_funds")
+        #expect(WorkflowFailure.classify(OsaurusRouterAPIError.firstActionPending).fixIn == .person)
+        #expect(WorkflowFailure.classify(OsaurusRouterAPIError.noIdentity).kind == "router_no_identity")
+        let server = WorkflowFailure.classify(OsaurusRouterAPIError.server(code: "X", message: "m", status: 503))
+        #expect(server.kind == "provider_http_5xx" && server.retryable)
+        #expect(!WorkflowNodeError.isRetryable(OsaurusRouterAPIError.accountFrozen))
+    }
+
+    @Test
+    func carriedCause_survivesAWorkerEnvelope() throws {
+        let error = ChatEngine.EngineError(kind: .modelNotFound(requested: "gone/model"))
+        let plain = ToolEnvelope.fromError(error, tool: "agent")
+        let carried = WorkflowFailure.attachingCause(of: error, to: plain)
+        #expect(ToolEnvelope.isError(carried))
+        #expect(WorkflowFailure.attachingCause(of: PlainFailure.broke, to: plain) == plain)
+
+        do {
+            _ = try BuiltInWorkerRunner.delegated(from: carried, worker: .research)
+            Issue.record("expected the worker failure to throw")
+        } catch {
+            let failure = WorkflowFailure.classify(error)
+            #expect(failure.kind == "model_unavailable")
+            #expect(failure.errorType == "ChatEngine.EngineError.modelNotFound")
+            #expect(failure.fixIn == .setup)
+            #expect(!WorkflowNodeError.isRetryable(error))
+            #expect(WorkflowFailure.message(error).contains("gone/model"))
+        }
+
+        do {
+            _ = try BuiltInWorkerRunner.delegated(from: plain, worker: .research)
+            Issue.record("expected the worker failure to throw")
+        } catch {
+            #expect(WorkflowFailure.classify(error).kind == "execution_error")
+        }
+    }
+
+    @Test
+    func runner_runLevelFailures_areClassified() async {
+        let def = WorkflowDefinition(
+            inputSchema: WF.object(["topic": .object(["type": .string("string")])], required: ["topic"]),
+            outputSchema: WF.object([:]), nodes: [WF.code("a")], edges: [], output: .object([:]))
+        let template = WF.template(def)
+        let run = await WorkflowRunner(
+            request: WorkflowRunner.Request(
+                workflowID: UUID(), workflowName: template.name, template: template,
+                caller: WorkflowCaller(kind: .user), input: .object([:]), workspace: WF.tempDir()),
+            executor: ClosureExecutor { _, _ in WorkflowNodeOutcome(output: .object([:])) }
+        ).execute()
+        #expect(run.status == .failed)
+        #expect(run.primaryFailure?.kind == "input_mismatch")
+        #expect(run.primaryFailure?.errorType == "WorkflowRunError.inputMismatch")
+        #expect(run.primaryFailure?.fixIn == .workflow)
+        #expect(WorkflowRunTelemetry.stage(kind: "input_mismatch", nodeID: nil) == "preflight")
+    }
+
+    // MARK: - Telemetry tokens
+
+    @Test
+    func telemetry_failureFields_comeFromTheRun() {
+        var run = WorkflowRun(
+            workflowID: UUID(), workflowName: "W", templateID: UUID(), templateVersion: 1,
+            caller: WorkflowCaller(kind: .orchestrator), input: .object([:]), nodeIDs: ["fetch", "write"])
+        run.status = .failed
+        run.update("fetch") { $0.status = .done }
+        run.update("write") {
+            $0.status = .failed
+            $0.model = "osaurus/deepseek-v4-1-flash"
+            $0.failure = NodeRunFailure(
+                kind: "provider_disconnected", retryable: true, errorType: "RemoteProviderUnavailable.stillConnecting",
+                fixIn: .retry)
+        }
+        run.error = WorkflowRunError(nodeID: "write", reason: "r", failure: run.node("write")?.failure)
+        run.wrapperAgentID = UUID()
+
+        let failure = WorkflowRunTelemetry.failure(
+            run, stepKinds: ["fetch": "http", "write": "inference"], route: { _ in ("remote", "osaurus") })
+        #expect(failure?.stage == "step")
+        #expect(failure?.kind == "provider_disconnected")
+        #expect(failure?.fixIn == "retry")
+        #expect(failure?.stepKind == "inference")
+        #expect(failure?.stepsDone == 1)
+        #expect(failure?.modelSource == "remote" && failure?.providerType == "osaurus")
+        #expect(WorkflowRunTelemetry.runKind(run) == "wrapper")
+
+        run.status = .completed
+        #expect(WorkflowRunTelemetry.failure(run, stepKinds: [:], route: { _ in ("local", "mlx") }) == nil)
+
+        var early = WorkflowRun(
+            workflowID: UUID(), workflowName: "W", templateID: UUID(), templateVersion: 1,
+            caller: WorkflowCaller(kind: .test), input: .object([:]), nodeIDs: ["a"])
+        early.status = .failed
+        early.error = WorkflowRunError(reason: "legacy, no classification")
+        let unclassified = WorkflowRunTelemetry.failure(early, stepKinds: ["a": "code"], route: { _ in ("local", "mlx") })
+        #expect(unclassified?.kind == "unclassified" && unclassified?.stage == "run")
+        #expect(unclassified?.stepKind == nil && unclassified?.modelSource == nil)
+        #expect(WorkflowRunTelemetry.runKind(early) == "test")
+        #expect(WorkflowRunTelemetry.stage(kind: "sandbox_unavailable", nodeID: nil) == "sandbox")
+        #expect(WorkflowRunTelemetry.stage(kind: "output_mismatch", nodeID: nil) == "output")
+        #expect(WorkflowRunTelemetry.stage(kind: "output_mismatch", nodeID: "a") == "step")
+        #expect(ProcessLaunch.date <= Date())
+    }
+
     // MARK: - Stored and bound
 
     @Test

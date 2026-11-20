@@ -80,7 +80,16 @@ enum WorkflowRunWorker: TaskWorker {
         let workflow: InstalledWorkflow
         let workflowInput: JSONValue
         switch self.workflowInput(action, payload: occurrence.payload, agentId: action.runAsAgentId) {
-        case .failure(let outcome): return outcome
+        case .failure(let outcome):
+            let reason: String
+            switch outcome.reason {
+            case "workflow_unavailable": reason = "not_installed"
+            case "workflow_missing_keys": reason = "missing_keys"
+            case "invalid_input": reason = "invalid_input"
+            default: reason = "needs_setup"
+            }
+            FeatureTelemetry.workflowRunRefused(caller: WorkflowCaller.Kind.event.rawValue, target: "installed", reason: reason)
+            return outcome
         case .success(let value): (workflow, workflowInput) = value
         }
         let runID = UUID()

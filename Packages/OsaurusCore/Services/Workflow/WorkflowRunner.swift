@@ -495,7 +495,11 @@ public actor WorkflowRunner {
     public func execute() async -> WorkflowRun {
         await publish()
         guard let def = request.template.workflow else {
-            return await finish(.failed, error: WorkflowRunError(reason: L("This template is not a workflow.")))
+            return await finish(
+                .failed,
+                error: WorkflowRunError(
+                    reason: L("This template is not a workflow."),
+                    failure: Self.runFailure("not_a_workflow", case: "notAWorkflow")))
         }
         let inputIssues = JSONSchemaValidator.validate(request.input, against: def.inputSchema)
         if let first = inputIssues.first {
@@ -504,18 +508,25 @@ public actor WorkflowRunner {
                 error: WorkflowRunError(
                     reason: L("Input does not match the workflow's input schema: ")
                         + inputIssues.map(\.description).joined(separator: "; "),
-                    path: first.path))
+                    path: first.path, failure: Self.runFailure("input_mismatch", case: "inputMismatch")))
         }
         let structural = WorkflowValidator.validate(def, allowPlaceholders: run.isTest, checkSandboxCommands: false)
         if !structural.isEmpty {
             return await finish(
                 .failed,
-                error: WorkflowRunError(reason: structural.map(\.message).joined(separator: "; ")))
+                error: WorkflowRunError(
+                    reason: structural.map(\.message).joined(separator: "; "),
+                    failure: Self.runFailure("invalid_definition", case: "invalidDefinition")))
         }
         guard let order = WorkflowValidator.topologicalOrder(def) else {
-            return await finish(.failed, error: WorkflowRunError(reason: L("The workflow graph has a cycle.")))
+            return await finish(
+                .failed,
+                error: WorkflowRunError(
+                    reason: L("The workflow graph has a cycle."),
+                    failure: Self.runFailure("graph_cycle", case: "graphCycle")))
         }
-        if let failure = applyPinsAndStart(def) {
+        if var failure = applyPinsAndStart(def) {
+            failure.failure = Self.runFailure("pin_error", case: "pinError")
             return await finish(.failed, error: failure)
         }
 
@@ -561,7 +572,8 @@ public actor WorkflowRunner {
                 error: WorkflowRunError(
                     reason: L("The assembled output does not match the output schema: ")
                         + outputIssues.map(\.description).joined(separator: "; "),
-                    path: outputIssues.first?.path))
+                    path: outputIssues.first?.path,
+                    failure: Self.runFailure("output_mismatch", case: "outputMismatch")))
         }
         run.output = output
         let scope = WorkflowFileScope(
@@ -569,6 +581,12 @@ public actor WorkflowRunner {
             sandbox: sandboxContext)
         run.artifacts += WorkflowArtifactCollector.outputFiles(output, schema: def.outputSchema, scope: scope)
         return await finish(.completed, error: nil)
+    }
+
+    /// A run-level failure: raised by the runner itself, not a step, and
+    /// fixed in the workflow (or the input its caller passed).
+    static func runFailure(_ kind: String, case errorCase: String) -> NodeRunFailure {
+        NodeRunFailure(kind: kind, retryable: false, errorType: "WorkflowRunError.\(errorCase)", fixIn: .workflow)
     }
 
     // MARK: - Test pins

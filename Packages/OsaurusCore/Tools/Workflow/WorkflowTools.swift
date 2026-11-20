@@ -168,18 +168,105 @@ enum WorkflowToolCall {
     static func runWrapper(_ wrapper: AgentWrapper, input: JSONValue, caller: WorkflowCaller, tool: String) async
         -> String
     {
-        guard caller.onBehalfOf == nil else { return teammateRefusal(workflow: wrapper.name, tool: tool) }
+        guard caller.onBehalfOf == nil else {
+            await recordRefusal(caller: caller, target: "wrapper", reason: "not_open_to_teammates")
+            return teammateRefusal(workflow: wrapper.name, tool: tool)
+        }
         let installed = wrapper.installed
         let issues = JSONSchemaValidator.validate(input, against: installed.definition.inputSchema)
         if let first = issues.first {
+            await recordRefusal(caller: caller, target: "wrapper", reason: "invalid_input")
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message: "\(wrapper.name) takes one input, `\(AgentWrapperCatalog.taskInput)`: the request in the "
                     + "user's words. " + issues.map(\.description).joined(separator: "; "),
                 field: first.path, tool: tool)
         }
+        let parentModel = ChatExecutionContext.currentModelName
+        let refusal: (reason: String, envelope: String)? = await MainActor.run {
+            wrapperPreflight(wrapper, caller: caller, parentModel: parentModel, tool: tool)
+        }
+        if let refusal {
+            await recordRefusal(caller: caller, target: "wrapper", reason: refusal.reason)
+            return refusal.envelope
+        }
         let runID = await MainActor.run { WorkflowRunService.shared.startWrapper(wrapper, input: input, caller: caller) }
         return await follow(runID, workflow: installed, caller: caller, tool: tool, routed: true)
+    }
+
+    /// What would stop a wrapper's one step before it does any work, so the
+    /// call is refused instead of starting a run that fails at once: the
+    /// custom agent is gone or no longer allowed, or nothing names a model
+    /// for the agent to run on. A model that is named but not reachable yet
+    /// is left to the step, which waits for a provider still connecting.
+    @MainActor
+    static func wrapperPreflight(
+        _ wrapper: AgentWrapper, caller: WorkflowCaller, parentModel: String?, tool: String,
+        agentModel: (UUID) -> String? = { AgentManager.shared.effectiveModel(for: $0) }
+    ) -> (reason: String, envelope: String)? {
+        let model: String?
+        if wrapper.worker != nil {
+            model = parentModel ?? agentModel(Agent.defaultId)
+        } else {
+            let spec = AgentNodeSpec(agent: wrapper.name, task: "")
+            switch AgentNodeExecutor.resolve(
+                spec.requirement, binding: wrapper.agentID.uuidString, in: .live())
+            {
+            case .unavailable(let message):
+                return (
+                    "agent_unavailable",
+                    ToolEnvelope.failure(
+                        kind: .unavailable, message: "\(wrapper.name) can't take this: \(message)", tool: tool,
+                        retryable: false)
+                )
+            case .target(let target):
+                let launcher = caller.agentID ?? Agent.defaultId
+                guard AgentNodeExecutor.isAllowed(target, launcher: launcher) else {
+                    return (
+                        "agent_unavailable",
+                        ToolEnvelope.failure(
+                            kind: .unavailable,
+                            message: AgentNodeExecutor.notAllowedMessage(
+                                target.name, isDefault: launcher == Agent.defaultId),
+                            tool: tool, retryable: false)
+                    )
+                }
+            }
+            model = agentModel(wrapper.agentID) ?? parentModel
+        }
+        guard (model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty else { return nil }
+        return (
+            "no_model",
+            envelope(
+                WorkflowCallResult(
+                    status: .needsSetup, reasons: [L("No model is selected for \(wrapper.name) to run on.")],
+                    noModel: true),
+                workflow: wrapper.name, tool: tool)
+        )
+    }
+
+    /// `workflow_run_refused` for a request turned away before a run
+    /// started. `target` is `installed`, `wrapper`, or `prepared`.
+    static func recordRefusal(caller: WorkflowCaller, target: String, reason: String) async {
+        await recordRefusal(callerKind: caller.kind, target: target, reason: reason)
+    }
+
+    static func recordRefusal(callerKind: WorkflowCaller.Kind, target: String, reason: String) async {
+        await MainActor.run {
+            FeatureTelemetry.workflowRunRefused(caller: callerKind.rawValue, target: target, reason: reason)
+        }
+    }
+
+    @MainActor
+    static func recordRefusalNow(caller: WorkflowCaller, target: String, reason: String) {
+        FeatureTelemetry.workflowRunRefused(caller: caller.kind.rawValue, target: target, reason: reason)
+    }
+
+    /// The `workflow_run_refused` reason for a blocking setup report.
+    static func refusalReason(_ report: SetupReport) -> String {
+        if SetupChecker.onlyKeysMissing(report) { return "missing_keys" }
+        if report.blocking.contains(where: \.hasNoModel) { return "no_model" }
+        return "needs_setup"
     }
 
     /// Runs a first-run ask (`PreparedAskCatalog`) by id. Owner only, with
@@ -187,15 +274,20 @@ enum WorkflowToolCall {
     static func runPrepared(_ workflow: InstalledWorkflow, input: JSONValue, caller: WorkflowCaller, tool: String)
         async -> String
     {
-        guard caller.onBehalfOf == nil else { return teammateRefusal(workflow: workflow.name, tool: tool) }
-        let failure: String? = await MainActor.run {
+        guard caller.onBehalfOf == nil else {
+            await recordRefusal(caller: caller, target: "prepared", reason: "not_open_to_teammates")
+            return teammateRefusal(workflow: workflow.name, tool: tool)
+        }
+        let failure: String? = await MainActor.run { () -> String? in
             let report = SetupChecker.check(
                 workflow, secrets: .caller(caller.credentialAgentID), attended: caller.isAttended)
             if !report.blocking.isEmpty {
+                recordRefusalNow(caller: caller, target: "prepared", reason: refusalReason(report))
                 return envelope(setupResult(report), workflow: workflow.name, tool: tool)
             }
             let issues = JSONSchemaValidator.validate(input, against: workflow.definition.inputSchema)
             if let first = issues.first {
+                recordRefusalNow(caller: caller, target: "prepared", reason: "invalid_input")
                 return ToolEnvelope.failure(
                     kind: .invalidArgs, message: issues.map(\.description).joined(separator: "; "),
                     field: first.path, tool: tool)
@@ -257,6 +349,7 @@ enum WorkflowToolCall {
     ) async -> Result<UUID, WorkflowCallFailure> {
         await MainActor.run {
             guard let workflow = InstalledWorkflowStore.shared.workflow(id: workflowID) else {
+                recordRefusalNow(caller: caller, target: "installed", reason: "not_installed")
                 return .failure(.init(ToolEnvelope.failure(
                     kind: .unavailable, message: "This workflow is no longer installed.", tool: tool,
                     retryable: false)))
@@ -265,6 +358,7 @@ enum WorkflowToolCall {
                 auditTeammateRun(
                     .workflowRunRefused, caller: caller, workflow: workflow.name, runID: nil,
                     details: ["reason": "not_open_to_teammates"])
+                recordRefusalNow(caller: caller, target: "installed", reason: "not_open_to_teammates")
                 return .failure(.init(teammateRefusal(workflow: workflow.name, tool: tool)))
             }
             let report = SetupChecker.check(
@@ -274,12 +368,14 @@ enum WorkflowToolCall {
                 // another agent, or the shared Keys, may have it.
                 let keysOnly = SetupChecker.onlyKeysMissing(report)
                 if !keysOnly { InstalledWorkflowStore.shared.setNeedsSetup(true, id: workflow.id) }
+                recordRefusalNow(caller: caller, target: "installed", reason: refusalReason(report))
                 return .failure(
                     .init(envelope(setupResult(report), workflow: workflow.name, tool: tool, keysOnly: keysOnly)))
             }
             if workflow.needsSetup { InstalledWorkflowStore.shared.setNeedsSetup(false, id: workflow.id) }
             let issues = JSONSchemaValidator.validate(input, against: workflow.definition.inputSchema)
             if let first = issues.first {
+                recordRefusalNow(caller: caller, target: "installed", reason: "invalid_input")
                 return .failure(.init(ToolEnvelope.failure(
                     kind: .invalidArgs, message: issues.map(\.description).joined(separator: "; "),
                     field: first.path, tool: tool)))
@@ -484,6 +580,7 @@ final class WorkflowTool: OsaurusTool, ContextualPermissionedTool, @unchecked Se
                 ?? false
         }
         guard enabled else {
+            await WorkflowToolCall.recordRefusal(callerKind: .agent, target: "installed", reason: "not_enabled")
             return ToolEnvelope.failure(
                 kind: .unavailable, message: "\(name) is not enabled for this agent.", tool: name, retryable: false)
         }
@@ -595,6 +692,7 @@ final class RunWorkflowTool: OsaurusTool, ContextualPermissionedTool, @unchecked
         guard let workflowID = resolved.id else {
             let hiddenLink = await MainActor.run { HostedWorkflowLinkStore.shared.link(named: key) }
             if let hiddenLink, !hiddenLink.orchestratorVisible {
+                await WorkflowToolCall.recordRefusal(callerKind: .orchestrator, target: "hosted", reason: "not_visible")
                 return ToolEnvelope.failure(
                     kind: .rejected,
                     message: "\"\(key)\" runs on \(hiddenLink.hostLabel) but is not marked \"Osaurus can run this for "
@@ -603,6 +701,7 @@ final class RunWorkflowTool: OsaurusTool, ContextualPermissionedTool, @unchecked
                     tool: name, retryable: false)
             }
             if resolved.hidden {
+                await WorkflowToolCall.recordRefusal(callerKind: .orchestrator, target: "installed", reason: "not_visible")
                 return ToolEnvelope.failure(
                     kind: .rejected,
                     message: "\"\(key)\" is installed but not marked \"Osaurus can run this for you\". The user turns "
@@ -617,6 +716,7 @@ final class RunWorkflowTool: OsaurusTool, ContextualPermissionedTool, @unchecked
                 ? ""
                 : " \(offered.joined(separator: "; ")) is shared in a workspace but not added here. The user "
                     + "installs it or adds it in Main window → Workflows → Workspaces."
+            await WorkflowToolCall.recordRefusal(callerKind: .orchestrator, target: "unknown", reason: "unknown_workflow")
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message: "No workflow named \"\(key)\" is visible to the Orchestrator. Visible workflows: \(list).\(hint)",

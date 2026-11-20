@@ -93,6 +93,7 @@ enum BuiltInWorkerRunner {
             let message =
                 object?["message"]?.stringValue ?? object?["reason"]?.stringValue
                 ?? L("The \(worker.displayName) worker did not finish.")
+            if let object, let cause = WorkflowFailure.carriedCause(in: object, message: message) { throw cause }
             throw WorkflowNodeError.toolFailed(
                 tool: "agent", kind: object?["kind"]?.stringValue ?? "execution_error", message: message,
                 retryable: false)

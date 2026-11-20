@@ -730,11 +730,66 @@ struct FeatureTelemetryEventTests {
         #expect(rec.events[0].props["resumed"] as? Bool == false)
         #expect(rec.events[1].props["duration_bucket"] as? String == "10_60s")
         #expect(rec.events[2].props["duration_bucket"] as? String == "none")
-        #expect(business(rec.events[1].props).count == 3)
+        #expect(business(rec.events[1].props).count == 6)
+        #expect(rec.events[1].props["run_kind"] as? String == "installed")
+        #expect(rec.events[1].props["failure_kind"] == nil)
         #expect(rec.events[3].props["origin"] as? String == "inline")
         #expect(rec.events[4].props["page"] as? String == "home")
         #expect(business(rec.events[5].props).count == 2)
         #expect(rec.events[6].props["status"] as? String == "succeeded")
+    }
+
+    @Test func workflowRunFinished_failure_carries_closed_failure_tokens() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.workflowRunFinished(
+            caller: "orchestrator", status: "failed", duration: 3, runKind: "wrapper", resumed: true, retry: false,
+            sinceLaunch: 45,
+            failure: .init(
+                stage: "step", kind: "provider_disconnected", errorType: "RemoteProviderUnavailable.connectFailed",
+                fixIn: "setup", stepKind: "agent", stepsDone: 0, modelSource: "remote", providerType: "osaurus"),
+            service: service)
+        FeatureTelemetry.workflowRunFinished(
+            caller: "agent", status: "failed", duration: 3,
+            failure: .init(
+                stage: "step", kind: "Free text from a plugin", errorType: "Some/Path Type", fixIn: "workflow",
+                stepKind: nil, stepsDone: 7, modelSource: nil, providerType: nil),
+            service: service)
+
+        let props = rec.events[0].props
+        #expect(props["run_kind"] as? String == "wrapper")
+        #expect(props["resumed"] as? Bool == true)
+        #expect(props["retry"] as? Bool == false)
+        #expect(props["since_launch_bucket"] as? String == "lt_2m")
+        #expect(props["duration_bucket"] as? String == "lt_10s")
+        #expect(props["failure_stage"] as? String == "step")
+        #expect(props["failure_kind"] as? String == "provider_disconnected")
+        #expect(props["error_type"] as? String == "RemoteProviderUnavailable.connectFailed")
+        #expect(props["fix_in"] as? String == "setup")
+        #expect(props["step_kind"] as? String == "agent")
+        #expect(props["steps_done"] as? String == "0")
+        #expect(props["model_source"] as? String == "remote")
+        #expect(props["provider_type"] as? String == "osaurus")
+
+        let sanitized = rec.events[1].props
+        #expect(sanitized["failure_kind"] as? String == "other")
+        #expect(sanitized["error_type"] as? String == "other")
+        #expect(sanitized["steps_done"] as? String == "6_plus")
+        #expect(sanitized["step_kind"] == nil)
+        #expect(sanitized["model_source"] == nil)
+    }
+
+    @Test func workflowRunRefused_has_documented_shape() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.workflowRunRefused(caller: "orchestrator", target: "wrapper", reason: "no_model", service: service)
+
+        #expect(rec.events.map(\.name) == ["workflow_run_refused"])
+        #expect(business(rec.events[0].props).count == 3)
+        #expect(rec.events[0].props["reason"] as? String == "no_model")
+        #expect(rec.events[0].props["target"] as? String == "wrapper")
     }
 
     @Test func deviceTemplateAccountAndSharingEvents_have_documented_shapes() {

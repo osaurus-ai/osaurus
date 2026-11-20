@@ -265,6 +265,50 @@ struct AgentWrapperCatalogTests {
         #expect((try? BuiltInWorkerRunner.delegated(from: browser, worker: .browser))?.text == "Signed in.")
     }
 
+    @MainActor
+    @Test func aWorkerWithNoModelToRunOnIsRefusedBeforeARunStarts() throws {
+        let worker = try #require(
+            AgentWrapperCatalog.wrappers(agents: [], config: Self.config(pool: [])).first { $0.worker == .research })
+        let caller = WorkflowCaller(kind: .orchestrator)
+        let refused = try #require(
+            WorkflowToolCall.wrapperPreflight(
+                worker, caller: caller, parentModel: nil, tool: "run_workflow", agentModel: { _ in nil }))
+        #expect(refused.reason == "no_model")
+        #expect(ToolEnvelope.isError(refused.envelope))
+        #expect(refused.envelope.contains("Choose a Model"))
+
+        #expect(
+            WorkflowToolCall.wrapperPreflight(
+                worker, caller: caller, parentModel: "openai/gpt-5", tool: "run_workflow", agentModel: { _ in nil })
+                == nil)
+        #expect(
+            WorkflowToolCall.wrapperPreflight(
+                worker, caller: caller, parentModel: nil, tool: "run_workflow", agentModel: { _ in "foundation" })
+                == nil)
+    }
+
+    @Test func aLocalAgentStepRunsOnTheAgentsOwnModelEvenBeforeItsProviderConnects() {
+        let id = UUID()
+        let local = AgentNodeExecutor.Target.local(id, name: "Planner")
+        #expect(AgentNodeExecutor.dispatchModel(for: local) { $0 == id ? "mate/ghost-stub" : nil } == "mate/ghost-stub")
+        #expect(AgentNodeExecutor.dispatchModel(for: local) { _ in "  " } == nil)
+        #expect(AgentNodeExecutor.dispatchModel(for: local) { _ in nil } == nil)
+    }
+
+    @MainActor
+    @Test func aCustomAgentThatIsGoneIsRefusedBeforeARunStarts() throws {
+        let ghost = Self.agent("Ghostwriter")
+        let wrapper = try #require(
+            AgentWrapperCatalog.wrappers(agents: [ghost], config: Self.config(pool: [ghost.id])).first {
+                $0.agentID == ghost.id
+            })
+        let refused = try #require(
+            WorkflowToolCall.wrapperPreflight(
+                wrapper, caller: WorkflowCaller(kind: .orchestrator), parentModel: "foundation", tool: "run_workflow",
+                agentModel: { _ in "foundation" }))
+        #expect(refused.reason == "agent_unavailable")
+    }
+
     // MARK: Runs
 
     @MainActor
@@ -445,8 +489,10 @@ struct AgentWrapperVisibilityTests {
             }
         }) {
             let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
-                try await RunWorkflowTool().execute(
-                    argumentsJSON: #"{"workflow":"Browser","input":{"task":"Find sources on solar output"}}"#)
+                try await ChatExecutionContext.$currentModelName.withValue("foundation") {
+                    try await RunWorkflowTool().execute(
+                        argumentsJSON: #"{"workflow":"Browser","input":{"task":"Find sources on solar output"}}"#)
+                }
             }
             #expect(ToolEnvelope.isSuccess(result), "\(result)")
             #expect(await seen.ids == [BuiltInWorker.browser.agentId])
@@ -475,9 +521,11 @@ struct AgentWrapperVisibilityTests {
             let toolCallID = "call-step-feed-\(UUID().uuidString)"
             let call = Task {
                 try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
-                    try await ChatExecutionContext.$currentToolCallId.withValue(toolCallID) {
-                        try await RunWorkflowTool().execute(
-                            argumentsJSON: #"{"workflow":"Browser","input":{"task":"Open the solar output page"}}"#)
+                    try await ChatExecutionContext.$currentModelName.withValue("foundation") {
+                        try await ChatExecutionContext.$currentToolCallId.withValue(toolCallID) {
+                            try await RunWorkflowTool().execute(
+                                argumentsJSON: #"{"workflow":"Browser","input":{"task":"Open the solar output page"}}"#)
+                        }
                     }
                 }
             }

@@ -28,15 +28,15 @@ struct AssignedNativePicker<Content: View>: NSViewRepresentable {
     }
     func updateNSView(_ view: AssignedPickerHostingView, context: Context) {
         view.host.rootView = hostedContent(context.environment)
-        view.recipe = TextRecipe(theme: theme, enabled: enabled, family: family, disabledMenuIndices: disabledMenuIndices, stylesClosedControl: stylesClosedControl)
         view.onFocusChange = onFocusChange
-        view.inlineMenu = inlineMenu.map { AnyView($0.environment(\.self, context.environment)) }
+        view.update(
+            recipe: TextRecipe(theme: theme, enabled: enabled, family: family, disabledMenuIndices: disabledMenuIndices, stylesClosedControl: stylesClosedControl),
+            inlineMenu: inlineMenu.map { AnyView($0.environment(\.self, context.environment)) }
+        )
         if stylesClosedControl {
             view.catalogAssignmentTarget(["text", "foreground", "disabledForeground"].map { "component.library.\(family)." + $0 }, name: "Picker value", theme: theme)
         }
         view.updateCatalogInspection(context.environment.nativeCatalogInspection, selection: context.environment.nativeCatalogSelection)
-        view.host.needsLayout = true
-        DispatchQueue.main.async { [weak view] in view?.applyRecipe() }
     }
     static func dismantleNSView(_ view: AssignedPickerHostingView, coordinator: ()) {
         view.stopObservingWindow()
@@ -72,6 +72,17 @@ struct AssignedNativePicker<Content: View>: NSViewRepresentable {
         /// height would sit the glyphs at the bottom of a taller line box.
         func closedTitle(_ text: String) -> NSAttributedString {
             NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: foreground, .kern: tracking])
+        }
+        /// Everything `applyRecipe()` writes into AppKit. The theme itself is
+        /// only read when the menu opens.
+        struct Style: Equatable {
+            let font: NSFont, foreground: NSColor, tracking: CGFloat, lineHeight: CGFloat, gap: CGFloat
+            let enabled: Bool, family: Int, disabledMenuIndices: Set<Int>, stylesClosedControl: Bool, hasInlineMenu: Bool
+        }
+        func style(hasInlineMenu: Bool) -> Style {
+            Style(font: font, foreground: foreground, tracking: tracking, lineHeight: lineHeight, gap: gap,
+                  enabled: enabled, family: family, disabledMenuIndices: disabledMenuIndices,
+                  stylesClosedControl: stylesClosedControl, hasInlineMenu: hasInlineMenu)
         }
     }
     /// Intercepts only presentation. Selection runs the original NSMenuItem
@@ -168,18 +179,25 @@ struct AssignedNativePicker<Content: View>: NSViewRepresentable {
     /// layout each pass until AppKit aborts the window's update cycle.
     final class AssignedPickerHostingView: NSView {
         let host: ContentHostingView
-        var recipe: TextRecipe?
+        private(set) var recipe: TextRecipe?
         var onFocusChange: ((Bool) -> Void)?
-        var inlineMenu: AnyView?
+        private(set) var inlineMenu: AnyView?
         private var windowObserver: NSObjectProtocol?
         private var lastFocus = false
         private var menuTrigger: AssignedPickerMenuTrigger?
         private var disabledItems: [NSMenuItem] = []
         private var reportedSize = NSSize(width: -1, height: -1)
+        private var appliedStyle: TextRecipe.Style?
+        private var applyScheduled = false
         init(rootView: AnyView) {
             host = ContentHostingView(rootView: rootView)
             super.init(frame: .zero)
             host.sizingOptions = [.intrinsicContentSize]
+            // Under a transparent full-size titlebar the host would add its
+            // overlap with the strip to its intrinsic height, so its size
+            // would depend on its position and every move would re-dirty the
+            // window's constraint pass.
+            host.safeAreaRegions = []
             host.owner = self
             host.frame = bounds
             host.autoresizingMask = [.width, .height]
@@ -190,6 +208,27 @@ struct AssignedNativePicker<Content: View>: NSViewRepresentable {
             }
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        /// SwiftUI calls this on every parent render. Forcing a host layout
+        /// each time adds a pass to whatever window layout is in flight, so
+        /// only a style change does; the deferred apply restyles rebuilt menu
+        /// items and writes nothing when they already match.
+        func update(recipe: TextRecipe, inlineMenu: AnyView?) {
+            self.recipe = recipe
+            self.inlineMenu = inlineMenu
+            menuTrigger?.recipe = recipe
+            menuTrigger?.inlineMenu = inlineMenu
+            let style = recipe.style(hasInlineMenu: inlineMenu != nil)
+            if style != appliedStyle {
+                appliedStyle = style
+                host.needsLayout = true
+            }
+            guard !applyScheduled else { return }
+            applyScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                self?.applyScheduled = false
+                self?.applyRecipe()
+            }
+        }
         override var intrinsicContentSize: NSSize {
             var size = host.intrinsicContentSize
             if inlineMenu != nil, let menuTrigger {

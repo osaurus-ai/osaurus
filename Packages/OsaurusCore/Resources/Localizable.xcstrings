@@ -52,6 +52,74 @@
     "1 chat with %@, newest first." : {
 
     },
+    "Add Osaurus credits, then retry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Füge Osaurus-Credits hinzu und versuche es dann erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 크레딧을 추가한 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пополните кредиты Osaurus и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请添加 Osaurus 积分，然后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請添加 Osaurus 積分，然後重試。"
+          }
+        }
+      }
+    },
+    "Add credits with the provider, then retry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lade beim Anbieter Guthaben auf und versuche es dann erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI 제공사에서 크레딧을 충전한 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пополните баланс у провайдера и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在提供商处充值，然后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請在提供商處充值，然後重試。"
+          }
+        }
+      }
+    },
     "All %lld chats" : {
 
     },
@@ -61,8 +129,1011 @@
     "All chats with %@" : {
 
     },
+    "Allow this caller to spend Osaurus credits in Osaurus Credits settings, or pick a model that doesn't route through the Router." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erlaube diesem Aufrufer in den Einstellungen für Osaurus-Credits, Credits auszugeben, oder wähle ein Modell, das nicht über den Router läuft."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 크레딧 설정에서 이 호출자가 Osaurus 크레딧을 사용하도록 허용하거나, Router를 거치지 않는 모델을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешите этому вызывающему тратить кредиты Osaurus в настройках кредитов Osaurus или выберите модель, которая не идёт через Router."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在 Osaurus 积分设置中允许此调用方使用 Osaurus 积分，或选择不经过路由的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請在 Osaurus 積分設置中允許此調用方使用 Osaurus 積分，或選擇不經過路由器的模型。"
+          }
+        }
+      }
+    },
     "Archive instead" : {
 
+    },
+    "Change the step's input or settings; the provider names what it can't take." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ändere die Eingabe oder die Einstellungen des Schritts; der Anbieter nennt, was er nicht annimmt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "단계의 입력이나 설정을 변경하세요. AI 제공사가 받을 수 없는 항목을 알려 줍니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Измените входные данные или настройки шага; провайдер указывает, что он не принимает."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请更改该步骤的输入或设置；提供商会说明它无法接受的内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請更改該步驟的輸入或設置；提供商會說明它無法接受的內容。"
+          }
+        }
+      }
+    },
+    "Connect %@ in Settings → Providers, or pick a model that is here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verbinde %@ unter Einstellungen → Anbieter oder wähle ein Modell, das hier verfügbar ist."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → AI 제공사에서 %@에 연결하거나, 여기에 있는 모델을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключите %@ в разделе «Настройки → Провайдеры» или выберите доступную здесь модель."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在“设置 → 提供商”中连接 %@，或选择此处可用的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請在「設置 → 提供商」中連接 %@，或選擇此處可用的模型。"
+          }
+        }
+      }
+    },
+    "Delete %@?" : {
+
+    },
+    "Delete %lld chats" : {
+
+    },
+    "Delete %lld chats?" : {
+
+    },
+    "Delete 1 chat" : {
+
+    },
+    "Delete 1 chat?" : {
+
+    },
+    "Delete Agent…" : {
+
+    },
+    "Deselect %@" : {
+
+    },
+    "Finish choosing your welcome credit, then retry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle zuerst dein Willkommensguthaben aus und versuche es dann erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "환영 크레딧 선택을 마친 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершите выбор приветственного кредита и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先完成欢迎额度的选择，然后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先完成歡迎額度的選擇，然後重試。"
+          }
+        }
+      }
+    },
+    "Fix the provider's address in Settings → Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Korrigiere die Adresse des Anbieters unter Einstellungen → Anbieter."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → AI 제공사에서 제공사 주소를 수정하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправьте адрес провайдера в разделе «Настройки → Провайдеры»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在“设置 → 提供商”中修正该提供商的地址。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請在「設置 → 提供商」中修正該提供商的地址。"
+          }
+        }
+      }
+    },
+    "Message %@..." : {
+
+    },
+    "New chat with %@" : {
+
+    },
+    "No model is selected for %@ to run on." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für %@ ist kein Modell zum Ausführen ausgewählt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@을(를) 실행할 모델이 선택되지 않았습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для %@ не выбрана модель для запуска."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未为 %@ 选择运行所用的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未為 %@ 選擇運行所用的模型。"
+          }
+        }
+      }
+    },
+    "Open Settings → Providers to see why %@ didn't connect, then retry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Öffne Einstellungen → Anbieter, um zu sehen, warum %@ keine Verbindung hergestellt hat, und versuche es dann erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → AI 제공사를 열어 %@이(가) 연결되지 않은 이유를 확인한 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Откройте «Настройки → Провайдеры», чтобы узнать, почему %@ не подключился, и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请打开“设置 → 提供商”查看 %@ 未能连接的原因，然后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請打開「設置 → 提供商」查看 %@ 未能連接的原因，然後重試。"
+          }
+        }
+      }
+    },
+    "Pick a model that is installed or connected, for the step or the agent it asks." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle ein installiertes oder verbundenes Modell für den Schritt oder den Agenten, den er fragt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "단계 또는 단계가 요청하는 에이전트에 설치되었거나 연결된 모델을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите установленную или подключённую модель для шага или для агента, к которому он обращается."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请为该步骤或它调用的智能体选择一个已安装或已连接的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請為該步驟或它調用的智能體選擇一個已安裝或已連接的模型。"
+          }
+        }
+      }
+    },
+    "Previous 7 days" : {
+
+    },
+    "Reconnect to the remote agent, then retry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verbinde dich erneut mit dem Remote Agent und versuche es dann erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원격 에이전트에 다시 연결한 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переподключитесь к удаленному агенту и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请重新连接远程智能体，然后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請重新連接遠程智能體，然後重試。"
+          }
+        }
+      }
+    },
+    "Retry once %@ shows as connected in Settings → Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versuche es erneut, sobald %@ unter Einstellungen → Anbieter als verbunden angezeigt wird."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → AI 제공사에서 %@이(가) 연결됨으로 표시되면 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторите попытку, когда %@ будет показан как подключённый в разделе «Настройки → Провайдеры»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待 %@ 在“设置 → 提供商”中显示为已连接后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待 %@ 在「設置 → 提供商」中顯示為已連接後重試。"
+          }
+        }
+      }
+    },
+    "Search messages for “%@”" : {
+
+    },
+    "Select %@" : {
+
+    },
+    "Select all %lld" : {
+
+    },
+    "Select chats" : {
+
+    },
+    "Set up your Osaurus Identity, then retry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Richte deine Osaurus-Identität ein und versuche es dann erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 신원을 설정한 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройте свою идентичность Osaurus и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请设置你的 Osaurus 身份，然后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請設置你的 Osaurus 身份，然後重試。"
+          }
+        }
+      }
+    },
+    "Sign in to %@ again in Settings → Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Melde dich unter Einstellungen → Anbieter erneut bei %@ an."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → AI 제공사에서 %@에 다시 로그인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Снова войдите в %@ в разделе «Настройки → Провайдеры»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在“设置 → 提供商”中重新登录 %@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請在「設置 → 提供商」中重新登入 %@。"
+          }
+        }
+      }
+    },
+    "The Router refused the request's signature. Check this Mac's clock and your Osaurus Identity." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Router hat die Signatur der Anfrage abgelehnt. Prüfe die Uhr dieses Macs und deine Osaurus-Identität."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Router가 요청 서명을 거부했습니다. 이 Mac의 시계와 Osaurus 신원을 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Router отклонил подпись запроса. Проверьте часы этого Mac и свою идентичность Osaurus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "路由拒绝了请求的签名。请检查这台 Mac 的时钟和你的 Osaurus 身份。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "路由器拒絕了請求的簽名。請檢查這台 Mac 的時鐘和你的 Osaurus 身份。"
+          }
+        }
+      }
+    },
+    "The answer hit the output limit. Ask for less, or raise the step's output limit." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Antwort hat das Ausgabelimit erreicht. Fordere weniger an oder erhöhe das Ausgabelimit des Schritts."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "답변이 출력 한도에 도달했습니다. 요청을 줄이거나 단계의 출력 한도를 높이세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ответ упёрся в лимит вывода. Запросите меньше или увеличьте лимит вывода шага."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回答达到了输出上限。请减少请求的内容，或提高该步骤的输出上限。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回答達到了輸出上限。請減少請求的內容，或提高該步驟的輸出上限。"
+          }
+        }
+      }
+    },
+    "The provider dropped its connection. Retry once it shows as connected in Settings → Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Anbieter hat die Verbindung getrennt. Versuche es erneut, sobald er unter Einstellungen → Anbieter als verbunden angezeigt wird."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI 제공사 연결이 끊어졌습니다. 설정 → AI 제공사에서 연결됨으로 표시되면 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер разорвал соединение. Повторите попытку, когда он будет показан как подключённый в разделе «Настройки → Провайдеры»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商断开了连接。待其在“设置 → 提供商”中显示为已连接后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商斷開了連接。待其在「設置 → 提供商」中顯示為已連接後重試。"
+          }
+        }
+      }
+    },
+    "The provider is busy. Retry in a moment, or add a retry policy to the step." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Anbieter ist ausgelastet. Versuche es gleich noch einmal oder füge dem Schritt eine Wiederholungsregel hinzu."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI 제공사가 사용 중입니다. 잠시 후 다시 시도하거나 단계에 재시도 정책을 추가하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер занят. Повторите попытку чуть позже или добавьте шагу политику повторов."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商正忙。请稍后重试，或为该步骤添加重试策略。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商正忙。請稍後重試，或為該步驟添加重試策略。"
+          }
+        }
+      }
+    },
+    "The provider is failing. Retry from the failed step." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beim Anbieter treten Fehler auf. Versuche es ab dem fehlgeschlagenen Schritt erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI 제공사에 오류가 발생하고 있습니다. 실패한 단계부터 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У провайдера сбои. Повторите с шага, на котором произошла ошибка."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商出现故障。请从失败的步骤重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商出現故障。請從失敗的步驟重試。"
+          }
+        }
+      }
+    },
+    "The provider lists no models. Check it in Settings → Providers, or pick another model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Anbieter listet keine Modelle auf. Prüfe ihn unter Einstellungen → Anbieter oder wähle ein anderes Modell."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI 제공사에 표시되는 모델이 없습니다. 설정 → AI 제공사에서 확인하거나 다른 모델을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер не показывает ни одной модели. Проверьте его в разделе «Настройки → Провайдеры» или выберите другую модель."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该提供商没有列出任何模型。请在“设置 → 提供商”中检查，或选择其他模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "該提供商沒有列出任何模型。請在「設置 → 提供商」中檢查，或選擇其他模型。"
+          }
+        }
+      }
+    },
+    "The provider refused the credentials. Check its key or sign-in in Settings → Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Anbieter hat die Zugangsdaten abgelehnt. Prüfe den Schlüssel oder die Anmeldung unter Einstellungen → Anbieter."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI 제공사가 자격 증명을 거부했습니다. 설정 → AI 제공사에서 키 또는 로그인을 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер отклонил учётные данные. Проверьте ключ или вход в разделе «Настройки → Провайдеры»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商拒绝了凭据。请在“设置 → 提供商”中检查其密钥或登录状态。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商拒絕了憑據。請在「設置 → 提供商」中檢查其密鑰或登入狀態。"
+          }
+        }
+      }
+    },
+    "The provider refused the request; the message says why. Change the step or its model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Anbieter hat die Anfrage abgelehnt; die Meldung nennt den Grund. Ändere den Schritt oder sein Modell."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI 제공사가 요청을 거부했습니다. 메시지에 이유가 나와 있습니다. 단계 또는 해당 모델을 변경하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер отклонил запрос; причина указана в сообщении. Измените шаг или его модель."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商拒绝了请求，消息中说明了原因。请更改该步骤或其模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商拒絕了請求，消息中說明了原因。請更改該步驟或其模型。"
+          }
+        }
+      }
+    },
+    "The workspace is out of credits. Ask its owner to add more, then retry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Workspace hat keine Credits mehr. Bitte den Inhaber, welche hinzuzufügen, und versuche es dann erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "작업 공간의 크레딧이 소진되었습니다. 소유자에게 충전을 요청한 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В рабочей области закончились кредиты. Попросите владельца пополнить их и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该工作区的积分已用完。请让其所有者充值，然后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "該工作空間的積分已用完。請讓其所有者充值，然後重試。"
+          }
+        }
+      }
+    },
+    "These chats and their messages are removed from this Mac. This cannot be undone." : {
+
+    },
+    "This chat and its messages are removed from this Mac. This cannot be undone." : {
+
+    },
+    "Tick chats to select" : {
+
+    },
+    "Your Osaurus billing account is on hold; resolve it in Osaurus Credits." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dein Osaurus-Abrechnungskonto ist gesperrt; kläre das unter Osaurus-Credits."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 결제 계정이 보류 상태입니다. Osaurus 크레딧에서 해결하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваш платёжный аккаунт Osaurus приостановлен; решите это в разделе «Кредиты Osaurus»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的 Osaurus 计费账户已被暂停；请在 Osaurus 积分中处理。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的 Osaurus 計費賬戶已被暫停；請在 Osaurus 積分中處理。"
+          }
+        }
+      }
+    },
+    "%@ can't be reached: this Mac is offline." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ ist nicht erreichbar: Dieser Mac ist offline."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에 연결할 수 없습니다. 이 Mac이 오프라인 상태입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ недоступен: этот Mac не в сети."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法访问 %@：这台 Mac 处于离线状态。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法訪問 %@：這台 Mac 處於離線狀態。"
+          }
+        }
+      }
+    },
+    "%@ didn't connect" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ hat keine Verbindung hergestellt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에 연결하지 못했습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не подключился"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 未能连接"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 未能連接"
+          }
+        }
+      }
+    },
+    "%@ is turned off in Settings → Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ ist unter Einstellungen → Anbieter deaktiviert."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@이(가) 설정 → AI 제공사에서 꺼져 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ отключён в разделе «Настройки → Провайдеры»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 已在“设置 → 提供商”中关闭。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 已在「設置 → 提供商」中關閉。"
+          }
+        }
+      }
+    },
+    "%@ is waiting for you to choose your welcome credit." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ wartet darauf, dass du dein Willkommensguthaben auswählst."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에서 환영 크레딧을 선택하기를 기다리고 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ ждёт, пока вы выберете приветственный кредит."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 正在等待你选择欢迎额度。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 正在等待你選擇歡迎額度。"
+          }
+        }
+      }
+    },
+    "%@ isn't connected." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ ist nicht verbunden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@이(가) 연결되어 있지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не подключён."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 未连接。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 未連接。"
+          }
+        }
+      }
+    },
+    "%@ was still connecting when this step gave up waiting for it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ hat sich noch verbunden, als dieser Schritt das Warten aufgegeben hat."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 단계가 대기를 중단했을 때 %@은(는) 아직 연결 중이었습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ всё ещё подключался, когда этот шаг перестал его ждать."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此步骤停止等待时，%@ 仍在连接中。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此步驟停止等待時，%@ 仍在連接中。"
+          }
+        }
+      }
     },
     "Claude Code can use Osaurus tools and delegate, but can't change Osaurus settings. Turn on Allow Osaurus configuration changes below to let it." : {
       "localizations" : {
@@ -132,30 +1203,6 @@
         }
       }
     },
-    "Delete %@?" : {
-
-    },
-    "Delete %lld chats" : {
-
-    },
-    "Delete %lld chats?" : {
-
-    },
-    "Delete 1 chat" : {
-
-    },
-    "Delete 1 chat?" : {
-
-    },
-    "Delete Agent…" : {
-
-    },
-    "Deselect %@" : {
-
-    },
-    "Message %@..." : {
-
-    },
     "Model and context set by Claude Code" : {
       "localizations" : {
         "de" : {
@@ -224,12 +1271,6 @@
         }
       }
     },
-    "New chat with %@" : {
-
-    },
-    "Previous 7 days" : {
-
-    },
     "Runs on a runtime that no longer exists" : {
       "localizations" : {
         "de" : {
@@ -263,18 +1304,6 @@
           }
         }
       }
-    },
-    "Search messages for “%@”" : {
-
-    },
-    "Select %@" : {
-
-    },
-    "Select all %lld" : {
-
-    },
-    "Select chats" : {
-
     },
     "Text only mode gives Claude Code no tools, so it can't configure Osaurus or delegate. Set Execution mode to Agent below." : {
       "localizations" : {
@@ -343,12 +1372,6 @@
           }
         }
       }
-    },
-    "These chats and their messages are removed from this Mac. This cannot be undone." : {
-
-    },
-    "This chat and its messages are removed from this Mac. This cannot be undone." : {
-
     },
     "This runtime runs its own model and tools. Osaurus tools and delegation need Claude Code or a built-in model." : {
       "localizations" : {
@@ -1664,9 +2687,6 @@
           }
         }
       }
-    },
-    "Tick chats to select" : {
-
     },
     "Up to date. No new models from ChatGPT." : {
       "localizations" : {
