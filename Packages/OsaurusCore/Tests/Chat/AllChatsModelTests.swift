@@ -136,6 +136,16 @@ struct AllChatsModelTests {
         #expect(ChatSessionSidebar.allChatsCount(chats, agentId: Agent.defaultId) == 1)
     }
 
+    @Test("New Agent chats (the hidden Configurator's) are not listed or counted")
+    func hiddenBuiltInChatsLeftOut() {
+        let creator = chat("New agent: Trip Planner", agent: Agent.configuratorId)
+        let mine = chat("Hello")
+        #expect(build([creator, mine]).matchingIds == [mine.id])
+        #expect(build([creator, mine]).counts[.all] == 1)
+        #expect(build([creator, mine], query: "trip").matchingIds.isEmpty)
+        #expect(ChatSessionSidebar.allChatsCount([creator, mine]) == 1)
+    }
+
     @Test("a chip or a search narrows the list; All with no agent and no query does not")
     func narrowedList() {
         #expect(!AllChatsPage.isNarrowed(filter: .all, agentId: nil, query: "  "))

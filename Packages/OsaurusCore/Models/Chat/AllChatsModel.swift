@@ -46,6 +46,12 @@ struct AllChatsModel: Equatable {
         return title.isEmpty || title.caseInsensitiveCompare("New Chat") == .orderedSame
     }
 
+    /// Hidden built-ins (the Configurator behind New Agent) never appear in
+    /// agent lists, so their chats stay out of All chats too.
+    nonisolated static func isListed(_ session: ChatSessionData) -> Bool {
+        !Agent.isHiddenBuiltIn(session.agentId)
+    }
+
     /// `All`, `Pinned` and `Untitled` leave archived chats out; `Archived`
     /// is only them.
     nonisolated static func passes(_ session: ChatSessionData, filter: AllChatsFilter) -> Bool {
@@ -71,6 +77,7 @@ struct AllChatsModel: Equatable {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let prepared = SearchService.PreparedQuery(trimmed)
         let scoped = sessions.filter { session in
+            guard isListed(session) else { return false }
             let owner = session.agentId ?? Agent.defaultId
             if let agentId, owner != agentId { return false }
             guard !trimmed.isEmpty else { return true }

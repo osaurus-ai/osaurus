@@ -38,8 +38,10 @@ Rules that follow from this:
   (`ChatWindowState.chatPage`, `AllChatsPage`), not a context lens. The
   sidebar row `All chats` sits first under the search (clock glyph, the
   count of chats that are not archived) and is highlighted while the page
-  is on screen. An open agent lists five chats (`chatsPerAgent`); when it
-  has more, `All N chats` opens the page filtered to it, and the list
+  is on screen. Chats of hidden built-ins (the Configurator's New Agent
+  chats) are neither listed nor counted (`AllChatsModel.isListed`). An
+  open agent lists five chats (`chatsPerAgent`); when it has more,
+  `All N chats` opens the page filtered to it, and the list
   never grows in place. While the sidebar search has a query, a last row
   `Search messages for "<query>"` opens the page with that query. The
   sidebar search stays titles and names; message text is searched on the
@@ -87,8 +89,10 @@ Rules that follow from this:
   agents; in place, Return commits, Escape or an empty name cancels),
   Share to Workspace… / Unshare from …, and Delete Agent… (custom agents;
   one confirmation: "<Agent>, its memory and its N chats are removed
-  from this Mac. This cannot be undone."). Deleting moves every window
-  off the agent's chats first (`AgentSidebarActions`).
+  from this Mac. This cannot be undone."; with no chats, "<Agent> and its
+  memory are removed…"). Deleting moves every window off the agent's
+  chats first, and a window that was on the agent opens a new chat with
+  the Orchestrator (`AgentSidebarActions`).
 - The composer's placeholder names the local agent: "Message <Agent>...".
 - Chats are selected in place (`ChatWindowState.chatSelection`, pure
   rules in `ChatSelection`). Hovering a saved chat row puts a checkbox in

@@ -70,5 +70,8 @@ struct ChatSidebarNewChatTests {
         #expect(
             AgentSidebarActions.deleteMessage(name: "Editor", chatCount: 1)
                 == "Editor, its memory and its 1 chat are removed from this Mac. This cannot be undone.")
+        #expect(
+            AgentSidebarActions.deleteMessage(name: "Editor", chatCount: 0)
+                == "Editor and its memory are removed from this Mac. This cannot be undone.")
     }
 }

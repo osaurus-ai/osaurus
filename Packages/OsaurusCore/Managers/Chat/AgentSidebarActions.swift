@@ -19,9 +19,11 @@ enum AgentSidebarActions {
     }
 
     nonisolated static func deleteMessage(name: String, chatCount: Int) -> String {
-        chatCount == 1
-            ? L("\(name), its memory and its 1 chat are removed from this Mac. This cannot be undone.")
-            : L("\(name), its memory and its \(chatCount) chats are removed from this Mac. This cannot be undone.")
+        switch chatCount {
+        case 0: L("\(name) and its memory are removed from this Mac. This cannot be undone.")
+        case 1: L("\(name), its memory and its 1 chat are removed from this Mac. This cannot be undone.")
+        default: L("\(name), its memory and its \(chatCount) chats are removed from this Mac. This cannot be undone.")
+        }
     }
 
     // MARK: - Actions
@@ -72,6 +74,9 @@ enum AgentSidebarActions {
     /// memory, so no window saves a deleted chat back.
     static func delete(_ agent: Agent) {
         Task { @MainActor in
+            // Captured up front: removing the agent already moves these
+            // windows to the Orchestrator's last open chat.
+            let windowsOnAgent = ChatWindowManager.shared.allWindowStates.filter { $0.agentId == agent.id }
             let chatIds = Set(
                 ChatSessionsManager.shared.sessions
                     .filter { ($0.agentId ?? Agent.defaultId) == agent.id }
@@ -82,7 +87,7 @@ enum AgentSidebarActions {
                 ToastManager.shared.errorLocalized("Failed to delete agent", message: "Please try again.")
                 return
             }
-            for state in ChatWindowManager.shared.allWindowStates where state.agentId == agent.id {
+            for state in windowsOnAgent {
                 state.startNewChat(with: Agent.defaultId)
             }
             ToastManager.shared.success(L("Deleted \"\(agent.name)\""))

@@ -377,7 +377,8 @@ struct ChatSessionSidebar: View {
 
     nonisolated static func allChatsIds(_ sessions: [ChatSessionData], agentId: UUID? = nil) -> [UUID] {
         sessions.filter { session in
-            !session.archived && (agentId.map { (session.agentId ?? Agent.defaultId) == $0 } ?? true)
+            !session.archived && AllChatsModel.isListed(session)
+                && (agentId.map { (session.agentId ?? Agent.defaultId) == $0 } ?? true)
         }.map(\.id)
     }
 
