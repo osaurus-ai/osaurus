@@ -12336,9 +12336,9 @@ struct ChatView: View {
                                     },
                                     onOpenInNewTab: { windowState.openSessionInNewTab($0) }
                                 )
+                                .background(theme.surface.canvas)
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(theme.surface.canvas)
                             .transition(pageTransition)
                         } else if windowState.mainSurface == .insights {
                             InsightsView()
