@@ -64,9 +64,24 @@ enum WorkflowExecutionContext {
                 try await ChatExecutionContext.$isExternalSurface.withValue(caller.isExternalSurface) {
                     try await ChatExecutionContext.$hasRemoteReviewer.withValue(caller.hasRemoteReviewer) {
                         try await ChatExecutionContext.$isUnattendedDispatch.withValue(caller.isUnattendedDispatch) {
-                            try await bindWorkflowAccess(context, granted: granted, grantedPaths, writableRoots, body)
+                            try await bindPromptScope(caller) {
+                                try await bindWorkflowAccess(context, granted: granted, grantedPaths, writableRoots, body)
+                            }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// A step's prompts follow its caller. The harness token's agent and
+    /// chat never reach a step: they name the bridge call that started the
+    /// run, not the agent the step runs as.
+    private static func bindPromptScope<T>(_ caller: WorkflowCaller, _ body: () async throws -> T) async throws -> T {
+        try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(caller.deniesUnapprovedPrompts) {
+            try await ChatExecutionContext.$harnessTokenAgentId.withValue(nil) {
+                try await ChatExecutionContext.$harnessChatId.withValue(nil) {
+                    try await body()
                 }
             }
         }

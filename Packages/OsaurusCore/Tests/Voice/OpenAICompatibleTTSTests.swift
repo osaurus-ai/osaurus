@@ -46,14 +46,54 @@ struct TTSConfigurationDecodingTests {
         #expect(decoded == original)
     }
 
-    // A config written by a future version with an engine this build doesn't
-    // know would fail the enum decode; the store then falls back to defaults,
-    // which is the safe behavior — but make sure a known raw value decodes.
     @Test("provider decodes from raw string")
     func providerRawValue() throws {
         let json = #"{"provider": "openAICompatible"}"#
         let config = try JSONDecoder().decode(TTSConfiguration.self, from: Data(json.utf8))
         #expect(config.provider == .openAICompatible)
+    }
+
+    // A config written by a newer build with an engine this one doesn't know
+    // must not throw away the user's other TTS settings.
+    @Test("unknown provider falls back to the default engine and keeps other fields")
+    func unknownProviderKeepsOtherFields() throws {
+        let json = #"{"provider": "someFutureEngine", "enabled": false, "voice": "vera", "remoteSpeed": 1.5}"#
+        let config = try JSONDecoder().decode(TTSConfiguration.self, from: Data(json.utf8))
+        #expect(config.provider == .pocketTTS)
+        #expect(config.enabled == false)
+        #expect(config.voice == "vera")
+        #expect(config.remoteSpeed == 1.5)
+    }
+
+    // Pre-0.18 builds saved 0.7 whether or not the user touched the slider.
+    // That was an Osaurus default, not the checkpoint's, so it migrates to
+    // "use the model default".
+    @Test("legacy default temperature migrates to the model default")
+    func legacyDefaultTemperatureMigrates() throws {
+        let legacy = #"{"voice": "alba", "temperature": 0.7}"#
+        let config = try JSONDecoder().decode(TTSConfiguration.self, from: Data(legacy.utf8))
+        #expect(config.temperature == nil)
+    }
+
+    @Test("an explicit temperature survives a round trip, including 0.7")
+    func explicitTemperatureRoundTrips() throws {
+        for value in [0.7, 0.35] {
+            let original = TTSConfiguration(temperature: value)
+            let data = try JSONEncoder().encode(original)
+            let decoded = try JSONDecoder().decode(TTSConfiguration.self, from: data)
+            #expect(decoded.temperature == value)
+            let json = try #require(String(data: data, encoding: .utf8))
+            #expect(!json.contains(#""temperature""#), "the legacy key is never written")
+        }
+    }
+
+    @Test("no temperature is written when the model default is in use")
+    func modelDefaultTemperatureOmitted() throws {
+        let data = try JSONEncoder().encode(TTSConfiguration())
+        let decoded = try JSONDecoder().decode(TTSConfiguration.self, from: data)
+        #expect(decoded.temperature == nil)
+        let json = try #require(String(data: data, encoding: .utf8))
+        #expect(!json.contains("emperature"))
     }
 }
 

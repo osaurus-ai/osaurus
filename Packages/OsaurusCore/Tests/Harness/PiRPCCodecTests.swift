@@ -65,7 +65,7 @@ struct PiRPCCodecTests {
         #expect(events.visibleText == "Hello\u{2028}there")
         #expect(events[3] == .toolStarted(callId: "c1", name: "bash"))
         #expect(events[4] == .toolFinished(callId: "c1", name: "bash", isError: true))
-        if case .stats(let tokens, _, let stopReason) = events[5] {
+        if case .stats(let tokens, _, let stopReason, _) = events[5] {
             #expect(tokens == 42)
             #expect(stopReason == "stop")
         } else {

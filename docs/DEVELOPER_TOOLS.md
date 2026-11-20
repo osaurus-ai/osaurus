@@ -395,7 +395,7 @@ A passing run produces ~1–2k log lines instead of the historical ~30k, and ind
 Test wall-time is now bounded by the build-from-scratch cost of the full `OsaurusCore` package. The biggest remaining lever is splitting `OsaurusCore` into focused SPM targets (`OsaurusFoundation`, `OsaurusInference`, `OsaurusVoice`, `OsaurusUpdater`, `OsaurusSandbox`, `OsaurusUI`) so a Foundation-only PR doesn't rebuild MLX / FluidAudio / Sparkle / VecturaKit. File-coupling counts that justify the split:
 
 - MLX/MLXLLM/MLXVLM/MLXLMCommon/Tokenizers: ~10 files, all in `Services/ModelRuntime*`, `Managers/Model/ModelManager.swift`, `Models/Configuration/VLMDetection.swift`, `Utils/StreamingDeltaProcessor.swift`, `Views/Chat/ChatView.swift`.
-- `FluidAudio`: 2 files (`Managers/SpeechService.swift`, `Managers/Model/SpeechModelManager.swift`).
+- `FluidAudio`: 3 files (`Managers/SpeechService.swift`, `Managers/Model/SpeechModelManager.swift`, `Managers/TTS/PocketTTSEngine.swift`).
 - `Sparkle`: 1 file (`Services/UpdaterService.swift`).
 - `AAInfographics`: 1 file (`Views/Chat/NativeChartView.swift`).
 - `VecturaKit`: 7 files in `Services/{Memory,Method,Skill,Tool}/*`.

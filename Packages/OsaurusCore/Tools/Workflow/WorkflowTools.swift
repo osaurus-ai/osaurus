@@ -26,6 +26,7 @@ enum WorkflowToolCall {
             hasRemoteReviewer: ChatExecutionContext.hasRemoteReviewer,
             isUnattendedDispatch: ChatExecutionContext.isUnattendedDispatch,
             folderPath: ChatExecutionContext.currentFolderRoot?.path)
+        caller.deniesUnapprovedPrompts = ChatExecutionContext.denyUnapprovedToolPrompts
         if let participant = sharedRunCaller {
             caller.onBehalfOf = participant
             caller.workspaceId = sharedRunWorkspaceId
@@ -143,7 +144,7 @@ enum WorkflowToolCall {
     /// in that chat (`syncWorkflowDialogs`) instead of parking.
     static func isInOpenHarnessChat() async -> Bool {
         guard let chatId = ChatExecutionContext.harnessChatId else { return false }
-        return await MainActor.run { ChatWindowManager.shared.session(forSessionId: chatId) != nil }
+        return await MainActor.run { HarnessBridgeCall.openChat(chatId) != nil }
     }
 
     /// Checks setup and input, runs the workflow, and encodes the outcome.
@@ -224,7 +225,10 @@ enum WorkflowToolCall {
             return WorkflowCallFeed.attach(
                 runID: runID, toolCallID: toolCallID, workflow: workflow, caller: caller, planning: planning)
         }
-        let parksChatTurn = routed && !caller.background && caller.sessionID != nil && caller.toolCallID != nil
+        // A harness turn can't be resumed later, so its call waits inline.
+        let parksChatTurn =
+            routed && !caller.background && caller.sessionID != nil && caller.toolCallID != nil
+            && ChatExecutionContext.harnessChatId == nil
         let run = await withTaskCancellationHandler {
             caller.background || parksChatTurn
                 ? await WorkflowRunService.shared.settledOrParked(runID)

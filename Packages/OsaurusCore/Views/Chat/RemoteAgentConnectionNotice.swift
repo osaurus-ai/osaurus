@@ -36,13 +36,17 @@ struct RemoteAgentConnectionStatusNotice: View {
 struct RemoteAgentNoticeRow<Content: View>: View {
     let tone: ThemeStatusSet<Color>
     let baseTheme: any ThemeProtocol
+    var alignment: VerticalAlignment = .center
     private let content: Content
-    init(tone: ThemeStatusSet<Color>, baseTheme: any ThemeProtocol, @ViewBuilder content: () -> Content) {
-        self.tone = tone; self.baseTheme = baseTheme; self.content = content()
+    init(
+        tone: ThemeStatusSet<Color>, baseTheme: any ThemeProtocol, alignment: VerticalAlignment = .center,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.tone = tone; self.baseTheme = baseTheme; self.alignment = alignment; self.content = content()
     }
     var body: some View {
         let noticeTheme = baseTheme.catalogFamily(40)
-        HStack(spacing: noticeTheme.catalogLayoutMetric("component.library.40.elements.layout.remoteAgentNoticeRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(40, "gap", baseTheme.space.s8, noticeTheme))) { content }.catalogLayoutTarget("component.library.40.elements.layout.remoteAgentNoticeRow.body.horizontalGap")
+        HStack(alignment: alignment, spacing: noticeTheme.catalogLayoutMetric("component.library.40.elements.layout.remoteAgentNoticeRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(40, "gap", baseTheme.space.s8, noticeTheme))) { content }.catalogLayoutTarget("component.library.40.elements.layout.remoteAgentNoticeRow.body.horizontalGap")
             .padding(.horizontal, noticeTheme.catalogLayoutMetric("component.library.40.elements.layout.remoteAgentNoticeRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(40, "padding", baseTheme.space.s12, noticeTheme))).catalogLayoutTarget("component.library.40.elements.layout.remoteAgentNoticeRow.body.paddingX")
             .padding(.vertical, noticeTheme.catalogLayoutMetric("component.library.40.elements.layout.remoteAgentNoticeRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(40, "padding", baseTheme.space.s6, noticeTheme))).catalogLayoutTarget("component.library.40.elements.layout.remoteAgentNoticeRow.body.paddingY")
             .frame(minHeight: NativeComponentInspectionStyle.metric(40, "height", 0, noticeTheme))

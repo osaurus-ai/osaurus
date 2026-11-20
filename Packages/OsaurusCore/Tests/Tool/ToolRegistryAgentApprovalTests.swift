@@ -55,6 +55,25 @@ private final class AgentApprovalPerCallProbeTool: OsaurusTool, PermissionedTool
     }
 }
 
+private final class AgentApprovalBlanketExemptProbeTool: OsaurusTool, PermissionedTool, BlanketApprovalExemptTool,
+    @unchecked Sendable
+{
+    let name: String
+    let description = "Test-only blanket-exempt probe."
+    let parameters: JSONValue? = nil
+    let requirements: [String] = []
+    let defaultPermissionPolicy: ToolPermissionPolicy = .ask
+    let isExemptFromBlanketApproval = true
+    private(set) var executions = 0
+
+    init(name: String) { self.name = name }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        executions += 1
+        return ToolEnvelope.success(tool: name, text: "ran")
+    }
+}
+
 @Suite(.serialized)
 @MainActor
 struct ToolRegistryAgentApprovalTests {
@@ -167,6 +186,28 @@ struct ToolRegistryAgentApprovalTests {
                     _ = try await run(tool, agentId: agent.id)
                 }
                 #expect(tool.executions == 0)
+            }
+        }
+    }
+
+    /// Never Ask never named a declared-destructive MCP tool; the agent's own
+    /// Auto for that tool (Always Allow for *Agent*) does.
+    @Test func blanketExemptToolNeedsAGrantThatNamesIt() async throws {
+        try await runFixture { fixture in
+            setGlobalAutoAllow(false)
+            let tool = AgentApprovalBlanketExemptProbeTool(name: probeName("blanket_exempt"))
+            try fixture.register(tool)
+            try await withAgent(mode: .neverAsk) { agent in
+                await #expect(throws: (any Error).self) {
+                    _ = try await run(tool, agentId: agent.id)
+                }
+                #expect(tool.executions == 0)
+            }
+            try await withAgent(mode: .neverAsk, policies: [tool.name: .auto]) { agent in
+                let callId = "call-\(UUID().uuidString)"
+                _ = try await run(tool, agentId: agent.id, callId: callId)
+                #expect(tool.executions == 1)
+                #expect(ToolApprovalAudit.take(callId: callId) == .agentToolPolicy)
             }
         }
     }

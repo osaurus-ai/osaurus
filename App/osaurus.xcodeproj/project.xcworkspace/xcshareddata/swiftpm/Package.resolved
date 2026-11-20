@@ -1,5 +1,5 @@
 {
-  "originHash": "68646bd3e17c1133b5475cc01d0f92be952e1e813f0a07d93fd88afb613a8394",
+  "originHash": "fd9f633e736c8b959405c2c0ea96d21d1963f415cf4f2462440d018682ad6499",
   "pins": [
     {
       "identity": "aachartkit-swift",
@@ -50,8 +50,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/FluidInference/FluidAudio.git",
       "state": {
-        "revision": "d302273d49ef4d8914b27f20d342be482e8810f1",
-        "version": "0.14.1"
+        "revision": "c8b41f98eae668794dd0083bbe028fe7e6585051",
+        "version": "0.18.3"
       }
     },
     {

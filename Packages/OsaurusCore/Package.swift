@@ -372,11 +372,18 @@ let package = Package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
             revision: "2073a764e61e6efad2322684720c8716ac92f4ff"
         ),
-        // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
-        // calls that osaurus's `TTSService` doesn't pass. Pinning to the
-        // last working version until osaurus catches up. Bumping requires
-        // a paired osaurus-side TTSService update.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", "0.14.0" ..< "0.14.2"),
+        // FluidAudio minors break source compatibility (0.14.3 added a
+        // required `language:` to PocketTTS downloads; 0.18.2 moved the
+        // English PocketTTS pack). Stay within one minor so a bump is always
+        // paired with a `Managers/TTS` + `SpeechService` update.
+        // Traits: `TTS` only. `NemoTextProcessing` links a prebuilt Rust
+        // staticlib whose personality routine, on top of the Rust code
+        // already in this graph, exceeds what compact unwind can encode
+        // (ld: "Too many personality routines"). TTS frontends then use
+        // FluidAudio's built-in normalizers. `Diarizer` is unused.
+        .package(
+            url: "https://github.com/FluidInference/FluidAudio.git", "0.18.3" ..< "0.19.0",
+            traits: ["TTS"]),
         // VecturaKit 6.x keeps embedding providers out of the core package.
         // Osaurus supplies its embedder from vmlx-swift so the app graph does
         // not pull a second transformer/embedding stack.

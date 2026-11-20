@@ -15415,30 +15415,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         httpTrace.set("http_input_audio_count", req.messages.reduce(0) { $0 + $1.audioInputs.count })
         httpTrace.set("http_input_video_count", req.messages.reduce(0) { $0 + $1.videoUrls.count })
 
-        // The Default (built-in) agent is unreachable from external HTTP.
-        // Silently drop the header if it points at the Default id so that
-        // memory writes and per-agent persistence never touch the built-in
-        // agent's data. Inference itself is unaffected — model selection
-        // and tools still work, just unattributed to the default.
-        let rawMemoryAgentId = head.headers.first(name: "X-Osaurus-Agent-Id")
-        let memoryAgentId: String? = {
-            guard let raw = rawMemoryAgentId else { return nil }
-            if let uuid = UUID(uuidString: raw), uuid == Agent.defaultId { return nil }
-            return raw
-        }()
-
-        // HTTP-specific persistence knobs:
-        //   X-Persist: false   → skip writing the conversation to chat history
-        //   X-Session-Id: <id> → group repeat calls under one session row
-        //                       (falls back to request.session_id when absent)
-        let persistDisabled =
-            (head.headers.first(name: "X-Persist") ?? "").lowercased() == "false"
-        let externalSessionKey: String? =
-            head.headers.first(name: "X-Session-Id") ?? req.session_id
-        let resolvedAgentUUID = memoryAgentId.flatMap { UUID(uuidString: $0) }
-        let priorMessages = req.messages
-        let persistOnSuccess = !persistDisabled
-
         // HTTP inference admission control. A real concurrency ceiling keyed to
         // the batch engine's capacity so a burst of concurrent streams can't
         // fan out unbounded into MLX and oversubscribe unified memory. When
@@ -15603,11 +15579,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if case .completed = completion.status {
                         let assistant = try response.completedAssistantInput()
                         if let error = Self.emptyToolTaskCompletionError(requestMessages: enrichedReq.messages, responseMessage: assistant) { throw error }
-                        if persistOnSuccess {
-                            ChatHistoryWriter.persistInBackground(source: .http, sourcePluginId: nil,
-                                agentId: resolvedAgentUUID, externalKey: externalSessionKey,
-                                finalMessages: priorMessages + [assistant], model: model)
-                        }
                     }
                     let finish = Self.openResponsesFinishReason(completion).rawValue
                     let includeUsage = req.stream_options?.include_usage == true
@@ -15710,11 +15681,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         let assistant = try response.completedAssistantInput()
                         if let error = Self.emptyToolTaskCompletionError(requestMessages: enrichedReq.messages, responseMessage: assistant) {
                             throw error
-                        }
-                        if persistOnSuccess {
-                            ChatHistoryWriter.persistInBackground(source: .http, sourcePluginId: nil,
-                                agentId: resolvedAgentUUID, externalKey: externalSessionKey,
-                                finalMessages: priorMessages + [assistant], model: model)
                         }
                     }
                     let body = try response.chatCompletionsHTTPBody(model: model, prefixHash: prefixHash)
@@ -17399,9 +17365,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let architectInspect = harnessGrant?.agentId == Agent.architectId
             let tools = entries.map { e in
                 let narrowed = architectInspect && e.name == "osaurus_inspect"
+                let bridgedClarify = harnessGrant != nil && e.name == HarnessClarifyBridge.toolName
                 var obj: [String: Any] = [
                     "name": e.name,
-                    "description": narrowed ? OsaurusInspectTool.architectDescription : e.description,
+                    "description": narrowed
+                        ? OsaurusInspectTool.architectDescription
+                        : bridgedClarify ? HarnessClarifyBridge.description : e.description,
                 ]
                 if let params = narrowed ? OsaurusInspectTool.architectParameters : e.parameters {
                     obj["inputSchema"] = params.anyValue
@@ -17564,6 +17533,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let toolName = req.name
         let harnessTokenPresented = !(head.headers.first(name: HarnessGrantStore.headerName) ?? "").isEmpty
         let harnessGrant = resolvedHarnessGrant(head: head)
+        let harnessToolCallId = HarnessBridgeCall.toolCallId(
+            fromHeader: head.headers.first(name: HarnessBridgeCall.toolCallIdHeader))
         // Capture for logging
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -17571,6 +17542,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
             let toolCallStartTime = Date()
+            // Recorded before the response goes out, so the harness's tool
+            // card can find it when the harness reports the call finished.
+            func recordBridgeCall(_ result: String, isError: Bool) async {
+                guard let chatId = harnessGrant?.chatId else { return }
+                await HarnessBridgeCalls.shared.record(
+                    .init(
+                        toolCallId: harnessToolCallId, name: toolName, arguments: argsJSON, result: result,
+                        isError: isError, durationMs: Date().timeIntervalSince(toolCallStartTime) * 1000),
+                    chatId: chatId)
+            }
             do {
                 // Validate against schema if available
                 let (schema, validatedJSON) = await MainActor.run {
@@ -17593,6 +17574,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
                             ?? Data("{}".utf8)
                         let body = String(decoding: data, as: UTF8.self)
+                        await recordBridgeCall(message, isError: true)
                         hop {
                             var headers = [("Content-Type", "application/json; charset=utf-8")]
                             headers.append(contentsOf: cors)
@@ -17640,6 +17622,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
                         ?? Data("{}".utf8)
                     let body = String(decoding: data, as: UTF8.self)
+                    await recordBridgeCall(message, isError: true)
                     hop {
                         var headers = [("Content-Type", "application/json; charset=utf-8")]
                         headers.append(contentsOf: cors)
@@ -17672,10 +17655,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // is proof of which chat this call belongs to, so the agent it
                 // names is bound for the duration of this execution.
                 //
-                // `isExternalSurface` deliberately stays true: the caller is
-                // still out of process, so every other external restriction
-                // (the deny list above, unattended-prompt refusal) continues to
-                // apply. This grants attribution, not trust.
+                // `isExternalSurface` stays true: the caller is still out of
+                // process, so every other external restriction (the deny list
+                // above, unattended-prompt refusal) continues to apply. This
+                // grants attribution, not trust. The exception is a call the
+                // person is watching (`HarnessBridgeCall.attendedScope`): it
+                // runs as the open chat's own call, with its folder and prompts.
                 let bridgeGrant = harnessGrant
 
                 let result: String
@@ -17727,27 +17712,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         retryable: false
                     )
                 } else {
-                    // The chat id is bound in the form chats key their state
-                    // by (`UUID.uuidString`), so the Architect's draft tools
-                    // find the draft of the chat this harness serves.
                     let chatId = bridgeGrant?.chatId
-                    result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
-                        try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
-                            try await ChatExecutionContext.$currentAgentId.withValue(bridgeGrant?.agentId) {
-                                try await ChatExecutionContext.$harnessTokenAgentId.withValue(bridgeGrant?.agentId) {
-                                    try await ChatExecutionContext.$harnessChatId.withValue(chatId) {
-                                        try await ChatExecutionContext.$currentSessionId.withValue(
-                                            chatId?.uuidString ?? ChatExecutionContext.currentSessionId
-                                        ) {
-                                            try await ToolRegistry.shared.execute(
-                                                name: toolName,
-                                                argumentsJSON: argsJSON
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    let attended = await MainActor.run {
+                        HarnessBridgeCall.attendedScope(grant: bridgeGrant, toolName: toolName)
+                    }
+                    result = try await HarnessBridgeCalls.shared.run(chatId: chatId) {
+                        try await Self.executeBridgeCall(
+                            toolName: toolName,
+                            argumentsJSON: argsJSON,
+                            grant: bridgeGrant,
+                            attended: attended,
+                            toolCallId: harnessToolCallId
+                        )
                     }
                 }
                 // MCP transport stays HTTP 200; tool-level failure is signaled
@@ -17762,6 +17738,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
                     ?? Data("{}".utf8)
                 let body = String(decoding: d, as: UTF8.self)
+                await recordBridgeCall(result, isError: isError)
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
@@ -17798,6 +17775,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
                     ?? Data("{}".utf8)
                 let body = String(decoding: d, as: UTF8.self)
+                await recordBridgeCall(error.localizedDescription, isError: true)
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
@@ -17826,6 +17804,55 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     toolCalls: [toolLog],
                     errorMessage: error.localizedDescription
                 )
+            }
+        }
+    }
+
+    /// Runs a `/mcp/call` tool under the identity its harness token proves.
+    /// The chat id is bound in the form chats key their state by
+    /// (`UUID.uuidString`), so the Architect's draft tools find the draft of
+    /// the chat this harness serves.
+    static func executeBridgeCall(
+        toolName: String,
+        argumentsJSON: String,
+        grant: HarnessGrant?,
+        attended: HarnessBridgeCall.AttendedScope?,
+        toolCallId: String?
+    ) async throws -> String {
+        let chatId = grant?.chatId
+        if toolName == HarnessClarifyBridge.toolName, let chatId, grant?.agentId == Agent.architectId {
+            return await HarnessClarifyBridge.execute(chatId: chatId, argumentsJSON: argumentsJSON)
+        }
+        let sessionId = chatId?.uuidString ?? ChatExecutionContext.currentSessionId
+        let execute: @Sendable () async throws -> String = {
+            try await ChatExecutionContext.$currentAgentId.withValue(grant?.agentId) {
+                try await ChatExecutionContext.$harnessTokenAgentId.withValue(grant?.agentId) {
+                    try await ChatExecutionContext.$harnessChatId.withValue(chatId) {
+                        try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                            try await ChatExecutionContext.$currentToolCallId.withValue(
+                                toolCallId ?? ChatExecutionContext.currentToolCallId
+                            ) {
+                                try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argumentsJSON)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        guard let attended else {
+            return try await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                    try await execute()
+                }
+            }
+        }
+        return try await ChatExecutionContext.$isExternalSurface.withValue(false) {
+            try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(false) {
+                try await ChatExecutionContext.$currentSessionSource.withValue(.chat) {
+                    try await ChatExecutionContext.$currentFolderRoot.withValue(attended.folderRoot) {
+                        try await execute()
+                    }
+                }
             }
         }
     }

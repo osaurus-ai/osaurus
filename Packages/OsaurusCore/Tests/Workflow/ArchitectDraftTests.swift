@@ -1009,7 +1009,8 @@ struct ArchitectToolExposureTests {
         #expect(prompt.hasPrefix(ArchitectSystemPromptBuilder.render().prefix(200)))
         #expect(prompt.hasSuffix(ArchitectSystemPromptBuilder.harnessAddendum))
         for tool in HarnessGrantStore.architectToolNames { #expect(ArchitectSystemPromptBuilder.harnessAddendum.contains(tool)) }
-        #expect(!HarnessGrantStore.architectToolNames.contains("clarify"))
+        #expect(HarnessGrantStore.architectToolNames == ToolRegistry.architectAllowedToolNames)
+        #expect(!ArchitectSystemPromptBuilder.harnessAddendum.contains("There is no `clarify`"))
         #expect(!HarnessTurnDriver.harnessSystemPrompt(for: UUID()).contains("Running in an external harness"))
     }
 

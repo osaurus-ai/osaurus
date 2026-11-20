@@ -116,18 +116,26 @@ private struct ClarifyPromptCard: View {
     }
 
     var body: some View {
-        PromptCard(
-            pillIcon: "questionmark.bubble.fill",
-            pillLabel: "Question",
-            title: nil,
-            descriptionMarkdown: state.question,
-            footnote: nil,
-            onCancel: onCancel,
-            bodyContent: { chipStrip },
-            inputRow: { inputRow }
-        )
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            PromptCard(
+                pillIcon: "questionmark.bubble.fill",
+                pillLabel: "Question",
+                title: nil,
+                descriptionMarkdown: state.question,
+                footnote: expiryFootnote(now: context.date),
+                onCancel: onCancel,
+                bodyContent: { chipStrip },
+                inputRow: { inputRow }
+            )
+        }
         .environment(\.theme, theme)
         .onAppear { autoFocusIfNeeded() }
+    }
+
+    private func expiryFootnote(now: Date) -> PromptCardFootnote? {
+        guard let expiresAt = state.expiresAt, expiresAt > now else { return nil }
+        let remaining = expiresAt.formatted(.relative(presentation: .numeric, unitsStyle: .wide))
+        return PromptCardFootnote(icon: "clock", text: "This question closes \(remaining) if unanswered.")
     }
 
     private func autoFocusIfNeeded() {

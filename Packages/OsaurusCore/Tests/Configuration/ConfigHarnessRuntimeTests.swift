@@ -155,6 +155,33 @@ struct ConfigHarnessRuntimeTests {
         #expect(config.effort == nil, "an unknown value never reaches the agent")
     }
 
+    @Test func osaurusToolsKeyDefaultsOnAndAcceptsTheOldSpelling() throws {
+        #expect(ClaudeCodeAgentConfig.default.osaurusTools)
+        #expect(ConfigHarness.export(.default, includeConfigWrites: false).osaurusTools == true)
+
+        let current = try ConfigYAML.decode(
+            "default_agent:\n  claude_code:\n    osaurus_tools: false\n")
+        #expect(current.defaultAgent?.claudeCode?.osaurusTools == false)
+        let old = try ConfigYAML.decode(
+            "default_agent:\n  claude_code:\n    allow_osaurus_tools: false\n")
+        #expect(old.defaultAgent?.claudeCode?.osaurusTools == false)
+
+        var config = ClaudeCodeAgentConfig.default
+        var entry = AgentClaudeCodeEntry()
+        entry.osaurusTools = false
+        #expect(ConfigHarness.changes(entry, current: config, prefix: "claude_code") == ["claude_code.osaurus_tools: true -> false"])
+        ConfigHarness.patch(&config, from: entry)
+        #expect(!config.osaurusTools)
+
+        var document = OsaurusConfigDocument()
+        var section = DefaultAgentSection()
+        section.claudeCode = ConfigHarness.export(config, includeConfigWrites: false)
+        document.defaultAgent = section
+        let yaml = try ConfigYAML.encode(document)
+        #expect(yaml.contains("osaurus_tools: false"))
+        #expect(!yaml.contains("allow_osaurus_tools"))
+    }
+
     @Test func planFlagsLaunchCommandsAndHarnessMoves() async throws {
         try await isolated {
             var agent = AgentEntry(name: "Researcher")

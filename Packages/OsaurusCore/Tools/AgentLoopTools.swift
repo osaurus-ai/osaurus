@@ -520,7 +520,7 @@ public final class ClarifyTool: OsaurusTool, @unchecked Sendable {
 
 // MARK: - speak
 
-/// Speak text aloud via PocketTTS. Fire-and-forget: returns the moment
+/// Speak text aloud via the configured TTS engine. Fire-and-forget: returns the moment
 /// playback starts. The row spinner clears when audio drains.
 public final class SpeakTool: OsaurusTool, @unchecked Sendable {
     public let name = "speak"

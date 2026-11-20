@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import MCP
 import Testing
 
 @testable import OsaurusCLICore
@@ -118,6 +119,16 @@ struct MCPBridgeGrantTests {
     func constantsMatchCore() {
         #expect(MCPCommand.bridgeGrantEnvironmentKey == "OSAURUS_MCP_BRIDGE_GRANT")
         #expect(MCPCommand.bridgeGrantHeaderName == "X-Osaurus-Bridge-Grant")
+        #expect(MCPCommand.toolCallIdHeaderName == "X-Osaurus-Tool-Call-Id")
+        #expect(MCPCommand.claudeToolUseIdMetaKey == "claudecode/toolUseId")
+    }
+
+    @Test("Claude Code's tool-use id is read from _meta")
+    func toolCallIdFromMeta() {
+        let meta = Metadata(additionalFields: ["claudecode/toolUseId": .string("toolu_01AbC")])
+        #expect(MCPCommand.toolCallId(from: meta) == "toolu_01AbC")
+        #expect(MCPCommand.toolCallId(from: nil) == nil)
+        #expect(MCPCommand.toolCallId(from: Metadata(additionalFields: ["claudecode/toolUseId": .string("  ")])) == nil)
     }
 
     @Test("grant header is absent when the environment does not carry one")

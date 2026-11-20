@@ -38,54 +38,7 @@ struct HelloChapterView: View {
     let onGetStarted: () -> Void
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            greeting
-                .padding(.leading, OnboardingLayout.greetingInset)
-                .padding(.top, greetingTop)
-
-            card
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .padding(OnboardingLayout.contentPadding)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    // MARK: Greeting
-
-    /// The glow is pinned to the window's top edge, so it offsets by exactly this.
-    private var greetingTop: CGFloat { OnboardingLayout.stageTopInset + theme.space.s16 }
-
-    private var greeting: some View {
-        VStack(alignment: .leading, spacing: theme.space.s0) {
-            ForEach(stage.greetingLines, id: \.self) { line in
-                Text(verbatim: line)
-                    .font(OnboardingTypography.greeting)
-                    .foregroundColor(OnboardingPalette.labelPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(width: OnboardingLayout.greetingWidth, alignment: .leading)
-        .onboardingEntrance(0)
-        .background(alignment: .topLeading) { legibilityGlow }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: stage.greetingText))
-        .accessibilityAddTraits(.isHeader)
-    }
-
-    /// A soft wash of the window canvas behind the greeting so it reads on
-    /// every landscape, light or dark.
-    private var legibilityGlow: some View {
-        // Elliptical so it fades out exactly at the frame's edges.
-        EllipticalGradient(
-            colors: [OnboardingPalette.windowBackground, OnboardingPalette.windowBackground.opacity(0)],
-            center: .topLeading,
-            startRadiusFraction: 0,
-            endRadiusFraction: 1
-        )
-        .opacity(0.55)
-        .frame(width: OnboardingLayout.greetingWidth * 1.4, height: OnboardingLayout.greetingWidth * 0.7)
-        .offset(x: -OnboardingLayout.greetingInset, y: -greetingTop)
-        .allowsHitTesting(false)
+        OnboardingGreetingLayout(stage: stage) { card }
     }
 
     // MARK: Card
@@ -142,5 +95,66 @@ struct HelloChapterView: View {
             alignment: .leading
         )
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+// MARK: - Greeting layout
+
+/// The stage's greeting over the landscape at top left, and a chapter's
+/// glass card at bottom right. Welcome and the Classic upgrade screen
+/// share it.
+struct OnboardingGreetingLayout<Card: View>: View {
+    @Environment(\.theme) private var theme
+
+    @ObservedObject var stage: OnboardingStage
+    @ViewBuilder let card: () -> Card
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            greeting
+                .padding(.leading, OnboardingLayout.greetingInset)
+                .padding(.top, greetingTop)
+
+            card()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(OnboardingLayout.contentPadding)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// The glow is pinned to the window's top edge, so it offsets by exactly this.
+    private var greetingTop: CGFloat { OnboardingLayout.stageTopInset + theme.space.s16 }
+
+    private var greeting: some View {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
+            ForEach(stage.greetingLines, id: \.self) { line in
+                Text(verbatim: line)
+                    .font(OnboardingTypography.greeting)
+                    .foregroundColor(OnboardingPalette.labelPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(width: OnboardingLayout.greetingWidth, alignment: .leading)
+        .onboardingEntrance(0)
+        .background(alignment: .topLeading) { legibilityGlow }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: stage.greetingText))
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    /// A soft wash of the window canvas behind the greeting so it reads on
+    /// every landscape, light or dark.
+    private var legibilityGlow: some View {
+        // Elliptical so it fades out exactly at the frame's edges.
+        EllipticalGradient(
+            colors: [OnboardingPalette.windowBackground, OnboardingPalette.windowBackground.opacity(0)],
+            center: .topLeading,
+            startRadiusFraction: 0,
+            endRadiusFraction: 1
+        )
+        .opacity(0.55)
+        .frame(width: OnboardingLayout.greetingWidth * 1.4, height: OnboardingLayout.greetingWidth * 0.7)
+        .offset(x: -OnboardingLayout.greetingInset, y: -greetingTop)
+        .allowsHitTesting(false)
     }
 }

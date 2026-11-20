@@ -75,6 +75,8 @@ app: cli
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-js-host"
 	@echo "Bundling sandbox kernel (Resources/SandboxRuntime)…"
 	./scripts/build/fetch_sandbox_kernel.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Resources/SandboxRuntime"
+	@echo "Stripping unused GPL LuxTTS G2P data…"
+	./scripts/build/strip_luxtts_g2p.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app"
 
 install-cli: cli
 	@echo "Installing CLI symlink…"
@@ -248,7 +250,7 @@ EVALS_PR_REPORT_OUT := $(EVALS_PR_REPORT_OUT)
 EVALS_HOST_VERSION ?= $(shell sed -n 's:.*<sparkle\:shortVersionString>\(.*\)</sparkle\:shortVersionString>.*:\1:p' docs/appcast.xml | head -1)
 evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic \
 evals-capture-screen evals-loop evals-matrix evals-diff evals-compat evals-pr-report \
-evals-pr-report-baseline evals-scoreboard: export OSAURUS_HOST_VERSION = $(EVALS_HOST_VERSION)
+evals-pr-report-baseline evals-scoreboard evals-architect evals-architect-claude-code: export OSAURUS_HOST_VERSION = $(EVALS_HOST_VERSION)
 EVALS_WATCHER_CHANNEL ?= main
 EVALS_WATCHER_OUT ?= build/evals/watcher
 EVALS_REPORT_PRESET ?= local-frontier
@@ -304,6 +306,33 @@ evals-architect:
 		--transcripts \
 		$(if $(FILTER),--filter $(FILTER),) \
 		--out build/evals/architect/$(ARCHITECT_LABEL).json
+
+# The same Architect cases with Claude Code designing: the real harness path
+# (agent token, `osaurus mcp` proxy, an in-process server on an ephemeral
+# port). Model steps inside test runs still run on ARCHITECT_MODEL. Needs
+# `claude` installed and signed in; otherwise every row is BLOCKED. Runs on
+# the person's Claude subscription, so EVALS_REPEAT defaults to 1.
+#   make evals-architect-claude-code CLAUDE_MODEL=opus LABEL=baseline
+CLAUDE_MODEL ?= sonnet
+# Point at ~/MLXModels when ARCHITECT_MODEL is a local model.
+ARCHITECT_MODELS_DIR ?= /tmp/osaurus-test-models
+.PHONY: evals-architect-claude-code
+evals-architect-claude-code: evals-prep
+	@mkdir -p build/evals/architect
+	swift build --package-path Packages/OsaurusCore --product osaurus-js-host
+	swift build --package-path Packages/OsaurusCLI --product osaurus-cli
+	OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 OSAURUS_TEST_ROOT=/tmp/osaurus-test OSU_MODELS_DIR=$(ARCHITECT_MODELS_DIR) \
+	OSAURUS_JS_HOST_PATH=$$(swift build --package-path Packages/OsaurusCore --show-bin-path)/osaurus-js-host \
+	OSAURUS_CLI_PATH=$$(swift build --package-path Packages/OsaurusCLI --show-bin-path)/osaurus-cli \
+	OSAURUS_EVALS_HARNESS=claude-code OSAURUS_EVALS_CLAUDE_MODEL=$(CLAUDE_MODEL) \
+	OSAURUS_EVALS_HARNESS_VERSION="$$(claude --version 2>/dev/null | head -1)" \
+	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+		--suite $(EVALS_ROOT)/Architect \
+		--model $(ARCHITECT_MODEL) \
+		--repeat $(if $(EVALS_REPEAT),$(EVALS_REPEAT),1) \
+		--transcripts \
+		$(if $(FILTER),--filter $(FILTER),) \
+		--out build/evals/architect/claude-code-$(CLAUDE_MODEL)-$(ARCHITECT_LABEL).json
 
 # Every walkthrough ask and the common typed first questions, on the local
 # first-run model and on Osaurus Cloud. floors.json#modelSuitePassRates pins

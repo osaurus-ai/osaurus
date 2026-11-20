@@ -568,7 +568,7 @@ struct WorkflowTemplateCard: View {
         Group {
             if isHomepageCard {
                 WorkflowStarterCard(title: template.name, icon: homepageIcon, detail: WorkflowStarterCard.detail(for: template),
-                    isSelected: isSelected, minimumHeight: theme.space.s64 + theme.space.s48, action: onOpen)
+                    isSelected: isSelected, minimumHeight: theme.space.s64, action: onOpen)
                     .assignedContextMenu { menuItems }
             } else { detailedCard }
         }

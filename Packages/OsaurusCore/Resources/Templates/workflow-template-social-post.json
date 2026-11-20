@@ -5,7 +5,7 @@
   "kind": "workflow",
   "version": 1,
   "changelog": "Built-in template",
-  "name": "Social Post Writer",
+  "name": "Social Post",
   "summary": "Turns a topic into a ready-to-share post for the platform you pick, with hashtags.",
   "author": {
     "name": "Osaurus"

@@ -814,6 +814,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task.detached(priority: .utility) {
             BundledModelSeeder.seedIfNeeded()
         }
+        // Agents on a retired Raptor move to Raptor 0.7 once the download
+        // the Classic upgrade screen started has landed.
+        RaptorUpgrade.start()
 
         let presentOnboarding = OnboardingService.shared.shouldShowOnboarding
         // Login-item and CLI launches stay hidden in the menu bar (#2609).

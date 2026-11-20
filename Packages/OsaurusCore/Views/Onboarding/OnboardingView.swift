@@ -20,6 +20,8 @@ import SwiftUI
 public enum OnboardingStep: Int, CaseIterable {
     case welcome
     case configureAI
+    /// In place of Welcome for an install that came from Classic.
+    case classicUpgrade
 }
 
 // MARK: - Navigation Direction
@@ -64,8 +66,9 @@ public struct OnboardingView: View {
 
     @StateObject private var welcomeState = WelcomeState()
     @StateObject private var configureAIState = ConfigureAIState()
-    @StateObject private var stage = OnboardingStage()
+    @StateObject private var stage: OnboardingStage
     @StateObject private var pointer = OnboardingPointer()
+    @StateObject private var classicUpgradeState: ClassicUpgradeState
 
     // Identity, sandbox, and crash reporting are configured implicitly on
     // completion (see `configureImplicitDefaults`) rather than shown as their
@@ -78,8 +81,19 @@ public struct OnboardingView: View {
     /// Team is the walkthrough in chat, so the indicator leaves it out when
     /// none will follow.
     private let chapters: [OnboardingChapter]
+    /// The install came from Classic: the window opens on the upgrade
+    /// screen, which offers the starter team or keeps the setup as it is.
+    private let classicUpgrade: Bool
 
     public init(onComplete: @escaping () -> Void) {
+        if OnboardingService.shared.shouldOfferClassicUpgrade {
+            let state = ClassicUpgradeState.live()
+            self.init(
+                classicUpgrade: state,
+                needsModel: AgentManager.shared.effectiveModel(for: Agent.defaultId) == nil,
+                onComplete: onComplete)
+            return
+        }
         let preferences = BundleOnboardingPreferences.effective
         let roster = TeamSeeder.Options(
             developerMac: DeveloperMacSignal.isDeveloperMac(),
@@ -95,11 +109,29 @@ public struct OnboardingView: View {
     init(skipsIntro: Bool, walkthroughFollows: Bool = true, onComplete: @escaping () -> Void) {
         self.onComplete = onComplete
         self.skipsIntro = skipsIntro
+        self.classicUpgrade = false
         self.chapters = walkthroughFollows ? OnboardingChapter.allCases : [.welcome, .model]
         _currentStep = State(initialValue: skipsIntro ? .configureAI : .welcome)
+        _stage = StateObject(wrappedValue: OnboardingStage())
+        _classicUpgradeState = StateObject(
+            wrappedValue: ClassicUpgradeState(roster: [], raptorOffer: nil, asksUsageConsent: false))
     }
 
-    private var chapter: OnboardingChapter { currentStep == .welcome ? .welcome : .model }
+    /// The upgrade screen. Model appears only when the Orchestrator has no
+    /// model yet, so adding the team runs Configure AI first.
+    init(classicUpgrade state: ClassicUpgradeState, needsModel: Bool, onComplete: @escaping () -> Void) {
+        self.onComplete = onComplete
+        self.skipsIntro = false
+        self.classicUpgrade = true
+        var chapters: [OnboardingChapter] = needsModel ? [.welcome, .model] : [.welcome]
+        if !state.roster.isEmpty { chapters.append(.team) }
+        self.chapters = chapters
+        _currentStep = State(initialValue: .classicUpgrade)
+        _stage = StateObject(wrappedValue: OnboardingStage(classicUpgrade: true))
+        _classicUpgradeState = StateObject(wrappedValue: state)
+    }
+
+    private var chapter: OnboardingChapter { currentStep == .configureAI ? .model : .welcome }
 
     public var body: some View {
         Group {
@@ -222,7 +254,20 @@ public struct OnboardingView: View {
         case .configureAI:
             ConfigureAIStepView(
                 state: configureAIState,
-                onComplete: { finishOnboarding(via: .finishButton) }
+                onComplete: {
+                    if classicUpgrade {
+                        finishClassicInstall()
+                    } else {
+                        finishOnboarding(via: .finishButton)
+                    }
+                }
+            )
+        case .classicUpgrade:
+            ClassicUpgradeChapterView(
+                state: classicUpgradeState,
+                stage: stage,
+                onAddTeam: addStarterTeam,
+                onKeep: { finishClassicKeep(skipped: false) }
             )
         }
     }
@@ -238,6 +283,7 @@ public struct OnboardingView: View {
             case .local: return .localModel
             case .keys, .byok, .claudeCode: return .ownAccount
             }
+        case .classicUpgrade: return .classicUpgrade(offersRaptor: classicUpgradeState.raptor != nil)
         }
     }
 
@@ -245,7 +291,7 @@ public struct OnboardingView: View {
     /// clear of the setup panel.
     private var helpMaxRight: CGFloat {
         switch currentStep {
-        case .welcome:
+        case .welcome, .classicUpgrade:
             return OnboardingMetrics.windowWidth - OnboardingLayout.contentPadding
                 - OnboardingLayout.helloCardWidth - OnboardingLayout.columnGap
         case .configureAI:
@@ -279,7 +325,7 @@ public struct OnboardingView: View {
                         OnboardingCircleIconButton(
                             systemName: "arrow.left",
                             action: {
-                                advance(to: .welcome, direction: .backward)
+                                advance(to: classicUpgrade ? .classicUpgrade : .welcome, direction: .backward)
                             },
                             accessibilityLabelKey: "Back"
                         )
@@ -287,7 +333,11 @@ public struct OnboardingView: View {
                     }
                     Spacer(minLength: 0)
                     OnboardingGlassTextButton(title: "Skip setup") {
-                        finishOnboarding(via: .skipButton)
+                        if classicUpgrade {
+                            finishClassicKeep(skipped: true)
+                        } else {
+                            finishOnboarding(via: .skipButton)
+                        }
                     }
                 }
             }
@@ -487,6 +537,82 @@ public struct OnboardingView: View {
 
         OnboardingService.shared.completeOnboarding()
         playFarewell()
+    }
+
+    // MARK: - Classic upgrade
+
+    /// Add starter team. The Raptor download starts first (a disk shortfall
+    /// stops here with its warning); with no model on the Orchestrator,
+    /// Configure AI runs before the team is made.
+    private func addStarterTeam() {
+        guard !isFinishing, !isSeedingTeam, classicUpgradeState.startRaptorDownloadIfChosen() else { return }
+        if AgentManager.shared.effectiveModel(for: Agent.defaultId) == nil {
+            advance(to: .configureAI)
+            return
+        }
+        finishClassicInstall()
+    }
+
+    /// Creates the team and default workflows, arms the walkthrough, and
+    /// records the choice after the seed, so a quit mid-seed offers the
+    /// screen again on the next launch.
+    private func finishClassicInstall() {
+        guard !isFinishing, !isSeedingTeam else { return }
+        isSeedingTeam = true
+        commitClassicUpgradeConsent(granted: classicUpgradeState.shareUsageData)
+        OnboardingTelemetry.completed(
+            lastStep: currentStep, via: .classicInstall,
+            raptorDownload: classicUpgradeState.startedRaptorDownload)
+
+        // The walkthrough runs in a chat with the Orchestrator.
+        AgentManager.shared.setActiveAgent(Agent.defaultId)
+        let brainIsLocal =
+            configureAIState.selectedBrainSource != nil
+            ? configureAIState.hasCommittedLocal : Self.orchestratorRunsLocally()
+        let options = TeamSeeder.Options(
+            developerMac: DeveloperMacSignal.isDeveloperMac(),
+            brainIsLocal: brainIsLocal,
+            excludedTeammates: BundleOnboardingPreferences.effective.excludeTeammates
+        )
+        Task { @MainActor in
+            let team = await TeamSeeder.seedClassicUpgrade(options)
+            // Pins only a brain chosen on Configure AI; otherwise the team
+            // already runs on the Orchestrator's model.
+            OnboardingBrainPin.pin(configureAIState, forAgents: [Agent.defaultId] + team.map(\.id))
+            if AgentManager.shared.agents.contains(where: { $0.teammate != nil }) {
+                OnboardingFirstRun.armOpening()
+            }
+            OnboardingService.shared.recordClassicUpgradeChoice(.installed)
+            playFarewell()
+        }
+    }
+
+    /// Keep my setup (or Skip setup): nothing is created and no model,
+    /// agent, or credit changes. The card's Raptor switch still applies to
+    /// Keep my setup, which the person pressed with it in view.
+    private func finishClassicKeep(skipped: Bool) {
+        guard !isFinishing, !isSeedingTeam else { return }
+        if !skipped {
+            guard classicUpgradeState.startRaptorDownloadIfChosen() else { return }
+        }
+        commitClassicUpgradeConsent(granted: !skipped && classicUpgradeState.shareUsageData)
+        OnboardingTelemetry.completed(
+            lastStep: currentStep, via: .classicKeep,
+            raptorDownload: classicUpgradeState.startedRaptorDownload)
+        OnboardingService.shared.recordClassicUpgradeChoice(.kept)
+        playFarewell()
+    }
+
+    /// The usage switch shows only while consent is undecided; Skip setup
+    /// declines, as it does on Welcome.
+    private func commitClassicUpgradeConsent(granted: Bool) {
+        guard classicUpgradeState.asksUsageConsent, TelemetryService.shared.needsConsentDecision else { return }
+        TelemetryService.shared.setEnabled(granted)
+    }
+
+    private static func orchestratorRunsLocally() -> Bool {
+        guard let model = AgentManager.shared.effectiveModel(for: Agent.defaultId) else { return false }
+        return SetupChecker.isLocalModel(model, catalog: ConfigModelReference.liveCatalog())
     }
 
     /// The chapter content dissolves, then the window becomes the chat

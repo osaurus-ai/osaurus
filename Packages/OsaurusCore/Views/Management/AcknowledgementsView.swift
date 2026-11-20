@@ -166,7 +166,7 @@ struct AcknowledgementsView: View {
         Acknowledgement(
             name: "FluidAudio",
             identity: "fluidaudio",
-            version: "0.12",
+            version: "0.18",
             repository: "https://github.com/FluidInference/FluidAudio",
             license: "Apache 2.0",
             licenseUrl: "https://github.com/FluidInference/FluidAudio/blob/main/LICENSE"
@@ -211,6 +211,62 @@ struct AcknowledgementsView: View {
             license: "MIT",
             licenseUrl: "https://huggingface.co/minishlab/potion-base-4M"
         ),
+        Acknowledgement(
+            name: "Kokoro-82M (speech model)",
+            identity: "kokoro-82m",
+            version: "1.0",
+            repository: "https://huggingface.co/hexgrad/Kokoro-82M",
+            license: "Apache 2.0",
+            licenseUrl: "https://huggingface.co/hexgrad/Kokoro-82M"
+        ),
+        Acknowledgement(
+            name: "Misaki (Kokoro G2P lexicons)",
+            identity: "misaki",
+            version: "0.9",
+            repository: "https://github.com/hexgrad/misaki",
+            license: "Apache 2.0",
+            licenseUrl: "https://github.com/hexgrad/misaki/blob/main/LICENSE"
+        ),
+        Acknowledgement(
+            name: "kokoro-coreml (Kokoro Fast v3 generator)",
+            identity: "kokoro-coreml",
+            version: "a3f1ff27",
+            repository: "https://github.com/mattmireles/kokoro-coreml",
+            license: "Apache 2.0",
+            licenseUrl: "https://github.com/mattmireles/kokoro-coreml/blob/main/LICENSE"
+        ),
+        Acknowledgement(
+            name: "unidic-lite (Kokoro Japanese dictionary)",
+            identity: "unidic-lite",
+            version: "2.1.2",
+            repository: "https://github.com/polm/unidic-lite",
+            license: "BSD",
+            licenseUrl: "https://github.com/polm/unidic-lite/blob/master/LICENSE"
+        ),
+        Acknowledgement(
+            name: "cutlet (Kokoro Japanese romanization rules)",
+            identity: "cutlet",
+            version: "",
+            repository: "https://github.com/polm/cutlet",
+            license: "MIT",
+            licenseUrl: "https://github.com/polm/cutlet/blob/master/LICENSE"
+        ),
+        Acknowledgement(
+            name: "ipa-dict (Kokoro Spanish and French lexicons)",
+            identity: "ipa-dict",
+            version: "",
+            repository: "https://github.com/open-dict-data/ipa-dict",
+            license: "MIT",
+            licenseUrl: "https://github.com/open-dict-data/ipa-dict/blob/master/LICENSE"
+        ),
+        Acknowledgement(
+            name: "CharsiuG2P (Kokoro French G2P fallback)",
+            identity: "charsiug2p",
+            version: "",
+            repository: "https://github.com/lingjzhu/CharsiuG2P",
+            license: "MIT",
+            licenseUrl: "https://github.com/lingjzhu/CharsiuG2P/blob/main/LICENSE"
+        ),
     ]
 }
 
@@ -224,7 +280,7 @@ private struct PackageRow: View {
         SettingsRow(
             title: package.name,
             description: package.repository.replacingOccurrences(of: "https://github.com/", with: ""),
-            badge: "v\(package.version)",
+            badge: package.version.isEmpty ? nil : "v\(package.version)",
             verbatimTitle: true,
             verbatimDescription: true
         ) {

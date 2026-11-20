@@ -236,7 +236,9 @@ public enum WorkflowEvalHarness {
     // MARK: - Template runs
 
     @MainActor
-    public static func runTemplate(_ spec: TemplateCase, model: String) async -> Outcome {
+    public static func runTemplate(
+        _ spec: TemplateCase, model: String, driver: TemplateDriver = .direct
+    ) async -> Outcome {
         let definition: WorkflowDefinition
         do {
             definition = try JSONDecoder().decode(
@@ -259,6 +261,27 @@ public enum WorkflowEvalHarness {
         }
 
         let template = Template(name: "Eval Workflow", summary: "Eval", payload: .workflow(definition))
+        if case .harnessBridge(let apiPort) = driver {
+            let usesModel = !definition.modelSlots.isEmpty || definition.nodes.contains {
+                if case .inference = $0.kind { return true }
+                return false
+            }
+            guard spec.toolResults.isEmpty, spec.answers.isEmpty, !usesModel else {
+                return Outcome(
+                    passed: false, blocked: nil,
+                    checks: ["FAIL a harness-bridge case has no model steps, tool fixtures, or form answers"],
+                    outputTokens: 0, generationMs: 0)
+            }
+            let bridged = await runThroughHarnessBridge(template, input: spec.input, apiPort: apiPort)
+            let bridgeChecks = bridged.checks.map { ($0.0 ? "PASS " : "FAIL ") + "harness: " + $0.1 }
+            guard let run = bridged.run else {
+                return Outcome(passed: false, blocked: nil, checks: bridgeChecks, outputTokens: 0, generationMs: 0)
+            }
+            let scored = score(run, spec)
+            return Outcome(
+                passed: scored.passed && bridged.checks.allSatisfy(\.0), blocked: nil,
+                checks: bridgeChecks + scored.checks, outputTokens: 0, generationMs: 0)
+        }
         let nodeSlots = definition.nodes.compactMap { node -> String? in
             if case .inference(let spec) = node.kind { return spec.modelSlot }
             return nil
@@ -542,8 +565,15 @@ public enum WorkflowEvalHarness {
 
     @MainActor
     public static func runArchitect(
-        _ spec: ArchitectCase, model: String?
+        _ spec: ArchitectCase, model: String?, driver: ArchitectDriver = .builtIn
     ) async -> (outcome: Outcome, transcript: AgentLoopTranscript) {
+        let claudeRuntime = claudeCodeRuntime()
+        if case .claudeCode(let lane) = driver, let blocked = await claudeCodeBlocker(lane, runtime: claudeRuntime) {
+            return (
+                Outcome(passed: false, blocked: blocked, checks: [], outputTokens: 0, generationMs: 0),
+                emptyTranscript(exit: "blocked")
+            )
+        }
         let media = spec.needsImageModel ? await MediaModelResolver.loadedLiveCandidates() : []
         if spec.needsImageModel,
             !media.contains(where: { $0.supports(.generate) }) || !media.contains(where: { $0.supports(.upscale) })
@@ -565,16 +595,22 @@ public enum WorkflowEvalHarness {
         // Test runs bind unbound slots to the Architect's model, as when the
         // user picks it in Settings; point it at the eval model for the run.
         let savedConfiguration = ArchitectConfigurationStore.load()
-        if let model {
-            var configuration = savedConfiguration
-            configuration.model = model
-            ArchitectConfigurationStore.save(configuration)
+        var configuration = savedConfiguration
+        if let model { configuration.model = model }
+        if case .claudeCode(let lane) = driver {
+            var claudeCode = configuration.claudeCode ?? .default
+            claudeCode.model = lane.claudeModel
+            configuration.claudeCode = claudeCode
         }
+        if configuration != savedConfiguration { ArchitectConfigurationStore.save(configuration) }
         defer { ArchitectConfigurationStore.save(savedConfiguration) }
         WorkflowSecretsKeychain.useInMemoryStore(values: spec.secrets)
         defer { WorkflowSecretsKeychain.useInMemoryStore(values: nil) }
 
-        let sessionID = UUID().uuidString
+        // A harness keys its process and token on a chat UUID; the drafts
+        // key on its string form, as in the app.
+        let chatId = UUID()
+        let sessionID = chatId.uuidString
         var brief = spec.brief
         var installed: InstalledWorkflow?
         var setupChecks: [String] = []
@@ -617,10 +653,17 @@ public enum WorkflowEvalHarness {
         }
 
         let transcript = await withScriptedAnswers(spec.answers, folder: spec.pickedFolder) {
-            await AgentLoopEvaluator.run(
-                task: brief, workspace: workspace, agentId: Agent.architectId,
-                maxIterations: spec.maxIterations, model: model, useHostFolder: false, sessionId: sessionID,
-                clarifyReplies: spec.replies)
+            switch driver {
+            case .builtIn:
+                return await AgentLoopEvaluator.run(
+                    task: brief, workspace: workspace, agentId: Agent.architectId,
+                    maxIterations: spec.maxIterations, model: model, useHostFolder: false, sessionId: sessionID,
+                    clarifyReplies: spec.replies)
+            case .claudeCode(let lane):
+                return await runClaudeCodeArchitect(
+                    brief: brief, replies: ReplyQueue(spec.replies), lane: lane, runtime: claudeRuntime,
+                    chatId: chatId)
+            }
         }
         let draft =
             drafts.draft(forSession: sessionID)

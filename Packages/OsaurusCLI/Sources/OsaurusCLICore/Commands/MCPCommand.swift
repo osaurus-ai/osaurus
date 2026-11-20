@@ -123,6 +123,9 @@ public struct MCPCommand: Command {
             }
             var request = makeProxyRequest(url: url, method: "POST", timeout: callTimeout(), credential: credential)
             request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+            if let toolCallId = toolCallId(from: params._meta) {
+                request.setValue(toolCallId, forHTTPHeaderField: toolCallIdHeaderName)
+            }
 
             do {
                 // Wrap dictionary arguments into a single MCP.Value object if present
@@ -231,6 +234,19 @@ public struct MCPCommand: Command {
     /// shared; `MCPBridgeGrantTests` pins the literals on both sides.
     static let bridgeGrantEnvironmentKey = "OSAURUS_MCP_BRIDGE_GRANT"
     static let bridgeGrantHeaderName = "X-Osaurus-Bridge-Grant"
+    /// `HarnessBridgeCall.toolCallIdHeader` / `claudeToolUseIdMetaKey` in
+    /// OsaurusCore, pinned the same way.
+    static let toolCallIdHeaderName = "X-Osaurus-Tool-Call-Id"
+    static let claudeToolUseIdMetaKey = "claudecode/toolUseId"
+
+    /// The client's id for this call, when it sends one in `_meta` (Claude
+    /// Code does), so the app can tie the call to the chat row showing it.
+    static func toolCallId(from meta: MCP.Metadata?) -> String? {
+        guard let id = meta?[claudeToolUseIdMetaKey]?.stringValue?.trimmingCharacters(in: .whitespaces),
+            !id.isEmpty
+        else { return nil }
+        return id
+    }
 
     private static func printUsage() {
         let usage = """

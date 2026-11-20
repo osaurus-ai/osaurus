@@ -463,17 +463,23 @@ The same hints pick each tool's **default** approval policy:
 - A tool the server declares read-only (`readOnlyHint: true`) runs without
   asking, unless it also declares `openWorldHint: true` (web search, page
   fetch), which could carry chat content to third parties.
-- A tool that is not declared read-only and not explicitly non-destructive
-  (`destructiveHint: false`) asks on **every** call. Task-wide approval and
-  **Always Allow** never cover it. The spec says a tool without hints may be
-  destructive, so tools without hints are treated this way too.
-- Everything else asks the first time, as before.
+- Everything else, including a tool without hints, asks. Its card offers
+  **For the Rest of This Reply** and **Always Allow…** (plus the agent
+  entries in a custom agent's chat), and Auto-Allow All Tool Calls and an
+  agent's Never Ask cover it like any other Ask tool.
+- A tool that explicitly declares `destructiveHint: true` (and is not
+  read-only) also asks, and still takes a reply lease, Always Allow, or an
+  agent's own Auto for that tool. Blanket switches do not cover it:
+  Auto-Allow All Tool Calls and an agent's Never Ask leave its card on, and
+  the card does not offer **Never Ask for *Agent*…**. A teammate's call on a
+  shared agent is approved one call at a time, with no conversation lease.
 
 The spec treats annotations as untrusted, so hints only choose the starting
-point. A policy you set on the tool (Ask or Deny on a read-only tool, Auto on
-a non-destructive one) replaces the default. The one exception is a tool that
-asks on every call: its menu offers only Ask and Deny, and a stored Auto is
-ignored. `ExternalMCPToolPolicy` deny lists still apply.
+point and never take a choice away. A policy you set on the tool (Auto, Ask,
+or Deny) replaces the default. Tools without hints are not treated as
+destructive: the spec's absent-means-destructive default would put almost
+every connector tool out of reach of Auto-Allow All Tool Calls.
+`ExternalMCPToolPolicy` deny lists still apply.
 
 ### Requests From a Connector (elicitation)
 

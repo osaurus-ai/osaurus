@@ -66,6 +66,18 @@ struct RemoteToolActivityTests {
         #expect(result.contains(ToolEnvelope.Kind.rejected.rawValue))
     }
 
+    @Test func startedThenFinished_recordsDuration_forTheWorkedForRow() {
+        let turn = makeTurn()
+        turn.noteRemoteToolStarted(callId: "c1", name: "workflow_test")
+        usleep(80_000)
+        turn.noteRemoteToolFinished(callId: "c1", name: "workflow_test", isError: false)
+        let duration = turn.toolCallDurations["c1"] ?? 0
+        #expect(duration >= 0.05)
+
+        turn.noteRemoteToolFinished(callId: "c2", name: "Read", isError: false)
+        #expect(turn.toolCallDurations["c2"] == nil, "no start seen, so no duration")
+    }
+
     @Test func doesNotPopulateToolCalls_soHistoryStaysClean() {
         let turn = makeTurn()
         turn.noteRemoteToolStarted(callId: "c1", name: "get_weather")

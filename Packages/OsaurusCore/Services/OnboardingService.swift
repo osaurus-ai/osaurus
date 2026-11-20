@@ -67,14 +67,35 @@ public final class OnboardingService: ObservableObject {
     /// 0.25.x writes 3; raising it re-shows onboarding to every existing user.
     nonisolated static let currentOnboardingVersion = 3
 
-    /// Whether onboarding should be shown (first launch or version mismatch)
+    /// What someone who updated from Classic chose on the upgrade screen.
+    nonisolated static let classicUpgradeChoiceKey = "classicUpgradeChoice"
+
+    public enum ClassicUpgradeChoice: String, Sendable {
+        /// Added the starter team and default workflows.
+        case installed
+        /// Kept their setup; nothing was created.
+        case kept
+    }
+
+    /// Whether onboarding should be shown: first launch, version mismatch,
+    /// or the one-time upgrade screen for an install that came from Classic.
     public var shouldShowOnboarding: Bool {
-        Self.shouldShowOnboarding(in: .standard)
+        Self.shouldShowOnboarding(in: .standard) || shouldOfferClassicUpgrade
     }
 
     /// Whether this is a completely fresh install (never completed onboarding)
     public var isFreshInstall: Bool {
         Self.isFreshInstall(in: .standard)
+    }
+
+    /// An install that finished onboarding on an earlier build (Classic)
+    /// and never got the starter team. The window opens once in its
+    /// upgrade mode.
+    public var shouldOfferClassicUpgrade: Bool {
+        Self.shouldOfferClassicUpgrade(
+            in: .standard,
+            hasTeammates: AgentManager.shared.agents.contains { $0.teammate != nil }
+        )
     }
 
     nonisolated static func shouldShowOnboarding(in defaults: UserDefaults) -> Bool {
@@ -85,6 +106,23 @@ public final class OnboardingService: ObservableObject {
 
     nonisolated static func isFreshInstall(in defaults: UserDefaults) -> Bool {
         !defaults.bool(forKey: hasCompletedOnboardingKey)
+    }
+
+    /// A teammate made on purpose (Create Starter Agents) or a recorded
+    /// choice means the person already has, or turned down, the team.
+    nonisolated static func shouldOfferClassicUpgrade(in defaults: UserDefaults, hasTeammates: Bool) -> Bool {
+        defaults.bool(forKey: hasCompletedOnboardingKey)
+            && !defaults.bool(forKey: TeamSeeder.seededDefaultsKey)
+            && !hasTeammates
+            && defaults.string(forKey: classicUpgradeChoiceKey) == nil
+    }
+
+    /// Records the upgrade screen's choice and marks onboarding current, so
+    /// neither the upgrade screen nor the full onboarding opens again.
+    public func recordClassicUpgradeChoice(_ choice: ClassicUpgradeChoice, defaults: UserDefaults = .standard) {
+        defaults.set(choice.rawValue, forKey: Self.classicUpgradeChoiceKey)
+        defaults.set(true, forKey: Self.hasCompletedOnboardingKey)
+        defaults.set(Self.currentOnboardingVersion, forKey: Self.onboardingVersionKey)
     }
 
     private init() {}

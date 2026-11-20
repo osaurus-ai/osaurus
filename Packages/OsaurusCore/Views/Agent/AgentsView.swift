@@ -2903,127 +2903,12 @@ struct AgentDetailView: View {
     }
 
     private var claudeCodeSection: some View {
-        SettingsSection(title: "Claude Code Options") {
-            VStack(alignment: .leading, spacing: theme.space.s14) {
-                labeledSegmented(L("Claude model")) {
-                    AssignedBaseSegmentedPicker(
-                        selection: Binding(
-                            get: { claudeCodeConfig.resolvedModel },
-                            set: { model in updateClaudeCodeConfig { $0.model = model } }
-                        ),
-                        options: ClaudeCodeModel.allCases.map { .init($0.rawValue, $0.rawValue.capitalized, verbatim: true) }
-                            + (ClaudeCodeModel(rawValue: claudeCodeConfig.resolvedModel) == nil
-                                ? [.init(claudeCodeConfig.resolvedModel, claudeCodeConfig.resolvedModel, verbatim: true)] : [])
-                    )
-                }
-                .settingsLandingAnchor("agents.claudeCode.model")
-
-                Picker(
-                    L("Claude effort"),
-                    selection: Binding(
-                        get: { claudeCodeConfig.resolvedEffort?.rawValue ?? "" },
-                        set: { effort in updateClaudeCodeConfig { $0.effort = effort.isEmpty ? nil : effort } }
-                    )
-                ) {
-                    Text("Default", bundle: .module).tag("")
-                    ForEach(ClaudeCodeEffort.allCases, id: \.rawValue) { effort in
-                        Text(verbatim: effort.displayName).tag(effort.rawValue)
-                    }
-                }
-                .settingsLandingAnchor("agents.claudeCode.effort")
-
-                labeledSegmented(L("Execution mode")) {
-                    AssignedBaseSegmentedPicker(
-                        selection: Binding(
-                            get: { claudeCodeConfig.mode },
-                            set: { mode in updateClaudeCodeConfig { $0.mode = mode } }
-                        ),
-                        options: [.init(ClaudeCodeMode.agent, "Agent"), .init(ClaudeCodeMode.textOnly, "Text only")]
-                    )
-                }
-
-                Text(
-                    claudeCodeConfig.mode == .agent
-                        ? "Claude Code runs its own agent loop under your macOS account. Read, Grep, and Glob are allowed by default; every wider capability is opt-in."
-                        : "Claude Code runs as a text generator with every built-in and MCP tool disabled.",
-                    bundle: .module
-                )
-                .textStyle(.footnote)
-                .foregroundColor(theme.text.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-                Toggle(
-                    isOn: Binding(
-                        get: { claudeCodeConfig.allowWrites },
-                        set: { enabled in updateClaudeCodeConfig { $0.allowWrites = enabled } }
-                    )
-                ) {
-                    claudeCodePermissionLabel(
-                        title: "Allow file changes",
-                        detail: "Auto-approve Edit, Write, and NotebookEdit inside the chat folder, or the chat's private scratch folder when none is set."
-                    )
-                }
-                .settingsCheckbox()
-                .disabled(claudeCodeConfig.mode != .agent)
-
-                Toggle(
-                    isOn: Binding(
-                        get: { claudeCodeConfig.allowShell },
-                        set: { enabled in updateClaudeCodeConfig { $0.allowShell = enabled } }
-                    )
-                ) {
-                    claudeCodePermissionLabel(
-                        title: "Allow shell commands",
-                        detail: "Auto-approve Bash and Monitor under your macOS account. Osaurus can't confine shell commands to the chat folder, and this is not the Osaurus sandbox. When off, Claude isn't offered any tool that runs commands."
-                    )
-                }
-                .settingsCheckbox()
-                .disabled(claudeCodeConfig.mode != .agent)
-
-                Toggle(
-                    isOn: Binding(
-                        get: { claudeCodeConfig.allowOsaurusTools },
-                        set: { enabled in
-                            updateClaudeCodeConfig {
-                                $0.allowOsaurusTools = enabled
-                                if !enabled { $0.allowOsaurusConfigWrites = false }
-                            }
-                        }
-                    )
-                ) {
-                    claudeCodePermissionLabel(
-                        title: "Allow Osaurus read tools",
-                        detail: "Attach osaurus_inspect and osaurus_help over an MCP bridge scoped to this agent. Needs the Osaurus server running."
-                    )
-                }
-                .settingsCheckbox()
-                .disabled(claudeCodeConfig.mode != .agent)
-
-                Toggle(
-                    isOn: Binding(
-                        get: { claudeCodeConfig.allowOsaurusConfigWrites && agent.id == Agent.defaultId },
-                        set: { enabled in
-                            updateClaudeCodeConfig { $0.allowOsaurusConfigWrites = enabled }
-                        }
-                    )
-                ) {
-                    claudeCodePermissionLabel(
-                        title: "Allow Osaurus configuration changes",
-                        detail: agent.id == Agent.defaultId
-                            ? "Also attach osaurus_config, which changes agents, providers, models, plugins, and MCP servers."
-                            : "Only the Default agent can change Osaurus configuration."
-                    )
-                }
-                .settingsCheckbox()
-                .disabled(
-                    claudeCodeConfig.mode != .agent
-                        || !claudeCodeConfig.allowOsaurusTools
-                        || agent.id != Agent.defaultId
-                )
-            }
-            .toggleStyle(.switch)
-            .settingsLandingAnchor("agents.claudeCode")
-        }
+        ClaudeCodeOptionsSection(
+            agentId: agent.id,
+            config: $claudeCodeConfig,
+            anchorPrefix: "agents.claudeCode",
+            onSave: showSaveIndicator
+        )
     }
 
     // MARK: - Runtime
@@ -3107,43 +2992,6 @@ struct AgentDetailView: View {
             .font(SettingsFont.footnote)
             .foregroundColor(isWarning ? theme.status.warning.foreground : theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func claudeCodePermissionLabel(
-        title: LocalizedStringKey,
-        detail: LocalizedStringKey
-    ) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.s2) {
-            Text(title, bundle: .module)
-                .font(SettingsFont.compactLabel)
-                .foregroundColor(theme.text.primary)
-            Text(detail, bundle: .module)
-                .font(SettingsFont.footnote)
-                .foregroundColor(theme.text.tertiary)
-        }
-    }
-
-    /// A segmented control with its label in front, where a labeled native
-    /// `Picker` used to draw one. `title` is already localized.
-    private func labeledSegmented<Control: View>(_ title: String, @ViewBuilder control: () -> Control) -> some View {
-        HStack(spacing: theme.settingsInlineGap) {
-            Text(verbatim: title)
-                .font(SettingsFont.rowTitle)
-                .foregroundColor(theme.text.primary)
-            control()
-                .fixedSize()
-                .accessibilityLabel(Text(verbatim: title))
-        }
-    }
-
-    private func updateClaudeCodeConfig(
-        _ mutate: (inout ClaudeCodeAgentConfig) -> Void
-    ) {
-        var next = claudeCodeConfig
-        mutate(&next)
-        claudeCodeConfig = next
-        agentManager.updateClaudeCodeConfig(next, for: agent.id)
-        showSaveIndicator()
     }
 
     /// Per-agent follow-up suggestions: an opt-out for this agent's chats and
@@ -6948,6 +6796,7 @@ private struct AgentDetailVoiceSection: View {
     @Binding var autoSpeak: Bool
     @Binding var ttsVoice: String
     let onSave: () -> Void
+    @State private var ttsConfig = TTSConfigurationStore.load()
 
     /// Downloaded is enough: the model loads on first speak, not here.
     private var voiceAvailable: Bool {
@@ -6965,7 +6814,7 @@ private struct AgentDetailVoiceSection: View {
                         Text(
                             voiceAvailable
                                 ? "Read every reply aloud automatically after streaming completes. For on-request only, use the Speak Tool feature instead."
-                                : "Download the PocketTTS model in Voice settings to enable.",
+                                : "Download the voice model in Voice settings to enable.",
                             bundle: .module
                         )
                         .textStyle(.footnote)
@@ -7007,7 +6856,7 @@ private struct AgentDetailVoiceSection: View {
                         Picker("", selection: $ttsVoice) {
                             Text("Default (global)", bundle: .module).tag("")
                             ForEach(agentVoiceOptions, id: \.self) { voice in
-                                Text(PocketTTSVoiceCatalog.displayName(for: voice))
+                                Text(displayName(for: voice))
                                     .tag(voice)
                             }
                         }
@@ -7019,20 +6868,57 @@ private struct AgentDetailVoiceSection: View {
                     }
                     .padding(theme.space.s8)
                     .settingsChrome(.control)
+
+                    if let unavailableVoiceHint {
+                        Text(unavailableVoiceHint)
+                            .textStyle(.footnote)
+                            .foregroundColor(theme.text.tertiary)
+                    }
                 }
             }
         }
         .onAppear { ttsService.probeModelFiles() }
+        .onReceive(NotificationCenter.default.publisher(for: .ttsConfigurationChanged)) { _ in
+            ttsConfig = TTSConfigurationStore.load()
+        }
     }
 
-    /// Built-in catalog plus any stored custom voice (preserves legacy values).
+    /// Voices of the engine that will speak. Kokoro's depend on its language
+    /// and runtime; the remote engine keeps the PocketTTS names it always offered.
+    private var engineVoices: [String] {
+        switch ttsConfig.provider {
+        case .kokoro:
+            return KokoroVoiceCatalog.voices(
+                language: ttsConfig.kokoroLanguage, runtime: KokoroVoiceCatalog.effectiveRuntime(for: ttsConfig))
+        case .pocketTTS, .openAICompatible:
+            return PocketTTSVoiceCatalog.availableVoices
+        }
+    }
+
+    private func displayName(for voice: String) -> String {
+        ttsConfig.provider == .kokoro
+            ? KokoroVoiceCatalog.displayName(for: voice)
+            : PocketTTSVoiceCatalog.displayName(for: voice)
+    }
+
+    /// Engine catalog plus any stored voice it lacks (preserves the choice
+    /// for when the user switches back to the engine that has it).
     private var agentVoiceOptions: [String] {
-        let builtIn = PocketTTSVoiceCatalog.availableVoices
+        let builtIn = engineVoices
         let current = ttsVoice.trimmingCharacters(in: .whitespacesAndNewlines)
         if !current.isEmpty && !builtIn.contains(current) {
             return [current] + builtIn
         }
         return builtIn
+    }
+
+    /// An on-device engine can't speak a voice outside its catalog and uses
+    /// the global voice instead; say so rather than look like it applies.
+    private var unavailableVoiceHint: String? {
+        let current = ttsVoice.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !current.isEmpty, ttsConfig.provider != .openAICompatible, !engineVoices.contains(current)
+        else { return nil }
+        return L("This voice isn't available on the current engine, so the global voice is used.")
     }
 }
 

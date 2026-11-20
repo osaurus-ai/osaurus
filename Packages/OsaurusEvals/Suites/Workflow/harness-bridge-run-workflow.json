@@ -1,0 +1,86 @@
+{
+  "id": "workflow.harness-bridge-run-workflow",
+  "domain": "workflow",
+  "label": "workflow \u2022 a Claude Code chat's run_workflow runs attended through /mcp/call",
+  "query": "a Claude Code chat's run_workflow runs attended through /mcp/call",
+  "notes": "No model. The Default agent's harness token, for a chat a window shows, calls `run_workflow` on the in-process server's `/mcp/call` with an `X-Osaurus-Tool-Call-Id`, as `osaurus mcp` does for Claude Code. The run belongs to that chat and tool-use id, runs attended (approvals would ask in the chat), and the call is recorded for its tool card. State steps only, so no helper or model is needed.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "via": "harness_bridge",
+      "definition": {
+        "edges": [
+          {
+            "from": "remember",
+            "to": "recall"
+          }
+        ],
+        "examples": [],
+        "input_schema": {
+          "properties": {
+            "note": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "note"
+          ],
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "remember",
+            "kind": "state",
+            "name": "Remember Note",
+            "state": {
+              "action": "set",
+              "key": "note",
+              "value": "{{input.note}}"
+            },
+            "output_schema": {}
+          },
+          {
+            "id": "recall",
+            "kind": "state",
+            "name": "Recall Note",
+            "state": {
+              "action": "get",
+              "key": "note"
+            },
+            "output_schema": {}
+          }
+        ],
+        "output": {
+          "note": "{{nodes.recall.output.value}}"
+        },
+        "output_schema": {
+          "properties": {
+            "note": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "note"
+          ],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {
+        "note": "delegated from Claude Code"
+      },
+      "status": "completed",
+      "nodeStatuses": {
+        "remember": "done",
+        "recall": "done"
+      },
+      "outputValues": {
+        "note": [
+          "delegated from Claude Code"
+        ]
+      }
+    }
+  }
+}

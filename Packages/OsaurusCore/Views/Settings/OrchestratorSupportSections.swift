@@ -23,6 +23,10 @@ import SwiftUI
 // MARK: - Model readiness
 
 struct OrchestratorModelReadinessRow: View {
+    /// The page's copy, so the verdict follows the Claude Code switches
+    /// below it as they change.
+    let claudeCodeConfig: ClaudeCodeAgentConfig
+
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var pickerCache = ModelPickerItemCache.shared
@@ -36,6 +40,61 @@ struct OrchestratorModelReadinessRow: View {
         let contextLength: Int?
         let tools: Tools
         let hint: String?
+        /// Replaces the context line when a harness runtime picks the model.
+        var runtimeNote: String? = nil
+
+        static func make(harness: HarnessSelection, claudeCode: ClaudeCodeAgentConfig) -> Verdict {
+            guard case .resolved(let runtime) = harness else {
+                return Verdict(
+                    modelName: L("Missing runtime"),
+                    contextLength: nil,
+                    tools: .off,
+                    hint: L("The Orchestrator's runtime was removed. Pick a model in the chat model picker so it can run."),
+                    runtimeNote: L("Runs on a runtime that no longer exists")
+                )
+            }
+            guard runtime.kind == .claudeCode else {
+                return Verdict(
+                    modelName: runtime.displayName,
+                    contextLength: nil,
+                    tools: .limited,
+                    hint: L("This runtime runs its own model and tools. Osaurus tools and delegation need Claude Code or a built-in model."),
+                    runtimeNote: L("Model and context set by the runtime")
+                )
+            }
+            let model = ClaudeCodeModel(rawValue: claudeCode.resolvedModel)?.rawValue.capitalized
+                ?? claudeCode.resolvedModel
+            let name = "\(runtime.displayName) · \(model)"
+            let note = L("Model and context set by Claude Code")
+            if claudeCode.mode != .agent {
+                return Verdict(
+                    modelName: name,
+                    contextLength: nil,
+                    tools: .off,
+                    hint: L("Text only mode gives Claude Code no tools, so it can't configure Osaurus or delegate. Set Execution mode to Agent below."),
+                    runtimeNote: note
+                )
+            }
+            if !claudeCode.osaurusTools {
+                return Verdict(
+                    modelName: name,
+                    contextLength: nil,
+                    tools: .limited,
+                    hint: L("Claude Code has only its own tools, so it can't delegate to your agents or use Osaurus tools. Turn on Use Osaurus Tools below."),
+                    runtimeNote: note
+                )
+            }
+            if !claudeCode.allowOsaurusConfigWrites {
+                return Verdict(
+                    modelName: name,
+                    contextLength: nil,
+                    tools: .limited,
+                    hint: L("Claude Code can use Osaurus tools and delegate, but can't change Osaurus settings. Turn on Allow Osaurus configuration changes below to let it."),
+                    runtimeNote: note
+                )
+            }
+            return Verdict(modelName: name, contextLength: nil, tools: .ok, hint: nil, runtimeNote: note)
+        }
 
         static func make(modelId: String?) -> Verdict {
             guard let modelId, !modelId.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -72,7 +131,10 @@ struct OrchestratorModelReadinessRow: View {
     }
 
     private var verdict: Verdict {
-        Verdict.make(modelId: agentManager.effectiveModel(for: Agent.defaultId))
+        if let harness = agentManager.effectiveHarness(for: Agent.defaultId) {
+            return Verdict.make(harness: harness, claudeCode: claudeCodeConfig)
+        }
+        return Verdict.make(modelId: agentManager.effectiveModel(for: Agent.defaultId))
     }
 
     var body: some View {
@@ -88,7 +150,9 @@ struct OrchestratorModelReadinessRow: View {
                         .truncationMode(.middle)
                         .accessibilityIdentifier("orchestrator.readiness.model")
                     Text(verbatim: "·")
-                    if let ctx = verdict.contextLength {
+                    if let note = verdict.runtimeNote {
+                        Text(verbatim: note)
+                    } else if let ctx = verdict.contextLength {
                         Text(verbatim: L("Context: \(Self.formatTokens(ctx))"))
                     } else {
                         Text("Context: unknown", bundle: .module)

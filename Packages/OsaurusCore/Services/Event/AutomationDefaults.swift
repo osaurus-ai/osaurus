@@ -69,6 +69,12 @@ enum AutomationDefaults {
             createdAt: now, updatedAt: now)
     }
 
+    /// Whether a one-click automation of this kind would start on.
+    static func startsOn(_ workflow: InstalledWorkflow, kind: EventSourceKind) -> Bool {
+        let schema = workflow.definition.inputSchema
+        return missingInputs(schema: schema, mapping: inputMapping(schema: schema, kind: kind)).isEmpty
+    }
+
     static func event(for workflow: InstalledWorkflow, source: EventSource) -> OsaurusEvent {
         event(
             workflowID: workflow.id, workflowName: workflow.name,

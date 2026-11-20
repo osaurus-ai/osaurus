@@ -32,6 +32,9 @@ struct HarnessGrant: Sendable, Equatable {
         {
             return false
         }
+        if HarnessGrantStore.architectOnlyToolNames.contains(name) {
+            return allowedToolNames?.contains(name) == true
+        }
         if name == HarnessGrantStore.configWriteToolName || name == "osaurus_import", !allowsConfigWrites {
             return false
         }
@@ -66,15 +69,21 @@ final class HarnessGrantStore: @unchecked Sendable {
 
     static let configWriteToolName = "osaurus_config"
 
-    /// Never reachable with a harness token. `spawn_agent` would let a harness
-    /// start more agent workers (forbidden by AGENTS.md); the agent-loop tools
-    /// only mean something inside Osaurus's own loop; the folder picker would
-    /// restart the harness inside its own turn.
+    /// Never reachable with a harness token. `spawn_agent` starts a worker on
+    /// the caller's built-in model, which a harness agent does not have (the
+    /// Default agent delegates with `run_workflow` instead); the agent-loop
+    /// tools only mean something inside Osaurus's own loop; the folder picker
+    /// would restart the harness inside its own turn.
     static let deniedToolNames: Set<String> = [
         SubagentCapabilityRegistry.spawnAgentToolName,
-        "todo", "complete", "clarify", "speak",
+        "todo", "complete", "speak",
         PromptWorkingFolderTool.toolName,
     ]
+
+    /// Only a token that lists them by name (the Architect's) may call
+    /// these. `clarify` asks on the open chat's question card
+    /// (`HarnessClarifyBridge`); other agents ask in a plain reply.
+    static let architectOnlyToolNames: Set<String> = [HarnessClarifyBridge.toolName]
 
     /// Tools that run their own Osaurus sub-loop on the agent's built-in
     /// model. A harness agent has no such model, so these are refused with
@@ -84,11 +93,13 @@ final class HarnessGrantStore: @unchecked Sendable {
         AppleScriptTool.toolName, MacQueryTool.toolName,
     ]
 
-    /// The Architect's fixed surface on any harness: its draft tools and the
-    /// read-only `osaurus_inspect`. Never widened by the runtime's options or
-    /// the agent's tool policy, exactly as on the built-in loop
-    /// (`ToolRegistry.architectAllowedToolNames`, less `clarify`).
-    static let architectToolNames: Set<String> = ToolRegistry.architectToolNames.union(["osaurus_inspect"])
+    /// The Architect's fixed surface on any harness: its draft tools, the
+    /// read-only `osaurus_inspect`, and `clarify`. Never widened by the
+    /// runtime's options or the agent's tool policy, exactly as on the
+    /// built-in loop (`ToolRegistry.architectAllowedToolNames`).
+    static let architectToolNames: Set<String> = ToolRegistry.architectToolNames.union([
+        "osaurus_inspect", HarnessClarifyBridge.toolName,
+    ])
 
     /// Normalized paths (the router strips `/v1` and `/api`) a token may call.
     /// Everything else — `/admin/*`, `/agents/*`, pairing, credits — is refused.

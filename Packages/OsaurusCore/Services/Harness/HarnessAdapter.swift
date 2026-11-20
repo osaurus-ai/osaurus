@@ -22,7 +22,8 @@ public enum HarnessEvent: Sendable, Equatable {
     case notice(String, isError: Bool)
     /// The harness is blocked on a question for the user.
     case dialog(HarnessDialogRequest)
-    case stats(outputTokens: Int, tokensPerSecond: Double, stopReason: String?)
+    /// `promptTokens` is nil when the harness doesn't report it.
+    case stats(outputTokens: Int, tokensPerSecond: Double, stopReason: String?, promptTokens: Int? = nil)
     case turnCompleted
     case turnFailed(HarnessError)
 }
@@ -103,6 +104,12 @@ struct HarnessLaunchContext: Sendable {
     var sessionMode: SessionMode = .automatic
     /// Optional flags the installed Claude Code accepts.
     var claudeCodeFeatures: ClaudeCodeCLIFeatures = .none
+    /// The agent's Osaurus tools for this launch (`HarnessToolSurface`).
+    /// Unused by the Architect, whose surface is fixed.
+    var osaurusToolNames: Set<String> = []
+    /// The Default agent's teammate routing note, appended once its Osaurus
+    /// tools attach.
+    var teammateRoutingNote: String?
 
     struct Fingerprint: Hashable {
         let runtime: HarnessRuntime
@@ -111,6 +118,8 @@ struct HarnessLaunchContext: Sendable {
         let systemPrompt: String?
         let claudeCode: ClaudeCodeAgentConfig
         let serverReachable: Bool
+        let osaurusToolNames: Set<String>
+        let teammateRoutingNote: String?
     }
 
     /// The Architect keeps its fixed persona and tool surface on every
@@ -124,7 +133,9 @@ struct HarnessLaunchContext: Sendable {
             workingDirectory: workingDirectory.standardizedFileURL.path,
             systemPrompt: systemPrompt,
             claudeCode: claudeCode,
-            serverReachable: serverReachable
+            serverReachable: serverReachable,
+            osaurusToolNames: osaurusToolNames,
+            teammateRoutingNote: teammateRoutingNote
         )
     }
 }

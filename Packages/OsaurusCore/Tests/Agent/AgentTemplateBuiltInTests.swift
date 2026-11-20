@@ -77,7 +77,7 @@ struct AgentTemplateBuiltInTests {
     @Test
     func workflowStarters_haveTitledOrderedFieldsAndAValidExample() throws {
         let starters = TemplateStore.shared.builtIn.filter { $0.kind == .workflow }
-        #expect(Set(starters.map(\.name)) == ["Social Post Writer", "Meeting Action Items", "Email Reply"])
+        #expect(Set(starters.map(\.name)) == ["Social Post", "Meeting Recap", "Email Reply"])
         for template in starters {
             let def = try #require(template.workflow)
             #expect(WorkflowValidator.validate(def, allowPlaceholders: false).isEmpty, "\(template.name)")

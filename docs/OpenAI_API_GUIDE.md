@@ -307,7 +307,7 @@ For visibility, every response carries a `prefix_hash` field — a stable hash o
 { "prefix_hash": "a1b2c3d4e5f67890..." }
 ```
 
-`prefix_hash` is informational only — passing it back to the server has no effect. Keep `session_id` stable per conversation so chat history and session tool bookkeeping group correctly; cache reuse itself does not depend on it.
+`prefix_hash` is informational only — passing it back to the server has no effect. Keep `session_id` stable per conversation so session tool bookkeeping groups correctly; cache reuse itself does not depend on it.
 
 ### Chat Templates
 
@@ -581,7 +581,7 @@ Use these surfaces when you want Osaurus-composed agent context:
 - `POST /agents/{id}/run`: runs a server-side autonomous agent loop with that agent's context and tool execution.
 - Plugin host inference APIs: carry the plugin's active agent context by design.
 
-`X-Osaurus-Agent-Id` on `/chat/completions` may still be used to associate persisted HTTP chat history with an agent/session, but it is not a prompt/context injection switch.
+`/chat/completions` calls are not saved as chats. Insights records each one (request, response, model, tokens). `X-Osaurus-Agent-Id` is only checked against an agent-scoped key's agent; it is not a prompt/context injection switch.
 
 Strict pass-through example:
 

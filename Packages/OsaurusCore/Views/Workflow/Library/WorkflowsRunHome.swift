@@ -3,9 +3,10 @@
 //  osaurus
 //
 //  The Workflows window's home: the title with New Workflow (everything
-//  else in ⋯), what is running now, from here, from an agent, or from an
-//  automation, then what needs you and your workflows. Every workflow,
-//  draft and workspace lists in the sidebar, not here.
+//  else in ⋯), Get Started while it has steps left, what is running now,
+//  from here, from an agent, or from an automation, then what needs you,
+//  your workflows, and the Store. Drafts and workspaces list in the
+//  sidebar, not here.
 //
 
 import SwiftUI
@@ -14,16 +15,20 @@ extension WorkflowsView {
     var workflowsHome: some View {
         VStack(alignment: .leading, spacing: theme.space.s32) {
             homeHeader
+            WorkflowsGetStarted(windowState: windowState, overview: windowState.workflowsOverview, onRun: runOrSetUp)
             WorkflowsRunningNow(onOpen: openRun)
             WorkflowsHomeSections(
                 windowState: windowState, overview: windowState.workflowsOverview,
-                onRun: { workflow in
-                    if workflow.needsSetup { setupSubject = .setup(workflow) } else { play(workflow) }
-                },
+                onRun: runOrSetUp,
                 onSetUp: { setupSubject = .setup($0) },
                 onAllActivity: { windowState.showWorkflowsActivity(.init(filter: .ranOnTheirOwn)) })
+            WorkflowsStoreCard()
             PublishedByYouLine(kind: .workflow, anchor: "workflows.publishedByYou")
         }
+    }
+
+    private func runOrSetUp(_ workflow: InstalledWorkflow) {
+        if workflow.needsSetup { setupSubject = .setup(workflow) } else { play(workflow) }
     }
 
     /// The title, New Workflow, and ⋯ for the rest; one line under it
@@ -32,7 +37,7 @@ extension WorkflowsView {
         VStack(alignment: .leading, spacing: theme.space.s8) {
             homeTitle(L("Workflows")) {
                 SettingsButton(
-                    .primary, "New Workflow", icon: "plus", size: .extraSmall,
+                    .primary, "New Workflow", icon: "plus",
                     help: "Describe a task and Osaurus builds it (⌘N)"
                 ) {
                     withAnimation(theme.motion.quick) { windowState.showNewWorkflow() }
@@ -56,7 +61,7 @@ extension WorkflowsView {
                 Label(L("All Automations"), systemImage: "bolt")
             }
             Divider()
-            Button { NSWorkspace.shared.open(WorkflowsSidebar.storeURL) } label: {
+            Button { WorkflowsSidebar.openStore() } label: {
                 Label(L("Browse the Store"), systemImage: "storefront")
             }
         } label: {
@@ -68,6 +73,36 @@ extension WorkflowsView {
         .background(Color.clear.settingsLandingAnchor("workflows.importExport"))
         .background(Color.clear.settingsLandingAnchor("workflows.connections"))
         .background(Color.clear.settingsLandingAnchor("workflows.automations"))
+    }
+}
+
+// MARK: - Store
+
+/// The foot of Home: workflows other people made, on store.osaurus.ai.
+struct WorkflowsStoreCard: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(alignment: .center, spacing: theme.space.s12) {
+            LibraryIcon(symbol: "storefront", tint: theme.text.secondary, size: theme.space.s32)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                Text("Find more in the Osaurus Store", bundle: .module)
+                    .textStyle(.body, weight: 500)
+                    .foregroundStyle(theme.text.primary)
+                Text("Workflows other people made for mail, meetings, research and more, ready to add.", bundle: .module)
+                    .font(SettingsFont.footnote)
+                    .foregroundStyle(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            SettingsButton(.secondary, "Browse the Store", icon: "arrow.up.right", size: .small) {
+                WorkflowsSidebar.openStore()
+            }
+        }
+        .padding(theme.space.s16)
+        .settingsChrome(.card)
+        .accessibilityElement(children: .contain)
+        .settingsLandingAnchor("workflows.storeCard")
     }
 }
 
