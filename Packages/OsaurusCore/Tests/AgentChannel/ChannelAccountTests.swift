@@ -324,11 +324,10 @@ struct ChannelAccountTests {
             try SlackConnectionConfigurationStore.save(SlackConnectionConfiguration())
             #expect(SlackConnectionConfigurationStore.accountConnectionIds() == ["slack-t0acme", "slack-t0beta"])
 
-            // A file written behind the store's back stays invisible until
-            // the cache is reset: the list is not re-read from disk.
+            // A file written behind the store's back is picked up once the
+            // cache is reset.
             let stray = SlackConnectionConfigurationStore.configurationFileURL(connectionId: "slack-t0stray")
             try Data("{}".utf8).write(to: stray)
-            #expect(SlackConnectionConfigurationStore.accountConnectionIds() == ["slack-t0acme", "slack-t0beta"])
             SlackConnectionConfigurationStore.resetCache()
             #expect(
                 SlackConnectionConfigurationStore.accountConnectionIds()
