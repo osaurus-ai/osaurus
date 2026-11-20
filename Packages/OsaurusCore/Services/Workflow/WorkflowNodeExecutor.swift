@@ -218,6 +218,8 @@ public enum WorkflowNodeError: Error, LocalizedError, Equatable {
             }
         }
         if let recorded = error as? RecordedNodeFailure { return isRetryable(recorded.underlying) }
+        if let classified = error as? ClassifiedNodeFailure { return classified.failure.retryable }
+        if let route = WorkflowFailure.routeFailure(error) { return route.retryable }
         if let subagent = error as? SubagentError { return subagent.retryable }
         if error is WorkflowSettingBlock || error is MediaModelResolver.Failure { return false }
         if case StructuredOutputError.unsupportedModel? = error as? StructuredOutputError { return false }

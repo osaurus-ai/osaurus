@@ -1576,15 +1576,21 @@ public enum SubagentSession {
 
     /// Map a thrown error to the canonical failure envelope. `SubagentError`
     /// carries its own kind/retryable; anything else falls back to
-    /// `ToolEnvelope.fromError`.
+    /// `ToolEnvelope.fromError`. Inside a workflow run the envelope also
+    /// carries the error's classification (`cause_*`), which the step
+    /// records in place of the envelope's generic kind.
     static func envelope(for error: Error, tool: String) -> String {
         if let se = error as? SubagentError { return se.envelope(tool: tool) }
+        let envelope: String
         if let metadata = ChatRunOutcome.envelopeMetadata(for: error) {
-            return ToolEnvelope.failure(
+            envelope = ToolEnvelope.failure(
                 kind: .executionError, message: WorkflowFailure.message(error), tool: tool,
                 retryable: WorkflowFailure.classify(error).retryable, metadata: metadata)
+        } else {
+            envelope = ToolEnvelope.fromError(error, tool: tool)
         }
-        return ToolEnvelope.fromError(error, tool: tool)
+        guard ChatExecutionContext.currentWorkflowRunId != nil else { return envelope }
+        return WorkflowFailure.attachingCause(of: error, to: envelope)
     }
 
     /// Canonical local identity for the admission gate. This path runs for
