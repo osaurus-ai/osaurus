@@ -212,16 +212,36 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
 
 enum SlackConnectionConfigurationStore {
     nonisolated(unsafe) static var overrideDirectory: URL? {
-        didSet { cache.reset() }
+        didSet {
+            cache.reset()
+            accountIdsCache.reset()
+        }
     }
 
     /// In-memory copy of each workspace's last loaded/saved configuration.
     /// See `ConnectionConfigurationCache` (Sentry APPLE-MACOS-3C5).
     private static let cache = ConnectionConfigurationCache<SlackConnectionConfiguration>()
 
+    /// In-memory list of the extra workspaces' connection ids, keyed by the
+    /// settings directory. Listing the directory on every MainActor prompt
+    /// preview recompute hung the main thread for seconds (Sentry
+    /// APPLE-MACOS-40H). `save` / `delete` are the only writers of these
+    /// files, so they keep the list coherent.
+    private static let accountIdsCache = ConnectionConfigurationCache<[String]>()
+
     /// Drop the in-memory copies so the next `load()` reads from disk.
     static func resetCache() {
         cache.reset()
+        accountIdsCache.reset()
+    }
+
+    private static func settingsDirectory() -> URL {
+        overrideDirectory ?? OsaurusPaths.config()
+    }
+
+    private static func isAccountConnectionId(_ connectionId: String) -> Bool {
+        connectionId != AgentChannelConnection.nativeSlackConnectionId
+            && connectionId.hasPrefix(ChannelAccounts.extraPrefix(.slack))
     }
 
     /// Each workspace has its own file: `slack.json` for the primary one,
@@ -259,6 +279,11 @@ enum SlackConnectionConfigurationStore {
         let data = try encoder.encode(normalized)
         try LegacyInboundDispatchCarryOver.platformFile(data, replacing: url).write(to: url, options: [.atomic])
         cache.store(normalized, for: url)
+        if isAccountConnectionId(connectionId) {
+            accountIdsCache.update(for: settingsDirectory()) { ids in
+                ids.contains(connectionId) ? ids : (ids + [connectionId]).sorted()
+            }
+        }
         NotificationCenter.default.post(name: .channelAccountSettingsChanged, object: connectionId)
     }
 
@@ -267,12 +292,21 @@ enum SlackConnectionConfigurationStore {
         let url = configurationFileURL(connectionId: connectionId)
         try? FileManager.default.removeItem(at: url)
         cache.remove(for: url)
+        accountIdsCache.update(for: settingsDirectory()) { ids in
+            ids.filter { $0 != connectionId }
+        }
         NotificationCenter.default.post(name: .channelAccountSettingsChanged, object: connectionId)
     }
 
     /// The extra workspaces' connection ids, from their settings files.
+    /// Served from memory after the first listing of a directory; see
+    /// `accountIdsCache`.
     static func accountConnectionIds() -> [String] {
-        let directory = overrideDirectory ?? OsaurusPaths.config()
+        let directory = settingsDirectory()
+        return accountIdsCache.value(for: directory) { listAccountConnectionIds(in: directory) }
+    }
+
+    private static func listAccountConnectionIds(in directory: URL) -> [String] {
         let prefix = ChannelAccounts.extraPrefix(.slack)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         return names.filter { $0.hasPrefix(prefix) && $0.hasSuffix(".json") }
@@ -283,7 +317,7 @@ enum SlackConnectionConfigurationStore {
     static func configurationFileURL(
         connectionId: String = AgentChannelConnection.nativeSlackConnectionId
     ) -> URL {
-        (overrideDirectory ?? OsaurusPaths.config())
+        settingsDirectory()
             .appendingPathComponent("\(connectionId).json", isDirectory: false)
     }
 }

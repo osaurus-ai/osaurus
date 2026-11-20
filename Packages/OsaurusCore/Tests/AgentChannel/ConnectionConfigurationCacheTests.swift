@@ -45,6 +45,25 @@ struct ConnectionConfigurationCacheTests {
         #expect(cache.value(for: url) { 9 } == 5)
     }
 
+    /// A write that lands while a load is reading disk wins: the load's
+    /// (possibly pre-write) value is not cached (Sentry APPLE-MACOS-40H).
+    @Test func aLoadRacingAWriteDoesNotCacheItsRead() {
+        let cache = ConnectionConfigurationCache<[String]>()
+        let url = URL(fileURLWithPath: "/tmp/config", isDirectory: true)
+
+        let raced = cache.value(for: url) {
+            // Not cached yet, so this update is a no-op on the value...
+            cache.update(for: url) { $0 + ["slack-t0acme"] }
+            return []
+        }
+        #expect(raced.isEmpty)
+        // ...but the stale read was not cached: the next read reloads.
+        #expect(cache.value(for: url) { ["slack-t0acme"] } == ["slack-t0acme"])
+
+        cache.update(for: url) { $0 + ["slack-t0beta"] }
+        #expect(cache.value(for: url) { [] } == ["slack-t0acme", "slack-t0beta"])
+    }
+
     @Test func iMessageStoreServesSavedValueAndHonorsOverrideSwitch() async throws {
         try await AgentChannelConfigurationTestLock.shared.run {
             let previous = IMessageConnectionConfigurationStore.overrideDirectory
