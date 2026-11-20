@@ -69,7 +69,7 @@ struct ChatBatchBar: View {
     enum Placement { case sidebar, page }
 
     let placement: Placement
-    let count: Int
+    let selectedCount: Int
     var allPinned = false
     var allArchived = false
     /// The page offers "Select all N" while some of the chats it shows are
@@ -94,7 +94,7 @@ struct ChatBatchBar: View {
                 SettingsButton(.tertiary, L("Select all \(selectAllCount)"), size: .compact, verbatim: true, action: onSelectAll)
             }
             Spacer(minLength: theme.space.s8)
-            if count > 0 {
+            if selectedCount > 0 {
                 switch placement {
                 case .sidebar: sidebarActions
                 case .page: pageActions
@@ -120,10 +120,10 @@ struct ChatBatchBar: View {
     }
 
     private var label: some View {
-        Text(verbatim: count == 0 ? L("Tick chats to select") : L("\(count) selected"))
+        Text(verbatim: selectedCount == 0 ? L("Tick chats to select") : L("\(selectedCount) selected"))
             .textStyle(.label, weight: 600)
             .monospacedDigit()
-            .foregroundStyle(count == 0 ? theme.text.secondary : theme.text.primary)
+            .foregroundStyle(selectedCount == 0 ? theme.text.secondary : theme.text.primary)
             .lineLimit(1)
             .fixedSize()
     }

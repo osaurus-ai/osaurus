@@ -300,7 +300,7 @@ struct AllChatsPage: View {
         let selection = windowState.chatSelection
         return ChatBatchBar(
             placement: .page,
-            count: ids.count,
+            selectedCount: ids.count,
             allPinned: allPinned,
             allArchived: allArchived,
             selectAllCount: everyMatchSelected || model.matchingIds.isEmpty ? nil : model.matchingIds.count,

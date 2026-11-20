@@ -3217,7 +3217,7 @@ final class ChatWindowState: ObservableObject {
     /// Chats deleted elsewhere (another window, sync) leave the selection
     /// quietly.
     private func pruneChatSelection() {
-        guard chatSelection.count > 0 else { return }
+        guard !chatSelection.selectedIds.isEmpty else { return }
         chatSelection.prune(existing: Set(ChatSessionsManager.shared.sessions.map(\.id)))
     }
 

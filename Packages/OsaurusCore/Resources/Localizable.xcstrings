@@ -1,6 +1,69 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ and its memory are removed from this Mac. This cannot be undone." : {
+
+    },
+    "%@, its memory and its %lld chats are removed from this Mac. This cannot be undone." : {
+
+    },
+    "%@, its memory and its 1 chat are removed from this Mac. This cannot be undone." : {
+
+    },
+    "%lld archived, %lld skipped" : {
+
+    },
+    "%lld chats archived" : {
+
+    },
+    "%lld chats deleted" : {
+
+    },
+    "%lld chats moved back to the list" : {
+
+    },
+    "%lld chats on this Mac, newest first." : {
+
+    },
+    "%lld chats selected" : {
+
+    },
+    "%lld chats with %@, newest first." : {
+
+    },
+    "%lld deleted, %lld skipped" : {
+
+    },
+    "%lld moved back to the list, %lld skipped" : {
+
+    },
+    "1 chat archived" : {
+
+    },
+    "1 chat deleted" : {
+
+    },
+    "1 chat moved back to the list" : {
+
+    },
+    "1 chat on this Mac, newest first." : {
+
+    },
+    "1 chat with %@, newest first." : {
+
+    },
+    "All %lld chats" : {
+
+    },
+    "All chats" : {
+
+    },
+    "All chats with %@" : {
+
+    },
+    "Archive instead" : {
+
+    },
     "Claude Code can use Osaurus tools and delegate, but can't change Osaurus settings. Turn on Allow Osaurus configuration changes below to let it." : {
       "localizations" : {
         "de" : {
@@ -68,6 +131,30 @@
           }
         }
       }
+    },
+    "Delete %@?" : {
+
+    },
+    "Delete %lld chats" : {
+
+    },
+    "Delete %lld chats?" : {
+
+    },
+    "Delete 1 chat" : {
+
+    },
+    "Delete 1 chat?" : {
+
+    },
+    "Delete Agent…" : {
+
+    },
+    "Deselect %@" : {
+
+    },
+    "Message %@..." : {
+
     },
     "Model and context set by Claude Code" : {
       "localizations" : {
@@ -137,6 +224,12 @@
         }
       }
     },
+    "New chat with %@" : {
+
+    },
+    "Previous 7 days" : {
+
+    },
     "Runs on a runtime that no longer exists" : {
       "localizations" : {
         "de" : {
@@ -170,6 +263,18 @@
           }
         }
       }
+    },
+    "Search messages for “%@”" : {
+
+    },
+    "Select %@" : {
+
+    },
+    "Select all %lld" : {
+
+    },
+    "Select chats" : {
+
     },
     "Text only mode gives Claude Code no tools, so it can't configure Osaurus or delegate. Set Execution mode to Agent below." : {
       "localizations" : {
@@ -238,6 +343,12 @@
           }
         }
       }
+    },
+    "These chats and their messages are removed from this Mac. This cannot be undone." : {
+
+    },
+    "This chat and its messages are removed from this Mac. This cannot be undone." : {
+
     },
     "This runtime runs its own model and tools. Osaurus tools and delegation need Claude Code or a built-in model." : {
       "localizations" : {
@@ -1553,6 +1664,9 @@
           }
         }
       }
+    },
+    "Tick chats to select" : {
+
     },
     "Up to date. No new models from ChatGPT." : {
       "localizations" : {

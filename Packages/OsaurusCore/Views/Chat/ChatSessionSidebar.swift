@@ -185,7 +185,7 @@ struct ChatSessionSidebar: View {
                     if isFilteringNavigator, let onShowAllChats {
                         NavigatorLinkRow(
                             icon: "text.magnifyingglass",
-                            title: L("Search messages for \u{201C}\(trimmedNavigatorQuery)\u{201D}")
+                            title: L("Search messages for “\(trimmedNavigatorQuery)”")
                         ) { onShowAllChats(AllChatsRequest(query: trimmedNavigatorQuery)) }
                         .padding(.top, theme.space.s8)
                     }
@@ -200,7 +200,7 @@ struct ChatSessionSidebar: View {
             if showsBatchBar, let binding = chatSelection, binding.wrappedValue.isActive {
                 ChatBatchBar(
                     placement: .sidebar,
-                    count: binding.wrappedValue.count,
+                    selectedCount: binding.wrappedValue.count,
                     onArchive: {
                         ChatBatchActions.setArchived(binding.wrappedValue.selectedIds, archived: true)
                         binding.wrappedValue.clear()
