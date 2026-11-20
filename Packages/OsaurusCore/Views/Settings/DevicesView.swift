@@ -172,12 +172,6 @@ struct DevicesView: View {
 
     private var syncSection: some View {
         SettingsSection(title: "Settings") {
-            SettingsToggle(
-                title: "Sync Chats",
-                description: "Send and receive chats with your other devices. When off, chats stay on this Mac until you turn it back on.",
-                anchorId: "settings.sync.network",
-                isOn: Binding(get: { model.configuration.networkEnabled }, set: { model.setNetworkEnabled($0) })
-            )
             SettingsPickerRow(
                 title: "Find Devices",
                 description: "Same Network reaches devices on your Wi-Fi or Ethernet. Anywhere also connects through Osaurus servers, so your devices sync on different networks. Chats stay end-to-end encrypted either way.",
@@ -189,6 +183,24 @@ struct DevicesView: View {
                 ]
             )
             .disabled(!model.configuration.networkEnabled)
+            SettingsToggle(
+                title: "Keep Mac Awake for iPhone",
+                description: "While an iPhone is in your devices, this Mac doesn't go to sleep on its own, so your agents stay reachable. The display may still sleep, and closing a MacBook lid or choosing Sleep always wins.",
+                anchorId: "settings.devices.keepAwake",
+                isOn: $keepMacAwake
+            )
+            SettingsToggle(
+                title: "Sync Chats",
+                description: "Send and receive chats with your other devices. When off, chats stay on this Mac until you turn it back on.",
+                anchorId: "settings.sync.network",
+                isOn: Binding(get: { model.configuration.networkEnabled }, set: { model.setNetworkEnabled($0) })
+            )
+            SettingsToggle(
+                title: "Continue iPhone Chats on This Mac",
+                description: "When you come back to this Mac after this Mac answered a chat from your iPhone, that chat opens in front.",
+                anchorId: "settings.devices.continuePhoneChats",
+                isOn: $continuePhoneChats
+            )
             SettingsToggle(
                 title: "Run Agents for My Other Devices",
                 description: "Your other devices, your iPhone included, can chat with this Mac's agents. The agents run here, with this Mac's models, tools and files, and ask before using tools on the device you're chatting on. Your iPhone needs this on.",
@@ -206,18 +218,6 @@ struct DevicesView: View {
                     tone: .warning
                 )
             }
-            SettingsToggle(
-                title: "Keep Mac Awake for iPhone",
-                description: "While an iPhone is in your devices, this Mac doesn't go to sleep on its own, so your agents stay reachable. The display may still sleep, and closing a MacBook lid or choosing Sleep always wins.",
-                anchorId: "settings.devices.keepAwake",
-                isOn: $keepMacAwake
-            )
-            SettingsToggle(
-                title: "Continue iPhone Chats on This Mac",
-                description: "When you come back to this Mac after this Mac answered a chat from your iPhone, that chat opens in front.",
-                anchorId: "settings.devices.continuePhoneChats",
-                isOn: $continuePhoneChats
-            )
             if model.chatsDownloading > 0, model.connectedDeviceCount > 0 {
                 SettingsValueRow(
                     title: "Older Messages",
