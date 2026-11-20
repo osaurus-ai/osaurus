@@ -36,7 +36,7 @@ enum AttentionProducers {
         let chatSessionId =
             ChatExecutionContext.currentSessionId.flatMap(UUID.init(uuidString:))
             ?? ChatExecutionContext.currentChatSessionBox?.session?.sessionId
-        return AttentionItem(
+        var item = AttentionItem(
             id: id,
             kind: kind,
             requester: ChatExecutionContext.currentParticipant,
@@ -53,6 +53,9 @@ enum AttentionProducers {
             hasInlineCard: hasInlineCard,
             link: link
         )
+        // Bound by the workflow node executor: a tool node's or agent step's approval names its run.
+        item.workflowRunId = ChatExecutionContext.currentWorkflowRunId
+        return item
     }
 
     /// The owner answered on this Mac.

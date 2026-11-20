@@ -64,6 +64,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `workflow_step_details` | `steps` on every `workflow_outputs` message, an empty list for a run without any (§5.5) |
 | `manage_workflows` | the workflow library is a message in the manage conversation, not in the manage state, which a large library took past 64 KiB (§5.4) |
 | `workflow_live_steps` | `workflowOutput` with `partial` answers for a run still going, with its finished steps' details (§5.5) |
+| `workflow_run_approvals` | `run_id` on attention items a workflow run raises: a step's `tool_approval` (a tool node, or an agent step's tool), `config_approval`, `computer_use`, as well as its `workflow_dialog` (§4) |
 | `workflow_file_inputs` | `runWorkflow` takes `files` the phone attached, and fills file and folder fields from the last run (`lastUsed`) (§5.4) |
 | `directory_models` | each directory entry carries the agent's `model`, and the agent directory conversation carries the models message (§5.2) too, so a new iPhone has both before the manage conversation arrives |
 
@@ -483,6 +484,9 @@ While an iPhone is in the account, each Mac keeps one conversation tagged
 
   An unknown kind SHOULD be shown with its title, body and `open`.
 - Labels in `requester`, `agent` and `decided_by` are already formatted. Show them as they are.
+- An item a workflow run raised carries `run_id` (`workflow_run_approvals`): the run, as in
+  `ai.osaurus.workflow-runs/1`. An iPhone that started the run SHOULD show it on the run, as it does
+  the run's forms; it is answered like any other item (§4.1). A sub-workflow's items name the sub-run.
 - A pending `tool_approval` carries `arguments_preview`: the call's JSON arguments, cut to 512
   characters. Show it with the Allow buttons, so the user sees what they allow. It may not be
   valid JSON once cut.
