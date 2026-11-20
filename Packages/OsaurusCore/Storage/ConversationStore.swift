@@ -43,6 +43,9 @@ protocol ConversationStore: AnyObject, Sendable {
     func loadMetadata(ids: [UUID]) -> [ChatSessionData]
     func turnCounts(forAgent agentId: UUID?) -> [UUID: Int]
     func sessionIds(withContentContaining text: String) -> Set<UUID>
+    /// Each chat's first user message, as stored. Read-only; chats without
+    /// one are left out.
+    func firstUserMessages(ids: [UUID]) -> [UUID: String]
     func findSession(source: SessionSource, externalKey: String, agentId: UUID?) -> ChatSessionData?
     func findSession(pluginId: String, externalKey: String, agentId: UUID?) -> ChatSessionData?
 
@@ -78,6 +81,16 @@ enum ConversationStores {
 }
 
 extension ConversationStore {
+    func firstUserMessages(ids: [UUID]) -> [UUID: String] {
+        var previews: [UUID: String] = [:]
+        for id in ids {
+            if let text = loadSession(id: id)?.turns.first(where: { $0.role == .user })?.content {
+                previews[id] = text
+            }
+        }
+        return previews
+    }
+
     /// Stores without a sync history to compare against save it as usual.
     func retrySessionSaveAsync(
         _ session: ChatSessionData,

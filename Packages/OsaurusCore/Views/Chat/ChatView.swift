@@ -11802,6 +11802,9 @@ struct ChatView: View {
             onSelectOpenChat: { windowState.selectTab(id: $0); closeCompactDrawer() },
             onCloseOpenChat: { windowState.closeTab(id: $0) },
             chatSelection: $windowState.chatSelection,
+            showsBatchBar: !windowState.chatPage.isAllChats,
+            onShowAllChats: { windowState.showAllChats($0) },
+            isShowingAllChats: windowState.mainSurface == .chat && windowState.chatPage.isAllChats,
             onSelect: { data in
                 windowState.loadSession(data)
                 isPinnedToBottom = true
@@ -12321,6 +12324,21 @@ struct ChatView: View {
                                 .padding(.top, Self.headerHeight(theme))
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .transition(pageTransition)
+                        } else if windowState.mainSurface == .chat, case .allChats(let request) = windowState.chatPage {
+                            AllChatsPage(
+                                windowState: windowState,
+                                request: request,
+                                scope: .chat(windowState.windowId),
+                                onSelect: { data in
+                                    windowState.loadSession(data)
+                                    isPinnedToBottom = true
+                                },
+                                onOpenInNewTab: { windowState.openSessionInNewTab($0) }
+                            )
+                            .padding(.top, Self.headerHeight(theme))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(theme.surface.canvas)
+                            .transition(pageTransition)
                         } else if windowState.mainSurface == .insights {
                             InsightsView()
                                 .padding(.top, Self.headerHeight(theme))
@@ -12825,6 +12843,7 @@ struct ChatView: View {
     private var isChatContentCovered: Bool {
         (windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary)
             || windowState.showsPageSurface
+            || (windowState.mainSurface == .chat && windowState.chatPage.isAllChats)
     }
 
     /// A short fade carried by the transition alone, so nothing inside the

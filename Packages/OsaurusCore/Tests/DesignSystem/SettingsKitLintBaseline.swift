@@ -32,7 +32,6 @@ enum SettingsKitLintBaseline {
         "Views/Management/SidebarNavigation.swift": ["rawTextInput", "handChrome", "capsuleFill", "uppercaseTitle"],  // sidebar (macOS source list)
         "Views/Settings/ServerSettings/ServerSettingsSidebarNav.swift": ["rawTextFont"],  // sidebar
         "Views/Workflow/Library/WorkflowsPaneView.swift": ["borderlessMenu"],  // sidebar list (hover ⋯ on source-list rows)
-        "Views/Workflow/WorkflowRunHistoryList.swift": ["borderlessMenu"],  // sidebar list (hover ⋯ on source-list rows)
 
         // Tables and data grids: dense cells, not settings rows.
         "Views/Agent/CapabilitiesTableRepresentable.swift": ["capsuleFill", "adHocButton", "familyThemeWrapper", "inspectionSpacing"],  // NSTableView cells
@@ -196,7 +195,6 @@ enum SettingsKitLintBaseline {
             "Views/Workflow/Library/WorkflowsPaneView.swift": 1,
             "Views/Workflow/WorkflowMediaGallery.swift": 1,
             "Views/Workflow/WorkflowRunFilesView.swift": 1,
-            "Views/Workflow/WorkflowRunHistoryList.swift": 1,
             "Views/Workspaces/WorkspaceAuditView.swift": 1,
             "Views/Workspaces/WorkspaceDetailView.swift": 2,
             "Views/Workspaces/WorkspacePoolActivityView.swift": 2,

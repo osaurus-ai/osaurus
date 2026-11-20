@@ -176,14 +176,6 @@ enum ChatInspectorPane: Hashable {
     }
 }
 
-/// The two halves of the inspector's History lens.
-enum ChatHistoryTab: Hashable {
-    /// The past chats of this chat's agent.
-    case chats
-    /// The workflow runs of this chat's agent.
-    case runs
-}
-
 /// Per-window state container for ChatView - each window creates its own instance
 @MainActor
 final class ChatWindowState: ObservableObject {
@@ -291,6 +283,20 @@ final class ChatWindowState: ObservableObject {
     /// Chats ticked for a batch action in this window. Not persisted, and
     /// kept across navigation; a batch action, Done or Escape clears it.
     @Published var chatSelection = ChatSelection()
+
+    /// The Chat destination's content column: the conversation, or All
+    /// chats. Any navigation to a chat returns to the conversation.
+    @Published var chatPage: ChatContentPage = .conversation
+
+    func showAllChats(_ request: AllChatsRequest = AllChatsRequest()) {
+        if mainSurface != .chat { showMainSurface(.chat) }
+        chatPage = .allChats(request)
+        isCompactSidebarPresented = false
+    }
+
+    func showConversation() {
+        if chatPage != .conversation { chatPage = .conversation }
+    }
 
     /// Record the window's breakpoint. Crossing into or out of compact
     /// closes the overlays: a drawer or context overlay left open from a
@@ -703,6 +709,10 @@ final class ChatWindowState: ObservableObject {
     /// Settings and Insights, Esc belongs to the page, so never here.
     @discardableResult
     func goBack() -> Bool {
+        if mainSurface == .chat, chatPage != .conversation {
+            showConversation()
+            return true
+        }
         if !showsPageSurface, surfaceBack != nil { return returnToPreviousSurface() }
         guard mainSurface == .workflows else { return false }
         if !showsWorkflowLibrary {
@@ -1088,14 +1098,6 @@ final class ChatWindowState: ObservableObject {
     /// The pane the inspector reopens on.
     @Published private(set) var lastInspectorPane: ChatInspectorPane = .fileChanges
 
-    /// Chats or Runs in the History lens; kept across lens switches.
-    @Published var historyTab: ChatHistoryTab = .chats
-
-    /// The Runs tab's search, filters, and scroll spot. Opening a run swaps
-    /// this window's session, which rebuilds the inspector, so the tab
-    /// keeps them here. Not published: the tab owns the live copy.
-    var runHistoryViewState = WorkflowRunHistoryViewState()
-
     var isInspectorOpen: Bool { inspectorPane != nil }
 
     /// The pane the inspector resolves to for this chat's agent: the
@@ -1428,6 +1430,7 @@ final class ChatWindowState: ObservableObject {
     /// project: it is a different agent's new conversation, so the project
     /// pill only shows for chats that belong to a project.
     func switchAgent(to newAgentId: UUID) {
+        showConversation()
         TTSService.shared.stop()
         let scope = ChatTabScope.local(newAgentId)
         if scope == activeScope, activeTab?.workflowID == nil { return }
@@ -1459,6 +1462,7 @@ final class ChatWindowState: ObservableObject {
     /// New Chat there (a blank tab is reused), otherwise a new tab opens for
     /// the agent.
     func startNewChat(with newAgentId: UUID) {
+        showConversation()
         if ChatTabScope.local(newAgentId) == activeScope {
             startNewChat()
             return
@@ -1481,6 +1485,7 @@ final class ChatWindowState: ObservableObject {
     /// workspace id, which the composer lock and pool chip treat as "no
     /// workspace" rather than "workspace lost".
     func switchToWorkspaceAgent(address rawAddress: String, workspaceId requestedWorkspaceId: String? = nil) {
+        showConversation()
         let address = rawAddress.lowercased()
         // The user's own agent on one of their sync devices: chat through
         // sync. The relay route (owner redeem) stays for Macs not in sync.
@@ -1584,6 +1589,7 @@ final class ChatWindowState: ObservableObject {
     /// window stays on the Default agent; the tab's session carries the
     /// host's agent id and device, and that Mac answers its turns.
     func switchToHostedAgent(device: String, agentId hostedAgentId: UUID) {
+        showConversation()
         TTSService.shared.stop()
         let scope = ChatTabScope.hosted(device: device, agentId: hostedAgentId)
         if scope == activeScope, activeTab?.workflowID == nil { return }
@@ -1878,6 +1884,7 @@ final class ChatWindowState: ObservableObject {
     /// working folder when the chat has none. Never lands on an existing
     /// tab: that conversation would be pulled into the project.
     func startNewChat(in project: Project) {
+        showConversation()
         let target = project.defaultAgentId.flatMap { id in
             agents.contains(where: { $0.id == id }) ? id : nil
         } ?? agentId
@@ -2007,6 +2014,7 @@ final class ChatWindowState: ObservableObject {
     /// Callers that stamp project membership afterwards (`startNewChat(in:)`)
     /// act on `session`, which is then the new tab's session.
     func startNewChat() {
+        showConversation()
         guard isBlank(session) else {
             newTab()
             return
@@ -2072,6 +2080,7 @@ final class ChatWindowState: ObservableObject {
     }
 
     func loadSession(_ sessionData: ChatSessionData) {
+        showConversation()
         guard sessionData.id != session.sessionId else { return }
         // Match same-window tab deduplication across windows. Do this before
         // saving/detaching the current session: choosing an already-open chat
@@ -2275,6 +2284,7 @@ final class ChatWindowState: ObservableObject {
     /// outgoing session is neither detached nor released — its tab keeps it
     /// live, so an in-flight stream keeps rendering into that tab.
     func selectTab(id: UUID) {
+        showConversation()
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         if tabs[idx].workflowID != nil || tabs[idx].session.agentId == Agent.architectId {
             showWorkflowDetail()
@@ -2379,6 +2389,7 @@ final class ChatWindowState: ObservableObject {
     /// Open a persisted conversation in a new tab (or focus the tab that
     /// already shows it).
     func openSessionInNewTab(_ sessionData: ChatSessionData) {
+        showConversation()
         if let existing = tabs.first(where: { $0.session.sessionId == sessionData.id }) {
             selectTab(id: existing.id)
             return

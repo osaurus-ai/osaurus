@@ -32,7 +32,30 @@ Rules that follow from this:
   belongs to Chat; Workflows has none.
 - The sidebar navigates. Opening a chat, starting one, or switching agents
   from it is navigation, so in a compact window the drawer closes on those
-  picks (folding an agent or Show more keeps it open).
+  picks (folding an agent keeps it open). Opening the All chats page is
+  navigation too.
+- All chats is a page of the Chat destination's content column
+  (`ChatWindowState.chatPage`, `AllChatsPage`), not a context lens. The
+  sidebar row `All chats` sits first under the search (clock glyph, the
+  count of chats that are not archived) and is highlighted while the page
+  is on screen. An open agent lists five chats (`chatsPerAgent`); when it
+  has more, `All N chats` opens the page filtered to it, and the list
+  never grows in place. While the sidebar search has a query, a last row
+  `Search messages for "<query>"` opens the page with that query. The
+  sidebar search stays titles and names; message text is searched on the
+  page. Deep link: `osaurus://chats/all`, with an optional `?agent=<id>`.
+- The page: title, "N chats on this Mac, newest first." (or "with
+  <Agent>"), Import and Select/Done; a search field over titles, agent
+  names and message text; the All / Pinned / Untitled / Archived chips
+  with counts (All, Pinned and Untitled leave archived chats out) and an
+  agent chip row; rows grouped Today, Yesterday, Previous 7 days, then by
+  month, each header with its count and a hover Select all; rows of two
+  lines (title over the first user message), 50 at a time
+  (`AllChatsModel`). The selection is the window's: in selection mode, or
+  whenever a chip or search narrows the list, a bar floats over the foot
+  of the list with "N selected", Select all M, Pin/Unpin,
+  Archive/Unarchive, Delete and a clear button; the sidebar's own bar
+  hides while the page is on screen.
 - Sidebar groups (Pinned, Agents, each agent) fold from anywhere on their
   row; a trailing action such as Agents' + keeps its own click. The
   Orchestrator is always the first row, in no group: it is the core agent
@@ -41,12 +64,13 @@ Rules that follow from this:
   unpinning returns it.
 - The Agents header's ⋯ (hover-only, the same trigger and plain-text menu
   as a chat row's) holds the sidebar's list-level actions: Import
-  Conversations (into the agent on screen) and Show/Hide Archived, which
-  returns archived chats to their agent's
-  list (and Pinned) with an archive glyph in the icon column; glyph and
-  title use the disabled ink, lifted to tertiary on hover. Workflow runs move to the Workflows destination, not here.
-  It also holds Select chats, which enters selection mode with nothing
-  ticked.
+  Conversations… (into the agent on screen), Select chats (selection
+  mode with nothing ticked) and Archived chats (the All chats page on its
+  Archived chip). The sidebar never lists archived chats, except one a
+  run is live on; they are found on the All chats page. Workflow runs
+  are in the Workflows destination, not here.
+- An agent row's menu adds All chats with <Agent> (the page filtered to
+  it) and Select chats (the same, with all its chats ticked).
 - Chats are selected in place (`ChatWindowState.chatSelection`, pure
   rules in `ChatSelection`). Hovering a saved chat row puts a checkbox in
   its icon column (over the avatar in Pinned); ticked rows keep it. A

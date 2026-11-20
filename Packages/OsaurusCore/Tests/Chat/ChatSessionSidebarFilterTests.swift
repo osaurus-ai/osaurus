@@ -79,25 +79,7 @@ struct ChatSessionSidebarFilterTests {
         #expect(ChatSessionSidebar.pinnedSessions(sessions).map(\.title) == ["Plan", "Taxes"])
     }
 
-    @Test("Show Archived brings archived chats back into their agent's list and the Pinned group")
-    func showArchivedIncludesArchived() {
-        let dinoki = UUID()
-        let now = Date()
-        let sessions = [
-            ChatSessionData(title: "Fetch Downloads", updatedAt: now, agentId: dinoki),
-            ChatSessionData(title: "hey", updatedAt: now.addingTimeInterval(-60), agentId: dinoki, archived: true),
-            ChatSessionData(title: "Old", updatedAt: now, agentId: dinoki, archived: true, pinned: true),
-        ]
-
-        #expect(
-            ChatSessionSidebar.agentHistorySessions(sessions, agentId: dinoki, includeArchived: true).map(\.title)
-                == ["Fetch Downloads", "hey"]
-        )
-        #expect(ChatSessionSidebar.pinnedSessions(sessions, includeArchived: true).map(\.title) == ["Old"])
-        #expect(ChatSessionSidebar.pinnedSessions(sessions).isEmpty)
-    }
-
-    @Test("an archived chat with a live run stays listed while Show Archived is off")
+    @Test("an archived chat with a live run stays listed")
     func liveArchivedChatsStayListed() {
         let dinoki = UUID()
         let now = Date()
@@ -167,9 +149,6 @@ struct ChatSessionSidebarFilterTests {
         #expect(
             ChatSessionSidebar.projectHistorySessions(sessions, projectId: project, keepingArchived: [running.id])
                 .map(\.title) == ["Spec", "Running"])
-        #expect(
-            ChatSessionSidebar.projectHistorySessions(sessions, projectId: project, includeArchived: true)
-                .map(\.title) == ["Spec", "Archived", "Running"])
         #expect(ChatSessionSidebar.pinnedSessions(sessions).map(\.title) == ["Pinned"])
     }
 
@@ -205,9 +184,6 @@ struct ChatSessionSidebarFilterTests {
         #expect(
             ChatSessionSidebar.workspaceAgentSessions(sessions, address: "0xABC", workspaceId: "w1").map(\.title)
                 == ["Brief"])
-        #expect(
-            ChatSessionSidebar.workspaceAgentSessions(sessions, address: Self.teamAgent, workspaceId: "w1",
-                includeArchived: true).map(\.title) == ["Brief", "Old"])
         #expect(
             ChatSessionSidebar.agentHistorySessions(sessions, agentId: Agent.defaultId).map(\.title) == ["Local"])
         var inProject = teamChat("Filed", workspace: "w1")

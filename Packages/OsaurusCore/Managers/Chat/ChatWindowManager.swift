@@ -442,6 +442,21 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         showWorkflowsSurface(destination: tab.map { .home($0) })
     }
 
+    /// All chats in the window the person is in (else a new one): the
+    /// `osaurus://chats/all` deep link.
+    func showAllChats(_ request: AllChatsRequest) {
+        let state: ChatWindowState
+        if let current = shortcutTargetState {
+            state = current
+        } else {
+            let id = createWindow()
+            guard let created = windowStates[id] else { return }
+            state = created
+        }
+        state.showAllChats(request)
+        showWindow(id: state.windowId)
+    }
+
     /// Where a Settings search result for Workflows lands.
     func showWorkflowsSurface(destination: ChatWindowState.WorkflowsDestination?) {
         let state: ChatWindowState
