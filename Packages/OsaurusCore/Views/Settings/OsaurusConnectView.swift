@@ -21,7 +21,6 @@ struct OsaurusConnectView: View {
     @AppStorage(MobilePairingService.keepAwakeDefaultsKey) private var keepMacAwake: Bool = true
     @AppStorage(MobilePairingService.reachAnywhereDefaultsKey) private var reachFromAnywhere: Bool = true
     @AppStorage(MobileConnectMigration.doneKey) private var retired: Bool = false
-    @State private var isEnablingNetwork = false
     @State private var showRevokeConfirm = false
 
     var body: some View {
@@ -88,69 +87,11 @@ struct OsaurusConnectView: View {
                     .font(SettingsFont.caption)
                     .foregroundColor(theme.text.secondary)
 
-                if !server.configuration.exposeToNetwork {
-                    networkBanner
-                }
-
-                if let code = pairing.activeCode {
-                    activeCodeView(code)
-                } else {
-                    Button {
-                        Task { await pairing.generateCode() }
-                    } label: {
-                        HStack(spacing: theme.space.s6) {
-                            if pairing.isGeneratingCode {
-                                SettingsSpinner()
-                            }
-                            Text("Generate 6-Digit Code", bundle: .module)
-                        }
-                    }
-                    .buttonStyle(.settings(.primary))
-                    .disabled(pairing.isGeneratingCode || !server.configuration.exposeToNetwork)
-                }
-
-                if let error = pairing.lastError {
-                    Text(error)
-                        .font(SettingsFont.caption)
-                        .foregroundColor(theme.status.error.foreground)
-                }
+                MobilePairingCodePanel()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .settingsLandingAnchor("settings.connect.pairing")
-    }
-
-    private var networkBanner: some View {
-        SettingsCallout(
-            icon: "wifi.exclamationmark",
-            title: "Only This Mac Can Connect",
-            message: "Allow local network access so your iPhone can reach this Mac.",
-            tone: .warning
-        ) {
-            SettingsButton(.secondary, "Allow", size: .compact) {
-                Task { await enableNetworkAccess() }
-            }
-            .disabled(isEnablingNetwork)
-        }
-    }
-
-    private func activeCodeView(_ code: PairingCode) -> some View {
-        SettingsStatusHero(
-            valueLabel: "Pairing code",
-            value: Self.spaced(code.code),
-            valueAccessibilityLabel: code.code.map(String.init).joined(separator: " "),
-            copyable: false,
-            statusLabel: nil
-        ) {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let remaining = max(0, Int(code.expiresAt.timeIntervalSince(context.date)))
-                Text("Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60))", bundle: .module)
-                    .font(SettingsFont.caption)
-                    .foregroundColor(theme.text.secondary)
-            }
-        } actions: {
-            SettingsButton(.secondary, "Cancel", size: .compact) { pairing.cancelCode() }
-        }
     }
 
     // MARK: Paired device
@@ -251,18 +192,6 @@ struct OsaurusConnectView: View {
 
     // MARK: Helpers
 
-    private func enableNetworkAccess() async {
-        isEnablingNetwork = true
-        defer { isEnablingNetwork = false }
-        server.configuration.exposeToNetwork = true
-        server.runtimeSettings.network.host = "0.0.0.0"
-        server.saveConfiguration()
-        ServerRuntimeSettingsStore.save(server.runtimeSettings)
-        if server.isRunning {
-            await server.restartServer()
-        }
-    }
-
     /// "123456" → "123 456" for readability.
     static func spaced(_ code: String) -> String {
         guard code.count == 6 else { return code }
@@ -273,5 +202,91 @@ struct OsaurusConnectView: View {
         let paired = device.pairedAt.formatted(date: .abbreviated, time: .shortened)
         guard let expires = device.keyExpiresAt else { return L("Paired \(paired)") }
         return L("Paired \(paired) · access until \(expires.formatted(date: .abbreviated, time: .omitted))")
+    }
+}
+
+/// The 6-digit code an iPhone app without Sync types in: the network note while only this Mac can reach the
+/// server, the code with its countdown, or the button that makes one. On the Mobile page, and in Devices' Add
+/// iPhone or iPad sheet when the phone's pairing screen asks for a code.
+struct MobilePairingCodePanel: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var pairing = MobilePairingService.shared
+    @EnvironmentObject private var server: ServerController
+    @State private var isEnablingNetwork = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            if !server.configuration.exposeToNetwork {
+                networkBanner
+            }
+
+            if let code = pairing.activeCode {
+                activeCodeView(code)
+            } else {
+                Button {
+                    Task { await pairing.generateCode() }
+                } label: {
+                    HStack(spacing: theme.space.s6) {
+                        if pairing.isGeneratingCode {
+                            SettingsSpinner()
+                        }
+                        Text("Generate 6-Digit Code", bundle: .module)
+                    }
+                }
+                .buttonStyle(.settings(.primary))
+                .disabled(pairing.isGeneratingCode || !server.configuration.exposeToNetwork)
+            }
+
+            if let error = pairing.lastError {
+                Text(error)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.status.error.foreground)
+            }
+        }
+    }
+
+    private var networkBanner: some View {
+        SettingsCallout(
+            icon: "wifi.exclamationmark",
+            title: "Only This Mac Can Connect",
+            message: "Allow local network access so your iPhone can reach this Mac.",
+            tone: .warning
+        ) {
+            SettingsButton(.secondary, "Allow", size: .compact) {
+                Task { await enableNetworkAccess() }
+            }
+            .disabled(isEnablingNetwork)
+        }
+    }
+
+    private func activeCodeView(_ code: PairingCode) -> some View {
+        SettingsStatusHero(
+            valueLabel: "Pairing code",
+            value: OsaurusConnectView.spaced(code.code),
+            valueAccessibilityLabel: code.code.map(String.init).joined(separator: " "),
+            copyable: false,
+            statusLabel: nil
+        ) {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let remaining = max(0, Int(code.expiresAt.timeIntervalSince(context.date)))
+                Text("Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60))", bundle: .module)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
+            }
+        } actions: {
+            SettingsButton(.secondary, "Cancel", size: .compact) { pairing.cancelCode() }
+        }
+    }
+
+    private func enableNetworkAccess() async {
+        isEnablingNetwork = true
+        defer { isEnablingNetwork = false }
+        server.configuration.exposeToNetwork = true
+        server.runtimeSettings.network.host = "0.0.0.0"
+        server.saveConfiguration()
+        ServerRuntimeSettingsStore.save(server.runtimeSettings)
+        if server.isRunning {
+            await server.restartServer()
+        }
     }
 }
