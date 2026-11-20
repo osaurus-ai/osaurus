@@ -138,7 +138,10 @@ enum SyncWorkflowOutput {
                 blobs.append(AttachmentFile(path: file.path, mediaType: artifact.mimeType, name: artifact.filename))
                 entry["blob"] = .number(Double(blobs.count - 1))
             }
-            hasher.update(data: Data("\(artifact.id)|\(artifact.fileSize)|\(entry["skipped"] == nil)".utf8))
+            // `fetchable` too: a run sent before it was listed is sent again with it.
+            hasher.update(
+                data: Data(
+                    "\(artifact.id)|\(artifact.fileSize)|\(entry["skipped"] == nil)|\(entry["fetchable"] != nil)".utf8))
             files.append(.object(entry))
         }
         if !files.isEmpty { object["files"] = .array(files) }
