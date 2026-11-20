@@ -7,10 +7,12 @@
 //
 //  - "Announcements": what the Osaurus team is announcing right now, still
 //    here after its dialog was dismissed (`HelpAnnouncementCard`).
-//  - "Report a Problem": describe what went wrong, see exactly what is sent
-//    with it, tick the Terms and Privacy box, send.
-//  - "Your Reports": everything this account has sent, with the team's
-//    replies. A row opens the conversation (`HelpThreadView`).
+//  - "Report a Problem": pick what it is about, fill in the details, describe
+//    it, review exactly what is sent, send (`HelpReportForm`).
+//  - "Your Reports": the reports still in progress, with the team's replies.
+//    A row opens the conversation (`HelpThreadView`); "All Reports" opens
+//    every report, open and resolved (`HelpReportsListView`).
+//  - "Other Ways to Get Help": the docs, Discord and GitHub issues.
 //
 //  Reports are tied to the Osaurus ID, so without one the page explains that
 //  and links to Osaurus ID instead of showing a form that cannot send.
@@ -23,26 +25,31 @@ struct HelpView: View {
     @ObservedObject private var announcements = AnnouncementsService.shared
     @Environment(\.theme) private var theme
 
-    @State private var openThreadId: String?
-    @State private var description = ""
-    @State private var hasConsented = false
-    /// What is attached to the report. Built when the page appears and sent
-    /// as-is, so the preview and the request are the same value.
-    @State private var report: SupportReport?
-    @State private var showsIncluded = false
-    @State private var isSending = false
-    @State private var sendError: String?
-    @State private var didSend = false
+    /// Pages pushed over Help, last on top.
+    @State private var path: [HelpRoute] = []
+
+    /// Reports shown on the Help page itself; the rest are one click away.
+    static let homeReportLimit = 3
 
     var body: some View {
-        if let openThreadId {
-            HelpThreadView(threadId: openThreadId)
-                .settingsBackDestination(L("Help"), verbatim: true) {
-                    withAnimation(theme.motion.quick) { self.openThreadId = nil }
-                }
-        } else {
+        switch path.last {
+        case .thread(let id)?:
+            HelpThreadView(threadId: id)
+                .settingsBackDestination(path.count > 1 ? L("All Reports") : L("Help"), verbatim: true) { pop() }
+        case .allReports?:
+            HelpReportsListView(onOpen: { push(.thread($0)) })
+                .settingsBackDestination(L("Help"), verbatim: true) { pop() }
+        case nil:
             helpPage
         }
+    }
+
+    private func push(_ route: HelpRoute) {
+        withAnimation(theme.motion.quick) { path.append(route) }
+    }
+
+    private func pop() {
+        withAnimation(theme.motion.quick) { _ = path.popLast() }
     }
 
     // MARK: - Page
@@ -66,25 +73,18 @@ struct HelpView: View {
                     announcementsSection
                 }
                 if hasIdentity {
-                    reportSection
+                    HelpReportForm(onOpenThread: { push(.thread($0)) })
                     reportsSection
                 } else {
                     identityRequiredSection
                 }
+                otherHelpSection
             }
         }
-        .task {
-            description = support.draftDescription
-            report = await SupportReportBuilder.buildCurrent()
-            await support.refreshIfDue(trigger: .helpOpened)
-        }
+        .task { await support.refreshIfDue(trigger: .helpOpened) }
         // Same 30-minute throttle as activation, so an announcement the
         // team ended leaves this page without a request per visit.
         .task { await announcements.refreshIfDue(trigger: .activation) }
-        .onChange(of: description) { _, value in
-            support.draftDescription = value
-            if didSend, !value.isEmpty { didSend = false }
-        }
     }
 
     /// `existsCached()`: this recomputes on every body pass, and the
@@ -114,203 +114,17 @@ struct HelpView: View {
         }
     }
 
-    // MARK: - Report a Problem
-
-    private var trimmedDescription: String {
-        description.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var isTooLong: Bool {
-        trimmedDescription.count > OsaurusRouterSupportLimits.maxMessageLength
-    }
-
-    private var isLongEnough: Bool {
-        trimmedDescription.count >= OsaurusRouterSupportLimits.minDescriptionLength
-    }
-
-    /// The router allows three reports that are not closed. Say so before
-    /// the user writes a fourth, rather than after they press Send.
-    private var isAtOpenLimit: Bool {
-        support.openThreadCount >= OsaurusRouterSupportLimits.maxOpenThreads
-    }
-
-    private var canSend: Bool {
-        hasConsented && isLongEnough && !isTooLong && !isSending && !isAtOpenLimit && report != nil
-    }
-
-    private var descriptionHint: String {
-        if isTooLong {
-            return String(
-                format: L("%1$lld characters over the %2$lld character limit."),
-                trimmedDescription.count - OsaurusRouterSupportLimits.maxMessageLength,
-                OsaurusRouterSupportLimits.maxMessageLength
-            )
-        }
-        return L("What you did, what you expected, and what happened instead. Please do not paste passwords or keys.")
-    }
-
-    private var reportSection: some View {
-        SettingsSection(title: "Report a Problem") {
-            if isAtOpenLimit {
-                SettingsEmptyState(
-                    inline: "tray.full",
-                    title: "You have 3 open reports",
-                    hint: "Add to one of them below. You can send a new report once one is closed."
-                )
-            } else {
-                SettingsFieldRow(label: "What went wrong?", hint: descriptionHint, verbatimHint: true) {
-                    SettingsTextEditor(
-                        text: $description,
-                        placeholder: L("Describe the problem"),
-                        minHeight: 120,
-                        maxHeight: 280,
-                        isInvalid: isTooLong
-                    )
-                    .disabled(isSending)
-                }
-
-                SettingsRow(
-                    title: "What's Included",
-                    description:
-                        "Your description, the Osaurus and macOS versions, your Mac model, chip and memory, and diagnostics: the current agent's name and model, tool names, and the timing and status of recent requests. Never your chats, files or keys."
-                ) {
-                    SettingsButton(.tertiary, showsIncluded ? "Hide Details" : "Show Details", size: .compact) {
-                        withAnimation(theme.motion.quick) { showsIncluded.toggle() }
-                    }
-                }
-                if showsIncluded {
-                    includedPreview
-                }
-
-                consentRow
-                sendRow
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var includedPreview: some View {
-        if let report {
-            VStack(alignment: .leading, spacing: theme.space.s8) {
-                ScrollView {
-                    Text(verbatim: report.previewJSON)
-                        .font(SettingsFont.monoSmall)
-                        .foregroundColor(theme.text.primary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(theme.space.s12)
-                }
-                .frame(maxHeight: 280)
-                .settingsChrome(.code)
-                .accessibilityLabel(Text("Details sent with the report", bundle: .module))
-
-                Text(verbatim: includedFootnote(report))
-                    .font(SettingsFont.caption)
-                    .foregroundColor(theme.text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .settingsRowChrome()
-        } else {
-            SettingsEmptyState(loading: "Collecting details…")
-        }
-    }
-
-    private func includedFootnote(_ report: SupportReport) -> String {
-        if report.diagnostics == nil {
-            return L("Diagnostics were too large to attach, so this report is sent without them.")
-        }
-        let size = ByteCountFormatter.string(fromByteCount: Int64(report.diagnosticsBytes), countStyle: .file)
-        return String(
-            format: L("This is everything sent besides your description (%@). Identifiers are one-way fingerprints."),
-            size
-        )
-    }
-
-    /// The box is beside the sentence, not around it, so the Terms and
-    /// Privacy links stay clickable.
-    private var consentRow: some View {
-        HStack(alignment: .center, spacing: theme.space.s10) {
-            Toggle(isOn: $hasConsented) { EmptyView() }
-                .settingsCheckbox(showsLabel: false)
-                .accessibilityLabel(Text("I agree to send this report", bundle: .module))
-                .disabled(isSending)
-            MarkdownLinkText(
-                markdown: Self.consentMarkdown,
-                style: .bodySmall,
-                textColor: theme.text.primary
-            )
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .settingsRowChrome()
-    }
-
-    static var consentMarkdown: String {
-        String(
-            format: L("I agree to send this report and the details listed above to Osaurus, under the [Terms](%1$@) and [Privacy Policy](%2$@)."),
-            OsaurusWebLinks.terms.absoluteString,
-            OsaurusWebLinks.privacy.absoluteString
-        )
-    }
-
-    private var sendRow: some View {
-        HStack(alignment: .center, spacing: theme.space.s12) {
-            Group {
-                if let sendError {
-                    Text(verbatim: sendError)
-                        .foregroundColor(theme.status[.error].foreground)
-                } else if didSend {
-                    Text("Report sent. We will reply on this page.", bundle: .module)
-                        .foregroundColor(theme.status[.success].foreground)
-                } else if !trimmedDescription.isEmpty, !isLongEnough {
-                    Text("Add a little more detail to send.", bundle: .module)
-                        .foregroundColor(theme.text.tertiary)
-                } else if isLongEnough, !isTooLong, !hasConsented {
-                    Text("Tick the box above to send.", bundle: .module)
-                        .foregroundColor(theme.text.tertiary)
-                }
-            }
-            .font(SettingsFont.caption)
-            .fixedSize(horizontal: false, vertical: true)
-
-            // An empty message renders nothing, so the spacer is what keeps
-            // the button on the trailing edge.
-            Spacer(minLength: 0)
-
-            SettingsButton(.primary, "Send Report", icon: "paperplane.fill", isLoading: isSending) {
-                send()
-            }
-            .disabled(!canSend)
-        }
-        .settingsRowChrome()
-    }
-
-    private func send() {
-        guard canSend, let report else { return }
-        let text = trimmedDescription
-        isSending = true
-        sendError = nil
-        didSend = false
-        Task {
-            do {
-                try await support.submit(description: text, report: report)
-                description = ""
-                hasConsented = false
-                showsIncluded = false
-                didSend = true
-                // The next report gets fresh diagnostics, not this one's.
-                self.report = await SupportReportBuilder.buildCurrent()
-            } catch {
-                sendError = SupportService.userMessage(for: error)
-            }
-            isSending = false
-        }
-    }
-
     // MARK: - Your Reports
 
+    /// Reports still in progress, plus a resolved one with a reply the user
+    /// has not read, newest first.
+    static func homeThreads(_ threads: [OsaurusRouterSupportThread]) -> [OsaurusRouterSupportThread] {
+        Array(threads.filter { $0.isOpen || $0.unread }.prefix(homeReportLimit))
+    }
+
     private var reportsSection: some View {
-        SettingsSection(
+        let shown = Self.homeThreads(support.threads)
+        return SettingsSection(
             title: "Your Reports",
             footer: support.threads.isEmpty
                 ? nil
@@ -336,25 +150,42 @@ struct HelpView: View {
                     )
                 }
             } else {
-                ForEach(support.threads) { thread in
-                    LibraryRow(
-                        title: thread.subject,
-                        subtitle: Self.activityLine(for: thread),
-                        showsChevron: true,
-                        action: {
-                            withAnimation(theme.motion.quick) { openThreadId = thread.id }
-                        },
-                        badges: {
-                            if thread.unread {
-                                StatusChip(L("New reply"), tone: .accent, showsDot: true)
-                            }
-                        },
-                        trailing: {
-                            HelpStatusChip(status: thread.status)
-                        }
+                if shown.isEmpty {
+                    SettingsEmptyState(
+                        inline: "checkmark.circle",
+                        title: "Nothing in progress",
+                        hint: "Your resolved reports are under All Reports."
                     )
                 }
+                ForEach(shown) { thread in
+                    HelpThreadRow(thread: thread) { push(.thread(thread.id)) }
+                }
+                SettingsNavigationRow(
+                    icon: "tray.full",
+                    title: "All Reports",
+                    subtitle: L("Open and resolved"),
+                    badge: support.threads.count
+                ) { push(.allReports) }
             }
+        }
+    }
+
+    // MARK: - Other Ways to Get Help
+
+    private var otherHelpSection: some View {
+        SettingsSection(title: "Other Ways to Get Help") {
+            SettingsLinkRow(
+                title: "Documentation",
+                description: "Guides for agents, workflows, models and the iPhone app."
+            ) { NSWorkspace.shared.open(OsaurusWebLinks.docs) }
+            SettingsLinkRow(
+                title: "Discord",
+                description: "Ask the community and the Osaurus team."
+            ) { NSWorkspace.shared.open(OsaurusWebLinks.discord) }
+            SettingsLinkRow(
+                title: "GitHub Issues",
+                description: "Report a bug in public, or follow one that is already known."
+            ) { NSWorkspace.shared.open(OsaurusWebLinks.githubIssues) }
         }
     }
 
@@ -362,9 +193,41 @@ struct HelpView: View {
     static func activityLine(for thread: OsaurusRouterSupportThread, now: Date = Date()) -> String {
         guard let date = thread.lastActivityDate else { return "" }
         let when = date.formatted(.relative(presentation: .named))
-        return String(
+        let activity = String(
             format: thread.lastStaffMessageAt == nil ? L("Sent %@") : L("Updated %@"),
             when
+        )
+        guard let category = thread.category else { return activity }
+        return "\(category.shortLabel) · \(activity)"
+    }
+}
+
+/// A page pushed over Help.
+enum HelpRoute: Equatable {
+    case allReports
+    case thread(String)
+}
+
+/// One report in a list: subject, kind and last activity, unread chip,
+/// status.
+struct HelpThreadRow: View {
+    let thread: OsaurusRouterSupportThread
+    let action: () -> Void
+
+    var body: some View {
+        LibraryRow(
+            title: thread.subject,
+            subtitle: HelpView.activityLine(for: thread),
+            showsChevron: true,
+            action: action,
+            badges: {
+                if thread.unread {
+                    StatusChip(L("New reply"), tone: .accent, showsDot: true)
+                }
+            },
+            trailing: {
+                HelpStatusChip(status: thread.status)
+            }
         )
     }
 }
@@ -408,7 +271,7 @@ struct HelpStatusChip: View {
         case .answered:
             StatusChip(L("Replied"), tone: .success)
         case .closed:
-            StatusChip(L("Closed"), tone: .neutral)
+            StatusChip(L("Resolved"), tone: .neutral)
         }
     }
 }

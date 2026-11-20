@@ -27,7 +27,8 @@ order: 180
 ## Getting help
 
 - Ask this assistant — it can read the guide and inspect your configuration.
-- Tell the Osaurus team: click the question mark icon above the usage icon in the main window rail to open Help, then use **Report a Problem**. You see exactly what is sent (**What's Included** → **Show Details**), you tick the Terms and Privacy box, and the reply arrives in Help under **Your Reports**, with a dot on the icon until you read it. Needs an Osaurus ID. This is not Devices → Support Report (saves sync logs to a file) or Send Crash Reports (Privacy & Security).
+- Tell the Osaurus team: click the question mark icon above the usage icon in the main window rail to open Help, then use **Report a Problem**. Pick what it is about (Something Isn't Working, Osaurus Cloud, Agent Problem, Workflow Problem, iPhone App, Store, Model Trouble), choose the agent, workflow, model or listing from the menus, describe it, and attach up to 3 screenshots (**Add Image**, or drop or paste them into the description). Under **Review and Send** you see exactly what is sent (**What's Included** → **Show Details**) and tick the Terms and Privacy box. Replies arrive in Help under **Your Reports**, with a dot on the icon until you read it; **All Reports** lists every report, open and resolved. Open a report to reply (with images too) or click **Mark as Resolved** when it is fixed; writing again reopens it. Needs an Osaurus ID. This is not Devices → Support Report (saves sync logs to a file) or Send Crash Reports (Privacy & Security).
+- Help also links to the documentation, the Osaurus Discord and GitHub issues under **Other Ways to Get Help**.
 - README and docs: https://docs.osaurus.ai
 - Search GitHub issues (open and closed) for similar problems; file bugs with the "Bug report" template (steps, expected/actual, environment).
 - Feature ideas: the "Feature request" template. Questions: GitHub Discussions.

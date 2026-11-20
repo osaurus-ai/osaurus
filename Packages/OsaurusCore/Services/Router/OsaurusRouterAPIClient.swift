@@ -693,18 +693,39 @@ actor OsaurusRouterAPIClient {
         try await get("/support/threads/\(try routerPathComponent(id))", timeout: 15)
     }
 
-    /// `POST /support/threads/:id/messages` — the user answers. Moves the
-    /// thread back to `open`, including from `closed`.
-    func replyToSupportThread(id: String, body: String) async throws -> OsaurusRouterSupportThread {
-        struct Body: Encodable { let body: String }
-        return try await post(
-            "/support/threads/\(try routerPathComponent(id))/messages", body: Body(body: body))
+    /// `POST /support/threads/:id/messages` — the user answers, optionally
+    /// with images. Moves the thread back to `open`, including from `closed`.
+    func replyToSupportThread(
+        id: String,
+        body: String,
+        attachments: [OsaurusRouterSupportAttachmentUpload] = []
+    ) async throws -> OsaurusRouterSupportThread {
+        try await post(
+            "/support/threads/\(try routerPathComponent(id))/messages",
+            body: OsaurusRouterSupportReplyBody(body: body, attachments: attachments))
     }
 
     /// `POST /support/threads/:id/read` — clear the unread flag. Reading the
     /// detail does not do this on its own.
     func markSupportThreadRead(id: String) async throws -> OsaurusRouterSupportThread {
         try await postEmpty("/support/threads/\(try routerPathComponent(id))/read")
+    }
+
+    /// `POST /support/threads/:id/close` — the user marks the report
+    /// resolved, which frees one of their open-report slots. Writing again
+    /// reopens it.
+    func closeSupportThread(id: String) async throws -> OsaurusRouterSupportThread {
+        try await postEmpty("/support/threads/\(try routerPathComponent(id))/close")
+    }
+
+    /// `GET /support/threads/:id/attachments/:attachmentId` — one attached
+    /// image as base64 JSON.
+    func supportAttachment(threadId: String, attachmentId: String) async throws
+        -> OsaurusRouterSupportAttachmentData
+    {
+        try await get(
+            "/support/threads/\(try routerPathComponent(threadId))/attachments/\(try routerPathComponent(attachmentId))",
+            timeout: 30)
     }
 
     func signedJSONRequest(method: String, path: String, body: Data? = nil) async throws -> URLRequest {

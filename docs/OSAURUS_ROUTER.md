@@ -357,8 +357,10 @@ pulled — without a release. `AnnouncementsService` owns the client side:
 Help, a page of the main window opened by the question mark on its rail, lets
 a user report a problem to the Osaurus team and read the replies in the app.
 Each report is a two-way thread on the router; staff answer from the admin
-console (`/support`). `SupportService` owns the client side, `HelpView` /
-`HelpThreadView` the page (`ChatWindowState.MainSurface.help`).
+console (`/support`). `SupportService` owns the client side; the page is
+`HelpView` (`ChatWindowState.MainSurface.help`) with `HelpReportForm`,
+`HelpReportsListView` (All Reports) and `HelpThreadView` (one conversation)
+pushed over it.
 
 - Identity: every `/support/*` call is wallet-signed, like `/credits/*`. A
   report belongs to the wallet that sent it; there is no email and no separate
@@ -366,32 +368,69 @@ console (`/support`). `SupportService` owns the client side, `HelpView` /
   ID instead of showing the form.
 - Endpoints: `GET /support/threads` (summaries plus `unread_count`),
   `POST /support/threads` (new report), `GET /support/threads/:id` (with
-  messages), `POST /support/threads/:id/messages` (the user writes back, which
-  reopens a closed thread), `POST /support/threads/:id/read` (clears unread).
+  messages and image metadata), `POST /support/threads/:id/messages` (the user
+  writes back, optionally with images, which reopens a closed thread),
+  `POST /support/threads/:id/read` (clears unread),
+  `POST /support/threads/:id/close` (Mark as Resolved, empty body) and
+  `GET /support/threads/:id/attachments/:attachmentId` (one image as
+  `{mime_type, data_base64}`).
+- The form: the user picks a category (`bug`, `cloud`, `agent`, `workflow`,
+  `ios`, `store`, `model`; `SupportCategory`), then details for it picked from
+  this Mac (the Osaurus Cloud connection status and one of its models from
+  `RemoteProviderManager`, an agent from `AgentManager`, a workflow from
+  `InstalledWorkflowStore`, an installed model, the paired iPhone's state, a
+  listing from `WorkflowRegistryRecordStore`) and a "what went wrong" chip.
+  A `cloud` report alerts the team as soon as it arrives, one alert per report
+  (`support.cloud_issue_reported`), where other reports share the router's
+  new-report alert cooldown. The draft
+  (`SupportReportDraft`) lives on `SupportService` in memory, so leaving Help
+  does not lose it; switching category drops the old category's picks.
 - Consent: `consent` must be the literal `true`. The app sets it only in
-  `SupportReport.body(description:)`, which the form calls after the user
+  `SupportReport.body(draft:extras:)`, which the form calls after the user
   ticked the box for that report. The box resets after every send.
-- What is sent: the description (10 to 5,000 characters), `app` (version,
-  build, macOS version), `hardware` (model, chip, memory from `MacProfile`),
-  and `diagnostics`, the existing `SupportDiagnosticsBundle`: tool names, the
-  current agent's name and model id, and per-request metadata for the 25 most
-  recent requests (path, status, timing, token counts). No prompt, response,
-  wire body, tool argument, tool result or free-form error text, and stable
-  identifiers only as one-way fingerprints.
+- What is sent: the description (10 to 5,000 characters), `category`,
+  `details` (the picks by name or stable id, at most 4 KB), up to 3 images,
+  `app` (version, build, macOS version), `hardware` (model, chip, memory from
+  `MacProfile`), and `diagnostics`, the existing `SupportDiagnosticsBundle`:
+  tool names, the current agent's name and model id, and per-request metadata
+  for the 25 most recent requests (path, status, timing, token counts). No
+  prompt, response, wire body, tool argument, tool result or free-form error
+  text, and stable identifiers only as one-way fingerprints.
+- Extra details: with the category's "Share …" switch on (default),
+  `SupportReportExtras` adds metadata about the picked item under
+  `diagnostics.extras`: whether Osaurus Cloud is on, offline, connected or
+  failing, when it last connected and how many models it lists (never the
+  error text or the balance), an agent's default model and lock (never its
+  instructions), a workflow's last 5 run outcomes and failed step (never
+  inputs, outputs or error text), pairing state (never the phone's name), a
+  listing's id, version and visibility, a model's type and size.
+- Images: `SupportImageEncoder` re-encodes every image before it is attached:
+  at most 2048 px on the long side, JPEG (PNG when it has transparency), no
+  EXIF or GPS metadata, under 2 MB, shrinking further when needed. Up to 3 per
+  message and 20 per report (router-enforced). They are added with Add Image,
+  by drop, or by pasting into the description or reply. Sent images are
+  fetched one at a time when shown and kept in memory by `SupportService`.
 - What you see is what is sent: `SupportReportBuilder` serializes the bundle
   once into a `JSONValue`. The "What's Included" preview and the request body
-  are rendered from that same value, and the page sends the instance it
-  previewed.
+  are rendered from that same value plus the same draft and extras (images in
+  the preview as their type, pixel size and byte count), and the page sends
+  the instance it previewed.
 - Size: the router rejects diagnostics over 200 KB. The builder keeps 8 KB of
   headroom, halves the recent-request list until the bundle fits, then drops
   the full tool registry, and sends the report with no diagnostics if it
-  still does not fit. The preview says so when that happens.
+  still does not fit. The preview says so when that happens. The router
+  accepts request bodies up to 9 MB on `/support` for the images.
 - Limits (router-enforced): 3 threads that are not closed per wallet, 5 new
   threads per 24 hours, 30 messages per hour. The window hides the form at 3
-  open reports rather than letting the send fail.
+  open reports rather than letting the send fail, and points at Mark as
+  Resolved.
 - Status wording: `open` is "Waiting for us", `answered` is "Replied",
-  `closed` is "Closed". Staff messages carry no author identity and render as
-  "Osaurus team".
+  `closed` is "Resolved" (by the user or the team; the admin console shows
+  which). Staff messages carry no author identity and render as "Osaurus
+  team".
+- Lists: the Help page shows up to 3 reports that are in progress (or have an
+  unread reply) and an All Reports row; All Reports has Open and Resolved tabs
+  over the same list.
 - Unread: a thread is unread when a staff message is newer than the last time
   the user read or answered it. Opening a thread fetches it, then calls
   `/read`; the count drives the dot on the rail's Help icon. There is no push
@@ -409,6 +448,8 @@ console (`/support`). `SupportService` owns the client side, `HelpView` /
 - Known limit: the app polls only while it knows of a report that is not
   closed. A staff reply on a closed thread moves it to `answered`, but the
   dot appears only after the user next opens Help.
+- Other Ways to Get Help: links to the docs, Discord and GitHub issues
+  (`OsaurusWebLinks`).
 - Operator guide: `docs/support.md` in the router repository.
 
 ## Control-Plane Request Budget

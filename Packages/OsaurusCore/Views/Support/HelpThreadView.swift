@@ -2,9 +2,10 @@
 //  HelpThreadView.swift
 //  osaurus
 //
-//  One report's conversation with the Osaurus team: the messages in order,
-//  and a field to write back. Opening it marks the team's replies as read,
-//  which clears the Help badge for this report.
+//  One report's conversation with the Osaurus team: the messages in order
+//  with their images, a field to write back (with images), and Mark as
+//  Resolved. Opening it marks the team's replies as read, which clears the
+//  Help badge for this report.
 //
 
 import SwiftUI
@@ -16,9 +17,13 @@ struct HelpThreadView: View {
     @Environment(\.theme) private var theme
 
     @State private var reply = ""
+    @State private var replyImages: [SupportImageAttachment] = []
+    @State private var imageMessage: String?
     @State private var isSending = false
     @State private var sendError: String?
     @State private var loadError: String?
+    @State private var isClosing = false
+    @State private var closeError: String?
 
     /// The full conversation once fetched; until then the list's summary,
     /// so the title and status show at once.
@@ -46,6 +51,15 @@ struct HelpThreadView: View {
                     status: {
                         if let thread {
                             HelpStatusChip(status: thread.status)
+                        }
+                    },
+                    secondary: {
+                        if let thread, thread.isOpen, messages != nil {
+                            SettingsButton(
+                                .secondary, "Mark as Resolved", icon: "checkmark.circle", isLoading: isClosing
+                            ) { close() }
+                            .disabled(isClosing || isSending)
+                            .help(Text("Close this report. Writing again reopens it.", bundle: .module))
                         }
                     }
                 )
@@ -91,7 +105,15 @@ struct HelpThreadView: View {
         SettingsSection(title: "Conversation") {
             if let messages {
                 ForEach(messages) { message in
-                    HelpMessageRow(message: message)
+                    HelpMessageRow(threadId: threadId, message: message)
+                }
+                if let closeError {
+                    SettingsCallout(
+                        icon: "exclamationmark.triangle",
+                        title: "Could not mark this report as resolved",
+                        message: closeError,
+                        tone: .warning
+                    )
                 }
                 if let loadError {
                     // The cached conversation is still shown; say that it
@@ -133,7 +155,18 @@ struct HelpThreadView: View {
     }
 
     private var canSend: Bool {
-        !trimmedReply.isEmpty && !isTooLong && !isSending
+        !trimmedReply.isEmpty && !isTooLong && !isSending && !isClosing
+    }
+
+    /// Images this reply may carry: three per message, and whatever is left
+    /// of the twenty a report can hold.
+    private var imageLimit: Int {
+        let used = messages?.reduce(0) { $0 + $1.attachments.count } ?? 0
+        return max(
+            0,
+            min(
+                OsaurusRouterSupportLimits.maxAttachmentsPerMessage,
+                OsaurusRouterSupportLimits.maxAttachmentsPerThread - used))
     }
 
     private var replyHint: String {
@@ -145,9 +178,9 @@ struct HelpThreadView: View {
             )
         }
         if thread?.status == .closed {
-            return L("This report is closed. Writing again reopens it.")
+            return L("This report is resolved. Writing again reopens it.")
         }
-        return L("Only your message is sent. Please do not paste passwords or keys.")
+        return L("Only your message and images are sent. Please do not paste passwords or keys.")
     }
 
     private var replySection: some View {
@@ -161,7 +194,15 @@ struct HelpThreadView: View {
                     isInvalid: isTooLong
                 )
                 .disabled(isSending)
+                .helpImageIntake(
+                    images: $replyImages, limit: imageLimit, message: $imageMessage, isEnabled: !isSending)
             }
+            HelpImageAttachmentsRow(
+                images: $replyImages,
+                limit: imageLimit,
+                message: $imageMessage,
+                isDisabled: isSending
+            )
             HStack(alignment: .center, spacing: theme.space.s12) {
                 Group {
                     if let sendError {
@@ -185,12 +226,15 @@ struct HelpThreadView: View {
     private func send() {
         guard canSend else { return }
         let text = trimmedReply
+        let images = replyImages
         isSending = true
         sendError = nil
         Task {
             do {
-                try await support.reply(threadId: threadId, body: text)
+                try await support.reply(threadId: threadId, body: text, images: images)
                 reply = ""
+                replyImages = []
+                imageMessage = nil
             } catch {
                 sendError = SupportService.userMessage(for: error)
             }
@@ -198,11 +242,27 @@ struct HelpThreadView: View {
         }
     }
 
+    private func close() {
+        isClosing = true
+        closeError = nil
+        Task {
+            do {
+                try await support.close(threadId: threadId)
+            } catch {
+                closeError = SupportService.userMessage(for: error)
+            }
+            isClosing = false
+        }
+    }
+
     // MARK: - Copy
 
+    /// "Agent · Sent Nov 3, 2026 at 9:41 AM".
     static func sentLine(for thread: OsaurusRouterSupportThread) -> String {
-        guard let date = thread.createdDate else { return "" }
-        return String(format: L("Sent %@"), date.formatted(date: .abbreviated, time: .shortened))
+        guard let date = thread.createdDate else { return thread.category?.shortLabel ?? "" }
+        let sent = String(format: L("Sent %@"), date.formatted(date: .abbreviated, time: .shortened))
+        guard let category = thread.category else { return sent }
+        return "\(category.shortLabel) · \(sent)"
     }
 }
 
@@ -211,6 +271,7 @@ struct HelpThreadView: View {
 /// One message. The team's replies carry the accent so they stand out from
 /// the user's own text when scanning a long conversation.
 private struct HelpMessageRow: View {
+    let threadId: String
     let message: OsaurusRouterSupportMessage
 
     @Environment(\.theme) private var theme
@@ -240,8 +301,11 @@ private struct HelpMessageRow: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if !message.attachments.isEmpty {
+                HelpMessageImages(threadId: threadId, attachments: message.attachments)
+            }
         }
         .settingsRowChrome()
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }

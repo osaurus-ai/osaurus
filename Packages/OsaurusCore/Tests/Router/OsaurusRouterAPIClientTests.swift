@@ -420,26 +420,74 @@ struct OsaurusRouterAPIClientTests {
         #expect(thread.messages?.count == 1)
     }
 
-    @Test func supportThreadDetailReplyAndRead_useTheThreadPath() async throws {
+    @Test func supportThreadDetailReplyReadAndClose_useTheThreadPath() async throws {
         let id = "7d0f0c2e-0000-4000-8000-000000000001"
+        let imageId = "9e1f0c2e-0000-4000-8000-000000000002"
         let seen = RequestRecorder()
         let client = try makeClient { request in
             let body = String(data: request.httpBodyStreamData ?? request.httpBody ?? Data(), encoding: .utf8) ?? ""
             seen.record("\(request.httpMethod ?? "") \(request.url?.path ?? "") \(body)")
             #expect(request.value(forHTTPHeaderField: "x-wallet-signature") != nil)
+            if request.url?.path.contains("/attachments/") == true {
+                return json(#"{"mime_type":"image/png","data_base64":"iVBORw=="}"#)
+            }
             return json(Self.supportThreadJSON)
         }
 
         _ = try await client.supportThread(id: id)
         _ = try await client.replyToSupportThread(id: id, body: "Still happening")
+        _ = try await client.replyToSupportThread(
+            id: id, body: "Screenshot", attachments: [.init(mimeType: "image/png", dataBase64: "iVBORw==")])
         _ = try await client.markSupportThreadRead(id: id)
+        _ = try await client.closeSupportThread(id: id)
+        let image = try await client.supportAttachment(threadId: id, attachmentId: imageId)
 
+        #expect(image.mimeType == "image/png")
+        #expect(image.data == Data([0x89, 0x50, 0x4E, 0x47]))
         #expect(
             seen.entries == [
                 "GET /support/threads/\(id) ",
-                #"POST /support/threads/\#(id)/messages {"body":"Still happening"}"#,
+                #"POST /support/threads/\#(id)/messages {"attachments":[],"body":"Still happening"}"#,
+                #"POST /support/threads/\#(id)/messages {"attachments":[{"data_base64":"iVBORw==","mime_type":"image/png"}],"body":"Screenshot"}"#,
                 "POST /support/threads/\(id)/read ",
+                "POST /support/threads/\(id)/close ",
+                "GET /support/threads/\(id)/attachments/\(imageId) ",
             ])
+    }
+
+    /// Category, details and images on the wire; nil category and details
+    /// are left out rather than sent as null.
+    @Test func createSupportThread_sendsCategoryDetailsAndImages() async throws {
+        let bodies = RequestRecorder()
+        let client = try makeClient { request in
+            bodies.record(String(data: request.httpBodyStreamData ?? request.httpBody ?? Data(), encoding: .utf8) ?? "")
+            return json(Self.supportThreadJSON, status: 201)
+        }
+        let base = OsaurusRouterSupportReportBody(
+            description: "Chat freezes", consent: true,
+            app: .init(version: "1.2.3", build: "456", osVersion: "macOS test"),
+            hardware: .init(model: "MacBook Air", chip: "M4", memoryGB: 24), diagnostics: nil)
+        _ = try await client.createSupportThread(base)
+        _ = try await client.createSupportThread(
+            OsaurusRouterSupportReportBody(
+                description: base.description, consent: true, app: base.app, hardware: base.hardware,
+                diagnostics: nil, category: "agent", details: .object(["agent": .string("Research")]),
+                attachments: [.init(mimeType: "image/jpeg", dataBase64: "/9j/")]))
+
+        let plain = try JSONDecoder().decode(JSONValue.self, from: Data(bodies.entries[0].utf8))
+        let full = try JSONDecoder().decode(JSONValue.self, from: Data(bodies.entries[1].utf8))
+        guard case .object(let plainFields) = plain, case .object(let fullFields) = full else {
+            Issue.record("report body is not a JSON object")
+            return
+        }
+        #expect(plainFields["category"] == nil)
+        #expect(plainFields["details"] == nil)
+        #expect(plainFields["attachments"] == .array([]))
+        #expect(fullFields["category"] == .string("agent"))
+        #expect(fullFields["details"] == .object(["agent": .string("Research")]))
+        #expect(
+            fullFields["attachments"]
+                == .array([.object(["mime_type": .string("image/jpeg"), "data_base64": .string("/9j/")])]))
     }
 
     /// A thread id is a path segment the app got from the router; anything
@@ -456,6 +504,13 @@ struct OsaurusRouterAPIClientTests {
             await #expect(throws: (any Error).self) { _ = try await client.markSupportThreadRead(id: id) }
             await #expect(throws: (any Error).self) {
                 _ = try await client.replyToSupportThread(id: id, body: "x")
+            }
+            await #expect(throws: (any Error).self) { _ = try await client.closeSupportThread(id: id) }
+            await #expect(throws: (any Error).self) {
+                _ = try await client.supportAttachment(threadId: "t1", attachmentId: id)
+            }
+            await #expect(throws: (any Error).self) {
+                _ = try await client.supportAttachment(threadId: id, attachmentId: "a1")
             }
         }
         #expect(seen.entries.isEmpty)
@@ -495,7 +550,7 @@ struct OsaurusRouterAPIClientTests {
             #expect(status == 409)
             #expect(
                 SupportService.userMessage(for: error)
-                    == L("You already have 3 open reports. Add to one of them, or wait until one is closed."))
+                    == L("You already have 3 open reports. Add to one of them, or mark one as resolved."))
         }
     }
 
