@@ -267,6 +267,9 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
     public var sessionID: String?
     /// For `kind == .workflow`: the run whose step started this one.
     public var parentRunID: UUID?
+    /// For `kind == .workflow`: the outermost run of the chain, the one a
+    /// person started (an iPhone shows that one, never its sub-runs).
+    public var rootRunID: UUID?
     /// For `kind == .workflow`: the installed workflows up the chain,
     /// outermost first. Bounds nesting and refuses a workflow that would
     /// call itself.
@@ -356,6 +359,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         child.toolCallID = nil
         child.taskId = nil
         child.parentRunID = parentRunID
+        child.rootRunID = rootRunID ?? parentRunID
         child.ancestors = ancestors + [parentWorkflowID]
         return child
     }
@@ -376,6 +380,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         case deniesUnapprovedPrompts = "denies_prompts"
         case folderPath = "folder_path"
         case parentRunID = "parent_run_id"
+        case rootRunID = "root_run_id"
         case ancestors
         case eventID = "event_id"
         case eventName = "event_name"
@@ -400,6 +405,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         deniesUnapprovedPrompts = try c.decodeIfPresent(Bool.self, forKey: .deniesUnapprovedPrompts) ?? false
         folderPath = try c.decodeIfPresent(String.self, forKey: .folderPath)
         parentRunID = try c.decodeIfPresent(UUID.self, forKey: .parentRunID)
+        rootRunID = try c.decodeIfPresent(UUID.self, forKey: .rootRunID)
         ancestors = try c.decodeIfPresent([UUID].self, forKey: .ancestors) ?? []
         eventID = try c.decodeIfPresent(UUID.self, forKey: .eventID)
         eventName = try c.decodeIfPresent(String.self, forKey: .eventName)
@@ -424,6 +430,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         if deniesUnapprovedPrompts { try c.encode(true, forKey: .deniesUnapprovedPrompts) }
         try c.encodeIfPresent(folderPath, forKey: .folderPath)
         try c.encodeIfPresent(parentRunID, forKey: .parentRunID)
+        try c.encodeIfPresent(rootRunID, forKey: .rootRunID)
         if !ancestors.isEmpty { try c.encode(ancestors, forKey: .ancestors) }
         try c.encodeIfPresent(eventID, forKey: .eventID)
         try c.encodeIfPresent(eventName, forKey: .eventName)

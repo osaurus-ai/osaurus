@@ -486,7 +486,8 @@ While an iPhone is in the account, each Mac keeps one conversation tagged
 - Labels in `requester`, `agent` and `decided_by` are already formatted. Show them as they are.
 - An item a workflow run raised carries `run_id` (`workflow_run_approvals`): the run, as in
   `ai.osaurus.workflow-runs/1`. An iPhone that started the run SHOULD show it on the run, as it does
-  the run's forms; it is answered like any other item (§4.1). A sub-workflow's items name the sub-run.
+  the run's forms; it is answered like any other item (§4.1). A sub-workflow's items (a `workflow` step's run) name the
+  outermost run, the one a person started; so does a form's `detail.run_id`.
 - A pending `tool_approval` carries `arguments_preview`: the call's JSON arguments, cut to 512
   characters. Show it with the Allow buttons, so the user sees what they allow. It may not be
   valid JSON once cut.

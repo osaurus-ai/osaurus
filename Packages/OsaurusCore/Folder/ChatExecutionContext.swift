@@ -274,6 +274,10 @@ public enum ChatExecutionContext {
     /// Bound by the workflow node executor so Insights rows emitted inside
     /// a node (model calls, MCP calls, web search) carry the run.
     @TaskLocal public static var currentWorkflowRunId: UUID?
+    /// The outermost run of the chain `currentWorkflowRunId` is in: itself,
+    /// or the run whose `workflow` step started it (and so on up). Attention
+    /// items name this one, the run a person started and follows.
+    @TaskLocal public static var currentRootWorkflowRunId: UUID?
     @TaskLocal public static var currentWorkflowNodeId: String?
     /// What the running workflow step is for (its intent, else its name),
     /// quoted on an approval card the step raises.

@@ -53,8 +53,10 @@ enum AttentionProducers {
             hasInlineCard: hasInlineCard,
             link: link
         )
-        // Bound by the workflow node executor: a tool node's or agent step's approval names its run.
-        item.workflowRunId = ChatExecutionContext.currentWorkflowRunId
+        // Bound by the workflow node executor: a tool node's or agent step's approval names its run, the
+        // outermost one for a sub-workflow's step (the run a person started; an iPhone knows only that one).
+        item.workflowRunId =
+            ChatExecutionContext.currentRootWorkflowRunId ?? ChatExecutionContext.currentWorkflowRunId
         return item
     }
 
