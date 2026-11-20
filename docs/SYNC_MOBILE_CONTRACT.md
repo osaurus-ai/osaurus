@@ -65,6 +65,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `manage_workflows` | the workflow library is a message in the manage conversation, not in the manage state, which a large library took past 64 KiB (§5.4) |
 | `workflow_live_steps` | `workflowOutput` with `partial` answers for a run still going, with its finished steps' details (§5.5) |
 | `workflow_run_approvals` | `run_id` on attention items a workflow run raises: a step's `tool_approval` (a tool node, or an agent step's tool), `config_approval`, `computer_use`, as well as its `workflow_dialog` (§4) |
+| `workflow_file_fetch` | `fetchable` on a run's `tooLarge` files and the `workflowFile` op that sends one on asking (§5.5) |
 | `workflow_file_inputs` | `runWorkflow` takes `files` the phone attached, and fills file and folder fields from the last run (`lastUsed`) (§5.4) |
 | `directory_models` | each directory entry carries the agent's `model`, and the agent directory conversation carries the models message (§5.2) too, so a new iPhone has both before the manage conversation arrives |
 
@@ -896,6 +897,12 @@ device pinned it, and removed when it's unpinned.
   without it was written before: the iPhone asks again, and the Mac rewrites it.
 - A file over 10 MiB, or past 32 MiB for the run, is listed with `skipped: "tooLarge"`. A file that
   is gone is listed with `skipped: "missing"`.
+- `workflow_file_fetch`: a `tooLarge` file of at most 512 MiB also has `fetchable: true`. The iPhone asks for it with
+  `workflowFile` `{ runId, fileId }` (owner-signed, as `workflowOutput`; ids only, the Mac reads the path from its
+  own record of the run, and sends only a plain file, never a link). It answers `{ runId, fileId }` once a system
+  message is written in the manage conversation with `ai.osaurus.workflow-file/1` `{ "v": 1, "runId", "fileId",
+  "blob": 0 }` and the file as its one attachment, or fails with `file_not_found` or `too_large`. The Mac keeps
+  the newest 2 of these messages.
 - `partial: true` (`workflow_live_steps`) answers for a run still going too, where it would otherwise fail
   with `running`. The message then has the run's `status` (`running` or `awaiting_user`), no `output` or
   `files` (they aren't final), and in `steps` the details of finished steps only: one not finished yet is

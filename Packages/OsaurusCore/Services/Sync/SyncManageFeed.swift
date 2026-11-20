@@ -442,7 +442,10 @@ final class SyncManageFeed {
         for (device, list) in lists.sorted(by: { $0.key < $1.key }) where deviceNames[device] != nil {
             let requests =
                 signed.contains(device)
-                ? list.requests : list.requests.filter { $0.op != .runWorkflow && $0.op != .workflowOutput }
+                ? list.requests
+                : list.requests.filter {
+                    $0.op != .runWorkflow && $0.op != .workflowOutput && $0.op != .workflowFile
+                }
             let results =
                 SyncHostedRunContract.read(
                     SyncDeviceFeedContract.ManageResults.self,
@@ -458,7 +461,7 @@ final class SyncManageFeed {
             SyncDeviceFeedContract.ManageRequests.self,
             SyncDeviceFeedContract.manageRequestNamespace,
             from: conversation
-        )?.requests ?? []).filter { $0.op != .runWorkflow && $0.op != .workflowOutput }
+        )?.requests ?? []).filter { $0.op != .runWorkflow && $0.op != .workflowOutput && $0.op != .workflowFile }
         let legacyResults =
             SyncHostedRunContract.read(
                 SyncDeviceFeedContract.ManageResults.self,
@@ -732,6 +735,21 @@ final class SyncManageFeed {
             }.value
             guard written else { return failed("failed", "The run's output couldn't be sent.") }
             return answered(["runId": payload.runId])
+        case .workflowFile:
+            let source: SyncWorkflowFile.Source
+            switch SyncWorkflowFile.source(runId: request.runId, fileId: request.fileId) {
+            case .success(let found): source = found
+            case .failure: return failed("file_not_found", "That file isn't on this Mac any more.")
+            }
+            let sent = await Task.detached(priority: .userInitiated) { () -> Result<Void, SyncWorkflowFile.Failure>? in
+                try? SyncConversationStore.shared.performWrite { core in try SyncWorkflowFile.send(source, core: core) }
+            }.value
+            switch sent {
+            case .success?: return answered(["runId": source.runId, "fileId": source.fileId])
+            case .failure(.notFound)?: return failed("file_not_found", "That file isn't on this Mac any more.")
+            case .failure(.tooLarge)?: return failed("too_large", "That file is too large to send.")
+            case nil: return failed("failed", "The file couldn't be sent.")
+            }
         case .runWorkflow:
             // Checked before any attached file is fetched and saved: a start that would fail costs nothing.
             let attached = Set((request.files ?? [:]).keys)
@@ -842,7 +860,7 @@ final class SyncManageFeed {
                     return failed("load_failed", "The model couldn't be loaded on this Mac.")
                 }
             case .setFavorite, .getModelOptions, .setModelOption, .contextUsage, .runWorkflow, .workflowOutput,
-                .unsupported:
+                .workflowFile, .unsupported:
                 return done()
             }
             return done(agentId: agentId)

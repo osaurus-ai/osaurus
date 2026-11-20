@@ -131,6 +131,8 @@ enum SyncWorkflowOutput {
                 entry["skipped"] = .string("missing")
             case .tooLarge:
                 entry["skipped"] = .string("tooLarge")
+                // Sent on asking instead (`workflow_file_fetch`), when not past that cap too.
+                if SyncWorkflowFile.fetchable(size: artifact.fileSize) { entry["fetchable"] = .bool(true) }
             case .copied(let file, let size):
                 total += size
                 blobs.append(AttachmentFile(path: file.path, mediaType: artifact.mimeType, name: artifact.filename))
