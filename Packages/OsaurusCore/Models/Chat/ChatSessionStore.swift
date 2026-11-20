@@ -382,6 +382,8 @@ enum ChatSessionStore {
             return
         }
         for id in ids {
+            saveVersions.removeValue(forKey: id)
+            ChatPersistenceStatus.shared.unsaved.remove(id)
             pendingSaves.removeValue(forKey: id)
         }
         Task.detached(priority: .utility) {

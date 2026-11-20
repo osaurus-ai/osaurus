@@ -32,6 +32,13 @@ struct ChatSessionSidebar: View {
     var openChats: [ChatTab] = []
     var onSelectOpenChat: ((UUID) -> Void)? = nil
     var onCloseOpenChat: ((UUID) -> Void)? = nil
+    /// The window's chat selection. nil leaves rows without checkboxes.
+    var chatSelection: Binding<ChatSelection>? = nil
+    /// False while a page with its own batch bar (All chats) is on screen.
+    var showsBatchBar = true
+    /// Selectable chat ids in the order their rows sit on screen, for
+    /// Shift-click ranges. Reported by the rows themselves.
+    @State private var visibleChatOrder: [UUID] = []
     @State private var navigatorRenameId: UUID?
     @ObservedObject private var conversations = ChatSessionsManager.shared
     @State private var agentExpansion: [UUID: Bool] = [:]
@@ -176,7 +183,25 @@ struct ChatSessionSidebar: View {
             .sidebarScrollEdgeFade()
             .coordinateSpace(name: "agentList")
             .onPreferenceChange(AgentRowFramesKey.self) { agentRowFrames = $0 }
+            .onPreferenceChange(VisibleChatOrderKey.self) { visibleChatOrder = Self.visibleChatOrder($0) }
+            if showsBatchBar, let binding = chatSelection, binding.wrappedValue.isActive {
+                SidebarBatchBar(
+                    count: binding.wrappedValue.count,
+                    onArchive: {
+                        ChatBatchActions.setArchived(binding.wrappedValue.selectedIds, archived: true)
+                        binding.wrappedValue.clear()
+                    },
+                    onDelete: {
+                        ChatBatchActions.requestDelete(binding.wrappedValue.selectedIds, scope: alertScope) {
+                            binding.wrappedValue.clear()
+                        }
+                    },
+                    onDone: { binding.wrappedValue.clear() }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(theme.motion.quick, value: chatSelection?.wrappedValue.isActive ?? false)
         .onChange(of: agentId) { _, newAgentId in
             // Opening an agent by any route (row tap, tab switch, deep link)
             // is "seen": the new-agent ring comes off.
@@ -359,7 +384,9 @@ struct ChatSessionSidebar: View {
             updatedAt: chat.updatedAt, agentId: agent?.id ?? chat.agentId, archived: live?.archived ?? false,
             pinned: live?.pinned ?? false, projectId: live?.projectId)
         let isWorkspaceChat = metadata.workspace != nil || live?.workspaceContext != nil
+        let selection = rowSelection(for: chat)
         return SessionRow(session: metadata, agent: agent, isSelected: chat.isSelected,
+            selection: selection,
             navigatorStyle: true, showsAgentAvatar: showsAgentAvatar, sharedAvatar: sharedAvatar,
             activityStatus: activityMonitor.statuses[chat.id],
             isEditing: navigatorRenameId == chat.id,
@@ -417,6 +444,54 @@ struct ChatSessionSidebar: View {
                 }
             },
             onOpenInNewTab: onOpenInNewTab.map { open in { open(savedConversation(chat)) } })
+            .preference(key: VisibleChatOrderKey.self, value: selection == nil ? [] : [chat.id])
+    }
+
+    /// A saved chat's part in the window's selection; drafts have none.
+    private func rowSelection(for chat: HistoryItem) -> SessionRowSelection? {
+        guard let binding = chatSelection, chat.saved != nil else { return nil }
+        let current = binding.wrappedValue
+        var batchCount: Int?
+        if case .batch(let count) = current.menuScope(for: chat.id) { batchCount = count }
+        let ids = current.selectedIds
+        let allPinned = batchCount != nil && ChatBatchActions.allPinned(ids, in: conversations.sessions)
+        let allArchived = batchCount != nil && ChatBatchActions.allArchived(ids, in: conversations.sessions)
+        let order = visibleChatOrder
+        let onScreen = activeSessionId
+        let scope = alertScope
+        return SessionRowSelection(
+            isChecked: current.contains(chat.id),
+            isModeActive: current.isActive,
+            batchCount: batchCount,
+            allPinned: allPinned,
+            allArchived: allArchived,
+            onToggle: { binding.wrappedValue.toggle(chat.id) },
+            onExtend: {
+                binding.wrappedValue.selectRange(to: chat.id, visibleOrder: order, fallbackAnchor: onScreen)
+            },
+            onSelectThis: {
+                if !binding.wrappedValue.contains(chat.id) { binding.wrappedValue.toggle(chat.id) }
+            },
+            onBatchPin: {
+                ChatBatchActions.setPinned(ids, pinned: !allPinned)
+                binding.wrappedValue.clear()
+            },
+            onBatchArchive: {
+                ChatBatchActions.setArchived(ids, archived: !allArchived)
+                binding.wrappedValue.clear()
+            },
+            onBatchDelete: {
+                ChatBatchActions.requestDelete(ids, scope: scope) { binding.wrappedValue.clear() }
+            }
+        )
+    }
+
+    /// Pure rule (testable): the selectable rows' ids as reported top to
+    /// bottom, each once. Rows of folded groups never render, so they
+    /// never report.
+    nonisolated static func visibleChatOrder(_ reported: [UUID]) -> [UUID] {
+        var seen = Set<UUID>()
+        return reported.filter { seen.insert($0).inserted }
     }
 
     private func savedConversation(_ chat: HistoryItem) -> ChatSessionData {
@@ -785,6 +860,17 @@ struct ChatSessionSidebar: View {
                 Text("Import Conversations", bundle: .module)
             } icon: {
                 Image(systemName: "square.and.arrow.down")
+            }
+        }
+        if let chatSelection {
+            Button {
+                chatSelection.wrappedValue.requestMode()
+            } label: {
+                Label {
+                    Text("Select chats", bundle: .module)
+                } icon: {
+                    Image(systemName: "checkmark.circle")
+                }
             }
         }
         Button {
@@ -2925,6 +3011,24 @@ private struct SidebarFooterRow: View {
 
 // MARK: - Session Row
 
+/// A chat row's part in the window's selection: its checkbox, its
+/// modifier clicks, and the menu that acts on several chats at once.
+struct SessionRowSelection {
+    var isChecked: Bool
+    var isModeActive: Bool
+    /// Set when the row's menu acts on the selection: how many chats.
+    var batchCount: Int?
+    var allPinned = false
+    var allArchived = false
+    var onToggle: () -> Void
+    var onExtend: () -> Void
+    /// The row menu's Select: enters selection mode with this chat ticked.
+    var onSelectThis: () -> Void
+    var onBatchPin: () -> Void = {}
+    var onBatchArchive: () -> Void = {}
+    var onBatchDelete: () -> Void = {}
+}
+
 private struct SessionRow: View {
     let session: ChatSessionData
     let agent: Agent?
@@ -2932,6 +3036,9 @@ private struct SessionRow: View {
     /// Whether this row is part of an active multi-selection. Drives the
     /// accent background and the leading checkmark.
     var isMultiSelected: Bool = false
+    /// The row's part in the window's chat selection. nil for rows that
+    /// can't be selected (an unsaved draft).
+    var selection: SessionRowSelection? = nil
     var navigatorStyle: Bool = false
     /// Navigator rows outside their agent's group (Pinned) show the agent's
     /// avatar in the icon column.
@@ -2978,7 +3085,6 @@ private struct SessionRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var fileChanges = FileChangeSummaryStore.shared
     @State private var isHovered = false
-    @State private var hoverControlsWidth: CGFloat = 0
     @State private var showActionsPopover = false
     /// Drill-in page state for the actions popover: false shows the main
     /// action list, true shows the project picker rows.
@@ -3169,6 +3275,38 @@ private struct SessionRow: View {
         environmentTheme.motion.springAnimation(responseMultiplier: 0.8)
     }
 
+    /// The checkbox takes the icon column on hover, while ticked, and for
+    /// every row in selection mode.
+    private var showsCheckbox: Bool {
+        guard let selection else { return false }
+        return isHovered || selection.isChecked || selection.isModeActive
+    }
+
+    private var showsHoverActions: Bool {
+        isHovered && !(selection?.isModeActive ?? false)
+    }
+
+    /// A plain click always opens the chat; Command toggles it, Shift
+    /// extends the selection to it.
+    private func handleNavigatorClick() {
+        guard let selection else { return onSelect() }
+        let flags = NSEvent.modifierFlags
+        switch ChatSelection.clickOutcome(command: flags.contains(.command), shift: flags.contains(.shift)) {
+        case .open: onSelect()
+        case .toggle: selection.onToggle()
+        case .extendRange: selection.onExtend()
+        }
+    }
+
+    private func selectionCheckbox(_ selection: SessionRowSelection) -> some View {
+        let title = session.title.isEmpty ? L("New chat") : session.title
+        return Toggle("", isOn: Binding(get: { selection.isChecked }, set: { _ in selection.onToggle() }))
+            .settingsCheckbox(showsLabel: false)
+            .labelsHidden()
+            .accessibilityLabel(Text(verbatim: selection.isChecked ? L("Deselect \(title)") : L("Select \(title)")))
+            .transition(.opacity)
+    }
+
     private var navigatorAgeLabel: some View {
         TimelineView(.everyMinute) { context in
             Text(verbatim: compactRelativeAge(session.updatedAt, now: context.date))
@@ -3185,11 +3323,13 @@ private struct SessionRow: View {
         let trailingControl = environmentTheme.assignedMetric(
             SettingsButtonSize.extraSmall.assignment("height"), fallback: environmentTheme.space.s24)
         return HStack(spacing: theme.space.s0) {
-            Button(action: onSelect) {
+            Button(action: handleNavigatorClick) {
                 HStack(spacing: theme.space.s0) {
                     // A real view, so the column keeps its width when empty.
                     ZStack {
-                        if showsAgentAvatar, let sharedAvatar {
+                        if showsCheckbox, let selection {
+                            selectionCheckbox(selection)
+                        } else if showsAgentAvatar, let sharedAvatar {
                             AgentAvatarView(
                                 mascotId: sharedAvatar.avatar,
                                 name: sharedAvatar.name,
@@ -3234,6 +3374,7 @@ private struct SessionRow: View {
                                 .transition(.opacity)
                         }
                     }
+                    .animation(navigatorActivityAnimation, value: showsCheckbox)
                     .frame(width: NavigatorRowMetrics.iconColumn)
                     .animation(navigatorActivityAnimation, value: activityStatus)
                     .padding(.leading, NavigatorRowMetrics.leadingInset)
@@ -3247,60 +3388,29 @@ private struct SessionRow: View {
                         )
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        // The title runs under Pin / Archive and fades out
-                        // there instead of re-truncating, so hovering never
-                        // shifts the row.
-                        .mask(alignment: .leading) {
-                            HStack(spacing: theme.space.s0) {
-                                Rectangle()
-                                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
-                                    .frame(width: isHovered ? environmentTheme.space.s12 : 0)
-                                Color.clear.frame(width: isHovered ? hoverControlsWidth : 0)
-                            }
-                        }
                 }
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
             }.buttonStyle(.plain)
-            .help(navigatorActivityLine ?? "")
+            .help(navigatorActivityLine ?? session.title)
             .accessibilityValue(Text(verbatim: [navigatorActivityLine, formatRelativeDate(session.updatedAt)]
                 .compactMap { $0 }.joined(separator: ", ")))
-            .overlay(alignment: .trailing) {
-                HStack(spacing: environmentTheme.space.s4) {
-                    // Tilted like a pushpin: upright, the head-heavy glyph
-                    // floats high and reads as an hourglass at this size.
-                    SettingsIconButton(
-                        session.pinned ? "pin.fill" : "pin",
-                        help: session.pinned ? "Unpin" : "Pin",
-                        size: .extraSmall, role: .tertiary,
-                        glyphTilt: .degrees(45), glyphNudge: CGSize(width: -0.75, height: 1),
-                        action: onTogglePin)
-                    SettingsIconButton(
-                        session.archived ? "tray.and.arrow.up" : "archivebox",
-                        help: session.archived ? "Unarchive" : "Archive",
-                        size: .extraSmall, role: .tertiary,
-                        glyphNudge: CGSize(width: 0, height: session.archived ? -1.25 : 0.5),
-                        action: onToggleArchive)
-                }
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { hoverControlsWidth = $0 }
-                .opacity(isHovered ? 1 : 0)
-                .allowsHitTesting(isHovered)
-            }
             // The age and the ⋯ share one slot; the menu stays mounted so it
             // can present, and the age keeps its width while hidden so the
-            // slot never resizes on hover.
+            // slot never resizes on hover. Selection mode hides the ⋯; the
+            // right-click menu still opens.
             ZStack(alignment: .trailing) {
                 navigatorAgeLabel
-                    .opacity(isHovered ? 0 : 1)
-                AssignedActionMenu(accessibilityLabel: "Conversation actions for \(session.title)", appearance: .chatContext) {
+                    .opacity(showsHoverActions ? 0 : 1)
+                AssignedActionMenu(accessibilityLabel: L("More actions"), appearance: .chatContext) {
                     conversationContextMenu
                 } label: {
                     Image(systemName: "ellipsis")
                 }
                 .buttonStyle(ConversationEllipsisStyle())
                 .frame(width: trailingControl, height: trailingControl)
-                .opacity(isHovered ? 1 : 0)
-                .allowsHitTesting(isHovered)
+                .opacity(showsHoverActions ? 1 : 0)
+                .allowsHitTesting(showsHoverActions)
             }
             .padding(.leading, environmentTheme.space.s4)
             .padding(.trailing, NavigatorRowMetrics.trailingInset)
@@ -3315,6 +3425,32 @@ private struct SessionRow: View {
     }
 
     @ViewBuilder private var conversationContextMenu: some View {
+        if let selection, let count = selection.batchCount {
+            batchContextMenu(selection, count: count)
+        } else {
+            singleContextMenu
+        }
+    }
+
+    /// Opened on one of several selected rows: the menu acts on all of them.
+    @ViewBuilder
+    private func batchContextMenu(_ selection: SessionRowSelection, count: Int) -> some View {
+        Section {
+            Button(action: selection.onBatchPin) {
+                Text(selection.allPinned ? "Unpin" : "Pin", bundle: .module)
+            }
+            Button(action: selection.onBatchArchive) {
+                Text(selection.allArchived ? "Unarchive" : "Archive", bundle: .module)
+            }
+            Button(role: .destructive, action: selection.onBatchDelete) {
+                Text(verbatim: ChatBatchActions.deleteButtonTitle(count: count))
+            }
+        } header: {
+            Text(verbatim: L("\(count) chats selected"))
+        }
+    }
+
+    @ViewBuilder private var singleContextMenu: some View {
                 if activityStatus != nil, let onStop {
                     Button {
                         onStop()
@@ -3361,6 +3497,9 @@ private struct SessionRow: View {
                     }
                 }
                 Button(action: requestExport) { Text("Export…", bundle: .module) }
+                if let selection {
+                    Button(action: selection.onSelectThis) { Text("Select", bundle: .module) }
+                }
                 Divider()
                 Button(action: onToggleArchive) {
                     Text(session.archived ? "Unarchive" : "Archive", bundle: .module)
@@ -3530,6 +3669,10 @@ private struct SessionRow: View {
     /// Entry point for both the context menu and the popover's Delete row.
     /// Skips the dialog if the user opted out earlier this app session.
     private func requestDelete() {
+        if selection != nil {
+            ChatBatchActions.requestDelete([session.id], scope: alertScope)
+            return
+        }
         if DeleteConfirmationPreference.shared.skipForSession {
             onDelete()
             return
@@ -4569,6 +4712,48 @@ private struct AgentRowFramesKey: PreferenceKey {
     static let defaultValue: [UUID: CGRect] = [:]
     static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+/// The foot of the rail in selection mode: the count, Archive, Delete and
+/// Done; with nothing ticked yet, a hint and Done.
+private struct SidebarBatchBar: View {
+    let count: Int
+    let onArchive: () -> Void
+    let onDelete: () -> Void
+    let onDone: () -> Void
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(spacing: theme.space.s0) {
+            ThemeHairlineDivider()
+            HStack(spacing: theme.space.s6) {
+                Text(verbatim: count == 0 ? L("Tick chats to select") : L("\(count) selected"))
+                    .textStyle(.label)
+                    .monospacedDigit()
+                    .foregroundStyle(count == 0 ? theme.text.tertiary : theme.text.primary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if count > 0 {
+                    SettingsButton(.secondary, "Archive", size: .compact, action: onArchive)
+                    SettingsButton(.destructive, "Delete", size: .compact, action: onDelete)
+                }
+                SettingsButton(.secondary, "Done", size: .compact, action: onDone)
+            }
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s10)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Selected chats", bundle: .module))
+    }
+}
+
+/// Selectable chat rows in view-tree order, which is top-to-bottom order
+/// in the rail's stack.
+private struct VisibleChatOrderKey: PreferenceKey {
+    static let defaultValue: [UUID] = []
+    static func reduce(value: inout [UUID], nextValue: () -> [UUID]) {
+        value.append(contentsOf: nextValue())
     }
 }
 

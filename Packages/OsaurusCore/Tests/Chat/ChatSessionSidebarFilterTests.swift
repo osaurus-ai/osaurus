@@ -289,4 +289,23 @@ struct ChatSessionSidebarFilterTests {
         )
         #expect(ChatSessionSidebar.navigatorVisibleChats(chats, cap: 20, activeIds: [ids[7]]).map(\.id) == ids)
     }
+
+    @Test("the Shift-click order is the rows as reported top to bottom, each once")
+    func visibleChatOrderKeepsFirstReport() {
+        let a = UUID(), b = UUID(), c = UUID()
+        #expect(ChatSessionSidebar.visibleChatOrder([a, b, a, c, b]) == [a, b, c])
+        #expect(ChatSessionSidebar.visibleChatOrder([]) == [])
+    }
+
+    @Test("a Shift-click range across two agents covers the rows between, in rail order")
+    func shiftRangeAcrossAgents() {
+        // Agent A's three chats, then agent B's two, as the rail reports them.
+        let a = (0..<3).map { _ in UUID() }
+        let b = (0..<2).map { _ in UUID() }
+        let order = ChatSessionSidebar.visibleChatOrder(a + b)
+        var selection = ChatSelection()
+        selection.toggle(a[1])
+        selection.selectRange(to: b[0], visibleOrder: order, fallbackAnchor: nil)
+        #expect(selection.selectedIds == [a[1], a[2], b[0]])
+    }
 }

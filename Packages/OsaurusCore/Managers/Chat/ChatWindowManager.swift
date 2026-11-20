@@ -862,6 +862,28 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
     }
 
+    /// Every open window's state, for refreshes that span windows.
+    var allWindowStates: [ChatWindowState] { Array(windowStates.values) }
+
+    /// `deleteSession(id:)` for several chats (the sidebar's batch delete):
+    /// the same per-chat steps, then one database batch instead of a
+    /// synchronous transaction per chat.
+    func deleteSessions(ids: Set<UUID>) async {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+                BackgroundTaskManager.shared.cancelTask(liveTask.id)
+            }
+            for state in windowStates.values {
+                state.prepareForSessionDeletion(id: id)
+            }
+        }
+        await ChatSessionsManager.shared.delete(ids: ids)
+        for state in windowStates.values {
+            state.refreshSessions()
+        }
+    }
+
     /// Returns the set of local model names selected by currently-open chat
     /// windows plus any active registry-owned (detached) background tasks.
     /// Used as a "keep loaded for next interaction" hint for GC.

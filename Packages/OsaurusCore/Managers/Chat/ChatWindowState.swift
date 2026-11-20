@@ -288,6 +288,10 @@ final class ChatWindowState: ObservableObject {
     /// rewrites the docked choice, and so the drawer always starts closed.
     @Published var isCompactSidebarPresented: Bool = false
 
+    /// Chats ticked for a batch action in this window. Not persisted, and
+    /// kept across navigation; a batch action, Done or Escape clears it.
+    @Published var chatSelection = ChatSelection()
+
     /// Record the window's breakpoint. Crossing into or out of compact
     /// closes the overlays: a drawer or context overlay left open from a
     /// wide layout would otherwise cover the conversation the moment the
@@ -3194,8 +3198,16 @@ final class ChatWindowState: ObservableObject {
                 // sees the post-mutation array.
                 Task { @MainActor [weak self] in
                     self?.refreshSessions()
+                    self?.pruneChatSelection()
                 }
             }
+    }
+
+    /// Chats deleted elsewhere (another window, sync) leave the selection
+    /// quietly.
+    private func pruneChatSelection() {
+        guard chatSelection.count > 0 else { return }
+        chatSelection.prune(existing: Set(ChatSessionsManager.shared.sessions.map(\.id)))
     }
 
     /// Reconcile our snapshot with a fresh emission from `AgentManager.$agents`.

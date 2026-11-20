@@ -11801,6 +11801,7 @@ struct ChatView: View {
             openChats: windowState.tabs,
             onSelectOpenChat: { windowState.selectTab(id: $0); closeCompactDrawer() },
             onCloseOpenChat: { windowState.closeTab(id: $0) },
+            chatSelection: $windowState.chatSelection,
             onSelect: { data in
                 windowState.loadSession(data)
                 isPinnedToBottom = true
@@ -13914,6 +13915,18 @@ extension ChatView {
                     ourWindow.sendEvent(event)
                     if ourWindow.firstResponder === field {
                         ourWindow.makeFirstResponder(nil)
+                    }
+                    return nil
+                }
+
+                // Stage 4.4: Selection mode. An inline rename still takes
+                // Esc first; then Esc clears the selection, before it can
+                // close the drawer the selection lives in.
+                if let windowState, windowState.chatSelection.isActive {
+                    if let cancelRename = windowState.cancelHistoryRename {
+                        cancelRename()
+                    } else {
+                        windowState.chatSelection.clear()
                     }
                     return nil
                 }

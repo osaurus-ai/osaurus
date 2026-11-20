@@ -45,6 +45,29 @@ Rules that follow from this:
   returns archived chats to their agent's
   list (and Pinned) with an archive glyph in the icon column; glyph and
   title use the disabled ink, lifted to tertiary on hover. Workflow runs move to the Workflows destination, not here.
+  It also holds Select chats, which enters selection mode with nothing
+  ticked.
+- Chats are selected in place (`ChatWindowState.chatSelection`, pure
+  rules in `ChatSelection`). Hovering a saved chat row puts a checkbox in
+  its icon column (over the avatar in Pinned); ticked rows keep it. A
+  plain click always opens the chat, even with others selected; the
+  checkbox and Command-click toggle; Shift-click selects the visible rows
+  between the anchor (the last chat toggled, else the chat on screen) and
+  the clicked row, in rail order, skipping folded agents. While at least
+  one chat is ticked, or after Select chats, the window is in selection
+  mode: every chat row shows its checkbox, row hover actions hide, and a
+  bar at the foot of the sidebar reads "N selected · Archive · Delete ·
+  Done" ("Tick chats to select · Done" when none is ticked). The
+  selection is per window, not persisted, and survives navigation; a
+  batch action, Done or Escape clears it (Escape after an open menu and
+  an inline rename). Toggling a checkbox keeps a compact drawer open.
+- A chat row's ⋯ and right-click open one menu. It adds Select; opened
+  on one of several selected rows it acts on all of them instead: a
+  "N chats selected" header, Pin/Unpin, Archive/Unarchive, Delete N
+  chats. Batch archive offers Undo, which restores each chat's own prior
+  state. Deleting one chat or many asks once (Cancel, Archive instead,
+  Delete N chats; "don't ask again" applies) and deletes in one batch
+  (`ChatSessionsManager.delete(ids:)`).
 - Sidebar rows share one grid (`NavigatorRowMetrics`): 32 points tall,
   content 8 in, a 24-point icon column (the agent's avatar, or empty under
   an agent), text 8 after it, hover actions 8 from the trailing edge. So a
