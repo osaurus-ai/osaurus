@@ -350,7 +350,7 @@ private struct HelpRemoteImageThumbnail: View {
                             Task { await load() }
                         }
                     } else {
-                        ProgressView().controlSize(.small)
+                        SettingsSpinner()
                     }
                 }
                 .frame(width: size.width, height: size.height)

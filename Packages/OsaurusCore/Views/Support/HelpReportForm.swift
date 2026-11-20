@@ -190,7 +190,7 @@ struct HelpReportForm: View {
                 )
             case .ios:
                 SettingsValueRow(
-                    title: "Paired iPhone",
+                    title: "Your iPhone",
                     value: pairing.pairedDevice?.name ?? L("None")
                 )
                 SettingsFieldRow(label: "iPhone Model") {
