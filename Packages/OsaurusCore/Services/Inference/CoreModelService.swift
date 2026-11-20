@@ -644,7 +644,7 @@ public actor CoreModelService {
     /// legitimately resident the whole time — trip the breaker and lock the
     /// *user's* own interactive calls out. Cancellation isn't a fault either.
     static func countsTowardBreaker(_ error: Error) -> Bool {
-        if error is CancellationError { return false }
+        if error is CancellationError || error is RemoteProviderUnavailable { return false }
         guard let coreErr = error as? CoreModelError else { return true }
         switch coreErr {
         case .modelUnavailable, .backgroundWouldEvictUserModel, .circuitBreakerOpen:
@@ -755,6 +755,8 @@ public actor CoreModelService {
     /// `.circuitBreakerOpen` won't either. Cancellation is never retryable.
     static func isRetryable(_ error: Error) -> Bool {
         if error is CancellationError { return false }
+        // `executeModelCall` already waited out any connect under way.
+        if error is RemoteProviderUnavailable { return false }
         // The backend cannot enforce a schema; asking again changes nothing.
         if case StructuredOutputError.unsupportedModel? = error as? StructuredOutputError { return false }
         if let fm = error as? FoundationModelServiceError { return fm.isTransient }
@@ -789,15 +791,25 @@ public actor CoreModelService {
         activity: ActivityContext,
         onDelta: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
-        let remoteServices: [ModelService] = await MainActor.run {
+        var remoteServices: [ModelService] = await MainActor.run {
             RemoteProviderManager.shared.connectedServices()
         }
 
-        let route = ModelServiceRouter.resolve(
+        var route = ModelServiceRouter.resolve(
             requestedModel: model,
             services: localServices,
             remoteServices: remoteServices
         )
+        if case .none = route, intent == .interactive {
+            // Someone is waiting: a provider that is still connecting gets
+            // the chance to finish rather than failing the call outright.
+            if let unavailable = await RemoteProviderManager.shared.awaitService(forModel: model) {
+                throw unavailable
+            }
+            remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
+            route = ModelServiceRouter.resolve(
+                requestedModel: model, services: localServices, remoteServices: remoteServices)
+        }
 
         switch route {
         case .service(let service, let effectiveModel):

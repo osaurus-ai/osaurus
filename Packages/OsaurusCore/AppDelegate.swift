@@ -513,6 +513,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Resolve the user's login-shell PATH off-main now so host MCP servers and the Claude Code launcher
         // see version-manager toolchains (mise / nvm / asdf) without waiting on the probe later (#3024).
         LoginShellPath.prewarm()
+        // Runs that start before the connect pass below (resumed runs,
+        // automations) wait for their provider instead of failing on it.
+        if !keychainDisabledTestMode || KeychainQueryHelpers.usesConnectedDesignProviders {
+            RemoteProviderManager.launchConnectPending = true
+        }
         Task { @MainActor in
             // Await the identity-existence seed before the first
             // `RemoteProviderManager.shared` touch below: its cold init

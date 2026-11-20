@@ -136,6 +136,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             /// model is not available. Fails closed instead of running the
             /// agent on another model. Maps to 503.
             case agentModelUnavailable(agentName: String, model: String)
+            /// The model names a configured remote provider that has no
+            /// live service (still connecting past the wait, failed, off,
+            /// or offline). Maps to 503.
+            case providerUnavailable(RemoteProviderUnavailable)
         }
 
         let kind: Kind
@@ -155,6 +159,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             case .agentModelUnavailable(let agentName, let model):
                 return
                     "\(agentName) is locked to model '\(model)', which isn't available. Repair the model or its provider in the app that installed this agent, or change the model in the agent's settings."
+            case .providerUnavailable(let unavailable):
+                return [unavailable.errorDescription, unavailable.hint].compactMap { $0 }.joined(separator: " ")
             }
         }
 
@@ -167,6 +173,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             case .routerSpendNotAuthorized: return 403
             case .invalidStructuredOutput: return 400
             case .agentModelUnavailable: return 503
+            case .providerUnavailable: return 503
             }
         }
     }
@@ -422,13 +429,24 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         // model. Provider startup can block on Keychain; local MLX requests
         // must not inherit that unrelated startup dependency.
         trace?.mark("fetch_remote_services")
-        let remoteServices = await remoteServicesProvider()
+        var remoteServices = await remoteServicesProvider()
         trace?.mark("route_resolve")
-        let route = ModelServiceRouter.resolve(
+        var route = ModelServiceRouter.resolve(
             requestedModel: request.model,
             services: services,
             remoteServices: remoteServices
         )
+        if case .none = route, !request.model.isEmpty {
+            // A provider still connecting (at launch, or reconnecting) gets
+            // the chance to finish; one that is down says why.
+            trace?.mark("await_provider")
+            if let unavailable = await RemoteProviderManager.shared.awaitService(forModel: request.model) {
+                throw EngineError(kind: .providerUnavailable(unavailable))
+            }
+            remoteServices = await remoteServicesProvider()
+            route = ModelServiceRouter.resolve(
+                requestedModel: request.model, services: services, remoteServices: remoteServices)
+        }
         if case .service(let service, let effectiveModel) = route {
             try await validateAgentReasoningDefaults(
                 request: request, service: service, effectiveModel: effectiveModel)

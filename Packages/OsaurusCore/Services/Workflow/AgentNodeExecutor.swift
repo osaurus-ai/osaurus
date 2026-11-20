@@ -404,14 +404,26 @@ enum AgentNodeExecutor {
         let launcherFolder = await MainActor.run {
             launcherWorkingFolder(for: context.caller) { AgentManager.shared.workingFolder(for: $0) }
         }
+        // The child's picker drops a model whose provider has not connected
+        // yet and would run on whatever else is listed; naming it keeps the
+        // agent's own model, so routing waits for the provider or says why.
+        let model = await MainActor.run { dispatchModel(for: target) { AgentManager.shared.effectiveModel(for: $0) } }
         let outcome = try await AgentDelegationDispatcher.run(
             target: target.dispatchTarget, targetAgentName: target.name, input: task,
-            maxElapsedSeconds: seconds, feed: feed, interrupt: InterruptToken(),
+            maxElapsedSeconds: seconds, model: model, feed: feed, interrupt: InterruptToken(),
             launcherWorkingFolder: launcherFolder)
         let artifacts = await MainActor.run { importArtifacts(of: outcome.sessionId, context: context) }
         return Delegated(
             sessionID: outcome.sessionId, text: outcome.finalText, needsInput: outcome.needsInput,
             completionTokens: outcome.completionTokens, artifacts: artifacts)
+    }
+
+    /// The model a local agent step runs on: the agent's own. A teammate's
+    /// workspace agent runs on their Mac with their model.
+    static func dispatchModel(for target: Target, effectiveModel: (UUID) -> String?) -> String? {
+        guard case .local(let id, _) = target else { return nil }
+        let model = effectiveModel(id)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return model?.isEmpty == false ? model : nil
     }
 
     /// The folder a folder-less local agent inherits for this step: the
