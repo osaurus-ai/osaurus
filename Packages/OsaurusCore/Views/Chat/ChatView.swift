@@ -12321,11 +12321,10 @@ struct ChatView: View {
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .transition(pageTransition)
                         } else if windowState.mainSurface == .chat, case .allChats(let request) = windowState.chatPage {
-                            // The chat's own header fades with the covered
-                            // thread, so the page carries the titlebar strip.
+                            // Like Insights and Settings: the titlebar strip
+                            // stays window material and the page names itself.
                             VStack(spacing: theme.space.s0) {
-                                chatHeader(contentLeadingX: ChatShellLayout.railWidth + sidebarWidth,
-                                           trailingPaneWidth: inspectorWidth)
+                                Color.clear.frame(height: Self.headerHeight(theme))
                                 AllChatsPage(
                                     windowState: windowState,
                                     request: request,
@@ -13022,26 +13021,23 @@ struct ChatView: View {
     /// Not hit-testable: the strip still drags the window.
     private func chatHeader(contentLeadingX: CGFloat, trailingPaneWidth: CGFloat) -> some View {
         let showsTitle = windowState.mainSurface == .chat && activeWorkflowTab == nil
-        let showsAllChats = windowState.chatPage.isAllChats
         let sideInset = max(
             ChatShellLayout.columnInset,
             ChatShellLayout.toolbarLeadingChromeWidth - contentLeadingX,
             ChatShellLayout.toolbarTrailingChromeWidth - trailingPaneWidth)
         return HStack(spacing: theme.space.s6) {
             if showsTitle {
-                Text(showsAllChats ? L("All chats") : chatHeaderTitle)
+                Text(chatHeaderTitle)
                     .textStyle(.label, weight: 600)
                     .foregroundStyle(theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
-                if !showsAllChats {
-                    Text(verbatim: windowState.effectiveChatIdentity.name)
-                        .textStyle(.label)
-                        .foregroundStyle(theme.text.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+                Text(verbatim: windowState.effectiveChatIdentity.name)
+                    .textStyle(.label)
+                    .foregroundStyle(theme.text.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
         .padding(.horizontal, sideInset)

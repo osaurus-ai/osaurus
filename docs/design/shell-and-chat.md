@@ -173,7 +173,8 @@ Rules that follow from this:
   fold is ignored.
 - The chat's title is always on screen, centered in the content column's
   title strip, with the agent name beside it in the quieter style. On the
-  All chats page the strip stays and reads "All chats", with no agent. On the
+  All chats page, as on Insights and Settings, the strip stays window
+  material with no title; the page's own heading names it. On the
   All chats page the strip stays and reads "All chats", with no agent.
 
 ## Breakpoints
