@@ -48,12 +48,14 @@ Rules that follow from this:
   page. Deep link: `osaurus://chats/all`, with an optional `?agent=<id>`.
 - The page: title, "N chats on this Mac, newest first." (or "with
   <Agent>"), Import and Select/Done; a search field over titles, agent
-  names and message text; the All / Pinned / Untitled / Archived chips
-  with counts (All, Pinned and Untitled leave archived chats out) and an
-  agent chip row; rows grouped Today, Yesterday, Previous 7 days, then by
-  month, each header with its count and a hover Select all; rows of two
-  lines (title over the first user message), 50 at a time
-  (`AllChatsModel`). The selection is the window's: in selection mode, or
+  names and message text; one filter row with the All / Pinned /
+  Untitled / Archived chips (a count only when it is above zero; All,
+  Pinned and Untitled leave archived chats out) and an agent menu, so the
+  row holds any number of agents; rows grouped Today, Yesterday, Previous
+  7 days, then by month, each header with its count and a hover Select
+  all; rows of two lines (title over the first user message) with the
+  agent's avatar and right-aligned agent and age columns, no resting fill,
+  50 at a time (`AllChatsModel`). The selection is the window's: in selection mode, or
   whenever a chip or search narrows the list, a bar floats over the foot
   of the list with "N selected", Select all M, Pin/Unpin,
   Archive/Unarchive, Delete and a clear button; the sidebar's own bar
@@ -103,8 +105,15 @@ Rules that follow from this:
   the clicked row, in rail order, skipping folded agents. While at least
   one chat is ticked, or after Select chats, the window is in selection
   mode: every chat row shows its checkbox, row hover actions hide, and a
-  bar at the foot of the sidebar reads "N selected · Archive · Delete ·
-  Done" ("Tick chats to select · Done" when none is ticked). The
+  bar at the foot of the sidebar reads "N selected", then Archive and
+  Delete as icon buttons and Done ("Tick chats to select · Done" when
+  none is ticked). The checkbox (`ChatSelectionCheckbox`) is a 14-point
+  square inside the icon column, accent-filled when ticked; ticked rows
+  sit on `surface.selected`, a step above the hover wash that marks the
+  chat on screen. The sidebar bar and the All chats page's floating bar
+  are one component (`ChatBatchBar`). Both read the window's theme, not
+  the rail's sidebar-family scope, so they look the same in both places.
+  The
   selection is per window, not persisted, and survives navigation; a
   batch action, Done or Escape clears it (Escape after an open menu and
   an inline rename). Toggling a checkbox keeps a compact drawer open.
@@ -163,7 +172,9 @@ Rules that follow from this:
   is active, each agent opens on its matching chats and the Agents section's
   fold is ignored.
 - The chat's title is always on screen, centered in the content column's
-  title strip, with the agent name beside it in the quieter style.
+  title strip, with the agent name beside it in the quieter style. On the
+  All chats page the strip stays and reads "All chats", with no agent. On the
+  All chats page the strip stays and reads "All chats", with no agent.
 
 ## Breakpoints
 

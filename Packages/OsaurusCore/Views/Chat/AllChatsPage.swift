@@ -132,8 +132,10 @@ struct AllChatsPage: View {
                     isSearching: isContentSearchInFlight,
                     chrome: .field
                 )
-                filterChips(model)
-                agentChips
+                HStack(spacing: theme.space.s8) {
+                    filterChips(model)
+                    agentMenu
+                }
                 if model.groups.isEmpty {
                     emptyState
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -212,10 +214,13 @@ struct AllChatsPage: View {
 
     // MARK: Chips
 
+    /// Empty filters keep their chip but drop the "0", so the counts that
+    /// show are the ones worth reading.
     private func filterChips(_ model: AllChatsModel) -> some View {
         FilterChipScroller(reveal: AnyHashable(filter)) {
             ForEach(AllChatsFilter.allCases, id: \.self) { chip in
-                FilterChip(Self.title(for: chip), count: model.counts[chip] ?? 0, isSelected: filter == chip) {
+                let count = model.counts[chip] ?? 0
+                FilterChip(Self.title(for: chip), count: count > 0 ? count : nil, isSelected: filter == chip) {
                     withAnimation(theme.motion.quick) { filter = chip }
                 }
                 .id(AnyHashable(chip))
@@ -234,16 +239,25 @@ struct AllChatsPage: View {
         }
     }
 
-    private var agentChips: some View {
-        let names = agentNames
-        return FilterChipRow(
-            agentManager.agents.map(\.id),
-            selection: $agentFilter,
-            allTitle: L("All agents"),
-            title: { names[$0] ?? "" }
-        )
-        .accessibilityElement(children: .contain)
+    /// One menu instead of a chip per agent, so the row holds any number of
+    /// agents.
+    private var agentMenu: some View {
+        let title = agentFilter.flatMap { agentNames[$0] } ?? L("All agents")
+        return SettingsMenuButton(.secondary, title, icon: "person.2", size: .compact, verbatim: true) {
+            Toggle(isOn: agentBinding(nil)) { Text("All agents", bundle: .module) }
+            Divider()
+            ForEach(agentManager.agents) { agent in
+                Toggle(isOn: agentBinding(agent.id)) { Text(verbatim: agent.displayName) }
+            }
+        }
         .accessibilityLabel(Text("Agent", bundle: .module))
+    }
+
+    private func agentBinding(_ id: UUID?) -> Binding<Bool> {
+        Binding(
+            get: { agentFilter == id },
+            set: { _ in withAnimation(theme.motion.quick) { agentFilter = id } }
+        )
     }
 
     // MARK: Empty state
@@ -283,49 +297,29 @@ struct AllChatsPage: View {
         let allPinned = ChatBatchActions.allPinned(ids, in: sessions)
         let allArchived = ChatBatchActions.allArchived(ids, in: sessions)
         let everyMatchSelected = !model.matchingIds.isEmpty && model.matchingIds.allSatisfy(ids.contains)
-        return HStack(spacing: theme.space.s8) {
-            Text(verbatim: ids.isEmpty ? L("Tick chats to select") : L("\(ids.count) selected"))
-                .textStyle(.label, weight: 600)
-                .monospacedDigit()
-                .foregroundStyle(ids.isEmpty ? theme.text.secondary : theme.text.primary)
-                .lineLimit(1)
-            if !everyMatchSelected, !model.matchingIds.isEmpty {
-                SettingsButton(.tertiary, L("Select all \(model.matchingIds.count)"), size: .compact, verbatim: true) {
-                    windowState.chatSelection.select(model.matchingIds)
-                }
-            }
-            if !ids.isEmpty {
-                SettingsButton(.secondary, allPinned ? "Unpin" : "Pin", size: .compact) {
-                    ChatBatchActions.setPinned(ids, pinned: !allPinned)
-                    windowState.chatSelection.clear()
-                }
-                SettingsButton(.secondary, allArchived ? "Unarchive" : "Archive", size: .compact) {
-                    ChatBatchActions.setArchived(ids, archived: !allArchived)
-                    windowState.chatSelection.clear()
-                }
-                SettingsButton(.destructive, "Delete", size: .compact) {
-                    ChatBatchActions.requestDelete(ids, scope: scope) { windowState.chatSelection.clear() }
-                }
-            }
-            if windowState.chatSelection.isActive {
-                SettingsIconButton("xmark", help: "Clear selection", size: .compact, role: .tertiary) {
-                    windowState.chatSelection.clear()
-                }
-            }
-        }
-        .padding(.horizontal, theme.space.s14)
-        .padding(.vertical, theme.space.s8)
-        .background(
-            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
-                .fill(theme.surface.raised)
+        let selection = windowState.chatSelection
+        return ChatBatchBar(
+            placement: .page,
+            count: ids.count,
+            allPinned: allPinned,
+            allArchived: allArchived,
+            selectAllCount: everyMatchSelected || model.matchingIds.isEmpty ? nil : model.matchingIds.count,
+            onSelectAll: { windowState.chatSelection.select(model.matchingIds) },
+            onPin: {
+                ChatBatchActions.setPinned(ids, pinned: !allPinned)
+                windowState.chatSelection.clear()
+            },
+            onArchive: {
+                ChatBatchActions.setArchived(ids, archived: !allArchived)
+                windowState.chatSelection.clear()
+            },
+            onDelete: {
+                ChatBatchActions.requestDelete(ids, scope: scope) { windowState.chatSelection.clear() }
+            },
+            onDone: selection.isActive ? { windowState.chatSelection.clear() } : nil
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
-                .strokeBorder(theme.border.subtle, lineWidth: theme.stroke.default)
-        )
+        .fixedSize(horizontal: true, vertical: false)
         .themeElevation(theme.elevation.overlay)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("Selected chats", bundle: .module))
     }
 
     // MARK: Loading

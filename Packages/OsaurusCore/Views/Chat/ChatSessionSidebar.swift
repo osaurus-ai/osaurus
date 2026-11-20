@@ -198,7 +198,8 @@ struct ChatSessionSidebar: View {
             .onPreferenceChange(AgentRowFramesKey.self) { agentRowFrames = $0 }
             .onPreferenceChange(VisibleChatOrderKey.self) { visibleChatOrder = Self.visibleChatOrder($0) }
             if showsBatchBar, let binding = chatSelection, binding.wrappedValue.isActive {
-                SidebarBatchBar(
+                ChatBatchBar(
+                    placement: .sidebar,
                     count: binding.wrappedValue.count,
                     onArchive: {
                         ChatBatchActions.setArchived(binding.wrappedValue.selectedIds, archived: true)
@@ -211,6 +212,7 @@ struct ChatSessionSidebar: View {
                     },
                     onDone: { binding.wrappedValue.clear() }
                 )
+                .padding(theme.space.s8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -3238,18 +3240,6 @@ private struct SessionRow: View {
     @State private var editBuffer: String = ""
     @FocusState private var isTextFieldFocused: Bool
 
-    /// Whether this is the default agent
-    private var isDefaultAgent: Bool {
-        guard let agent = agent else { return true }
-        return agent.isBuiltIn
-    }
-
-    /// Get a consistent color for the agent based on its ID
-    private var agentColor: Color {
-        guard let agent = agent, !agent.isBuiltIn else { return theme.text.secondary }
-        return theme.dataInk(seed: agent.id.uuidString)
-    }
-
     var body: some View {
         if isEditing {
             editingView
@@ -3299,10 +3289,10 @@ private struct SessionRow: View {
                     .foregroundColor(theme.text.primary)
             }
             Group {
-                if isDefaultAgent {
-                    defaultAgentIndicator
-                } else if let agent {
+                if let agent {
                     agentIndicatorView(agent)
+                } else {
+                    defaultAgentIndicator
                 }
             }
             .overlay {
@@ -3360,9 +3350,11 @@ private struct SessionRow: View {
                 .allowsHitTesting(showsHoverActions)
             }
         }
-        .padding(.horizontal, theme.space.s10)
+        .padding(.leading, theme.space.s4)
+        .padding(.trailing, theme.space.s10)
         .padding(.vertical, theme.space.s8)
-        .sidebarRowChrome(isSelected: isSelected || isMultiSelected || (selection?.isChecked ?? false), isHovered: isHovered)
+        .background(checkedRowFill)
+        .sidebarRowChrome(isSelected: isSelected || isMultiSelected, isHovered: isHovered, compactChatStyle: true)
         .overlay(
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                 .stroke(isImportHighlighted ? theme.border.focus : Color.clear, lineWidth: theme.stroke.focus)
@@ -3378,24 +3370,23 @@ private struct SessionRow: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    /// "Agent · 3h" at the trailing edge of an All chats row.
+    /// The agent and the age in two right-aligned columns, so both line up
+    /// down the page.
     private var pageRowTrailingLabel: some View {
-        HStack(spacing: environmentTheme.space.s4) {
-            if let agent {
-                Text(verbatim: agent.displayName)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(verbatim: "·")
-            }
+        HStack(spacing: environmentTheme.space.s12) {
+            Text(verbatim: agent?.displayName ?? "")
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: 104, alignment: .trailing)
             TimelineView(.everyMinute) { context in
                 Text(verbatim: compactRelativeAge(session.updatedAt, now: context.date))
                     .monospacedDigit()
-                    .fixedSize()
+                    .lineLimit(1)
+                    .frame(width: 32, alignment: .trailing)
             }
         }
         .textStyle(.caption)
         .foregroundStyle(environmentTheme.text.tertiary)
-        .frame(maxWidth: 160, alignment: .trailing)
         .accessibilityElement(children: .combine)
         .accessibilityValue(Text(verbatim: formatRelativeDate(session.updatedAt)))
     }
@@ -3425,11 +3416,21 @@ private struct SessionRow: View {
 
     private func selectionCheckbox(_ selection: SessionRowSelection) -> some View {
         let title = session.title.isEmpty ? L("New chat") : session.title
-        return Toggle("", isOn: Binding(get: { selection.isChecked }, set: { _ in selection.onToggle() }))
-            .settingsCheckbox(showsLabel: false)
-            .labelsHidden()
-            .accessibilityLabel(Text(verbatim: selection.isChecked ? L("Deselect \(title)") : L("Select \(title)")))
-            .transition(.opacity)
+        return ChatSelectionCheckbox(
+            isChecked: selection.isChecked,
+            accessibilityLabel: selection.isChecked ? L("Deselect \(title)") : L("Select \(title)"),
+            action: selection.onToggle
+        )
+        .transition(.opacity)
+    }
+
+    /// Ticked rows sit on the selected surface, a step above the hover wash
+    /// that marks the chat on screen.
+    @ViewBuilder private var checkedRowFill: some View {
+        if selection?.isChecked == true {
+            RoundedRectangle(cornerRadius: environmentTheme.radius.medium, style: .continuous)
+                .fill(environmentTheme.surface.selected)
+        }
     }
 
     private var navigatorAgeLabel: some View {
@@ -3535,6 +3536,7 @@ private struct SessionRow: View {
             .padding(.trailing, NavigatorRowMetrics.trailingInset)
         }
         .frame(height: NavigatorRowMetrics.rowHeight)
+        .background(checkedRowFill)
         .sidebarRowChrome(isSelected: isSelected, isHovered: isHovered, compactChatStyle: true)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
@@ -3879,18 +3881,20 @@ private struct SessionRow: View {
         .localizedHelp("Default")
     }
 
+    /// The agent's avatar as the rail draws it, so a page row and its
+    /// sidebar row read as the same agent.
     @ViewBuilder
     private func agentIndicatorView(_ agent: Agent) -> some View {
         AgentAvatarView(
             mascotId: agent.avatar,
-            name: agent.name,
-            tint: agentColor,
+            name: agent.displayName,
+            tint: theme.dataInk(seed: agent.name),
             diameter: 24,
             customImageURL: agent.customAvatarURL,
-            monogramFontSize: 10,
-            borderWidth: 1
+            monogramFontSize: 11,
+            borderWidth: 0
         )
-        .help(agent.name)
+        .help(Text(verbatim: agent.displayName))
     }
 
     private var editingView: some View {
@@ -4342,7 +4346,8 @@ struct AllChatsList: View {
 }
 
 /// A day group's header on the All chats page: its name and count, and
-/// Select all / Deselect all on hover or in selection mode.
+/// Select all / Deselect all on hover (the floating bar's Select all
+/// covers the whole list).
 private struct AllChatsGroupHeader: View {
     let title: String
     let count: Int
@@ -4354,7 +4359,7 @@ private struct AllChatsGroupHeader: View {
     var body: some View {
         let current = selection.wrappedValue
         let allSelected = !ids.isEmpty && ids.allSatisfy(current.contains)
-        let showsToggle = isHovered || current.isActive
+        let showsToggle = isHovered
         HStack(spacing: theme.space.s6) {
             Text(verbatim: title)
                 .textStyle(.caption, weight: 600)
@@ -4375,8 +4380,9 @@ private struct AllChatsGroupHeader: View {
             .allowsHitTesting(showsToggle)
             .accessibilityHidden(!showsToggle)
         }
-        .padding(.horizontal, theme.space.s10)
-        .padding(.top, theme.space.s14)
+        .padding(.leading, theme.space.s10)
+        .padding(.trailing, theme.space.s4)
+        .padding(.top, theme.space.s16)
         .padding(.bottom, theme.space.s4)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
@@ -4390,39 +4396,6 @@ private struct AgentRowFramesKey: PreferenceKey {
     static let defaultValue: [UUID: CGRect] = [:]
     static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { $1 })
-    }
-}
-
-/// The foot of the rail in selection mode: the count, Archive, Delete and
-/// Done; with nothing ticked yet, a hint and Done.
-private struct SidebarBatchBar: View {
-    let count: Int
-    let onArchive: () -> Void
-    let onDelete: () -> Void
-    let onDone: () -> Void
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        VStack(spacing: theme.space.s0) {
-            ThemeHairlineDivider()
-            HStack(spacing: theme.space.s6) {
-                Text(verbatim: count == 0 ? L("Tick chats to select") : L("\(count) selected"))
-                    .textStyle(.label)
-                    .monospacedDigit()
-                    .foregroundStyle(count == 0 ? theme.text.tertiary : theme.text.primary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if count > 0 {
-                    SettingsButton(.secondary, "Archive", size: .compact, action: onArchive)
-                    SettingsButton(.destructive, "Delete", size: .compact, action: onDelete)
-                }
-                SettingsButton(.secondary, "Done", size: .compact, action: onDone)
-            }
-            .padding(.horizontal, theme.space.s16)
-            .padding(.vertical, theme.space.s10)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("Selected chats", bundle: .module))
     }
 }
 
