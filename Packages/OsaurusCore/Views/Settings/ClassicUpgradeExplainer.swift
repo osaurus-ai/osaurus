@@ -332,19 +332,18 @@ private struct ClassicUpgradeCanvas: View {
 
     /// After a beat, the relay (pairing stages) or the Mac (Classic Data) goes offline: Classic loses access, Sync
     /// keeps its own link.
-    /// Over and over for as long as the stage shows, so it reads whenever it's joined: connected, then the drop.
+    /// Once a stage, spaced across its time: connected for the first part, then the drop, held to the end, the
+    /// status line saying what happened.
     private func drop() async {
         dropped = false
         guard !reduceMotion, stage != .syncData, stage != .compared else { return }
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(1.2))
-            guard !Task.isCancelled else { return }
-            dropped = true
-            try? await Task.sleep(for: .seconds(2.2))
-            guard !Task.isCancelled else { return }
-            dropped = false
-        }
+        try? await Task.sleep(for: stage.holdDuration * Self.connectedShare)
+        guard !Task.isCancelled else { return }
+        dropped = true
     }
+
+    /// How much of a stage shows the devices connected before the drop.
+    private static let connectedShare = 0.4
 
     // MARK: Status
 
@@ -412,7 +411,13 @@ private struct ClassicUpgradeCanvas: View {
             // Sync: the devices know each other, so they reach each other without the relay.
             Wire(from: phonePoint, to: macPoint, bow: 44)
                 .trim(from: 0, to: hasDirect ? 1 : 0)
-                .stroke(stage == .syncData ? offTint.opacity(0.5) : syncTint, style: stroke(dashed: true))
+                .stroke(syncTint, style: stroke(dashed: true))
+                .opacity(stage == .syncData ? 0 : 1)
+            // Sync Data: the devices keeping their copies in step, the link's dashes running between them.
+            if stage == .syncData {
+                MarchingWire(from: phonePoint, to: macPoint, bow: 44, color: syncTint, reduceMotion: reduceMotion)
+                    .transition(.opacity)
+            }
         }
     }
 
@@ -429,6 +434,11 @@ private struct ClassicUpgradeCanvas: View {
             if stage == .syncPairing {
                 Pulse(from: phonePoint, to: macPoint, bow: 44, color: syncTint, delay: 0.4)
             }
+            if stage == .syncData {
+                // Changes each way: what one device does, the other gets.
+                Pulse(from: phonePoint, to: macPoint, bow: 44, color: syncTint, delay: 0)
+                Pulse(from: macPoint, to: phonePoint, bow: 44, color: syncTint, delay: 0.8)
+            }
         }
     }
 
@@ -440,7 +450,7 @@ private struct ClassicUpgradeCanvas: View {
 
     /// A device, greyed when it can't be reached (Classic with the relay down) or is offline (Sync Data).
     private func device(glyph: String, label: LocalizedStringKey, x: CGFloat, isMac: Bool = false) -> some View {
-        let dimmed = (stage == .classicPairing && relayDown) || stage == .syncData || (isMac && macDown)
+        let dimmed = (stage == .classicPairing && relayDown) || (isMac && macDown)
         return VStack(spacing: theme.space.s6) {
             ZStack {
                 Circle().fill(theme.surface.raised).frame(width: 64, height: 64)
@@ -661,6 +671,29 @@ private struct ClassicUpgradeCanvas: View {
 }
 
 // MARK: - Wire
+
+/// A dashed link whose dashes run along it, over and over: two devices keeping in step.
+private struct MarchingWire: View {
+    @Environment(\.theme) private var theme
+    let from: CGPoint
+    let to: CGPoint
+    let bow: CGFloat
+    let color: Color
+    let reduceMotion: Bool
+    @State private var phase: CGFloat = 0
+
+    var body: some View {
+        Wire(from: from, to: to, bow: bow)
+            .stroke(
+                color,
+                style: StrokeStyle(lineWidth: theme.stroke.focus * 1.5, lineCap: .round, dash: [6, 6], dashPhase: phase)
+            )
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(theme.motion.loop(duration: 0.8)) { phase = -12 }
+            }
+    }
+}
 
 /// An S-curve between two points; `bow` sags it below the straight line instead (the direct path).
 private struct Wire: Shape {
