@@ -648,7 +648,7 @@ private struct ClassicUpgradeCanvas: View {
     private var compared: some View {
         HStack(spacing: theme.space.s24) {
             card(
-                title: "Classic", detail: "Osaurus Classic", glyph: "lock.icloud",
+                title: "Classic", detail: "Osaurus (0.25.x)", glyph: "lock.icloud",
                 points: ["Encrypted relay", "Only while connected"], color: classicTint, index: 0)
             card(
                 title: "Osaurus Sync", detail: "Osaurus 1.0 and above", glyph: "arrow.triangle.2.circlepath",
