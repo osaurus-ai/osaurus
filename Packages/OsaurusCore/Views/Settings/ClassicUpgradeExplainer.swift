@@ -363,12 +363,11 @@ private struct ClassicUpgradeCanvas: View {
     /// Stage 3 on: a lock on each wire to the servers.
     private var locks: some View {
         let shown = stage.rawValue >= ClassicUpgradeStage.private_.rawValue
+        // Each grown where it sits: scaled as one canvas-sized layer they swept in from, and out to, its middle.
         return ZStack {
-            lock.position(midpoint(phonePoint, serverLeft))
-            lock.position(midpoint(serverRight, macPoint))
+            lock.scaleEffect(shown ? 1 : 0.6).opacity(shown ? 1 : 0).position(midpoint(phonePoint, serverLeft))
+            lock.scaleEffect(shown ? 1 : 0.6).opacity(shown ? 1 : 0).position(midpoint(serverRight, macPoint))
         }
-        .scaleEffect(shown ? 1 : 0.6)
-        .opacity(shown ? 1 : 0)
     }
 
     private var lock: some View {
