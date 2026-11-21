@@ -6556,6 +6556,7 @@ public actor ModelRuntime {
             events: prepared.stream,
             modelName: modelName,
             promptTokenCount: prepared.promptTokens.count,
+            reasoningBudget: prepared.reasoningBudget,
             trace: trace,
             suppressProgressUI: parameters.suppressProgressUI,
             // Background housekeeping (follow-up suggestions, titles) must not
@@ -6671,7 +6672,7 @@ public actor ModelRuntime {
         // call, so iterating to natural EOS captures all of them).
         for try await ev in events {
             switch ev {
-            case .inputTokenCount, .cachedInputTokenCount:
+            case .inputTokenCount, .cachedInputTokenCount, .reasoningBudget:
                 break
             case .tokens(let s):
                 accumulated += s
@@ -6943,7 +6944,7 @@ public actor ModelRuntime {
                         }
                     case .completionInfo:
                         continue
-                    case .cachedInputTokenCount:
+                    case .cachedInputTokenCount, .reasoningBudget:
                         continue
                     }
                 }

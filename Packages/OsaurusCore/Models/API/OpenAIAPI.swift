@@ -807,6 +807,11 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// `reasoning_effort` chat-template kwarg; remote providers forward it
     /// natively where supported.
     var reasoning_effort: String? = nil
+    /// Explicit ceiling on reasoning tokens (vLLM `thinking_token_budget`,
+    /// OpenRouter `reasoning.max_tokens`, Anthropic `thinking.budget_tokens`).
+    /// Absent leaves reasoning length to the model. Decoded only; never
+    /// encoded onto a provider wire.
+    var thinking_token_budget: Int? = nil
     /// Request-local variables rendered by the active bundle's chat template.
     var chat_template_kwargs: [String: JSONValue]? = nil
     /// Local-only marker for app/UI requests whose sampling values came from
@@ -961,6 +966,16 @@ struct ChatCompletionRequest: Codable, Sendable {
         case chat_template_kwargs
     }
 
+    /// Thinking budget spellings, decoded only. `reasoning` is OpenRouter's
+    /// object; only its `max_tokens` is read here.
+    private enum ReasoningBudgetCodingKeys: String, CodingKey {
+        case thinking_token_budget, reasoning
+    }
+
+    private struct ReasoningBudgetObject: Decodable {
+        let max_tokens: Int?
+    }
+
     func withModel(_ newModel: String) -> ChatCompletionRequest {
         var copy = ChatCompletionRequest(
             model: newModel,
@@ -988,6 +1003,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.repetition_penalty = repetition_penalty
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
+        copy.thinking_token_budget = thinking_token_budget
         copy.chat_template_kwargs = chat_template_kwargs
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
@@ -1025,6 +1041,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.repetition_penalty = repetition_penalty
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
+        copy.thinking_token_budget = thinking_token_budget
         copy.chat_template_kwargs = chat_template_kwargs
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
@@ -1103,6 +1120,15 @@ extension ChatCompletionRequest {
             if reasoning_effort == nil, case .string(let effort)? = kwargs["reasoning_effort"] {
                 reasoning_effort = effort
             }
+        }
+        let budgetContainer = try decoder.container(keyedBy: ReasoningBudgetCodingKeys.self)
+        let reasoningObject = try? budgetContainer.decodeIfPresent(ReasoningBudgetObject.self, forKey: .reasoning)
+        thinking_token_budget =
+            try budgetContainer.decodeIfPresent(Int.self, forKey: .thinking_token_budget)
+            ?? reasoningObject?.max_tokens
+        if let reason = RequestValidator.reasoningBudgetReason(thinking_token_budget) {
+            throw DecodingError.dataCorruptedError(forKey: .thinking_token_budget, in: budgetContainer,
+                debugDescription: reason)
         }
         let osaurus = try decoder.container(keyedBy: OsaurusCodingKeys.self)
         osaurus_session_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_session_id)

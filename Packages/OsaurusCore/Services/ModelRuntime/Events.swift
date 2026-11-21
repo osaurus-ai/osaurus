@@ -24,6 +24,9 @@ enum ModelRuntimeEvent: Sendable {
     /// Emitted once, just before `.completionInfo`, and only when non-zero; it
     /// becomes `usage.prompt_tokens_details.cached_tokens`.
     case cachedInputTokenCount(Int)
+    /// The request's explicit thinking budget and whether the runtime armed
+    /// it. Emitted once, before any output, and only when a budget was sent.
+    case reasoningBudget(ReasoningBudgetReport)
     case tokens(String)
     /// Reasoning text (thinking / chain-of-thought). Translated by
     /// `GenerationEventMapper` from vmlx-swift's `Generation.reasoning(String)`
@@ -80,6 +83,23 @@ enum ModelRuntimeEvent: Sendable {
         promptTokensPerSecond: Double,
         mtp: MTPStatsSummary?
     )
+}
+
+/// An explicit API thinking budget as the runtime resolved it. `applied`
+/// means the reasoning ceiling was armed; whether the model reached it is
+/// not observable from the engine, so this never claims a forced close.
+struct ReasoningBudgetReport: Codable, Sendable, Equatable {
+    let requestedTokens: Int
+    let applied: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case requestedTokens = "requested_tokens"
+        case applied
+    }
+
+    var jsonValue: JSONValue {
+        .object(["requested_tokens": .number(Double(requestedTokens)), "applied": .bool(applied)])
+    }
 }
 
 /// Compact, transport-friendly projection of vmlx's

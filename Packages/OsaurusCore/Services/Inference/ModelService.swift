@@ -65,6 +65,10 @@ struct GenerationParameters: Sendable {
     var modelOptions: [String: ModelOptionValue]
     /// JSON variables for the active chat template, scoped to this generation.
     let templateKwargs: [String: JSONValue]?
+    /// Explicit API thinking budget. Local MLX hands it to vmlx's per-request
+    /// reasoning ceiling; nil leaves reasoning length to the model and is
+    /// never derived from `maxTokens`.
+    var reasoningBudgetTokens: Int? = nil
     let speculativeDecoding: Bool?
     /// Session identifier for chat/history grouping. Not threaded into the
     /// MLX cache layer — vmlx's `CacheCoordinator` handles prefix reuse
