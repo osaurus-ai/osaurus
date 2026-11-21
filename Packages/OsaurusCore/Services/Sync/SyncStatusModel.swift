@@ -23,7 +23,7 @@ final class SyncStatusModel: ObservableObject {
         case confirming(PairingConfirmation)
         case paired(deviceName: String)
         case failed(String)
-        /// The code shown ran out of time with no device using it: a new one is a fresh ask (it needs the owner).
+        /// The code shown ran out of time with no device using it; an open sheet makes a new one.
         case expired
     }
 

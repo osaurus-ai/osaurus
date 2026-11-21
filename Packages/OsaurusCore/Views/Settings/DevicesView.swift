@@ -111,6 +111,9 @@ struct DevicesView: View {
         }
         .onChange(of: keepMacAwake) { _, _ in phones.refreshKeepAwake() }
         .sheet(item: $pairSheet, onDismiss: endPairing) { kind in pairingSheet(kind) }
+        .onChange(of: model.pairing) { _, pairing in
+            if pairing == .expired { renewExpiredCode() }
+        }
         .sheet(
             isPresented: $showsClassicUpgrade,
             onDismiss: {
@@ -383,6 +386,13 @@ struct DevicesView: View {
         }
     }
 
+    /// The QR code still showing ran out of time: a new one in its place, with nothing to press. The owner already
+    /// allowed showing a code for this sheet, which is still open.
+    private func renewExpiredCode() {
+        guard pairSheet == .addPhone, phoneMethod == .scan else { return }
+        model.startPairing()
+    }
+
     /// Opens the field for another device's pairing link, from the header's Add Device menu.
     private func startJoining() {
         if case .offering = model.pairing { model.cancelPairing() }
@@ -442,16 +452,8 @@ struct DevicesView: View {
                     case .scan:
                         if case let .offering(offer) = model.pairing {
                             pairingPanel(offer)
-                        } else if model.pairing == .expired {
-                            SettingsCallout(
-                                icon: "clock.badge.exclamationmark",
-                                title: "This Code Expired",
-                                message: L("Codes work for 5 minutes. Show a new one to add your device."),
-                                tone: .info
-                            ) {
-                                SettingsButton(.secondary, "Show New Code") { showScanCode() }
-                            }
-                        } else if model.pairing == .idle {
+                        } else if model.pairing == .idle || model.pairing == .expired {
+                            // Made, or remade after the last one expired (`renewExpiredCode`).
                             SettingsSpinner()
                         }
                     }
