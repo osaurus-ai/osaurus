@@ -388,6 +388,13 @@ final class SyncAgentCalls {
 
     // MARK: Ending
 
+    /// The user called off the call arranged in this chat: a call ringing from it stops, as when its run stops.
+    func callOff(sessionId: UUID, agentId: UUID) {
+        guard let active = current, active.request.sessionId == sessionId, active.request.agentId == agentId
+        else { return }
+        finish(active.id, outcome: .cancelled)
+    }
+
     private func finish(_ id: String, outcome: Outcome, answeredBy: String? = nil) {
         guard var active = current, active.id == id else { return }
         current = nil

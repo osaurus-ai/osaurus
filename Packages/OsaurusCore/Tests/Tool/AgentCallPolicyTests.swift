@@ -158,7 +158,9 @@ struct AgentCallPolicyTests {
         var state = AgentCallPolicy.State()
         state.grants = [grant]
         Self.ring(&state, outcome: outcome)
-        #expect(state.grants == [grant])
+        #expect(state.grants.map(\.id) == [grant.id])
+        #expect(state.grants.first?.attempts == [.init(atMs: Self.now, outcome: outcome.rawValue)])
+        #expect(state.ringing == nil)
         #expect((state.calls[Self.agent] ?? []).isEmpty)
         #expect(Self.decide(state) == .arranged(grant.id))
     }
@@ -183,6 +185,123 @@ struct AgentCallPolicyTests {
             &state, outcome: .busy, decision: decision, agentId: Self.agent, rangMs: Self.now, taken: taken,
             nowMs: Self.now + 1)
         #expect(state.grants == [newer])
+        #expect(state.history?.first?.end == .replaced)
+    }
+
+    // MARK: The Inbox
+
+    @Test("an arranged call that rang ends with how it went", arguments: [
+        (SyncAgentCalls.Outcome.answered, AgentCallPolicy.End.answered), (.declined, .declined), (.missed, .missed),
+        (.cancelled, .calledOff),
+    ])
+    func endsWithOutcome(outcome: SyncAgentCalls.Outcome, end: AgentCallPolicy.End) {
+        let grant = Self.grant(expiresMs: Self.now + 60_000)
+        var state = AgentCallPolicy.State()
+        state.grants = [grant]
+        Self.ring(&state, outcome: outcome)
+        #expect(state.history?.map(\.id) == [grant.id])
+        #expect(state.history?.first?.end == end)
+        #expect(state.history?.first?.endedMs == Self.now + 1)
+        #expect(state.ringing == nil)
+    }
+
+    @Test("while its call rings, an arranged call is listed as ringing")
+    func listedWhileRinging() {
+        let grant = Self.grant(expiresMs: Self.now + 60_000)
+        var state = AgentCallPolicy.State()
+        state.grants = [grant]
+        _ = AgentCallPolicy.rang(&state, decision: Self.decide(state), agentId: Self.agent, nowMs: Self.now)
+        #expect(state.ringing == [grant])
+        #expect(state.grants.isEmpty)
+    }
+
+    @Test("a call ringing when Osaurus quit is given back on the next launch")
+    func ringingGivenBackOnRelaunch() {
+        let grant = Self.grant(expiresMs: Self.now + 60_000)
+        var state = AgentCallPolicy.State()
+        state.ringing = [grant]
+        AgentCallPolicy.relaunched(&state, nowMs: Self.now)
+        #expect(state.grants == [grant])
+        #expect(state.ringing == nil)
+    }
+
+    @Test("an arranged call the agent didn't make in time ends expired, at its expiry")
+    func expires() {
+        let grant = Self.grant(expiresMs: Self.now - 10)
+        var state = AgentCallPolicy.State()
+        state.grants = [grant]
+        #expect(AgentCallPolicy.sweep(&state, nowMs: Self.now))
+        #expect(state.grants.isEmpty)
+        #expect(state.history?.first?.end == .expired)
+        #expect(state.history?.first?.endedMs == Self.now - 10)
+        #expect(!AgentCallPolicy.sweep(&state, nowMs: Self.now))
+    }
+
+    @Test("arranging again in the same chat replaces the waiting call")
+    func arrangingReplaces() {
+        let first = Self.grant(expiresMs: Self.now + 60_000)
+        let second = Self.grant(expiresMs: Self.now + 120_000)
+        var state = AgentCallPolicy.State()
+        AgentCallPolicy.arrange(&state, first, nowMs: Self.now)
+        AgentCallPolicy.arrange(&state, second, nowMs: Self.now + 5)
+        #expect(state.grants == [second])
+        #expect(state.history?.first?.id == first.id)
+        #expect(state.history?.first?.end == .replaced)
+    }
+
+    @Test("a waiting call the user called off ends cancelled, and the agent is told not to call")
+    func cancelWaiting() {
+        let grant = Self.grant(expiresMs: Self.now + 60_000)
+        var state = AgentCallPolicy.State()
+        state.grants = [grant]
+        state.allowed = [Self.agent]
+        #expect(AgentCallPolicy.cancel(&state, id: grant.id, nowMs: Self.now) == .cancelled)
+        #expect(state.grants.isEmpty)
+        #expect(state.history?.first?.end == .cancelled)
+        // Refused even with Call You on, while the call would still have waited.
+        #expect(Self.isRefused(Self.decide(state)))
+        #expect(AgentCallPolicy.cancel(&state, id: grant.id, nowMs: Self.now) == .alreadyEnded)
+        #expect(AgentCallPolicy.cancel(&state, id: UUID(), nowMs: Self.now) == .notFound)
+        #expect(
+            AgentCallPolicy.decide(state, agentId: Self.agent, sessionId: Self.chat, nowMs: Self.now + 60_000)
+                == .onItsOwn)
+    }
+
+    @Test("a ringing call the user called off ends cancelled once the ring stops")
+    func cancelRinging() {
+        let grant = Self.grant(expiresMs: Self.now + 60_000)
+        var state = AgentCallPolicy.State()
+        state.grants = [grant]
+        let decision = Self.decide(state)
+        let taken = AgentCallPolicy.rang(&state, decision: decision, agentId: Self.agent, nowMs: Self.now)
+        #expect(AgentCallPolicy.cancel(&state, id: grant.id, nowMs: Self.now) == .ringing(grant))
+        AgentCallPolicy.ended(
+            &state, outcome: .cancelled, decision: decision, agentId: Self.agent, rangMs: Self.now, taken: taken,
+            nowMs: Self.now + 1, cancelledByUser: true)
+        #expect(state.history?.first?.end == .cancelled)
+        #expect(Self.isRefused(Self.decide(state)))
+    }
+
+    @Test("ended calls are kept a week, newest first, at most 50")
+    func historyBounds() {
+        var state = AgentCallPolicy.State()
+        let old = Self.grant()
+        AgentCallPolicy.close(&state, old, end: .missed, atMs: Self.now - AgentCallPolicy.historyMs - 1)
+        for index in 0..<60 {
+            AgentCallPolicy.close(&state, Self.grant(), end: .answered, atMs: Self.now + Int64(index))
+        }
+        let history = state.history ?? []
+        #expect(history.count == AgentCallPolicy.historyLimit)
+        #expect(!history.contains { $0.id == old.id })
+        #expect(history.first?.endedMs == Self.now + 59)
+    }
+
+    @Test("a state saved before arranged calls were kept still reads")
+    func oldStateReads() throws {
+        let json = #"{"allowed":[],"grants":[{"id":"#(UUID())","sessionId":"#(UUID())","agentId":"#(UUID())","#
+            + #""about":"build","expiresMs":1}],"calls":[],"missedInRow":[],"lastMissMs":[]}"#
+        let state = try JSONDecoder().decode(AgentCallPolicy.State.self, from: Data(json.utf8))
+        #expect(state.grants.count == 1 && state.grants[0].createdMs == nil && state.history == nil)
     }
 
     // MARK: Approval calls

@@ -15,22 +15,54 @@
 //
 //  Both tools are in the schema only while a device can ring.
 //
+//  Every arranged call is kept until it ends, and for a week after
+//  (`history`), so the Inbox on the Mac and the iPhone can show whether it
+//  was made and how it went, and the user can call off one no longer needed.
+//
 
 import Foundation
 import os
 
 /// Who may ring the user, and how often.
 @MainActor
-final class AgentCallPolicy {
+final class AgentCallPolicy: ObservableObject {
     static let shared = AgentCallPolicy()
 
+    nonisolated private static let log = Logger(subsystem: "ai.osaurus", category: "agent.calls")
+
     /// One call the user arranged, in one chat.
-    struct Grant: Codable, Equatable, Sendable {
+    struct Grant: Codable, Equatable, Sendable, Identifiable {
         var id: UUID
         var sessionId: UUID
         var agentId: UUID
         var about: String
         var expiresMs: Int64
+        /// Nil on a grant saved before arranged calls were kept.
+        var createdMs: Int64?
+        /// Tries that rang nothing (another call on, no device, the push service down), oldest first.
+        var attempts: [Attempt]?
+        /// How it ended; set on the grants in `history` only.
+        var end: End?
+        var endedMs: Int64?
+    }
+
+    struct Attempt: Codable, Equatable, Sendable {
+        var atMs: Int64
+        /// `busy`, `unavailable` or `notSent` (`SyncAgentCalls.Outcome`).
+        var outcome: String
+    }
+
+    /// How an arranged call ended.
+    enum End: String, Codable, Sendable {
+        case answered, missed, declined
+        /// The run that placed the call stopped while it rang.
+        case calledOff
+        /// The user called it off, on the Mac or an iPhone.
+        case cancelled
+        /// The agent didn't call in time.
+        case expired
+        /// A new call was arranged in the same chat.
+        case replaced
     }
 
     struct State: Codable, Equatable, Sendable {
@@ -47,6 +79,10 @@ final class AgentCallPolicy {
         var dailyCaps: [UUID: Int]?
         /// Approval calls by chat (`AgentCallPolicy.ApprovalCalls`); optional so an older state still reads.
         var approvalCalls: [UUID: ApprovalCalls]?
+        /// Arranged calls taken by a call ringing now: back to `grants` if nothing rang.
+        var ringing: [Grant]?
+        /// Ended arranged calls, newest first: at most `historyLimit`, for `historyMs`.
+        var history: [Grant]?
 
         func dailyCap(for agentId: UUID) -> Int {
             dailyCaps?[agentId] ?? AgentCallPolicy.defaultDailyCap
@@ -65,18 +101,56 @@ final class AgentCallPolicy {
     /// How long an arranged call may wait, by default and at most.
     nonisolated static let defaultGrantHours = 24
     nonisolated static let maxGrantHours = 72
+    /// How long an ended arranged call stays in the Inbox, and how many are kept.
+    nonisolated static let historyMs: Int64 = 7 * dayMs
+    nonisolated static let historyLimit = 50
 
+    /// Where the state was kept before it held what the user arranged; read once, then removed.
     private static let defaultsKey = "AgentCallPolicy"
-    private var state: State
+    private static var url: URL { OsaurusPaths.syncLocalState().appendingPathComponent("agent-calls.json") }
+    /// Saves in order, off the main thread.
+    private static let saveQueue = DispatchQueue(label: "ai.osaurus.agent-calls.save", qos: .utility)
+
+    @Published private(set) var state: State
+    /// Arranged calls the user called off while they rang: they end `cancelled`, not `calledOff`.
+    private var cancelling: Set<UUID> = []
+    private var expiryTask: Task<Void, Never>?
 
     private init() {
-        state = (UserDefaults.standard.data(forKey: Self.defaultsKey))
-            .flatMap { try? JSONDecoder().decode(State.self, from: $0) } ?? State()
+        let saved = (try? EncryptedFileStore.readPolicyAware(plaintextURL: Self.url))
+            .flatMap { try? JSONDecoder().decode(State.self, from: $0) }
+        let legacy = UserDefaults.standard.data(forKey: Self.defaultsKey)
+            .flatMap { try? JSONDecoder().decode(State.self, from: $0) }
+        state = saved ?? legacy ?? State()
+        Self.relaunched(&state, nowMs: SyncHostedRunContract.nowMs())
+        save()
+        if saved != nil || legacy != nil { UserDefaults.standard.removeObject(forKey: Self.defaultsKey) }
     }
 
     private func save() {
-        if let data = try? JSONEncoder().encode(state) {
-            UserDefaults.standard.set(data, forKey: Self.defaultsKey)
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        let url = Self.url
+        Self.saveQueue.async {
+            do {
+                try FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try EncryptedFileStore.writePolicyAware(data, toPlaintextURL: url)
+            } catch {
+                Self.log.error("agent calls not saved: \(String(describing: error), privacy: .public)")
+            }
+        }
+        scheduleExpiry()
+    }
+
+    /// Wakes at the next arranged call's expiry to move it to `history`.
+    private func scheduleExpiry() {
+        expiryTask?.cancel()
+        guard let next = state.grants.map(\.expiresMs).min() else { return }
+        let waitMs = max(0, next - SyncHostedRunContract.nowMs()) + 500
+        expiryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(waitMs))
+            guard !Task.isCancelled, let self else { return }
+            if Self.sweep(&self.state, nowMs: SyncHostedRunContract.nowMs()) { self.save() }
         }
     }
 
@@ -107,13 +181,97 @@ final class AgentCallPolicy {
             sessionId: sessionId,
             agentId: agentId,
             about: String(about.prefix(200)),
-            expiresMs: nowMs + Int64(clamped) * 3600 * 1000
+            expiresMs: nowMs + Int64(clamped) * 3600 * 1000,
+            createdMs: nowMs
         )
-        // One arranged call per chat and agent: a new one replaces the old.
-        state.grants.removeAll { ($0.sessionId == sessionId && $0.agentId == agentId) || $0.expiresMs <= nowMs }
-        state.grants.append(grant)
+        Self.arrange(&state, grant, nowMs: nowMs)
         save()
         return grant
+    }
+
+    /// One arranged call per chat and agent: a new one replaces the old.
+    nonisolated static func arrange(_ state: inout State, _ grant: Grant, nowMs: Int64) {
+        sweep(&state, nowMs: nowMs)
+        let replaced = state.grants.filter { $0.sessionId == grant.sessionId && $0.agentId == grant.agentId }
+        state.grants.removeAll { $0.sessionId == grant.sessionId && $0.agentId == grant.agentId }
+        for old in replaced { close(&state, old, end: .replaced, atMs: nowMs) }
+        state.grants.append(grant)
+    }
+
+    /// Moves `grant` to `history`, newest first, dropping what is past `historyMs` or `historyLimit`.
+    nonisolated static func close(_ state: inout State, _ grant: Grant, end: End, atMs: Int64) {
+        var ended = grant
+        ended.end = end
+        ended.endedMs = atMs
+        let kept = (state.history ?? []).filter { $0.id != grant.id }
+        let sorted = (kept + [ended])
+            .filter { ($0.endedMs ?? 0) > atMs - historyMs }
+            .sorted { ($0.endedMs ?? 0) > ($1.endedMs ?? 0) }
+        state.history = Array(sorted.prefix(historyLimit))
+    }
+
+    /// Arranged calls past their time end `expired`. Whether any did.
+    @discardableResult
+    nonisolated static func sweep(_ state: inout State, nowMs: Int64) -> Bool {
+        let expired = state.grants.filter { $0.expiresMs <= nowMs }
+        guard !expired.isEmpty else { return false }
+        state.grants.removeAll { $0.expiresMs <= nowMs }
+        for grant in expired { close(&state, grant, end: .expired, atMs: grant.expiresMs) }
+        return true
+    }
+
+    /// A call ringing when Osaurus quit never ended: its arranged call is given back, as for one that
+    /// rang nothing.
+    nonisolated static func relaunched(_ state: inout State, nowMs: Int64) {
+        for grant in state.ringing ?? []
+        where !state.grants.contains(where: { $0.sessionId == grant.sessionId && $0.agentId == grant.agentId }) {
+            state.grants.append(grant)
+        }
+        state.ringing = nil
+        sweep(&state, nowMs: nowMs)
+    }
+
+    // MARK: Calling off
+
+    enum CancelResult: Equatable, Sendable {
+        case cancelled
+        /// Its call is ringing: called off, it ends `cancelled` once the ring stops.
+        case ringing(Grant)
+        case alreadyEnded
+        case notFound
+    }
+
+    /// The user calls off an arranged call. A call ringing for it, or about an approval in its chat,
+    /// stops; the agent is told not to call about it.
+    @discardableResult
+    func cancel(_ id: UUID, nowMs: Int64) -> CancelResult {
+        let result = Self.cancel(&state, id: id, nowMs: nowMs)
+        switch result {
+        case .cancelled:
+            if let grant = state.history?.first(where: { $0.id == id }) {
+                SyncAgentCalls.shared.callOff(sessionId: grant.sessionId, agentId: grant.agentId)
+            }
+            save()
+        case .ringing(let grant):
+            cancelling.insert(id)
+            SyncAgentCalls.shared.callOff(sessionId: grant.sessionId, agentId: grant.agentId)
+        case .alreadyEnded, .notFound:
+            break
+        }
+        let short = id.uuidString.prefix(8)
+        Self.log.info("cancelling call \(short, privacy: .public): \(String(describing: result), privacy: .public)")
+        return result
+    }
+
+    nonisolated static func cancel(_ state: inout State, id: UUID, nowMs: Int64) -> CancelResult {
+        if let index = state.grants.firstIndex(where: { $0.id == id }) {
+            let grant = state.grants.remove(at: index)
+            close(&state, grant, end: .cancelled, atMs: nowMs)
+            return .cancelled
+        }
+        if let grant = state.ringing?.first(where: { $0.id == id }) { return .ringing(grant) }
+        if state.history?.contains(where: { $0.id == id }) == true { return .alreadyEnded }
+        return .notFound
     }
 
     // MARK: Deciding
@@ -143,6 +301,16 @@ final class AgentCallPolicy {
         }) {
             return .arranged(grant.id)
         }
+        // The user called off the call arranged here: no call about it, "Call You" or not, while it
+        // would still have been waiting.
+        if let last = state.history?.first(where: { $0.sessionId == sessionId && $0.agentId == agentId }),
+            last.end == .cancelled, last.expiresMs > nowMs
+        {
+            return .refused(
+                "The user called off the call arranged in this chat. Don't call about it; tell them in the chat "
+                    + "instead."
+            )
+        }
         guard state.allowed.contains(agentId) else {
             return .refused(
                 "The user hasn't asked for a call. Call only after `arrange_callback` was approved in this chat, "
@@ -168,12 +336,26 @@ final class AgentCallPolicy {
         return taken
     }
 
-    func ended(_ outcome: SyncAgentCalls.Outcome, decision: Decision, agentId: UUID, rangMs: Int64, taken: Grant?) {
+    /// How the arranged call `taken` ended, if it did.
+    @discardableResult
+    func ended(
+        _ outcome: SyncAgentCalls.Outcome, decision: Decision, agentId: UUID, rangMs: Int64, taken: Grant?
+    ) -> End? {
+        let byUser = taken.map { cancelling.remove($0.id) != nil } ?? false
         Self.ended(
             &state, outcome: outcome, decision: decision, agentId: agentId, rangMs: rangMs, taken: taken,
-            nowMs: SyncHostedRunContract.nowMs())
+            nowMs: SyncHostedRunContract.nowMs(), cancelledByUser: byUser)
         save()
+        return taken.flatMap { grant in state.history?.first(where: { $0.id == grant.id })?.end }
     }
+
+    /// The arranged calls still to come, ringing ones first.
+    var waiting: [(grant: Grant, ringing: Bool)] {
+        (state.ringing ?? []).map { ($0, true) }
+            + state.grants.sorted { ($0.createdMs ?? 0) > ($1.createdMs ?? 0) }.map { ($0, false) }
+    }
+
+    var history: [Grant] { state.history ?? [] }
 
     nonisolated static func rang(_ state: inout State, decision: Decision, agentId: UUID, nowMs: Int64) -> Grant? {
         var recent = (state.calls[agentId] ?? []).filter { $0 > nowMs - dayMs }
@@ -181,7 +363,9 @@ final class AgentCallPolicy {
         state.calls[agentId] = recent
         guard case .arranged(let id) = decision, let index = state.grants.firstIndex(where: { $0.id == id })
         else { return nil }
-        return state.grants.remove(at: index)
+        let taken = state.grants.remove(at: index)
+        state.ringing = (state.ringing ?? []) + [taken]
+        return taken
     }
 
     /// Whether `outcome` means a device rang: only then does the call count and the grant stay used.
@@ -199,8 +383,11 @@ final class AgentCallPolicy {
         agentId: UUID,
         rangMs: Int64,
         taken: Grant?,
-        nowMs: Int64
+        nowMs: Int64,
+        cancelledByUser: Bool = false
     ) {
+        if let taken { state.ringing?.removeAll { $0.id == taken.id } }
+        if state.ringing?.isEmpty == true { state.ringing = nil }
         guard didRing(outcome) else {
             // Nothing rang (another call on, no device, the push service down): the call isn't
             // counted, and the user's arranged call is kept unless they arranged a new one since.
@@ -208,12 +395,26 @@ final class AgentCallPolicy {
                 calls.remove(at: index)
                 state.calls[agentId] = calls
             }
-            if let taken, taken.expiresMs > nowMs,
-                !state.grants.contains(where: { $0.sessionId == taken.sessionId && $0.agentId == taken.agentId })
-            {
+            guard var taken else { return }
+            taken.attempts = (taken.attempts ?? []) + [Attempt(atMs: rangMs, outcome: outcome.rawValue)]
+            if state.grants.contains(where: { $0.sessionId == taken.sessionId && $0.agentId == taken.agentId }) {
+                close(&state, taken, end: .replaced, atMs: nowMs)
+            } else if taken.expiresMs <= nowMs {
+                close(&state, taken, end: .expired, atMs: nowMs)
+            } else {
                 state.grants.append(taken)
             }
             return
+        }
+        if let taken {
+            let end: End
+            switch outcome {
+            case .answered: end = .answered
+            case .declined: end = .declined
+            case .cancelled: end = cancelledByUser ? .cancelled : .calledOff
+            default: end = .missed
+            }
+            close(&state, taken, end: end, atMs: nowMs)
         }
         switch outcome {
         case .answered:
@@ -389,9 +590,13 @@ final class CallUserTool: OsaurusTool, @unchecked Sendable {
                 reason: reason
             )
         )
-        policy.ended(outcome, decision: decision, agentId: agentId, rangMs: nowMs, taken: taken)
+        let end = policy.ended(outcome, decision: decision, agentId: agentId, rangMs: nowMs, taken: taken)
+        if end == .cancelled { throw Refusal(message: Self.calledOffByUser) }
         return outcome
     }
+
+    static let calledOffByUser =
+        "The user called off this call while it rang. Don't call about it again; tell them in the chat instead."
 
     static func note(_ outcome: SyncAgentCalls.Outcome) -> String {
         switch outcome {
