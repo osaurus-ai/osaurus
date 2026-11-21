@@ -3,6 +3,33 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>1.0.10</title>
+            <pubDate>Sat, 21 Nov 2026 20:39:58 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.10</sparkle:version>
+            <sparkle:shortVersionString>1.0.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.10/Osaurus-1.0.10.dmg" length="125829684" type="application/octet-stream" sparkle:edSignature="fpj7X2MQMkID4C3zBroes8fThVrPOOfzTX6zYO1SK2xpwSgzim4K69TS5sDrdAd3DgrweW7MsZZBjahsntToCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Workflows: app requirements, Mac app trigger, and a Shortcuts Run Workflow action by @tpae in https://github.com/osaurus-ai/osaurus/pull/3488
+* Agent templates never carry shared_tool_approval by @tpae in https://github.com/osaurus-ai/osaurus/pull/3489
+* Workflows: installer that downloads what a workflow needs in the background by @tpae in https://github.com/osaurus-ai/osaurus/pull/3491
+* Models pages: plain-language labels and one row per image model by @tpae in https://github.com/osaurus-ai/osaurus/pull/3492
+* Inkling-2-Mini: repin vmlx-swift (#779), upstream checkpoint loading, effort_map effort levels by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3493
+* run approvals and large run files for the iphone, devices page rework and classic upgrade sheet by @RaajeevChandran in https://github.com/osaurus-ai/osaurus/pull/3490
+* Vision: stop cachedOrWarm from touching VLMProcessorTypeRegistry on the main thread by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3495
+* LaunchGuard: avoid redundant main-thread UserDefaults writes during health checks by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3494
+* Honor explicit thinking budgets on the HTTP API by @tpae in https://github.com/osaurus-ai/osaurus/pull/3496
+* Share model files with nearby Macs on the local network by @tpae in https://github.com/osaurus-ai/osaurus/pull/3497
+* Inkling-2-Mini: repin vmlx decode speedups; background calls turn reasoning off on effort-ladder models by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3498
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.9...1.0.10
+]]></description>
+        </item>
+        <item>
             <title>1.0.9</title>
             <pubDate>Sat, 21 Nov 2026 04:11:53 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
