@@ -37,6 +37,11 @@ enum LocalVisionEvidence {
     private static let lock = NSLock()
     private nonisolated(unsafe) static var cache: [String: (processorVersion: UInt64, result: Result)] = [:]
     private nonisolated(unsafe) static var generation: UInt64 = 0
+    /// Last `VLMProcessorTypeRegistry.shared.registrationVersion` seen by
+    /// `inspect`. `cachedOrWarm` compares against this snapshot instead of
+    /// touching the registry, whose lazy global initialization (swift_once)
+    /// can block the main thread for seconds on first access (APPLE-MACOS-41J).
+    private nonisolated(unsafe) static var lastProcessorVersion: UInt64?
     private nonisolated(unsafe) static let observer: NSObjectProtocol = NotificationCenter.default.addObserver(
         forName: .localModelsChanged, object: nil, queue: nil
     ) { _ in invalidate() }
@@ -53,6 +58,7 @@ enum LocalVisionEvidence {
         let key = directory.path
         let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
         lock.lock()
+        lastProcessorVersion = processorVersion
         let version = generation
         let cached = cache[key]
         lock.unlock()
@@ -84,12 +90,20 @@ enum LocalVisionEvidence {
     /// cache through `inspect`, which keeps the generation check, then posts
     /// `evidenceReady`. Send and load paths keep calling `inspect`, so the
     /// authoritative gate never sees a pending nil.
+    ///
+    /// Must not touch `VLMProcessorTypeRegistry.shared` (or any other lazily
+    /// initialized registry): its first access runs the global initializer
+    /// synchronously on the caller, which hung the main thread. The processor
+    /// version is compared against the snapshot `inspect` records off-main;
+    /// before the first background read there is no snapshot, so this misses
+    /// and the warm read initializes the registry on `warmQueue`.
     static func cachedOrWarm(_ directory: URL) -> Result? {
         _ = observer
         let key = directory.path
-        let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
         lock.lock()
-        if let cached = cache[key], cached.processorVersion == processorVersion {
+        if let processorVersion = lastProcessorVersion,
+            let cached = cache[key], cached.processorVersion == processorVersion
+        {
             lock.unlock()
             return cached.result
         }
