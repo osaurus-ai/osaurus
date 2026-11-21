@@ -77,29 +77,89 @@ public final class RampartModelManager: ObservableObject {
         if case .downloading = state { return }
         downloadTask?.cancel()
         state = .downloading(progress: 0)
-
-        let dir = Self.directoryURL()
-        let files = Self.requiredFiles
-
         downloadTask = Task { [weak self] in
-            do {
-                try await Self.downloadBundle(files: files, into: dir) { progress in
-                    Task { @MainActor in
-                        if case .downloading = self?.state {
-                            self?.state = .downloading(progress: progress)
-                        }
-                    }
-                }
-                try await self?.loadIfNeeded()
-                self?.state = .ready
-                PrivacyFilterStore.enableAIDetectionAfterInstall()
-            } catch is CancellationError {
-                self?.state = .idle
-            } catch {
-                self?.state = .failed(error.localizedDescription)
-            }
+            await self?.downloadFromHub()
             self?.downloadTask = nil
         }
+    }
+
+    /// Copies the bundle from a nearby Mac, then loads it as a download
+    /// would. When the Hub answers, the copy is refused unless every file it
+    /// gives a SHA-256 for matches; on any failure the bundle is downloaded
+    /// from the Hub instead.
+    func startDownload(fromNearby offer: NearbyOffer) {
+        if case .downloading = state { return }
+        downloadTask?.cancel()
+        state = .downloading(progress: 0)
+        downloadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.copy(from: offer)
+                try await self.finishInstall()
+            } catch {
+                if Task.isCancelled {
+                    self.state = .idle
+                    self.downloadTask = nil
+                    return
+                }
+                print("[Rampart] Nearby copy failed, downloading from Hugging Face: \(error.localizedDescription)")
+                self.state = .downloading(progress: 0)
+                await self.downloadFromHub()
+            }
+            self.downloadTask = nil
+        }
+    }
+
+    private func downloadFromHub() async {
+        do {
+            try await Self.downloadBundle(files: Self.requiredFiles, into: Self.directoryURL()) { [weak self] progress in
+                Task { @MainActor in
+                    if case .downloading = self?.state {
+                        self?.state = .downloading(progress: progress)
+                    }
+                }
+            }
+            try await finishInstall()
+        } catch is CancellationError {
+            state = .idle
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    private func copy(from offer: NearbyOffer) async throws {
+        guard let node = ModelShareService.shared.node else { throw NearbyTransferError.notRunning }
+        let files = offer.model.files.filter { Self.requiredFiles.contains($0.path) }
+        guard Set(files.map(\.path)) == Set(Self.requiredFiles) else { throw RampartModelError.bundleMissing }
+        if let hub = try? await HuggingFaceService.shared.fetchDownloadFiles(
+            repoId: Self.repoId,
+            patterns: Self.requiredFiles
+        ) {
+            for file in hub {
+                guard case .sha256(let expected) = file.digest else { continue }
+                let offered = files.first { $0.path == file.path }
+                guard offered?.sha256.caseInsensitiveCompare(expected) == .orderedSame else {
+                    throw NearbyTransferError.contentMismatch(path: file.path)
+                }
+            }
+        }
+        try await NearbyBundleTransfer.fetch(
+            node: node,
+            source: offer.source,
+            files: files,
+            into: Self.directoryURL()
+        ) { [weak self] received, total in
+            Task { @MainActor in
+                guard total > 0, case .downloading = self?.state else { return }
+                self?.state = .downloading(progress: Double(received) / Double(total))
+            }
+        }
+    }
+
+    private func finishInstall() async throws {
+        try await loadIfNeeded()
+        state = .ready
+        PrivacyFilterStore.enableAIDetectionAfterInstall()
     }
 
     public func cancel() {

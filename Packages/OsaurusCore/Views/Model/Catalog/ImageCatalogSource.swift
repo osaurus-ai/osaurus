@@ -55,6 +55,7 @@ final class ImageCatalogSource: LocalModelCatalogSource {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in Task { await self?.scanInstalled() } }
             .store(in: &subscriptions)
+        observeNearby { [weak self] in self?.rebuild() }
         Task {
             async let scan: Void = scanInstalled()
             async let catalog: Void = downloads.refreshCatalog()
@@ -96,7 +97,21 @@ final class ImageCatalogSource: LocalModelCatalogSource {
             else { continue }
             rows.append(item(for: representative, family: family, isFamilyRow: true))
         }
-        items = rows
+        let downloadService = downloads
+        items = mergingNearby(
+            rows,
+            localIds: { [$0.id] },
+            download: { offer, row in downloadService.download(nearby: offer, repoId: row?.huggingFaceRepo) },
+            decorate: { [weak self] row, offer in
+                guard let self else { return }
+                let status = self.status(offer.localId, installed: false)
+                row.status = status
+                if status.isActive {
+                    row.primaryAction = nil
+                    row.onCancel = { downloadService.cancel(offer.localId) }
+                }
+            }
+        )
         // Installed bundles come from a disk scan; until it lands, the
         // curated rows alone would read as the whole list.
         isLoading = !didScanInstalled || (items.isEmpty && downloads.isLoadingCatalog)

@@ -39,6 +39,7 @@ final class AppleScriptCatalogSource: LocalModelCatalogSource {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.scanInstalled() }
             .store(in: &subscriptions)
+        observeNearby { [weak self] in self?.rebuild() }
         scanInstalled()
     }
 
@@ -74,7 +75,35 @@ final class AppleScriptCatalogSource: LocalModelCatalogSource {
         let discoveredRows = installed.filter { !catalogIds.contains($0.id) }.map {
             item(for: $0, isInstalled: true, isCurated: false, defaultId: defaultId, mem: mem)
         }
-        items = catalogRows + discoveredRows
+        let manager = ModelManager.shared
+        let downloadService = downloads
+        let known = AppleScriptModelCatalog.models + installed
+        items = mergingNearby(
+            catalogRows + discoveredRows,
+            localIds: { [$0.id] },
+            download: { offer, _ in
+                let id = offer.model.repoId ?? offer.localId
+                let model =
+                    known.first { $0.id.caseInsensitiveCompare(id) == .orderedSame }
+                    ?? MLXModel(
+                        id: id,
+                        name: offer.model.name,
+                        description: L("Shared by \(offer.hostName) on this network."),
+                        downloadURL: "https://huggingface.co/\(id)"
+                    )
+                manager.downloadModel(model, fromNearbyHost: offer.source)
+            },
+            decorate: { row, offer in
+                let id = offer.model.repoId ?? offer.localId
+                guard let status = LocalModelCatalogItem.Status.nearbyProgress(downloadService.downloadStates[id])
+                else { return }
+                row.status = status
+                if status.isActive {
+                    row.primaryAction = nil
+                    row.onCancel = { manager.cancelDownload(id) }
+                }
+            }
+        )
     }
 
     private func item(

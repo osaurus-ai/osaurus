@@ -55,6 +55,7 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.scanInstalled() }
             .store(in: &subscriptions)
+        observeNearby { [weak self] in self?.rebuild() }
         scanInstalled()
         fetchOsaurusAI()
     }
@@ -110,7 +111,34 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
                 selectedId: selectedId
             )
         }
-        items = curated + published + local
+        let downloadService = downloads
+        let known = EmbeddingModelCatalog.curated.map(\.mlxModel) + osaurusAI + discovered
+        items = mergingNearby(
+            curated + published + local,
+            localIds: { [$0.id] },
+            download: { offer, _ in
+                let id = offer.model.repoId ?? offer.localId
+                let model =
+                    known.first { $0.id.caseInsensitiveCompare(id) == .orderedSame }
+                    ?? MLXModel(
+                        id: id,
+                        name: offer.model.name,
+                        description: L("Shared by \(offer.hostName) on this network."),
+                        downloadURL: "https://huggingface.co/\(id)"
+                    )
+                downloadService.download(model, nearby: offer.source)
+            },
+            decorate: { row, offer in
+                let id = offer.model.repoId ?? offer.localId
+                guard let status = LocalModelCatalogItem.Status.nearbyProgress(downloadService.downloadStates[id])
+                else { return }
+                row.status = status
+                if status.isActive {
+                    row.primaryAction = nil
+                    row.onCancel = { downloadService.cancel(id) }
+                }
+            }
+        )
     }
 
     private func item(

@@ -592,6 +592,12 @@ public final class ModelManager: NSObject, ObservableObject {
     ) {
         downloadService.download(model, route: route)
     }
+
+    /// Downloads `model` from the nearby Mac the user picked it from. Files
+    /// are still checked against Hugging Face when it can be reached.
+    func downloadModel(_ model: MLXModel, fromNearbyHost source: NearbySource) {
+        downloadService.download(model, nearby: source)
+    }
     func cancelDownload(_ modelId: String) { downloadService.cancel(modelId) }
     func pauseDownload(_ modelId: String) { downloadService.pause(modelId) }
     func resumeDownload(_ modelId: String) {

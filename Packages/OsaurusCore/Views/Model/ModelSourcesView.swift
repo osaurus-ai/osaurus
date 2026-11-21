@@ -4,20 +4,27 @@
 //
 //  Models → Local Models → Sources: where Osaurus keeps the models it
 //  downloads, and which other apps' models (Hugging Face cache, LM Studio)
-//  it may run in place. Pushed from the Local Models header.
+//  it may run in place, and which models nearby Macs share or copy over
+//  the local network. Pushed from the Local Models header.
 //
 
 import SwiftUI
 
 struct ModelSourcesView: View {
     /// Search landings that live on this page; Local Models opens it for them.
-    static let anchorIds: Set<String> = ["storage.location", "storage.externalModels"]
+    static let anchorIds: Set<String> = [
+        "storage.location",
+        "storage.externalModels",
+        "models.sharing.share",
+        "models.sharing.sharedModels",
+        "models.sharing.nearby",
+    ]
 
     var body: some View {
         SettingsPage {
             SettingsPageHeader(
                 title: "Model Sources",
-                subtitle: "Where Osaurus keeps its models, and which other apps' models it can use"
+                subtitle: "Where Osaurus keeps its models, which other apps' models it can use, and what nearby Macs share"
             )
         } content: {
             SettingsSection(
@@ -35,6 +42,14 @@ struct ModelSourcesView: View {
                 anchorId: "storage.externalModels"
             ) {
                 ExternalModelsSettingsView()
+            }
+
+            SettingsSection(
+                title: "Nearby Macs",
+                subtitle:
+                    "Copy models between Osaurus Macs on the same network instead of downloading them again. Only models you choose are shared, and files are checked before use."
+            ) {
+                NearbyMacsSettingsView()
             }
         }
     }

@@ -15,6 +15,7 @@
 //
 
 import Foundation
+import OsaurusSync
 
 /// Download / verify lifecycle state visible to SwiftUI.
 public enum PrivacyFilterDownloadState: Equatable, Sendable {
@@ -104,6 +105,63 @@ public final class PrivacyFilterModelDownloader: NSObject, ObservableObject {
         currentTask = Task { [weak self] in
             guard let self else { return }
             await self.runDownload()
+        }
+    }
+
+    /// Copies the bundle from a nearby Mac, then verifies and loads it as a
+    /// download would. When the Hub answers, the copy is refused unless every
+    /// file it gives a SHA-256 for matches; on any failure the bundle is
+    /// downloaded from the Hub instead.
+    func startDownload(fromNearby offer: NearbyOffer) {
+        currentTask?.cancel()
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            let directory = PrivacyFilterModelBundle.directoryURL()
+            let files = offer.model.files
+            let total = files.reduce(Int64(0)) { $0 + Int64($1.size) }
+            do {
+                guard let node = ModelShareService.shared.node else { throw NearbyTransferError.notRunning }
+                self.state = .enumerating
+                if let hub = try? await HuggingFaceService.shared.fetchDownloadFiles(
+                    repoId: Self.repoId,
+                    patterns: Self.filePatterns
+                ) {
+                    for file in hub {
+                        guard case .sha256(let expected) = file.digest else { continue }
+                        let offered = files.first { $0.path == file.path }
+                        guard offered?.sha256.caseInsensitiveCompare(expected) == .orderedSame else {
+                            throw NearbyTransferError.contentMismatch(path: file.path)
+                        }
+                    }
+                }
+                self.state = .downloading(
+                    fileIndex: 1, fileCount: files.count, fileName: offer.model.name,
+                    bytesDownloaded: 0, bytesTotal: total
+                )
+                try await NearbyBundleTransfer.fetch(
+                    node: node,
+                    source: offer.source,
+                    files: files,
+                    into: directory
+                ) { received, total in
+                    Task { @MainActor [weak self] in
+                        guard let self, case .downloading = self.state else { return }
+                        self.state = .downloading(
+                            fileIndex: 1, fileCount: files.count, fileName: offer.model.name,
+                            bytesDownloaded: received, bytesTotal: total
+                        )
+                    }
+                }
+            } catch {
+                if Task.isCancelled {
+                    self.state = .idle
+                    return
+                }
+                print("[PrivacyFilter] Nearby copy failed, downloading from Hugging Face: \(error.localizedDescription)")
+                await self.runDownload()
+                return
+            }
+            await self.verifyAndFinalize(at: directory)
         }
     }
 

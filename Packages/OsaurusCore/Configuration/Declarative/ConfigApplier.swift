@@ -15,6 +15,7 @@
 //
 
 import Foundation
+import OsaurusSync
 @preconcurrency import MLXLMCommon
 
 /// Process-wide serialization for `ConfigApplier.apply`. Applies can arrive
@@ -2041,13 +2042,37 @@ enum ConfigApplier {
         var requested = Set<String>()
         for repoId in desired where !installed.contains(repoId) {
             guard requested.insert(repoId.lowercased()).inserted else { continue }
-            guard let model = await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: repoId)
+            let nearby = await MainActor.run {
+                ModelShareService.shared.offers(repoId: repoId, format: ModelShareKind.language.format).first
+            }
+            // A nearby copy needs no Hub answer to start: the download checks
+            // files against the Hub when it can and the host's list otherwise.
+            let resolved = await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: repoId)
+            guard
+                let model = resolved
+                    ?? nearby.map({
+                        MLXModel(
+                            id: $0.model.repoId ?? repoId,
+                            name: $0.model.name,
+                            description: "Copied from \($0.hostName)",
+                            downloadURL: "https://huggingface.co/\(repoId)"
+                        )
+                    })
             else {
                 results.append(
                     ConfigApplyResult(
                         section: "models", target: repoId, status: .failed,
                         message: "`\(repoId)` is not MLX-compatible (expected an mlx-community/* "
                             + "or other MLX build)."))
+                continue
+            }
+            if let nearby {
+                await MainActor.run { ModelManager.shared.downloadModel(model, fromNearbyHost: nearby.source) }
+                results.append(
+                    ConfigApplyResult(
+                        section: "models", target: model.id, status: .started,
+                        message: "Copying from \(nearby.hostName) on this network — poll "
+                            + "osaurus_inspect({action: 'status'})."))
                 continue
             }
             await MainActor.run { ModelManager.shared.downloadModel(model) }

@@ -277,6 +277,11 @@ struct SettingsSearchSelfFindProbe {
             // General: the one external-models switch + Advanced subsections.
             ("Use Models Already on This Mac", "storage.externalModels"),
             ("lm studio", "storage.externalModels"),
+            ("Nearby Macs", "models.sharing.share"),
+            ("Share Models on This Network", "models.sharing.share"),
+            ("Shared Models", "models.sharing.sharedModels"),
+            ("Stop Sharing", "models.sharing.sharedModels"),
+            ("Find Models on Nearby Macs", "models.sharing.nearby"),
             ("Models Folder", "storage.location"),
             ("Sources", "storage.location"),
             ("Data & Storage", "storage.encryption"),

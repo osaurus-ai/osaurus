@@ -16,7 +16,8 @@ final class ConfiguratorHandoffTool: OsaurusTool, @unchecked Sendable {
     let name = ConfiguratorHandoffTool.toolName
     let description =
         "Hand a request about Osaurus itself to Osaurus's settings helper: how a feature works, where a "
-        + "setting is, what is configured, or a change to models, agents, providers, tools, automations, "
+        + "setting is, what is configured, or a change to models (including downloading one, from Hugging "
+        + "Face or a Mac on this network), agents, providers, tools, automations, "
         + "or app settings, including installing a skill, MCP server, or agent from a link, snippet, or "
         + "command the user shared. It answers or makes the change (the user approves changes on a card) and "
         + "returns the result to present."

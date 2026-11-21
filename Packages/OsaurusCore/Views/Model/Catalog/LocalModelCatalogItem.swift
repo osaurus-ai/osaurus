@@ -15,22 +15,33 @@ import SwiftUI
 enum LocalModelCatalogScope: String, CaseIterable, Hashable, Sendable {
     case onThisMac
     case available
+    /// Models a nearby Mac shares that aren't on this Mac. Its chip shows
+    /// only while one does.
+    case nearby
     case all
 
     var title: String {
         switch self {
         case .onThisMac: L("On This Mac")
         case .available: L("Available")
+        case .nearby: L("Nearby")
         case .all: L("All")
         }
     }
 
-    func includes(_ status: LocalModelCatalogItem.Status) -> Bool {
+    func includes(_ item: LocalModelCatalogItem) -> Bool {
         switch self {
-        case .onThisMac: status.isOnThisMac
-        case .available: !status.isOnThisMac
+        case .onThisMac: item.status.isOnThisMac
+        case .available: !item.status.isOnThisMac
+        case .nearby: !item.status.isOnThisMac && !item.nearbyHosts.isEmpty
         case .all: true
         }
+    }
+
+    /// Chips for a page, in order: Nearby only when some row is on a nearby Mac.
+    static func chips(for items: [LocalModelCatalogItem]) -> [Self] {
+        let showsNearby = items.contains { Self.nearby.includes($0) }
+        return allCases.filter { $0 != .nearby || showsNearby }
     }
 }
 
@@ -205,6 +216,8 @@ struct LocalModelCatalogItem: Identifiable {
     var versions: [Version] = []
     /// Greyed: the bundle is on disk but the local engine can't load it.
     var isUnsupported = false
+    /// Names of nearby Macs that share this model.
+    var nearbyHosts: [String] = []
 }
 
 extension LocalModelCatalogItem {
@@ -273,7 +286,7 @@ enum LocalModelCatalogOrdering {
         query: String,
         sort: SettingsDataTableSort<LocalModelSortKey>?
     ) -> [LocalModelCatalogItem] {
-        let scoped = items.filter { scope.includes($0.status) }
+        let scoped = items.filter { scope.includes($0) }
         return sorted(search(scoped, query: query), by: sort)
     }
 

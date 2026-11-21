@@ -3153,6 +3153,39 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
+            id: "models.sharing.share",
+            tab: .models,
+            section: "Nearby Macs",
+            title: "Share Models on This Network",
+            keywords: [
+                "share models", "lan", "local network", "nearby macs", "model sharing", "copy models to another mac",
+                "serve models", "wifi", "ethernet", "share with other macs",
+            ],
+            disambiguation: "Models → Local Models → Sources → Nearby Macs. Lets other Osaurus Macs on this local network copy the models picked under Shared Models; nothing is shared until a model is picked. Model files only, no chats or agents. Not Devices ▸ Sync Chats or Run Agents for My Other Devices, and not Remote Access."
+        ),
+        .init(
+            id: "models.sharing.sharedModels",
+            tab: .models,
+            section: "Nearby Macs",
+            title: "Shared Models",
+            keywords: [
+                "which models to share", "share this model", "stop sharing", "share on this network", "preparing",
+                "shared model list",
+            ],
+            disambiguation: "The per-model list under Share Models on This Network, grouped by kind. A model reads Preparing while its files are checksummed; it is offered once that finishes. Share on This Network / Stop Sharing on a model's row in Local Models changes the same list."
+        ),
+        .init(
+            id: "models.sharing.nearby",
+            tab: .models,
+            section: "Nearby Macs",
+            title: "Find Models on Nearby Macs",
+            keywords: [
+                "nearby", "download from another mac", "copy from mac", "models from my other mac", "offline download",
+                "skip hugging face", "lan download", "nearby models",
+            ],
+            disambiguation: "On (default): Local Models lists models other Osaurus Macs on this network share, with a Nearby chip and an On <Mac> badge, and downloads use a nearby Mac's copy when its files match Hugging Face. Off: downloads always come from the internet. Not Devices ▸ Find Devices, which is for chat sync."
+        ),
+        .init(
             id: "storage.location",
             tab: .models,
             section: "Sources",

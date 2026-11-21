@@ -26,6 +26,7 @@ final class SpeechCatalogSource: LocalModelCatalogSource {
             .throttle(for: .milliseconds(200), scheduler: DispatchQueue.main, latest: true)
             .sink { [weak self] _ in self?.rebuild() }
             .store(in: &subscriptions)
+        observeNearby { [weak self] in self?.rebuild() }
         rebuild()
     }
 
@@ -36,7 +37,17 @@ final class SpeechCatalogSource: LocalModelCatalogSource {
     private func rebuild() {
         let ordered = manager.availableModels.filter(\.isRecommended)
             + manager.availableModels.filter { !$0.isRecommended }
-        items = ordered.map(item(for:))
+        let manager = manager
+        items = mergingNearby(
+            ordered.map(item(for:)),
+            localIds: { [$0.id] },
+            repoId: { _ in nil },
+            addsUnlisted: false,
+            download: { offer, _ in
+                guard let model = manager.availableModels.first(where: { $0.id == offer.localId }) else { return }
+                manager.downloadModel(model, fromNearby: offer)
+            }
+        )
     }
 
     private func item(for model: SpeechModel) -> LocalModelCatalogItem {

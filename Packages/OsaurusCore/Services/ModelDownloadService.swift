@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import OsaurusSync
 import os
 
 private let downloadLog = Logger(subsystem: "com.dinoki.osaurus", category: "ModelDownload")
@@ -136,7 +137,10 @@ final class ModelDownloadService: ObservableObject {
             || lower.contains("speculative decoding")
         let title: String
         let message: String
-        if lower.contains("not enough disk space") || lower.contains("no space") {
+        if lower.contains("is no longer reachable") {
+            title = L("Mac no longer reachable")
+            message = rawError
+        } else if lower.contains("not enough disk space") || lower.contains("no space") {
             title = L("Not enough disk space")
             message = rawError
         } else if lower.contains("hugging face") || lower.contains("file list") {
@@ -190,7 +194,7 @@ final class ModelDownloadService: ObservableObject {
 
     // MARK: - Properties
 
-    static let downloadFilePatterns: [String] = [
+    nonisolated static let downloadFilePatterns: [String] = [
         "*.json",
         "*.jinja",
         "*.txt",
@@ -199,7 +203,7 @@ final class ModelDownloadService: ObservableObject {
     ]
 
     /// Filenames excluded from download even when they match a glob pattern.
-    static let downloadExcludedFiles: Set<String> = [
+    nonisolated static let downloadExcludedFiles: Set<String> = [
         "README.md",
         ".gitattributes",
     ]
@@ -227,6 +231,18 @@ final class ModelDownloadService: ObservableObject {
     /// Live downloaders keyed by model id, then by remote file path — one
     /// per in-flight file, since several files transfer concurrently.
     private var activeDownloaders: [String: [String: DirectDownloader]] = [:]
+    /// The nearby Mac the user picked a model from. Its catalog stands in for
+    /// Hugging Face's file list when the Hub can't be reached.
+    private var nearbyPicks: [String: NearbySource] = [:]
+    /// Per model, the nearby Mac each remote file path is copied from. A file
+    /// whose nearby copy fails is dropped from the plan and fetched from the
+    /// Hub instead.
+    private var nearbyPlans: [String: [String: NearbySource]] = [:]
+    /// Models whose file list came from a nearby Mac because the Hub couldn't
+    /// be reached; their files have no other source.
+    private var nearbyOnlyModels: Set<String> = []
+    /// Live nearby copies keyed by model id, then remote file path.
+    private var activeNearbyTransfers: [String: [String: Task<Void, Error>]] = [:]
     private var downloadTokens: [String: UUID] = [:]
     private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
     private var lastKnownSpeed: [String: Double] = [:]
@@ -297,8 +313,11 @@ final class ModelDownloadService: ObservableObject {
 
     // MARK: - Download Methods
 
-    func download(_ model: MLXModel, route: DownloadRoute = .direct) {
+    /// `nearby` names the Mac the user picked the model from; with nearby
+    /// Macs enabled, files any of them shares are copied from it either way.
+    func download(_ model: MLXModel, route: DownloadRoute = .direct, nearby: NearbySource? = nil) {
         guard !isActiveDownload(model.id) else { return }
+        nearbyPicks[model.id] = nearby
         if FileManager.default.fileExists(
             atPath: model.localDirectory.appendingPathComponent(ModelManifest.pendingUpdateFilename).path
         ) {
@@ -453,12 +472,31 @@ final class ModelDownloadService: ObservableObject {
         }
 
         do {
-            let files = try await HuggingFaceService.shared.fetchDownloadFiles(
-                repoId: model.id,
-                patterns: Self.downloadFilePatterns,
-                excludedFiles: Self.downloadExcludedFiles,
-                revision: resuming?.revision
-            )
+            // A model picked from a nearby Mac still comes from the Hub's file
+            // list when the Hub answers, so every file is checked against the
+            // Hub's digests. Only when it can't be reached does the host's own
+            // catalog stand in.
+            var nearbyOnlyOffer: NearbyOffer?
+            let files: [HuggingFaceService.MatchedFile]
+            do {
+                files = try await HuggingFaceService.shared.fetchDownloadFiles(
+                    repoId: model.id,
+                    patterns: Self.downloadFilePatterns,
+                    excludedFiles: Self.downloadExcludedFiles,
+                    revision: resuming?.revision
+                )
+            } catch {
+                guard !(error is CancellationError), !Task.isCancelled, let offer = nearbyManifestOffer(for: model)
+                else { throw error }
+                nearbyOnlyOffer = offer
+                files = Self.matchedFiles(from: offer.model)
+                guard !files.isEmpty else { throw error }
+            }
+            if nearbyOnlyOffer != nil {
+                nearbyOnlyModels.insert(model.id)
+            } else {
+                nearbyOnlyModels.remove(model.id)
+            }
             downloadRevisions[model.id] = files.first?.revision
 
             // Inspect the same immutable revision as the weights, before transfer.
@@ -466,6 +504,11 @@ final class ModelDownloadService: ObservableObject {
                 guard manifestFile.size <= ModelManifest.maximumBytes else {
                     throw ModelManifest.invalid("The file exceeds 64 KiB.")
                 }
+                if let nearbyOnlyOffer {
+                    try await checkNearbyManifest(manifestFile, from: nearbyOnlyOffer)
+                }
+            }
+            if nearbyOnlyOffer == nil, let manifestFile = files.first(where: { $0.path == ModelManifest.filename }) {
                 let snapshot = try await HuggingFaceService.shared.fetchModelManifest(
                     repoId: model.id,
                     revision: manifestFile.revision
@@ -565,6 +608,7 @@ final class ModelDownloadService: ObservableObject {
                 try Data((files.first?.revision ?? "").utf8).write(to: pendingUpdate, options: .atomic)
             }
             let transferFiles = filesToDownload.filter { $0.path != ModelManifest.filename }
+            nearbyPlans[model.id] = nearbyPlan(for: model, files: filesToDownload, nearbyOnly: nearbyOnlyOffer)
 
             // Transfer up to three files at once. Per-connection
             // throughput to the Hugging Face CDN is the bottleneck on
@@ -722,6 +766,7 @@ final class ModelDownloadService: ObservableObject {
                 if FileManager.default.fileExists(atPath: pendingUpdate.path) {
                     try FileManager.default.removeItem(at: pendingUpdate)
                 }
+                NearbyCopyMarker.record(in: directory, hostName: nearbyOnlyOffer?.hostName)
                 finalState = .completed
             } else if missing.count == 1 {
                 finalState = .failed(
@@ -854,6 +899,17 @@ final class ModelDownloadService: ObservableObject {
             return .completed
         }
 
+        if let source = nearbyPlans[model.id]?[file.path] {
+            let outcome = await transferFromNearby(file, source: source, to: destination, model: model, token: token)
+            guard case .failed(_, let error) = outcome,
+                !(error is CancellationError),
+                !nearbyOnlyModels.contains(model.id),
+                downloadTokens[model.id] == token
+            else { return outcome }
+            nearbyPlans[model.id]?[file.path] = nil
+            print("[ModelDownloadService] Nearby copy of \(file.path) failed, using Hugging Face: \(error.localizedDescription)")
+        }
+
         let downloader = DirectDownloader()
         activeDownloaders[model.id, default: [:]][file.path] = downloader
         defer {
@@ -925,9 +981,11 @@ final class ModelDownloadService: ObservableObject {
                     expectedSize: file.size,
                     expectedDigest: file.digest,
                     resumeData: resumeDataForAttempt,
+                    seed: NearbyFileDownloader.partURL(for: destination),
                     onProgress: onProgress
                 )
                 finishFileTransfer(modelId: model.id, token: token, path: file.path, size: file.size)
+                try? FileManager.default.removeItem(at: NearbyFileDownloader.partURL(for: destination))
                 return .completed
             } catch let pauseInfo as DirectDownloader.PauseInfo {
                 notePausedFileBytes(
@@ -973,6 +1031,162 @@ final class ModelDownloadService: ObservableObject {
         }
     }
 
+    // MARK: - Nearby Macs
+
+    /// The offer the user picked `model` from, if its host still shares it.
+    private func nearbyManifestOffer(for model: MLXModel) -> NearbyOffer? {
+        guard let pick = nearbyPicks[model.id] else { return nil }
+        let offers = ModelShareService.shared.offers(repoId: model.id, format: ModelShareKind.language.format)
+            .filter { $0.hostId == pick.hostId }
+        return offers.first { $0.model.id == pick.itemId } ?? offers.first
+    }
+
+    /// A host's file list in the shape of the Hub's, limited to what a Hub
+    /// download would fetch. Each digest is the host's SHA-256.
+    nonisolated static func matchedFiles(from model: NearbyModel) -> [HuggingFaceService.MatchedFile] {
+        model.files.compactMap { file in
+            let name = (file.path as NSString).lastPathComponent
+            guard HuggingFaceService.normalizedRemoteFilePath(file.path) != nil,
+                !downloadExcludedFiles.contains(name),
+                downloadFilePatterns.contains(where: { fnmatch($0, name, 0) == 0 })
+            else { return nil }
+            return HuggingFaceService.MatchedFile(
+                path: file.path,
+                size: Int64(file.size),
+                digest: .sha256(file.sha256),
+                revision: model.revision
+            )
+        }
+    }
+
+    private func nearbyPlan(
+        for model: MLXModel,
+        files: [HuggingFaceService.MatchedFile],
+        nearbyOnly: NearbyOffer?
+    ) -> [String: NearbySource] {
+        let service = ModelShareService.shared
+        guard service.configuration.useNearbyMacs, service.node != nil else { return [:] }
+        if let nearbyOnly {
+            return Dictionary(files.map { ($0.path, nearbyOnly.source) }, uniquingKeysWith: { first, _ in first })
+        }
+        return Self.nearbyPlan(
+            files: files,
+            offers: service.offers(repoId: model.id, format: ModelShareKind.language.format),
+            preferredHostId: nearbyPicks[model.id]?.hostId
+        )
+    }
+
+    /// Which nearby Mac each file comes from. A file qualifies only when a
+    /// host lists it at the same path and size and, for files the Hub gives a
+    /// SHA-256, with that digest; other files come from the Hub. The picked
+    /// host goes first, then files spread across hosts.
+    nonisolated static func nearbyPlan(
+        files: [HuggingFaceService.MatchedFile],
+        offers: [NearbyOffer],
+        preferredHostId: String?
+    ) -> [String: NearbySource] {
+        var plan: [String: NearbySource] = [:]
+        var load: [String: Int] = [:]
+        for file in files {
+            guard let digest = file.digest else { continue }
+            let candidates = offers.filter { offer in
+                offer.model.files.contains { offered in
+                    guard offered.path == file.path, Int64(offered.size) == file.size else { return false }
+                    if case .sha256(let expected) = digest {
+                        return offered.sha256.caseInsensitiveCompare(expected) == .orderedSame
+                    }
+                    return true
+                }
+            }
+            let pick = candidates.min { a, b in
+                let (pa, pb) = (a.hostId == preferredHostId, b.hostId == preferredHostId)
+                if pa != pb { return pa }
+                return load[a.hostId, default: 0] < load[b.hostId, default: 0]
+            }
+            guard let pick else { continue }
+            plan[file.path] = pick.source
+            load[pick.hostId, default: 0] += 1
+        }
+        return plan
+    }
+
+    /// Reads a nearby-only model's `osaurus.json` from the host before any
+    /// weights move, as the Hub path does.
+    private func checkNearbyManifest(_ file: HuggingFaceService.MatchedFile, from offer: NearbyOffer) async throws {
+        guard let node = ModelShareService.shared.node else { throw NearbyTransferError.notRunning }
+        guard let digest = file.digest else { throw ModelManifest.invalid("The nearby Mac listed no checksum.") }
+        let probe = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-nearby-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(ModelManifest.filename)
+        defer { try? FileManager.default.removeItem(at: probe.deletingLastPathComponent()) }
+        try await NearbyFileDownloader.download(
+            node: node,
+            source: offer.source,
+            path: file.path,
+            size: file.size,
+            digest: digest,
+            to: probe
+        ) { _ in }
+        let manifest = try ModelManifest.decode(Data(contentsOf: probe))
+        if let failure = manifest.compatibilityFailure(hostVersion: ModelManifest.hostVersion) { throw failure }
+    }
+
+    /// Copies one file from a nearby Mac. Pause stops the copy and keeps its
+    /// partial file for the next attempt.
+    private func transferFromNearby(
+        _ file: HuggingFaceService.MatchedFile,
+        source: NearbySource,
+        to destination: URL,
+        model: MLXModel,
+        token: UUID
+    ) async -> FileTransferOutcome {
+        guard let node = ModelShareService.shared.node, let digest = file.digest else {
+            return .failed(path: file.path, error: NearbyTransferError.notRunning)
+        }
+        if pauseRequestedModels.contains(model.id) { return .paused(path: file.path, resumeData: nil) }
+        let modelId = model.id
+        let path = file.path
+        let size = file.size
+        let task = Task.detached {
+            try await NearbyFileDownloader.download(
+                node: node,
+                source: source,
+                path: path,
+                size: size,
+                digest: digest,
+                to: destination
+            ) { [weak self] bytes in
+                Task { @MainActor [weak self] in
+                    self?.recordFileProgress(modelId: modelId, token: token, path: path, bytes: bytes)
+                }
+            }
+        }
+        activeNearbyTransfers[modelId, default: [:]][path] = task
+        defer {
+            if downloadTokens[modelId] == token { activeNearbyTransfers[modelId]?[path] = nil }
+        }
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            finishFileTransfer(modelId: modelId, token: token, path: path, size: size)
+            return .completed
+        } catch {
+            if pauseRequestedModels.contains(modelId) {
+                notePausedFileBytes(
+                    modelId: modelId,
+                    token: token,
+                    path: path,
+                    bytes: NearbyFileDownloader.resumableBytes(for: destination)
+                )
+                return .paused(path: path, resumeData: nil)
+            }
+            return .failed(path: path, error: error)
+        }
+    }
+
     /// Record live byte progress for one in-flight file and republish the
     /// model's aggregate progress.
     private func recordFileProgress(modelId: String, token: UUID, path: String, bytes: Int64) {
@@ -1013,6 +1227,8 @@ final class ModelDownloadService: ObservableObject {
     private func invalidateDownloaders(for modelId: String) {
         activeDownloaders[modelId]?.values.forEach { $0.invalidate() }
         activeDownloaders[modelId] = nil
+        activeNearbyTransfers[modelId]?.values.forEach { $0.cancel() }
+        activeNearbyTransfers[modelId] = nil
     }
 
     /// Token-guarded transition from `.downloading` → `.paused`. Freezes
@@ -1065,7 +1281,9 @@ final class ModelDownloadService: ObservableObject {
     func pause(_ modelId: String) {
         guard case .downloading(let progress) = downloadStates[modelId] else { return }
 
-        if let downloaders = activeDownloaders[modelId], !downloaders.isEmpty {
+        let downloaders = activeDownloaders[modelId] ?? [:]
+        let nearby = activeNearbyTransfers[modelId] ?? [:]
+        if !downloaders.isEmpty || !nearby.isEmpty {
             // Flag first: transfers waiting in a retry backoff have no live
             // URLSession task for `pause()` to cancel, and pick the flag up
             // at their next loop iteration instead.
@@ -1073,6 +1291,8 @@ final class ModelDownloadService: ObservableObject {
             for downloader in downloaders.values {
                 downloader.pause()
             }
+            // A nearby copy keeps its partial file; resume continues it.
+            nearby.values.forEach { $0.cancel() }
             return
         }
 
@@ -1103,6 +1323,7 @@ final class ModelDownloadService: ObservableObject {
 
     func cancel(_ modelId: String) {
         downloadRevisions[modelId] = nil
+        nearbyPicks[modelId] = nil
         releaseOrchestrationResources(for: modelId)
         pausedDownloads[modelId] = nil
         clearDownloadTracking(for: modelId)
@@ -1359,6 +1580,9 @@ final class ModelDownloadService: ObservableObject {
         clearDownloadTracking(for: modelId)
         pausedDownloads[modelId] = nil
         invalidateDownloaders(for: modelId)
+        nearbyPlans[modelId] = nil
+        nearbyOnlyModels.remove(modelId)
+        if finalState == .completed { nearbyPicks[modelId] = nil }
         if case .failed(let error) = finalState {
             if repairingModels.contains(modelId) {
                 repairMessages[modelId] = L("Repair failed: \(error)")
@@ -1888,6 +2112,7 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         expectedSize: Int64,
         expectedDigest: ModelFileDigest? = nil,
         resumeData: Data? = nil,
+        seed: URL? = nil,
         onProgress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
         let fm = FileManager.default
@@ -1959,6 +2184,7 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
                     }(),
                     acceptsRanges: metadata.acceptsRanges
                 ),
+                seed: seed,
                 onProgress: onProgress
             )
             return

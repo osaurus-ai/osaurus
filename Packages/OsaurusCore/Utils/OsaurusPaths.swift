@@ -706,6 +706,11 @@ public enum OsaurusPaths {
     public static func syncConfigFile() -> URL { config().appendingPathComponent("sync.json") }
     /// Last fetched relay and discovery server list (`SyncNetworkDirectory`).
     public static func syncNetworkFile() -> URL { config().appendingPathComponent("sync-network.json") }
+    public static func modelSharingConfigFile() -> URL { config().appendingPathComponent("model-sharing.json") }
+    /// SHA-256 of shared model files, keyed by path, size and modification time.
+    public static func modelSharingHashCacheFile() -> URL {
+        cache().appendingPathComponent("model-sharing-hashes.json")
+    }
     public static func computerUseConfigFile() -> URL {
         config().appendingPathComponent("computer-use.json")
     }

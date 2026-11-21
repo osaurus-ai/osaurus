@@ -18,6 +18,7 @@
 //
 
 import Foundation
+import OsaurusSync
 import OsaurusRepository
 
 // MARK: - Provider read visibility (eval isolation)
@@ -202,7 +203,9 @@ enum ConfigurationReadNextStep {
             set default_agent.model (the Default agent) or agents[].model (a custom \
             agent). `foundation` (the built-in Apple Foundation on-device model) \
             never appears in this list but is ALWAYS a valid value for those model \
-            keys — never refuse it as "not installed".
+            keys — never refuse it as "not installed". Filter `nearby` lists models \
+            Macs on this network share (`nearby_mac` names the Mac); installing one \
+            copies it from that Mac instead of downloading it.
             """,
         "providers": """
             # EVERY id in the `provider` list above is a directly supported \
@@ -368,7 +371,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
         + "knowledge, commands, channels, search, workspaces, shared_agents}. "
         + "shared_agents = teammates' agents you can delegate to (name, owner, workspace, "
         + "presence, `target` for spawn_agent; describe by Name@Workspace). "
-        + "Optional `filter` (list only): models: installed|downloading|recommended|all; "
+        + "Optional `filter` (list only): models: installed|downloading|recommended|nearby|all; "
         + "providers/mcp: enabled|disabled|connected|all; plugins: installed|available|failed; "
         + "knowledge/channels/automations: enabled|disabled; "
         + "skills/commands: builtin|custom|plugin; shared_agents: online|in_pool."
@@ -870,16 +873,30 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     filtered = all
                 case "recommended":
                     filtered = Array(all.prefix(10))
+                case "nearby":
+                    filtered = []
                 default:
                     filtered = ModelManager.shared.installedModels()
                 }
-                let items = filtered.map { model -> [String: Any] in
+                var items = filtered.map { model -> [String: Any] in
                     var dict: [String: Any] = [
                         "id": model.id,
                         "name": model.name,
                     ]
                     if let bytes = model.totalSizeEstimateBytes { dict["size_bytes"] = bytes }
                     return dict
+                }
+                if filter == "nearby" {
+                    let installed = Set(ModelManager.shared.installedModels().map { $0.id.lowercased() })
+                    items = ModelShareService.shared.offers(kind: .language).compactMap { offer in
+                        guard let repoId = offer.model.repoId, !installed.contains(repoId.lowercased()) else {
+                            return nil
+                        }
+                        return [
+                            "id": repoId, "name": offer.model.name, "size_bytes": offer.totalBytes,
+                            "nearby_mac": offer.hostName,
+                        ]
+                    }
                 }
                 let mediaItems = ["", "installed", "all"].contains(filter)
                     ? mediaModels.filter { filter == "all" || $0.ready }.map(Self.mediaModelPayload) : []
@@ -1686,7 +1703,7 @@ extension OsaurusInspectTool {
                 "filter": .object([
                     "type": .string("string"),
                     "description": .string(
-                        "For list: models installed|recommended|all; mcp enabled|connected|all; plugins installed|failed."),
+                        "For list: models installed|recommended|nearby|all; mcp enabled|connected|all; plugins installed|failed."),
                 ]),
             ]),
             "required": .array([.string("action"), .string("scope")]),

@@ -2312,10 +2312,14 @@ enum ConfigPlanner {
     ) {
         let installed = Set(ModelManager.shared.installedModels().map { $0.id })
         for id in desired where !installed.contains(id) {
+            let nearby = ModelShareService.shared.offers(repoId: id, format: ModelShareKind.language.format).first
             actions.append(
                 ConfigPlanAction(
                     section: "models", target: id, kind: .create,
-                    changes: ["download from Hugging Face (MLX compatibility checked during apply)"],
+                    changes: [
+                        nearby.map { "copy from \($0.hostName) on this network" }
+                            ?? "download from Hugging Face (MLX compatibility checked during apply)"
+                    ],
                     longRunning: true))
         }
         if prune {
