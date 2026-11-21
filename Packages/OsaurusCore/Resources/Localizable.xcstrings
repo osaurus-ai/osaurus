@@ -1,6 +1,874 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "1 nearby Mac sharing models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "1 Mac in der Nähe teilt Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모델을 공유하는 주변 Mac 1대"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "1 Mac поблизости делится моделями"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "附近有 1 台 Mac 正在共享模型"
+          }
+        }
+      }
+    },
+    "%lld nearby Macs sharing models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld Macs in der Nähe teilen Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모델을 공유하는 주변 Mac %lld대"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac поблизости, которые делятся моделями: %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "附近有 %lld 台 Mac 正在共享模型"
+          }
+        }
+      }
+    },
+    "No nearby Macs sharing models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Macs in der Nähe teilen Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모델을 공유하는 주변 Mac 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поблизости нет Mac, которые делятся моделями"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "附近没有正在共享模型的 Mac"
+          }
+        }
+      }
+    },
+    "Sharing 1 model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "1 Modell wird geteilt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모델 1개 공유 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Общий доступ: 1 модель"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在共享 1 个模型"
+          }
+        }
+      }
+    },
+    "Sharing %lld models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld Modelle werden geteilt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모델 %lld개 공유 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Общий доступ: моделей — %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在共享 %lld 个模型"
+          }
+        }
+      }
+    },
+    "%@ · Preparing…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ · Wird vorbereitet…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ · 준비 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ · Подготовка…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ · 正在准备…"
+          }
+        }
+      }
+    },
+    "Downloads copy this model from %@ on this network." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Downloads kopieren dieses Modell von %@ in diesem Netzwerk."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다운로드하면 이 네트워크의 %@에서 이 모델을 복사합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "При загрузке эта модель копируется с %@ в этой сети."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "下载时会从此网络上的 %@ 复制此模型。"
+          }
+        }
+      }
+    },
+    "Finding models on nearby Macs is turned off." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Suche nach Modellen auf Macs in der Nähe ist ausgeschaltet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "주변 Mac에서 모델 찾기가 꺼져 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поиск моделей на Mac поблизости выключен."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“在附近的 Mac 上查找模型”已关闭。"
+          }
+        }
+      }
+    },
+    "Mac no longer reachable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac nicht mehr erreichbar"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac에 더 이상 연결할 수 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac больше недоступен"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法再连接到 Mac"
+          }
+        }
+      }
+    },
+    "Macs on this network can copy this model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Macs in diesem Netzwerk können dieses Modell kopieren."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 네트워크의 Mac에서 이 모델을 복사할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac в этой сети могут скопировать эту модель."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此网络上的 Mac 可以复制此模型。"
+          }
+        }
+      }
+    },
+    "Nearby" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In der Nähe"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "주변"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поблизости"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "附近"
+          }
+        }
+      }
+    },
+    "Nearby Macs share nothing new for this kind" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Macs in der Nähe teilen nichts Neues dieser Art"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "주변 Mac에서 공유하는 이 종류의 새 모델이 없습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac поблизости не делятся новыми моделями этого типа"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "附近的 Mac 没有共享此类新模型"
+          }
+        }
+      }
+    },
+    "Not Checked" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht geprüft"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "확인 안 됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не проверено"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未检查"
+          }
+        }
+      }
+    },
+    "Shared by %@ on this network." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geteilt von %@ in diesem Netzwerk."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 네트워크의 %@에서 공유함."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Доступно с %@ в этой сети."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "由此网络上的 %@ 共享。"
+          }
+        }
+      }
+    },
+    "The nearby Mac listed an invalid file path: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Mac in der Nähe hat einen ungültigen Dateipfad angegeben: %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "주변 Mac이 잘못된 파일 경로를 제공했습니다: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac поблизости указал недопустимый путь к файлу: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "附近的 Mac 列出了无效的文件路径：%@"
+          }
+        }
+      }
+    },
+    "%@ is busy sharing other files. Try again in a moment." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ teilt gerade andere Dateien. Versuche es gleich noch einmal."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@에서 다른 파일을 공유하는 중입니다. 잠시 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ сейчас передает другие файлы. Повторите попытку чуть позже."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 正忙于共享其他文件。请稍后再试。"
+          }
+        }
+      }
+    },
+    "%@ is no longer reachable. Try again when it's back on this network." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ ist nicht mehr erreichbar. Versuche es erneut, wenn der Mac wieder in diesem Netzwerk ist."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@에 더 이상 연결할 수 없습니다. 이 네트워크에 다시 연결되면 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ больше недоступен. Повторите попытку, когда он снова появится в этой сети."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法再连接到 %@。待它重新回到此网络后再试。"
+          }
+        }
+      }
+    },
+    "%@ from the nearby Mac didn't match the expected checksum." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ vom Mac in der Nähe stimmt nicht mit der erwarteten Prüfsumme überein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "주변 Mac에서 받은 %@의 체크섬이 예상 값과 일치하지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Контрольная сумма %@ с Mac поблизости не совпала с ожидаемой."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "来自附近 Mac 的 %@ 与预期校验和不符。"
+          }
+        }
+      }
+    },
+    "Nearby Mac" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac in der Nähe"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "주변 Mac"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac поблизости"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "附近的 Mac"
+          }
+        }
+      }
+    },
+    "Nearby Macs" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Macs in der Nähe"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "주변 Mac"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac поблизости"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "附近的 Mac"
+          }
+        }
+      }
+    },
+    "Share Models on This Network" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modelle in diesem Netzwerk teilen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 네트워크에서 모델 공유"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Делиться моделями в этой сети"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在此网络上共享模型"
+          }
+        }
+      }
+    },
+    "Let other Osaurus Macs on this Wi-Fi or Ethernet network copy the models you choose below. Nothing is shared until you pick a model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Andere Osaurus-Macs in diesem WLAN- oder Ethernet-Netzwerk können die unten ausgewählten Modelle kopieren. Es wird nichts geteilt, bis du ein Modell auswählst."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Wi-Fi 또는 이더넷 네트워크의 다른 Osaurus Mac이 아래에서 선택한 모델을 복사할 수 있습니다. 모델을 선택하기 전에는 아무것도 공유되지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Другие Mac с Osaurus в этой сети Wi-Fi или Ethernet смогут копировать модели, выбранные ниже. Пока вы не выберете модель, ничего не передается."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许此 Wi-Fi 或以太网网络上的其他 Osaurus Mac 复制你在下方选择的模型。在你选择模型之前，不会共享任何内容。"
+          }
+        }
+      }
+    },
+    "Find Models on Nearby Macs" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modelle auf Macs in der Nähe finden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "주변 Mac에서 모델 찾기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Искать модели на Mac поблизости"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在附近的 Mac 上查找模型"
+          }
+        }
+      }
+    },
+    "Show models other Osaurus Macs share on this network, and copy them from there instead of downloading from the internet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zeigt Modelle, die andere Osaurus-Macs in diesem Netzwerk teilen, und kopiert sie von dort, statt sie aus dem Internet zu laden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 네트워크의 다른 Osaurus Mac이 공유하는 모델을 표시하고, 인터넷에서 다운로드하는 대신 그 Mac에서 복사합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Показывать модели, которыми делятся другие Mac с Osaurus в этой сети, и копировать их оттуда вместо загрузки из интернета."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "显示此网络上其他 Osaurus Mac 共享的模型，并从那里复制，而不是从互联网下载。"
+          }
+        }
+      }
+    },
+    "Shared Models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geteilte Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "공유된 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Общие модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已共享的模型"
+          }
+        }
+      }
+    },
+    "No models on this Mac can be shared yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf diesem Mac gibt es noch keine Modelle, die geteilt werden können."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Mac에는 아직 공유할 수 있는 모델이 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "На этом Mac пока нет моделей, которыми можно поделиться."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 Mac 上还没有可共享的模型。"
+          }
+        }
+      }
+    },
+    "Stop Sharing" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Teilen beenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "공유 중단"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Закрыть доступ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "停止共享"
+          }
+        }
+      }
+    },
+    "Share on This Network" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In diesem Netzwerk teilen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 네트워크에서 공유"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поделиться в этой сети"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在此网络上共享"
+          }
+        }
+      }
+    },
+    "Copied from %@ while Hugging Face couldn't be reached, so its files were checked only against that Mac's list. Repair checks them against Hugging Face." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Von %@ kopiert, als Hugging Face nicht erreichbar war. Die Dateien wurden daher nur mit der Liste dieses Macs abgeglichen. „Reparieren“ prüft sie mit Hugging Face."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hugging Face에 연결할 수 없을 때 %@에서 복사했기 때문에 파일을 그 Mac의 목록과만 대조했습니다. 복구하면 Hugging Face와 대조합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Скопировано с %@, когда Hugging Face был недоступен, поэтому файлы сверены только со списком этого Mac. «Восстановить» сверит их с Hugging Face."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "从 %@ 复制时无法连接 Hugging Face，因此文件仅与该 Mac 的列表核对过。“修复”会与 Hugging Face 核对。"
+          }
+        }
+      }
+    },
+    "Where Osaurus keeps its models, which other apps' models it can use, and what nearby Macs share" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wo Osaurus seine Modelle speichert, welche Modelle anderer Apps es nutzen kann und was Macs in der Nähe teilen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurus가 모델을 보관하는 위치, 사용할 수 있는 다른 앱의 모델, 주변 Mac이 공유하는 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Где Osaurus хранит модели, какие модели других приложений может использовать и чем делятся Mac поблизости"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurus 存放模型的位置、可使用哪些其他应用的模型，以及附近的 Mac 共享了什么"
+          }
+        }
+      }
+    },
+    "Copy models between Osaurus Macs on the same network instead of downloading them again. Only models you choose are shared, and files are checked before use." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopiere Modelle zwischen Osaurus-Macs im selben Netzwerk, statt sie erneut herunterzuladen. Es werden nur die Modelle geteilt, die du auswählst, und Dateien werden vor der Verwendung geprüft."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "같은 네트워크의 Osaurus Mac끼리 모델을 다시 다운로드하지 않고 복사합니다. 선택한 모델만 공유되며, 파일은 사용 전에 확인됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Копируйте модели между Mac с Osaurus в одной сети вместо повторной загрузки. Передаются только выбранные вами модели, а файлы проверяются перед использованием."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在同一网络上的 Osaurus Mac 之间复制模型，无需重新下载。只会共享你选择的模型，文件在使用前会经过检查。"
+          }
+        }
+      }
+    },
     "%@ and its memory are removed from this Mac. This cannot be undone." : {
 
     },
