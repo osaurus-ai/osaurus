@@ -425,14 +425,18 @@ private struct ClassicUpgradeCanvas: View {
 
     /// Nothing gets through: the relay offline, or the Mac on the other end of it.
     private var linkOff: Bool { relayOff || macDown }
-    private var relayWireColor: Color { linkOff ? offTint.opacity(0.5) : tint.opacity(0.7) }
+    private var relayWireColor: Color { linkOff ? offTint : tint }
+    /// Faded on the wire, not its ink, so the theme lint keeps inks whole.
+    private var relayWireFade: Double { linkOff ? 0.5 : 0.7 }
 
     private var wires: some View {
         ZStack {
             Wire(from: phonePoint, to: relayLeft)
                 .stroke(relayWireColor, style: stroke(dashed: linkOff))
+                .opacity(relayWireFade)
             Wire(from: relayRight, to: macPoint)
                 .stroke(relayWireColor, style: stroke(dashed: linkOff))
+                .opacity(relayWireFade)
             // Sync: the devices know each other, so they reach each other without the relay.
             Wire(from: phonePoint, to: macPoint, bow: 44)
                 .trim(from: 0, to: hasDirect ? 1 : 0)

@@ -140,19 +140,8 @@ struct DevicesView: View {
         Button {
             showsClassicUpgrade = true
         } label: {
-            HStack(spacing: theme.space.s4) {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .glyphSize(.caption, weight: .semibold)
-                Text("Upgrading from Classic?", bundle: .module)
-                    .textStyle(.caption, weight: 600)
-                    .lineLimit(1)
-            }
-            .foregroundStyle(theme.text.primary)
-            .padding(.horizontal, theme.space.s10)
-            .frame(height: 26)
-            .background(Capsule().fill(theme.surface.subtle))
-            .overlay(Capsule().stroke(theme.border.subtle, lineWidth: theme.stroke.default))
-            .contentShape(Capsule())
+            StatusChip(L("Upgrading from Classic?"), icon: "arrow.triangle.2.circlepath")
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
@@ -1080,7 +1069,7 @@ private struct AwaitingAnswerBorder: ViewModifier {
                 // sheet kept animating with it.
                 TimelineView(.animation(paused: reduceMotion)) { context in
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(theme.status.info.foreground, lineWidth: 1.5)
+                        .strokeBorder(theme.status.info.foreground, lineWidth: theme.stroke.focus)
                         .opacity(reduceMotion ? 0.7 : Self.opacity(at: context.date))
                 }
                 .allowsHitTesting(false)
