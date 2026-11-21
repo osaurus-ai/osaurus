@@ -209,7 +209,7 @@ struct MobileToSyncMigrationTests {
         #expect(mac.stringArray(forKey: MobileConnectMigration.seenSyncPhonesKey) == ["A"])
     }
 
-    @Test func moveToSyncUnpairsTheRelayDevicesAndKeepsTheirTunnelsAWhile() async {
+    @Test func moveToSyncUnpairsTheRelayDevicesAndKeepsTheirTunnels() async {
         let mac = defaults()
         let agent = UUID()
         let phoneKey = key("Mobile")
@@ -218,32 +218,12 @@ struct MobileToSyncMigrationTests {
         let recorder = Recorder(enabled: [agent], keys: [phoneKey])
         await MobileConnectMigration.unpairForSync(defaults: mac, environment: recorder.environment)
         #expect(recorder.revoked == [phoneKey.id])
-        // The tunnel stays on a while: the old app hears the 401 for its revoked key, not the relay's "offline".
+        // The tunnel stays on until the relay is retired: the old app hears the 401 for its revoked key, not the
+        // relay's "offline". Recorded for that retirement.
         #expect(recorder.disabled.isEmpty)
         #expect(recorder.pairingEnded == 1)
         #expect(mac.object(forKey: MobileConnectMigration.pairedDeviceKey) == nil)
-
-        // Before its time, the sweep leaves it; after, it turns it off, once.
-        let soon = Date().addingTimeInterval(60)
-        #expect(
-            MobileConnectMigration.sweepGraceTunnels(now: soon, defaults: mac, environment: recorder.environment)
-                .isEmpty)
-        let later = Date().addingTimeInterval(MobileConnectMigration.tunnelGrace + 60)
-        #expect(
-            MobileConnectMigration.sweepGraceTunnels(now: later, defaults: mac, environment: recorder.environment)
-                == [agent])
-        #expect(recorder.disabled == [agent])
-        #expect(mac.object(forKey: MobileConnectMigration.graceTunnelsKey) == nil)
-    }
-
-    @Test func theSweepLeavesATunnelACodePairedPhoneUsesAgain() {
-        let mac = defaults()
-        let agent = UUID()
-        mac.set([agent.uuidString: 0.0], forKey: MobileConnectMigration.graceTunnelsKey)
-        mac.set([agent.uuidString], forKey: MobileConnectMigration.relayManagedAgentsKey)
-        let recorder = Recorder(enabled: [agent], keys: [])
-        #expect(MobileConnectMigration.sweepGraceTunnels(defaults: mac, environment: recorder.environment).isEmpty)
-        #expect(recorder.disabled.isEmpty)
+        #expect(mac.stringArray(forKey: MobileConnectMigration.keptTunnelsKey) == [agent.uuidString])
     }
 
     @Test func ignoresTheV1DoneKey() {
