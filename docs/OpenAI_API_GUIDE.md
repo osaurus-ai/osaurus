@@ -309,6 +309,46 @@ For visibility, every response carries a `prefix_hash` field — a stable hash o
 
 `prefix_hash` is informational only — passing it back to the server has no effect. Keep `session_id` stable per conversation so session tool bookkeeping groups correctly; cache reuse itself does not depend on it.
 
+### Thinking Budget
+
+A reasoning model can spend its whole output allowance thinking. To cap how many tokens one reasoning block may use, send a budget with the request:
+
+| Endpoint | Field |
+|----------|-------|
+| `POST /chat/completions` | `thinking_token_budget` (integer), or `reasoning: {"max_tokens": N}`. When both are sent, `thinking_token_budget` wins. |
+| `POST /responses` | `reasoning: {"max_tokens": N}` |
+| `POST /messages` (Anthropic) | `thinking: {"type": "enabled", "budget_tokens": N}` |
+
+```bash
+curl http://127.0.0.1:1337/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3.6-35b-a3b-mxfp4",
+    "messages": [{"role": "user", "content": "Plan a three-step refactor."}],
+    "thinking_token_budget": 300
+  }'
+```
+
+The budget must be a positive integer; `0` or a negative value returns `400`. When the budget is spent, the runtime requires the model's reasoning close token once and stops the block from reopening. Until then, sampling is untouched. `max_tokens` / `max_output_tokens` remain the total output cap and are never turned into a thinking budget. API requests do not inherit the in-app chat's thinking settings, so no budget applies unless the request sends one.
+
+Every response to a request that carried a budget says whether it was applied:
+
+- Chat Completions: `generation_metrics.reasoning_budget`. When streaming, it arrives in the `generation_metrics` chunk after the finish chunk, even without `stream_options.include_usage`.
+- Responses: `generation_metrics.reasoning_budget` on the response object, including the terminal `response.completed` / `response.incomplete` event when streaming.
+- Anthropic Messages: `usage.reasoning_budget`. When streaming, it is in the final `message_delta` usage.
+
+```json
+"reasoning_budget": { "requested_tokens": 300, "applied": true }
+```
+
+`applied: false` means the request was accepted and ran without a cap. This happens when:
+
+- the model is not a local reasoning-tag model (its tokenizer has no recognized reasoning close tag such as `</think>`);
+- the prompt does not open a reasoning block and the vocabulary has no open tag the model could emit;
+- the request is routed to a remote provider (the budget is not forwarded upstream).
+
+One exception: a streaming `/responses` request served by a remote provider's native Responses stream forwards that provider's events unchanged, so its terminal event has no `reasoning_budget` key. Requests without a budget get no `reasoning_budget` key. While a budget is active, speculative decoding (native MTP, DFlash, and other drafters) falls back to plain autoregressive decode for that request, so tokens per second may drop. A process-level `VMLX_REASONING_BUDGET` environment variable, if set, overrides the request value.
+
 ### Chat Templates
 
 Osaurus defers chat templating to MLX `ChatSession`, which uses the model's configuration to format prompts. System messages are combined and passed as `instructions`; user content is supplied as the prompt to `respond/streamResponse`.
@@ -559,6 +599,7 @@ curl http://127.0.0.1:1337/v1/responses \
 | `seed` | integer | Optional Osaurus/compatible-endpoint extension; 0 is explicit |
 | `repetition_penalty` | float | Optional Osaurus extension; finite and greater than 0, independent of additive frequency/presence penalties |
 | `enable_thinking` | boolean | Optional explicit model-template thinking control |
+| `reasoning.max_tokens` | integer | Optional Osaurus extension: positive cap on reasoning tokens. See [Thinking Budget](#thinking-budget) |
 | `chat_template_kwargs` | object | Model-defined JSON variables passed to its own chat template |
 
 Omitted extensions preserve the existing model and request defaults. These extensions are not promises that an upstream Responses provider supports them: compatible routes forward supported values, and routes without a representation reject explicit unsupported controls before inference. Chat Completions also accepts `seed`, `repetition_penalty`, and `chat_template_kwargs`.

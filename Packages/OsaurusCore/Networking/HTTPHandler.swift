@@ -15668,7 +15668,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let finish = Self.openResponsesFinishReason(completion).rawValue
                     let includeUsage = req.stream_options?.include_usage == true
                     let usage = response.reportedChatUsage
-                    let generationMetrics = response.reportedGenerationMetrics
+                    let generationMetrics = response.generationMetrics(
+                        requestedReasoningBudget: req.thinking_token_budget)
+                    // A caller that sent a budget gets the report without
+                    // having to opt into usage chunks.
+                    let includeMetrics = includeUsage || req.thinking_token_budget != nil
                     if let count = response.inputTokenCount { httpTrace.set("http_prompt_tokens", count) }
                     if let count = completion.tokenCount { httpTrace.set("http_completion_tokens", count) }
                     if !calls.isEmpty { markSemanticDeltaIfConnected(); httpTrace.markFirstSemanticDelta("tool_calls") }
@@ -15679,7 +15683,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 writer: writerBound.value, model: model, responseId: responseId, created: created, context: ctx.value)
                         }
                         writerBound.value.writeFinishWithReason(finish, model: model, responseId: responseId, created: created, context: ctx.value)
-                        if includeUsage {
+                        if includeMetrics {
                             writerBound.value.writeGenerationMetrics(generationMetrics, model: model,
                                 responseId: responseId, created: created, context: ctx.value)
                         }
@@ -15768,7 +15772,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             throw error
                         }
                     }
-                    let body = try response.chatCompletionsHTTPBody(model: model, prefixHash: prefixHash)
+                    let body = try response.chatCompletionsHTTPBody(model: model, prefixHash: prefixHash,
+                        requestedReasoningBudget: enrichedReq.thinking_token_budget)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]
                     headers.append(contentsOf: cors)
                     let headersCopy = headers
@@ -18173,10 +18178,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     ServiceToolInvocation(toolName: $0.name, jsonArguments: $0.arguments, toolCallId: $0.callID,
                         geminiThoughtSignature: $0.geminiThoughtSignature)
                 }
+                let reasoningBudget = response.reasoningBudgetReport(
+                    requestedTokens: internalReq.generation.reasoningBudgetTokens)
                 hop {
                     writerBound.value.setInputTokens(usage.prompt_tokens, context: ctx.value)
                     writerBound.value.setOutputTokens(usage.completion_tokens)
                     writerBound.value.setCachedInputTokens(usage.cachedPromptTokens)
+                    writerBound.value.setReasoningBudget(reasoningBudget)
                     for call in calls { self.writeAnthropicToolUse(call, writer: writerBound.value, context: ctx.value) }
                     writerBound.value.writeFinish(stopReason: finish == .length ? "max_tokens" : (calls.isEmpty ? "end_turn" : "tool_use"), context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
@@ -18267,10 +18275,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         input: arguments.mapValues { AnyCodableValue($0) }))
                 }
                 if blocks.isEmpty { blocks.append(.textBlock("")) }
+                var anthropicUsage = AnthropicUsage(promptTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens,
+                    cachedPromptTokens: usage.cachedPromptTokens)
+                anthropicUsage.reasoning_budget = response.reasoningBudgetReport(
+                    requestedTokens: internalReq.generation.reasoningBudgetTokens)
                 let anthropicResp = AnthropicMessagesResponse(id: messageId, model: model, content: blocks,
                     stopReason: finish == .length ? "max_tokens" : (response.completion.functionCalls.isEmpty ? "end_turn" : "tool_use"),
-                    usage: AnthropicUsage(promptTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens,
-                        cachedPromptTokens: usage.cachedPromptTokens))
+                    usage: anthropicUsage)
                 let json = try JSONEncoder.osaurusCanonical().encode(anthropicResp)
                 var headers: [(String, String)] = [("Content-Type", "application/json")]
                 headers.append(contentsOf: cors)
@@ -18863,6 +18874,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     beginPortable()
                     let terminal = response.completion
                     let inputCount = response.inputTokenCount
+                    let reasoningBudget = response.reasoningBudgetReport(
+                        requestedTokens: internalReq.generation.reasoningBudgetTokens)
                     let status: OpenResponsesStatus
                     let itemStatus: OpenResponsesItemStatus
                     switch terminal.status {
@@ -18891,6 +18904,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if let count = terminal.tokenCount { writerBound.value.setOutputTokens(count) }
                         if let count = terminal.cachedInputTokenCount { writerBound.value.setCachedInputTokens(count) }
                         if let rate = terminal.tokensPerSecond { writerBound.value.setTokensPerSecond(rate) }
+                        writerBound.value.setReasoningBudget(reasoningBudget)
                         writerBound.value.writeResponseTerminal(status: status,
                             incompleteReason: status == .incomplete
                                 ? (terminal.stopReason == "length" ? "max_output_tokens" : terminal.stopReason) : nil,
@@ -19020,7 +19034,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 try Task.checkCancellation()
                 let response = try await chatEngine.completeResponse(request: internalReq)
                 let actualResponseID = response.completion.responseID
-                let openResponsesResp = response.openResponsesResponse(responseID: actualResponseID, model: model, metadata: internalReq.providerOptions?.metadata)
+                let openResponsesResp = response.openResponsesResponse(responseID: actualResponseID, model: model,
+                    metadata: internalReq.providerOptions?.metadata,
+                    requestedReasoningBudget: internalReq.generation.reasoningBudgetTokens)
                 if case .completed = response.completion.status {
                     Self.storeOpenResponsesContext(responseId: actualResponseID, model: model, request: internalReq,
                         assistantMessages: [try response.completedAssistantInput()], perRequestInstructions: perRequestInstructions)

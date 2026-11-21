@@ -33,7 +33,8 @@ struct AnthropicMessagesRequest: Codable, Sendable {
     /// Extended thinking (`{"type": "enabled", "budget_tokens": N}` / `{"type": "disabled"}` /
     /// `{"type": "adaptive"}`). `enabled` / `disabled` switch the model's thinking rail the same way
     /// `enable_thinking` does on chat completions; `adaptive` or no field keeps the model default.
-    /// The budget is accepted for wire compatibility; local models do not cap thinking by tokens.
+    /// With `enabled`, `budget_tokens` becomes the request's thinking budget: local reasoning-tag
+    /// models close their think block at that count. The usage block reports whether it applied.
     var thinking: AnthropicThinkingConfig? = nil
     /// `{"effort": "low" | "medium" | "high" | "xhigh" | "max"}` and native structured output
     /// (`format: json_schema`, workflow inference nodes only). Effort lives here, not inside
@@ -572,6 +573,9 @@ struct AnthropicUsage: Codable, Sendable {
     /// server-side compat writer and on providers that don't cache.
     var cache_creation_input_tokens: Int? = nil
     var cache_read_input_tokens: Int? = nil
+    /// Osaurus extension, present only when the request set
+    /// `thinking.budget_tokens`: whether the local runtime armed the cap.
+    var reasoning_budget: ReasoningBudgetReport? = nil
 
     init(inputTokens: Int, outputTokens: Int) {
         self.input_tokens = inputTokens
@@ -911,14 +915,18 @@ struct MessageDeltaEvent: Codable, Sendable {
         let output_tokens: Int
         let input_tokens: Int?
         var cache_read_input_tokens: Int? = nil
+        var reasoning_budget: ReasoningBudgetReport? = nil
     }
 
-    init(stopReason: String?, outputTokens: Int, inputTokens: Int? = nil, cacheReadInputTokens: Int? = nil) {
+    init(
+        stopReason: String?, outputTokens: Int, inputTokens: Int? = nil, cacheReadInputTokens: Int? = nil,
+        reasoningBudget: ReasoningBudgetReport? = nil
+    ) {
         self.type = "message_delta"
         self.delta = MessageDelta(stop_reason: stopReason, stop_sequence: nil)
         self.usage = MessageDeltaUsage(
             output_tokens: outputTokens, input_tokens: inputTokens,
-            cache_read_input_tokens: cacheReadInputTokens)
+            cache_read_input_tokens: cacheReadInputTokens, reasoning_budget: reasoningBudget)
     }
 }
 
@@ -1009,6 +1017,10 @@ extension AnthropicMessagesRequest {
         }) else {
             throw NSError(domain: "OsaurusAnthropicRequest", code: 400,
                 userInfo: [NSLocalizedDescriptionKey: "Thinking blocks must belong to an assistant message."])
+        }
+        if thinking?.type == "enabled", let budget = thinking?.budget_tokens, budget <= 0 {
+            throw NSError(domain: "OsaurusAnthropicRequest", code: 400,
+                userInfo: [NSLocalizedDescriptionKey: "thinking.budget_tokens must be a positive integer."])
         }
         return ResponsesInferenceRequest(chatCompletion: toChatCompletionRequest())
     }
@@ -1152,7 +1164,9 @@ extension AnthropicMessagesRequest {
         )
         request.top_k = top_k
         switch thinking?.type {
-        case "enabled": request.enable_thinking = true
+        case "enabled":
+            request.enable_thinking = true
+            if let budget = thinking?.budget_tokens, budget > 0 { request.thinking_token_budget = budget }
         case "disabled": request.enable_thinking = false
         default: break
         }

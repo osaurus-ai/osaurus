@@ -255,7 +255,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         let maxTokens = request.generation.maxOutputTokens ?? 16384
         // Multiplicative repetition and additive frequency/presence are
         // independent explicit controls. Nil preserves each bundle default.
-        if let reason = RequestValidator.repetitionPenaltyReason(request.generation.repetitionPenalty) {
+        if let reason = RequestValidator.repetitionPenaltyReason(request.generation.repetitionPenalty)
+            ?? RequestValidator.reasoningBudgetReason(request.generation.reasoningBudgetTokens)
+        {
             throw EngineError(kind: .invalidStructuredOutput(reason))
         }
         let repPenalty = request.generation.repetitionPenalty
@@ -372,6 +374,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             responsesProviderOptions: request.providerOptions
         )
         if request.context.runAsRemoteAgent { params.remoteAgentCallerId = request.context.remoteAgentCallerId }
+        params.reasoningBudgetTokens = request.generation.reasoningBudgetTokens
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,
         // never by the model string. A stale `selectedModel` left over from

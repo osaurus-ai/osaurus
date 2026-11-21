@@ -28,11 +28,27 @@ public struct OpenResponsesReasoningConfig: Codable, Sendable {
     /// Osaurus manually replays complete history, so `all_turns` preserves the
     /// same reasoning continuity as the Codex client.
     public let context: String?
+    /// OpenRouter-style thinking budget: an explicit ceiling on reasoning
+    /// tokens for local reasoning-tag models. Decoded only; OpenAI's
+    /// Responses API has no such field, so it is never encoded.
+    public let max_tokens: Int?
 
-    public init(effort: String?, summary: String? = nil, context: String? = nil) {
+    public init(effort: String?, summary: String? = nil, context: String? = nil, max_tokens: Int? = nil) {
         self.effort = effort
         self.summary = summary
         self.context = context
+        self.max_tokens = max_tokens
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case effort, summary, context, max_tokens
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(effort, forKey: .effort)
+        try container.encodeIfPresent(summary, forKey: .summary)
+        try container.encodeIfPresent(context, forKey: .context)
     }
 }
 
@@ -701,6 +717,9 @@ public struct OpenResponsesResponse: Codable, Sendable {
     public let metadata: [String: String]?
     public let incomplete_details: OpenResponsesIncompleteDetails?
     public var error: OpenResponsesError? = nil
+    /// Osaurus extension, present only when the request sent a thinking
+    /// budget: `{"reasoning_budget": {"requested_tokens": N, "applied": Bool}}`.
+    public var generation_metrics: [String: JSONValue]? = nil
 
     public init(
         id: String,
@@ -1305,7 +1324,9 @@ extension OpenResponsesRequest {
     /// Completions schema. Never silently weaken a named-tool contract.
     func toResponsesInferenceRequest() throws -> ResponsesInferenceRequest {
         try ChatTemplateParameters.validate(chat_template_kwargs)
-        if let reason = RequestValidator.repetitionPenaltyReason(repetition_penalty) {
+        if let reason = RequestValidator.repetitionPenaltyReason(repetition_penalty)
+            ?? RequestValidator.reasoningBudgetReason(reasoning?.max_tokens)
+        {
             throw NSError(domain: "OsaurusGenerationParameters", code: 400,
                 userInfo: [NSLocalizedDescriptionKey: reason])
         }
@@ -1385,6 +1406,7 @@ extension OpenResponsesRequest {
         request.generation.topP = top_p
         request.generation.maxOutputTokens = max_output_tokens
         request.generation.reasoningEffort = reasoning?.effort
+        request.generation.reasoningBudgetTokens = reasoning?.max_tokens
         request.generation.topK = top_k
         request.generation.minP = min_p
         request.generation.seed = seed
@@ -1407,6 +1429,21 @@ extension OpenResponsesRequest {
 extension ResponsesGenerationResult {
     /// Optional measurements stay sparse independently of the complete
     /// token-count tuple required by the Chat Completions usage object.
+    /// The thinking-budget report for a request that sent one: the local
+    /// runtime's resolution, or not applied when the route reported none.
+    func reasoningBudgetReport(requestedTokens: Int?) -> ReasoningBudgetReport? {
+        guard let requestedTokens else { return nil }
+        return completion.reasoningBudget ?? ReasoningBudgetReport(requestedTokens: requestedTokens, applied: false)
+    }
+
+    func generationMetrics(requestedReasoningBudget: Int?) -> [String: JSONValue] {
+        var metrics = reportedGenerationMetrics
+        if let report = reasoningBudgetReport(requestedTokens: requestedReasoningBudget) {
+            metrics["reasoning_budget"] = report.jsonValue
+        }
+        return metrics
+    }
+
     var reportedGenerationMetrics: [String: JSONValue] {
         var metrics: [String: JSONValue] = ["unclosed_reasoning": .bool(completion.unclosedReasoning)]
         if let count = inputTokenCount { metrics["prompt_tokens"] = .number(Double(count)) }
@@ -1444,7 +1481,9 @@ extension ResponsesGenerationResult {
 
     /// Explicit Chat Completions wire boundary for older clients. Native
     /// harness state is never reconstructed from this projection.
-    func chatCompletionsHTTPBody(model: String, prefixHash: String? = nil) throws -> String {
+    func chatCompletionsHTTPBody(
+        model: String, prefixHash: String? = nil, requestedReasoningBudget: Int? = nil
+    ) throws -> String {
         let assistant: ChatMessage
         let finish: String
         switch completion.status {
@@ -1468,7 +1507,8 @@ extension ResponsesGenerationResult {
             "created": Int(Date().timeIntervalSince1970), "model": model,
             "choices": [["index": 0, "message": message, "finish_reason": finish]]]
         object["generation_metrics"] = try JSONSerialization.jsonObject(
-            with: JSONEncoder.osaurusCanonical().encode(reportedGenerationMetrics))
+            with: JSONEncoder.osaurusCanonical().encode(
+                generationMetrics(requestedReasoningBudget: requestedReasoningBudget)))
         if let reportedChatUsage {
             object["usage"] = try JSONSerialization.jsonObject(with: JSONEncoder.osaurusCanonical().encode(reportedChatUsage))
         }
@@ -1480,7 +1520,10 @@ extension ResponsesGenerationResult {
 extension ResponsesGenerationResult {
     /// Explicit public Responses wire projection. Native status and sparse
     /// measured usage are authoritative; no estimated token count is usage.
-    func openResponsesResponse(responseID: String, model: String, metadata: [String: String]? = nil) -> OpenResponsesResponse {
+    func openResponsesResponse(
+        responseID: String, model: String, metadata: [String: String]? = nil,
+        requestedReasoningBudget: Int? = nil
+    ) -> OpenResponsesResponse {
         let status: OpenResponsesStatus
         let itemStatus: OpenResponsesItemStatus
         switch completion.status {
@@ -1512,11 +1555,14 @@ extension ResponsesGenerationResult {
             usage = .init(inputTokens: inputTokenCount, outputTokens: count,
                 tokensPerSecond: completion.tokensPerSecond, cachedInputTokens: completion.cachedInputTokenCount)
         } else { usage = nil }
-        return OpenResponsesResponse(id: responseID, createdAt: Int(Date().timeIntervalSince1970),
+        var response = OpenResponsesResponse(id: responseID, createdAt: Int(Date().timeIntervalSince1970),
             status: status, model: model, output: output, usage: usage,
             outputText: text.isEmpty ? nil : text, metadata: metadata,
             incompleteReason: status == .incomplete
                 ? (completion.stopReason == "length" ? "max_output_tokens" : completion.stopReason) : nil)
+        response.generation_metrics = reasoningBudgetReport(requestedTokens: requestedReasoningBudget)
+            .map { ["reasoning_budget": $0.jsonValue] }
+        return response
     }
 }
 
@@ -1676,6 +1722,7 @@ extension OpenResponsesRequest {
             }
         )
         request.reasoning_effort = reasoning?.effort
+        request.thinking_token_budget = reasoning?.max_tokens
         request.min_p = min_p
         request.seed = seed
         request.repetition_penalty = repetition_penalty
