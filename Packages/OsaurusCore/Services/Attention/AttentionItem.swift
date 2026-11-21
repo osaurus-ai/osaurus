@@ -179,6 +179,9 @@ public struct AttentionItem: Identifiable, Equatable, Sendable {
     public var sessionId: UUID?
     public var taskId: UUID?
     public var turnId: UUID?
+    /// The workflow run that raised it: a step's tool approval, say, or a
+    /// form. Lets an iPhone show it on the run it started (`run_id`).
+    public var workflowRunId: UUID? = nil
     public var title: String
     public var body: String
     /// Tool name for approval kinds (name only, never arguments).

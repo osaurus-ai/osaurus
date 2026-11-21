@@ -41,7 +41,8 @@ extension SyncDeviceFeedContract {
         var fields: [WorkflowInputField]
         /// The last run's input, which the Mac's Run page starts from.
         var prefill: [String: JSONValue]?
-        /// False when a required field is a file or folder on this Mac.
+        /// False when a required field is a secret, or a file or folder no earlier run used. A phone that
+        /// knows `workflow_file_inputs` can still start one whose only such fields are files, by attaching them.
         var phoneStartable: Bool
         /// Why it can't run until it's set up on the Mac.
         var blocked: String?
@@ -115,6 +116,9 @@ extension SyncDeviceFeedContract {
         var options: [String]?
         var help: String?
         var `default`: JSONValue?
+        /// A file or folder field: the name of what the last run used, which a start from the phone reuses
+        /// when it sends none (`workflow_file_inputs`). The name only, never the path.
+        var lastUsed: String?
     }
 
     struct WorkflowRuns: Codable, Equatable, Sendable {
@@ -155,15 +159,22 @@ enum SyncWorkflowLibrary {
             .map { workflow in
                 let fields = WorkflowFormFields.fields(fromInputSchema: workflow.definition.inputSchema)
                 let report = setupReport(workflow)
-                let last = recent.first { $0.workflowID == workflow.id }?.input.objectValue
-                let prefill = last?.filter { key, _ in fields.contains { $0.key == key } }
+                let lastRun = recent.first { $0.workflowID == workflow.id }
+                // Only what the phone fills in: a file or folder's path stays on this Mac (the phone gets its name,
+                // `lastUsed`), and a secret's value is never written into synced data.
+                let prefill = lastRun?.input.objectValue?.filter { key, _ in
+                    fields.contains { $0.key == key && phoneTypes.contains($0.type) }
+                }
                 return SyncDeviceFeedContract.ManagedWorkflow(
                     id: workflow.id.uuidString.lowercased(),
                     name: workflow.name,
                     summary: workflow.summary.flatMap { $0.isEmpty ? nil : String($0.prefix(summaryLimit)) },
-                    fields: fields.map(inputField),
+                    fields: fields.map { inputField($0, lastRun: lastRun) },
                     prefill: (prefill?.isEmpty ?? true) ? nil : prefill,
-                    phoneStartable: fields.allSatisfy { !$0.required || phoneTypes.contains($0.type) },
+                    phoneStartable: fields.allSatisfy { field in
+                        !field.required || phoneTypes.contains(field.type)
+                            || SyncWorkflowInputs.lastUsedName(field, lastRun: lastRun) != nil
+                    },
                     blocked: report.hasBlockers ? report.blocking.map(\.title).joined(separator: "; ") : nil,
                     facts: facts(workflow, report: report),
                     steps: steps(workflow, catalog: catalog),
@@ -175,7 +186,10 @@ enum SyncWorkflowLibrary {
             }
     }
 
-    private static func inputField(_ field: DialogField) -> SyncDeviceFeedContract.WorkflowInputField {
+    private static func inputField(
+        _ field: DialogField,
+        lastRun: WorkflowRun?
+    ) -> SyncDeviceFeedContract.WorkflowInputField {
         SyncDeviceFeedContract.WorkflowInputField(
             key: field.key,
             label: field.label,
@@ -183,7 +197,8 @@ enum SyncWorkflowLibrary {
             required: field.required,
             options: (field.options?.isEmpty ?? true) ? nil : field.options,
             help: field.help.flatMap { $0.isEmpty ? nil : String($0.prefix(helpLimit)) },
-            default: field.defaultValue
+            default: field.defaultValue,
+            lastUsed: SyncWorkflowInputs.lastUsedName(field, lastRun: lastRun)
         )
     }
 
@@ -348,23 +363,49 @@ enum SyncWorkflowLibrary {
         case invalidInput(String)
     }
 
+    /// What would stop a phone's start before any file it attached is fetched: the workflow gone, not set up, or
+    /// a required field the phone can't fill with nothing attached or reused for it. `start` checks again.
+    static func precheck(workflowId raw: String?, attached: Set<String>) -> StartFailure? {
+        guard let raw, let id = UUID(uuidString: raw), let workflow = InstalledWorkflowStore.shared.workflow(id: id)
+        else { return .notFound }
+        let report = setupReport(workflow)
+        if report.hasBlockers { return .blocked(report.summary) }
+        let fields = WorkflowFormFields.fields(fromInputSchema: workflow.definition.inputSchema)
+        let lastRun = SyncWorkflowInputs.lastRun(workflowId: id)
+        let fillable = fields.allSatisfy { field in
+            !field.required || phoneTypes.contains(field.type)
+                || (field.type == .file && attached.contains(field.key))
+                || SyncWorkflowInputs.lastPath(field, lastRun: lastRun) != nil
+        }
+        return fillable ? nil : .invalidInput("This workflow needs a file, folder or secret, filled in on the Mac.")
+    }
+
     /// Starts `workflowId` with the phone's values, as the Mac's Run button
     /// does: the fields the phone left out keep their defaults, and the
-    /// input is checked against the schema first.
-    static func start(workflowId raw: String?, values: JSONValue?) -> Result<UUID, StartFailure> {
+    /// input is checked against the schema first. `paths`: what file and folder fields get, paths this
+    /// Mac made (`SyncWorkflowInputs.paths`), never the phone's.
+    static func start(
+        workflowId raw: String?,
+        values: JSONValue?,
+        paths: [String: String] = [:]
+    ) -> Result<UUID, StartFailure> {
         guard let raw, let id = UUID(uuidString: raw), let workflow = InstalledWorkflowStore.shared.workflow(id: id)
         else { return .failure(.notFound) }
         let report = setupReport(workflow)
         if report.hasBlockers { return .failure(.blocked(report.summary)) }
         let schema = workflow.definition.inputSchema
         let fields = WorkflowFormFields.fields(fromInputSchema: schema)
-        // Enforced here, not left to the phone: a workflow that needs a file, folder or secret is
-        // started on the Mac, and the phone's values count only for the fields it fills in (a path
-        // from the phone would widen what the run reaches on this Mac).
-        guard fields.allSatisfy({ !$0.required || phoneTypes.contains($0.type) }) else {
+        // Enforced here, not left to the phone: the phone's values count only for the fields it fills in, and
+        // a file or folder field gets only a path this Mac made (a path from the phone would widen what the run
+        // reaches on this Mac). A secret, or a file or folder with none, is filled in on the Mac.
+        let made = paths.filter { key, _ in
+            fields.contains { $0.key == key && ($0.type == .file || $0.type == .folder) }
+        }
+        guard fields.allSatisfy({ !$0.required || phoneTypes.contains($0.type) || made[$0.key] != nil }) else {
             return .failure(.invalidInput("This workflow needs a file, folder or secret, filled in on the Mac."))
         }
-        let given = WorkflowDialogAttention.phoneValues(values?.objectValue ?? [:], fields: fields, prefill: [:])
+        let given = WorkflowDialogAttention.phoneValues(
+            values?.objectValue ?? [:], fields: fields, prefill: made.mapValues { .string($0) })
         let input = WorkflowFormFields.inputValue(
             WorkflowFormFields.initialValues(fields, prefill: given), fields: fields, schema: schema)
         let problems = JSONSchemaValidator.validate(input, against: schema)
@@ -372,7 +413,8 @@ enum SyncWorkflowLibrary {
             return .failure(.invalidInput(problems.map(\.description).joined(separator: "; ")))
         }
         // Nobody at this Mac sees its forms: they park and go to the attention feed.
-        let caller = WorkflowCaller(kind: .user, background: true)
+        var caller = WorkflowCaller(kind: .user, background: true)
+        caller.fromPhone = true
         let runId = WorkflowRunService.shared.start(workflow, input: input, caller: caller)
         SyncWorkflowPush.shared.noteStartedFromPhone(runId)
         return .success(runId)

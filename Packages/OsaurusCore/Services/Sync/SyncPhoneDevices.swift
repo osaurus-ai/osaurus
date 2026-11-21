@@ -64,6 +64,8 @@ final class SyncPhoneDevices: ObservableObject {
 
     /// Whether a non-revoked iPhone is in this sync account.
     @Published private(set) var hasPhone = false
+    /// The device keys of the non-revoked iPhones in this sync account.
+    @Published private(set) var phoneKeys: Set<String> = []
     /// Whether any non-revoked device that isn't a Mac (an iPhone, a
     /// Windows PC) is in this sync account; the Mac publishes its feeds for it.
     @Published private(set) var hasFeedReader = false
@@ -109,6 +111,8 @@ final class SyncPhoneDevices: ObservableObject {
     func refresh() {
         let devices = SyncService.shared.isOpen ? SyncService.shared.devices : []
         hasPhone = Self.hasActivePhone(devices)
+        let keys = Set(devices.filter { !$0.isSelf && !$0.revoked && $0.devicePlatform == .iPhone }.map(\.id))
+        if keys != phoneKeys { phoneKeys = keys }
         hasFeedReader = Self.hasActiveFeedReader(devices)
         refreshKeepAwake()
     }

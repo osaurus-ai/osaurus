@@ -337,8 +337,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// switch (`LocalAPIKeyPolicy`), injectable for the same reason.
     private let localKeyRequiredProvider: @Sendable () -> Bool
 
-    /// Live read of whether the 6-digit pairing retired on this Mac
-    /// (`MobileConnectMigration.isRetired`), injectable for the same reason.
+    /// Whether the 6-digit pairing routes are closed, injectable for the same reason. Open by default: kept beside
+    /// Sync, also once an iPhone has joined it, so an iPhone still on Classic can pair.
     private let pairingRetiredProvider: @Sendable () -> Bool
 
     private func localKeyRequired(for normalizedPath: String) -> Bool {
@@ -355,7 +355,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         responseEncryptor: SecureChannelResponseEncryptor? = nil,
         peerInferenceSharingProvider: @escaping @Sendable () -> Bool = { PeerInferenceSharing.isEnabled() },
         localKeyRequiredProvider: @escaping @Sendable () -> Bool = { LocalAPIKeyPolicy.isEnabled() },
-        pairingRetiredProvider: @escaping @Sendable () -> Bool = { MobileConnectMigration.isRetired() }
+        pairingRetiredProvider: @escaping @Sendable () -> Bool = { false }
     ) {
         self.configuration = configuration
         self.apiKeyValidatorProvider = apiKeyValidatorProvider ?? { apiKeyValidator }
@@ -713,8 +713,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Access key authentication gate (all data snapshotted at server start, zero locks)
             // Plugin routes handle their own auth per-route, so skip the global gate.
             // Loopback connections (CLI / local tools) are trusted without a token.
-            // The 6-digit pairing routes stay public for one release beside
-            // Sync; once an iPhone joins Sync they only answer 410.
+            // The 6-digit pairing routes stay public beside Sync; they answer 410
+            // only when pairing is closed (`pairingRetiredProvider`, open by default).
             let publicPaths =
                 pairingRetiredProvider()
                 ? Set(["/", "/health", "/pair-invite", "/secure/session"]).union(Self.retiredPhonePairingPaths)
@@ -7607,9 +7607,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    /// The 6-digit phone pairing routes. Once an iPhone has joined Sync
-    /// (`MobileConnectMigration.isRetired`), an older iPhone app that still
-    /// calls them is told to update instead of getting a bare 404.
+    /// The 6-digit phone pairing routes. When pairing is closed
+    /// (`pairingRetiredProvider`; open by default, kept beside Sync), an older
+    /// iPhone app that still calls them is told to update instead of getting a bare 404.
     static let retiredPhonePairingPaths: Set<String> = ["/pair/hello", "/pair/code", "/pair/confirm", "/pair/unpair"]
     static let retiredPhonePairingBody =
         #"{"error":"update_required","message":"Update Osaurus for iPhone, then add your iPhone in Sharing → Devices on your Mac."}"#

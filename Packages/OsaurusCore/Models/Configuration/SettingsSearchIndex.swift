@@ -568,7 +568,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.sync.network",
             tab: .devices,
-            section: "Sync",
+            section: "Settings",
             title: "Sync Chats",
             keywords: ["sync", "syncing", "other devices", "multiple macs", "second mac", "cross device", "iphone sync"],
             disambiguation: "Devices ▸ Sync Chats sends and receives chats with this account's other devices, end-to-end encrypted. Off keeps chats on this Mac until it is turned back on. API, automation, channel, schedule and other headless chats never sync; they stay on this Mac. Not Knowledge git sync or workspace sharing."
@@ -576,7 +576,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.sync.networkMode",
             tab: .devices,
-            section: "Sync",
+            section: "Settings",
             title: "Find Devices",
             keywords: ["same network", "anywhere", "anywhere (beta)", "relay", "relay servers", "osaurus servers", "discovery server", "different networks", "local network", "lan", "iphone can't reach mac", "iphone on cellular", "turn on anywhere"],
             disambiguation: "Same Network finds devices on the local network only. Anywhere (Beta) also connects through Osaurus relay and discovery servers (a list Osaurus publishes, applied the next time sync starts) so devices on different networks sync, an iPhone on cellular included. Chats stay end-to-end encrypted. Not Sharing ▸ Access ▸ Remote Access, which gives an agent a public URL for other people."
@@ -584,7 +584,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.sync.hostAgents",
             tab: .devices,
-            section: "Sync",
+            section: "Settings",
             title: "Run Agents for My Other Devices",
             keywords: ["host agents", "hosted runs", "run on this mac", "agents on my other mac", "use agents from another mac", "remote agent", "own devices", "on my mac", "iphone agents", "phone uses mac"],
             disambiguation: "On (default): this Mac lists its agents to the account's other devices, and runs a chat there when one of them is picked under \"On <this Mac>\" in the chat sidebar. Runs use this Mac's models, tools and files; tool approvals are answered on the device the user is chatting on. The iPhone app needs this on to use this Mac's agents. Off: the list empties and new requests get a short reply saying so. Not workspace sharing, which shares agents with other people."
@@ -592,7 +592,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.sync.status",
             tab: .devices,
-            section: "Sync",
+            section: "Connection",
             title: "Status",
             keywords: [
                 "sync status", "connected devices", "waiting to send", "pending messages", "earlier chats", "import progress",
@@ -612,32 +612,33 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.sync.addDevice",
             tab: .devices,
-            section: "Add a Device",
-            title: "Add a Device",
+            section: "Devices",
+            title: "Add Device",
             keywords: [
                 "pair", "pairing", "pairing code", "show code", "qr code", "link device", "new device",
                 "add iphone", "pair iphone", "iphone", "ios", "mobile", "osaurus connect", "iosaurus",
+                "add a device", "add iphone or ipad", "6-digit code",
             ],
-            disambiguation: "One flow for a Mac or an iPhone: scan the code with the Osaurus iPhone app, or paste the link into Join Another Device on another Mac. Not Devices ▸ Mobile, the 6-digit code kept for one release for an iPhone app that doesn't offer Sync yet."
+            disambiguation: "Add iPhone or iPad asks what the app's Pairing Screen shows: a QR code to scan, or a 6-digit code for an iPhone app that doesn't offer Sync yet. Join Another Device takes another Mac's pairing link."
         ),
         .init(
             id: "settings.sync.join",
             tab: .devices,
-            section: "Add a Device",
+            section: "Devices",
             title: "Join Another Device",
             keywords: ["pairing link", "join account", "enter pairing code"]
         ),
         .init(
             id: "settings.devices.iPhoneApp",
             tab: .devices,
-            section: "Add a Device",
-            title: "Osaurus for iPhone",
-            keywords: ["iphone app", "testflight", "ios app", "download iphone", "mobile app", "iosaurus"]
+            section: "Devices",
+            title: "Get iOS App",
+            keywords: ["osaurus for iphone", "iphone app", "testflight", "ios app", "download iphone", "mobile app", "iosaurus"]
         ),
         .init(
             id: "settings.devices.keepAwake",
             tab: .devices,
-            section: "iPhone",
+            section: "Settings",
             title: "Keep Mac Awake for iPhone",
             keywords: ["sleep", "awake", "reachable", "phone", "remote", "idle sleep", "paired iphone"],
             disambiguation: "Keeps this Mac from idle-sleeping while an iPhone is one of the account's devices, so the iPhone can use its agents. Not General ▸ Chat ▸ Keep Mac Awake While Agents Run, which only covers runs in progress."
@@ -645,7 +646,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.devices.continuePhoneChats",
             tab: .devices,
-            section: "iPhone",
+            section: "Settings",
             title: "Continue iPhone Chats on This Mac",
             keywords: [
                 "handoff", "continue", "resume", "iphone", "phone", "bring to front", "focus", "come back",

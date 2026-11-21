@@ -267,6 +267,9 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
     public var sessionID: String?
     /// For `kind == .workflow`: the run whose step started this one.
     public var parentRunID: UUID?
+    /// For `kind == .workflow`: the outermost run of the chain, the one a
+    /// person started (an iPhone shows that one, never its sub-runs).
+    public var rootRunID: UUID?
     /// For `kind == .workflow`: the installed workflows up the chain,
     /// outermost first. Bounds nesting and refuses a workflow that would
     /// call itself.
@@ -312,6 +315,9 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
     /// The workspace `onBehalfOf` reached the shared agent through. nil for
     /// guests and when `onBehalfOf` is nil.
     public var workspaceId: String?
+    /// Started from the owner's paired iPhone over Sync. Its input's values came from the phone, so a
+    /// later phone start never reuses one as a path (`SyncWorkflowInputs`).
+    public var fromPhone: Bool = false
 
     public init(
         kind: Kind, agentID: UUID? = nil, agentName: String? = nil, sessionID: String? = nil,
@@ -353,6 +359,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         child.toolCallID = nil
         child.taskId = nil
         child.parentRunID = parentRunID
+        child.rootRunID = rootRunID ?? parentRunID
         child.ancestors = ancestors + [parentWorkflowID]
         return child
     }
@@ -373,6 +380,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         case deniesUnapprovedPrompts = "denies_prompts"
         case folderPath = "folder_path"
         case parentRunID = "parent_run_id"
+        case rootRunID = "root_run_id"
         case ancestors
         case eventID = "event_id"
         case eventName = "event_name"
@@ -380,6 +388,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         case taskId = "task_id"
         case onBehalfOf = "on_behalf_of"
         case workspaceId = "workspace_id"
+        case fromPhone = "from_phone"
     }
 
     public init(from decoder: Decoder) throws {
@@ -396,6 +405,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         deniesUnapprovedPrompts = try c.decodeIfPresent(Bool.self, forKey: .deniesUnapprovedPrompts) ?? false
         folderPath = try c.decodeIfPresent(String.self, forKey: .folderPath)
         parentRunID = try c.decodeIfPresent(UUID.self, forKey: .parentRunID)
+        rootRunID = try c.decodeIfPresent(UUID.self, forKey: .rootRunID)
         ancestors = try c.decodeIfPresent([UUID].self, forKey: .ancestors) ?? []
         eventID = try c.decodeIfPresent(UUID.self, forKey: .eventID)
         eventName = try c.decodeIfPresent(String.self, forKey: .eventName)
@@ -403,6 +413,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         taskId = try c.decodeIfPresent(UUID.self, forKey: .taskId)
         onBehalfOf = try c.decodeIfPresent(Participant.self, forKey: .onBehalfOf)
         workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+        fromPhone = try c.decodeIfPresent(Bool.self, forKey: .fromPhone) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -419,6 +430,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         if deniesUnapprovedPrompts { try c.encode(true, forKey: .deniesUnapprovedPrompts) }
         try c.encodeIfPresent(folderPath, forKey: .folderPath)
         try c.encodeIfPresent(parentRunID, forKey: .parentRunID)
+        try c.encodeIfPresent(rootRunID, forKey: .rootRunID)
         if !ancestors.isEmpty { try c.encode(ancestors, forKey: .ancestors) }
         try c.encodeIfPresent(eventID, forKey: .eventID)
         try c.encodeIfPresent(eventName, forKey: .eventName)
@@ -426,6 +438,7 @@ public struct WorkflowCaller: Codable, Sendable, Equatable {
         try c.encodeIfPresent(taskId, forKey: .taskId)
         try c.encodeIfPresent(onBehalfOf, forKey: .onBehalfOf)
         try c.encodeIfPresent(workspaceId, forKey: .workspaceId)
+        if fromPhone { try c.encode(fromPhone, forKey: .fromPhone) }
     }
 }
 

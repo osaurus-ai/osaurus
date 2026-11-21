@@ -4,6 +4,9 @@
     "%@ and its memory are removed from this Mac. This cannot be undone." : {
 
     },
+    "%@ is now paired with this Mac." : {
+
+    },
     "%@, its memory and its %lld chats are removed from this Mac. This cannot be undone." : {
 
     },
@@ -37,6 +40,9 @@
     "%lld moved back to the list, %lld skipped" : {
 
     },
+    "%lld of %lld connected" : {
+
+    },
     "1 chat archived" : {
 
     },
@@ -50,6 +56,15 @@
 
     },
     "1 chat with %@, newest first." : {
+
+    },
+    "A 6-Digit Code to Enter" : {
+
+    },
+    "A QR Code to Scan" : {
+
+    },
+    "Add Device" : {
 
     },
     "Add Osaurus credits, then retry." : {
@@ -120,6 +135,12 @@
         }
       }
     },
+    "Add iPhone or iPad" : {
+
+    },
+    "Agent calls" : {
+
+    },
     "All %lld chats" : {
 
     },
@@ -163,7 +184,22 @@
         }
       }
     },
+    "Anywhere" : {
+
+    },
     "Archive instead" : {
+
+    },
+    "Available offline" : {
+
+    },
+    "Aware of each other" : {
+
+    },
+    "Borrowed live" : {
+
+    },
+    "Can't read it" : {
 
     },
     "Change the step's input or settings; the provider names what it can't take." : {
@@ -200,6 +236,33 @@
         }
       }
     },
+    "Chats & agents" : {
+
+    },
+    "Classic" : {
+
+    },
+    "Classic Data" : {
+
+    },
+    "Classic Osaurus devices pair using a secure, end-to-end encrypted relay. If the relay goes offline, so does access to your devices." : {
+
+    },
+    "Classic Pairing" : {
+
+    },
+    "Classic Pairing only lets you access your chat and agent data while your connection is active and your device is turned on." : {
+
+    },
+    "Classic and Osaurus 1.0 compared" : {
+
+    },
+    "Classic relay" : {
+
+    },
+    "Classic vs. Sync" : {
+
+    },
     "Connect %@ in Settings → Providers, or pick a model that is here." : {
       "localizations" : {
         "de" : {
@@ -234,6 +297,15 @@
         }
       }
     },
+    "Connect iPhone Now" : {
+
+    },
+    "Connected through the encrypted relay" : {
+
+    },
+    "Data synced and offline" : {
+
+    },
     "Delete %@?" : {
 
     },
@@ -253,6 +325,24 @@
 
     },
     "Deselect %@" : {
+
+    },
+    "Devices aware of each other" : {
+
+    },
+    "Direct via peer-to-peer network" : {
+
+    },
+    "Encrypted" : {
+
+    },
+    "Encrypted relay" : {
+
+    },
+    "Every device" : {
+
+    },
+    "Every device, one account" : {
 
     },
     "Finish choosing your welcome credit, then retry." : {
@@ -323,10 +413,61 @@
         }
       }
     },
+    "For an [Osaurus](https://testflight.apple.com/join/yTF86bVb) iPhone app that doesn't offer Sync yet. Generate a code here and type it in on your iPhone, on the same network as this Mac." : {
+
+    },
+    "Generate a code here and type it in on your iPhone, on the same network as this Mac." : {
+
+    },
+    "Get iOS App" : {
+
+    },
+    "Get the iPhone and iPad app from TestFlight" : {
+
+    },
+    "Got It" : {
+
+    },
+    "I'll Do It Later" : {
+
+    },
+    "It's end-to-end encrypted. Osaurus servers only pass along data they can't read." : {
+
+    },
+    "Live Activities" : {
+
+    },
+    "Mac offline: no access to its chats or agents" : {
+
+    },
     "Message %@..." : {
 
     },
+    "Move to Sync" : {
+
+    },
+    "Move to Sync Now" : {
+
+    },
+    "Move to Sync?" : {
+
+    },
+    "Must stay on" : {
+
+    },
+    "New Osaurus Sync devices also pair using a secure, end-to-end encrypted relay. However, your devices are aware of each other, so if the relay goes offline, you can still connect to your other devices." : {
+
+    },
     "New chat with %@" : {
+
+    },
+    "No access" : {
+
+    },
+    "No devices" : {
+
+    },
+    "No devices yet" : {
 
     },
     "No model is selected for %@ to run on." : {
@@ -363,6 +504,15 @@
         }
       }
     },
+    "On the same network your devices talk directly, and through Osaurus servers anywhere else." : {
+
+    },
+    "Only on 1.0" : {
+
+    },
+    "Only while connected" : {
+
+    },
     "Open Settings → Providers to see why %@ didn't connect, then retry." : {
       "localizations" : {
         "de" : {
@@ -396,6 +546,42 @@
           }
         }
       }
+    },
+    "Osaurus (0.25.x)" : {
+
+    },
+    "Osaurus 1.0 and above" : {
+
+    },
+    "Osaurus 1.0 connects your devices in a new way. Here's what changes." : {
+
+    },
+    "Osaurus Classic" : {
+
+    },
+    "Osaurus Sync" : {
+
+    },
+    "Osaurus Sync Data" : {
+
+    },
+    "Osaurus Sync Pairing" : {
+
+    },
+    "Osaurus Sync is only supported in the new architecture of Osaurus 1.0 and above." : {
+
+    },
+    "Osaurus Sync lets you sync your data across your devices and access it even when they're offline." : {
+
+    },
+    "Osaurus servers" : {
+
+    },
+    "Own copy" : {
+
+    },
+    "Pairing link" : {
+
     },
     "Pick a model that is installed or connected, for the step or the agent it asks." : {
       "localizations" : {
@@ -468,6 +654,15 @@
         }
       }
     },
+    "Relay offline" : {
+
+    },
+    "Relay offline: no access to your Mac" : {
+
+    },
+    "Relay offline: still connected peer-to-peer" : {
+
+    },
     "Retry once %@ shows as connected in Settings → Providers." : {
       "localizations" : {
         "de" : {
@@ -501,6 +696,12 @@
           }
         }
       }
+    },
+    "Same network: direct" : {
+
+    },
+    "Scan the code with the Osaurus app on your iPhone or iPad, or paste the link there with Paste Link from Mac. On another Mac, paste it into Join Another Device. It works for 5 minutes." : {
+
     },
     "Search messages for “%@”" : {
 
@@ -581,6 +782,12 @@
           }
         }
       }
+    },
+    "Still connected" : {
+
+    },
+    "Synced data" : {
+
     },
     "The Router refused the request's signature. Check this Mac's clock and your Osaurus Identity." : {
       "localizations" : {
@@ -854,6 +1061,47 @@
         }
       }
     },
+    "The store doesn't accept agent steps yet. Try again after the store updates." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Store akzeptiert noch keine Agentenschritte. Versuche es nach dem nächsten Store-Update erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The store doesn't accept agent steps yet. Try again after the store updates."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스토어가 아직 에이전트 단계를 지원하지 않습니다. 스토어가 업데이트된 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Магазин пока не принимает шаги агентов. Повторите попытку после обновления магазина."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "商店暂不支持智能体步骤。请在商店更新后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "商店暫不支援智慧體步驟。請在商店更新後重試。"
+          }
+        }
+      }
+    },
     "The workspace is out of credits. Ask its owner to add more, then retry." : {
       "localizations" : {
         "de" : {
@@ -891,10 +1139,37 @@
     "These chats and their messages are removed from this Mac. This cannot be undone." : {
 
     },
+    "This Mac makes a code for you to type in on the app." : {
+
+    },
+    "This Mac shows a code for the app to scan." : {
+
+    },
     "This chat and its messages are removed from this Mac. This cannot be undone." : {
 
     },
+    "This will unpair all of your existing devices and no data will be lost." : {
+
+    },
     "Tick chats to select" : {
+
+    },
+    "Upgrading from Classic?" : {
+
+    },
+    "Waiting for devices" : {
+
+    },
+    "What does the Pairing Screen in the Osaurus app on your iPhone or iPad show?" : {
+
+    },
+    "With 1.0, every device keeps its own copy of your chats, so they open even when the Mac sleeps." : {
+
+    },
+    "With Classic, your iPhone borrows the Mac's chats over a live link. When it drops, there's nothing." : {
+
+    },
+    "Workflows, Live Activities and agent calls work only on 1.0. Classic pairing is going away." : {
 
     },
     "Your Osaurus billing account is on hold; resolve it in Osaurus Credits." : {

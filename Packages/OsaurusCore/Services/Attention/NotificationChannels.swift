@@ -127,6 +127,7 @@ final class PairedDeviceChannel: NotificationChannel {
         if let expiresAt = item.expiresAt { out["expires_at"] = ISO8601DateFormatter().string(from: expiresAt) }
         if let sessionId = item.sessionId { out["session_id"] = sessionId.uuidString }
         if let taskId = item.taskId { out["task_id"] = taskId.uuidString }
+        if let runId = item.workflowRunId { out["run_id"] = runId.uuidString }
         if let agentId = item.agentId { out["agent_id"] = agentId.uuidString }
         if let toolName = item.toolName { out["tool"] = toolName }
         if item.isPending, let arguments = item.argumentsPreview, !arguments.isEmpty {

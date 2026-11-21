@@ -58,6 +58,8 @@ struct SettingsStatStrip: View {
                         .minimumScaleFactor(0.8)
                     label(stat)
                 }.catalogLayoutTarget("component.library.12.elements.layout.settingsStatStrip.divided.verticalGap")
+                // Clear of the dividers either side: a long value shrinks or ends in an ellipsis before it reaches one.
+                .padding(.horizontal, theme.space.s12)
                 .frame(maxWidth: .infinity)
                 .accessibilityElement(children: .combine)
             }
