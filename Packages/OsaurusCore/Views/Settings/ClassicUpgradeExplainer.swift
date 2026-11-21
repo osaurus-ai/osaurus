@@ -8,12 +8,9 @@
 //  drawn at a fixed design size and scaled as one piece, a caption under it, advancing on a timer that restarts when
 //  a stage is picked, cuts only under Reduce Motion.
 //
-//  What it says, as the two work:
-//  - Classic: the iPhone reaches the Mac live, over the Classic relay; the chats stay on the Mac, so the iPhone has
-//    nothing to show once that link drops.
-//  - 1.0 (osaurus-sync): every device keeps its own end-to-end encrypted copy and they sync with each other; the
-//    Osaurus servers only pass along what they can't read; on the same network devices reach each other directly.
-//  - Only on 1.0: workflows, their Live Activities, and agents calling the iPhone.
+//  The five stages: how Classic pairs (one encrypted relay; when it's offline so is access) and what that means for
+//  data (only while connected and the device is on); how Osaurus Sync pairs (the same kind of relay, but devices know
+//  each other, so losing it doesn't cut them off) and syncs data (there even offline); and that Sync needs 1.0.
 //
 
 import SwiftUI
@@ -21,42 +18,63 @@ import SwiftUI
 // MARK: - Stages
 
 enum ClassicUpgradeStage: Int, CaseIterable, Identifiable {
-    case classic
-    case ownCopy
-    case private_
-    case anywhere
-    case onlyOn10
+    case classicPairing
+    case classicData
+    case syncPairing
+    case syncData
+    case compared
 
     var id: Int { rawValue }
 
     var next: ClassicUpgradeStage {
-        ClassicUpgradeStage(rawValue: (rawValue + 1) % Self.allCases.count) ?? .classic
+        ClassicUpgradeStage(rawValue: (rawValue + 1) % Self.allCases.count) ?? .classicPairing
     }
+
+    /// Stages showing Classic, drawn in its colour; the rest show Osaurus Sync.
+    var isClassic: Bool { self == .classicPairing || self == .classicData }
 
     var chipLabel: LocalizedStringKey {
         switch self {
-        case .classic: return "Classic"
-        case .ownCopy: return "Every device"
-        case .private_: return "Encrypted"
-        case .anywhere: return "Anywhere"
-        case .onlyOn10: return "Only on 1.0"
+        case .classicPairing: return "Classic Pairing"
+        case .classicData: return "Classic Data"
+        case .syncPairing: return "Osaurus Sync Pairing"
+        case .syncData: return "Osaurus Sync Data"
+        case .compared: return "Classic vs. Sync"
         }
     }
 
-    var holdDuration: Duration { self == .classic ? .seconds(3.5) : .seconds(3) }
+    /// Long enough to read the caption.
+    var holdDuration: Duration {
+        switch self {
+        case .classicPairing: return .seconds(5.5)
+        case .classicData: return .seconds(5)
+        case .syncPairing: return .seconds(6.5)
+        case .syncData: return .seconds(4.5)
+        case .compared: return .seconds(4)
+        }
+    }
 
     var caption: LocalizedStringKey {
         switch self {
-        case .classic:
-            return "With Classic, your iPhone borrows the Mac's chats over a live link. When it drops, there's nothing."
-        case .ownCopy:
-            return "With 1.0, every device keeps its own copy of your chats, so they open even when the Mac sleeps."
-        case .private_:
-            return "It's end-to-end encrypted. Osaurus servers only pass along data they can't read."
-        case .anywhere:
-            return "On the same network your devices talk directly, and through Osaurus servers anywhere else."
-        case .onlyOn10:
-            return "Workflows, Live Activities and agent calls work only on 1.0. Classic pairing is going away."
+        case .classicPairing:
+            return """
+                Classic Osaurus devices pair using a secure, end-to-end encrypted relay. If the relay goes offline, \
+                so does access to your devices.
+                """
+        case .classicData:
+            return """
+                Classic Pairing only lets you access your chat and agent data while your connection is active and \
+                your device is turned on.
+                """
+        case .syncPairing:
+            return """
+                New Osaurus Sync devices also pair using a secure, end-to-end encrypted relay. However, your devices \
+                are aware of each other, so if the relay goes offline, you can still connect to your other devices.
+                """
+        case .syncData:
+            return "Osaurus Sync lets you sync your data across your devices and access it even when they're offline."
+        case .compared:
+            return "Osaurus Sync is only supported in the new architecture of Osaurus 1.0 and above."
         }
     }
 }
@@ -89,14 +107,14 @@ struct ClassicUpgradeExplainer: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var stage: ClassicUpgradeStage = .classic
+    @State private var stage: ClassicUpgradeStage = .classicPairing
     @State private var availableWidth: CGFloat = ClassicUpgradeExplainer.canvasDesignSize.width
 
     static let canvasDesignSize = CGSize(width: 656, height: 300)
     static let chipRowHeight: CGFloat = 26
     static let rowSpacing: CGFloat = 16
-    /// Two lines of the caption, whichever step.
-    static let captionHeight: CGFloat = 44
+    /// Three lines of the caption, whichever step.
+    static let captionHeight: CGFloat = 66
 
     private var scale: CGFloat { max(0.5, min(1, availableWidth / Self.canvasDesignSize.width)) }
 
@@ -132,7 +150,7 @@ struct ClassicUpgradeExplainer: View {
                     .font(SettingsFont.cardTitle)
                     .foregroundStyle(theme.text.primary)
                     .multilineTextAlignment(.center)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .minimumScaleFactor(0.9)
                     .frame(maxWidth: .infinity)
                     .id(stage)
@@ -234,84 +252,115 @@ private struct ChipProgress: View {
 
 // MARK: - Canvas
 
-/// The diagram: an iPhone and a Mac with the server between them, every element placed from `stage` alone so the
-/// scene animates between stages with one spring.
+/// The diagram: an iPhone and a Mac with the relay between them, every element placed from `stage` (and, in the two
+/// pairing stages, whether the relay has gone offline yet) so the scene animates with one spring. Both kinds of pairing
+/// go through the same end-to-end encrypted relay, so both carry its locks: Classic is never drawn as less secure, only
+/// as cut off when the relay is.
 private struct ClassicUpgradeCanvas: View {
     let stage: ClassicUpgradeStage
     let reduceMotion: Bool
 
     @Environment(\.theme) private var theme
 
+    /// The pairing stages: partway through, the relay goes offline.
+    @State private var relayDown = false
+
     private enum Layout {
         static let width: CGFloat = 656
         static let height: CGFloat = 300
         static let phoneX: CGFloat = 120
         static let macX: CGFloat = 536
-        static let deviceY: CGFloat = 120
-        static let serverX: CGFloat = 328
-        /// Classic: the relay sits on the line between the two. 1.0: above it, the direct path below.
-        static let serverYClassic: CGFloat = 120
-        static let serverY: CGFloat = 58
-        static let directY: CGFloat = 168
-        static let chatsY: CGFloat = 196
-        static let featuresY: CGFloat = 256
+        static let deviceY: CGFloat = 112
+        static let relayX: CGFloat = 328
+        /// Classic: the relay sits on the line between the two, the only way across. Sync: above it, the devices'
+        /// own link below.
+        static let relayYClassic: CGFloat = 112
+        static let relayY: CGFloat = 50
+        static let directLabelY: CGFloat = 162
+        static let dataY: CGFloat = 196
+        static let noteY: CGFloat = 230
+        static let comparedY: CGFloat = 150
     }
 
-    private var isClassic: Bool { stage == .classic }
-    private var serverY: CGFloat { isClassic ? Layout.serverYClassic : Layout.serverY }
+    private var isClassic: Bool { stage.isClassic }
+    private var isCompared: Bool { stage == .compared }
+    private var relayY: CGFloat { isClassic ? Layout.relayYClassic : Layout.relayY }
     private var classicTint: Color { theme.status.warning.foreground }
     private var syncTint: Color { theme.status.success.foreground }
+    private var offTint: Color { theme.text.tertiary }
     private var tint: Color { isClassic ? classicTint : syncTint }
+    /// The relay offline: in the pairing stages once it's dropped, and in Sync Data, where the devices are offline.
+    private var relayOff: Bool { relayDown || stage == .syncData }
+    /// The devices' own link: Sync only.
+    private var hasDirect: Bool { stage == .syncPairing || stage == .syncData }
 
     private var phonePoint: CGPoint { CGPoint(x: Layout.phoneX + 34, y: Layout.deviceY) }
     private var macPoint: CGPoint { CGPoint(x: Layout.macX - 34, y: Layout.deviceY) }
-    private var serverLeft: CGPoint { CGPoint(x: Layout.serverX - 62, y: serverY) }
-    private var serverRight: CGPoint { CGPoint(x: Layout.serverX + 62, y: serverY) }
+    private var relayLeft: CGPoint { CGPoint(x: Layout.relayX - 66, y: relayY) }
+    private var relayRight: CGPoint { CGPoint(x: Layout.relayX + 66, y: relayY) }
 
     var body: some View {
         ZStack {
-            wires
-            if !reduceMotion { pulses.id(stage) }
-            device(glyph: "iphone", label: "iPhone", x: Layout.phoneX)
-            device(glyph: "laptopcomputer", label: "Mac", x: Layout.macX)
-            server
-            locks
-            directLabel
-            phoneChats
-            macChats
-            features
+            Group {
+                wires
+                if !reduceMotion { pulses.id("\(stage.rawValue)-\(relayOff)") }
+                device(glyph: "iphone", label: "iPhone", x: Layout.phoneX)
+                device(glyph: "laptopcomputer", label: "Mac", x: Layout.macX)
+                relay
+                locks
+                directLabel
+                phoneData
+                macData
+                notes
+            }
+            .opacity(isCompared ? 0 : 1)
+            compared
         }
         .frame(width: Layout.width, height: Layout.height)
         .clipped()
         .animation(theme.motion.springAnimation, value: stage)
+        .animation(theme.motion.springAnimation, value: relayDown)
+        .task(id: stage) { await dropRelay() }
+    }
+
+    /// In the pairing stages, the relay goes offline after a beat: Classic loses access, Sync keeps its own link.
+    private func dropRelay() async {
+        relayDown = false
+        guard !reduceMotion, stage == .classicPairing || stage == .syncPairing else { return }
+        try? await Task.sleep(for: .seconds(2.4))
+        guard !Task.isCancelled else { return }
+        relayDown = true
     }
 
     // MARK: Wires
 
+    private var relayWireColor: Color { relayOff ? offTint.opacity(0.5) : tint.opacity(0.7) }
+
     private var wires: some View {
         ZStack {
-            Wire(from: phonePoint, to: serverLeft)
-                .stroke(tint.opacity(0.7), style: stroke(dashed: false))
-            Wire(from: serverRight, to: macPoint)
-                .stroke(tint.opacity(0.7), style: stroke(dashed: false))
-            // 1.0 on one network: the two reach each other with no server between.
-            Wire(from: phonePoint, to: macPoint, bow: 48)
-                .trim(from: 0, to: stage.rawValue >= ClassicUpgradeStage.anywhere.rawValue ? 1 : 0)
-                .stroke(syncTint, style: stroke(dashed: true))
+            Wire(from: phonePoint, to: relayLeft)
+                .stroke(relayWireColor, style: stroke(dashed: relayOff))
+            Wire(from: relayRight, to: macPoint)
+                .stroke(relayWireColor, style: stroke(dashed: relayOff))
+            // Sync: the devices know each other, so they reach each other without the relay.
+            Wire(from: phonePoint, to: macPoint, bow: 44)
+                .trim(from: 0, to: hasDirect ? 1 : 0)
+                .stroke(stage == .syncData ? offTint.opacity(0.5) : syncTint, style: stroke(dashed: true))
         }
     }
 
     private var pulses: some View {
         ZStack {
-            Pulse(from: phonePoint, to: serverLeft, color: tint, delay: 0)
-            Pulse(from: serverRight, to: macPoint, color: tint, delay: 0.9)
-            if !isClassic {
-                // Both ways: each side sends its changes.
-                Pulse(from: macPoint, to: serverRight, color: tint, delay: 1.8)
-                Pulse(from: serverLeft, to: phonePoint, color: tint, delay: 2.7)
+            if !relayOff {
+                Pulse(from: phonePoint, to: relayLeft, color: tint, delay: 0)
+                Pulse(from: relayRight, to: macPoint, color: tint, delay: 0.8)
+                if !isClassic {
+                    Pulse(from: macPoint, to: relayRight, color: tint, delay: 1.6)
+                    Pulse(from: relayLeft, to: phonePoint, color: tint, delay: 2.4)
+                }
             }
-            if stage.rawValue >= ClassicUpgradeStage.anywhere.rawValue {
-                Pulse(from: phonePoint, to: macPoint, bow: 48, color: syncTint, delay: 0.4)
+            if stage == .syncPairing {
+                Pulse(from: phonePoint, to: macPoint, bow: 44, color: syncTint, delay: 0.4)
             }
         }
     }
@@ -322,14 +371,18 @@ private struct ClassicUpgradeCanvas: View {
 
     // MARK: Nodes
 
+    /// A device, greyed when it can't be reached (Classic with the relay down) or is offline (Sync Data).
     private func device(glyph: String, label: LocalizedStringKey, x: CGFloat) -> some View {
-        VStack(spacing: theme.space.s6) {
+        let dimmed = (stage == .classicPairing && relayDown) || stage == .syncData
+        return VStack(spacing: theme.space.s6) {
             ZStack {
                 Circle().fill(theme.surface.raised).frame(width: 64, height: 64)
-                Circle().stroke(theme.rule(around: tint), lineWidth: theme.stroke.default).frame(width: 64, height: 64)
+                Circle()
+                    .stroke(theme.rule(around: dimmed ? offTint : tint), lineWidth: theme.stroke.default)
+                    .frame(width: 64, height: 64)
                 Image(systemName: glyph)
                     .glyphSize(.large, weight: .semibold)
-                    .foregroundStyle(theme.text.primary)
+                    .foregroundStyle(dimmed ? theme.text.tertiary : theme.text.primary)
             }
             Text(label, bundle: .module)
                 .font(SettingsFont.chip)
@@ -338,99 +391,106 @@ private struct ClassicUpgradeCanvas: View {
         .position(x: x, y: Layout.deviceY + 12)
     }
 
-    private var server: some View {
-        HStack(spacing: theme.space.s6) {
-            Image(systemName: isClassic ? "server.rack" : "lock.icloud")
+    /// The relay: the same end-to-end encrypted relay for both, a lock on it either way.
+    private var relay: some View {
+        let color = relayOff ? offTint : tint
+        return HStack(spacing: theme.space.s6) {
+            Image(systemName: relayOff ? "icloud.slash" : "lock.icloud")
                 .glyphSize(.footnote, weight: .semibold)
-                .foregroundStyle(tint)
+                .foregroundStyle(color)
                 .contentTransition(.symbolEffect(.replace))
-            Text(serverLabel, bundle: .module)
+            Text(relayOff ? "Relay offline" : "Encrypted relay", bundle: .module)
                 .font(SettingsFont.smallLabel)
-                .foregroundStyle(theme.text.primary)
+                .foregroundStyle(relayOff ? theme.text.secondary : theme.text.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
         .padding(.horizontal, theme.space.s8)
-        .frame(width: 124, height: 32)
+        .frame(width: 132, height: 32)
         .background(
-            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous).fill(theme.wash(behind: tint)))
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .fill(relayOff ? theme.surface.raised : theme.wash(behind: color)))
         .overlay(
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .stroke(theme.rule(around: tint), lineWidth: theme.stroke.default)
+                .stroke(theme.rule(around: color), lineWidth: theme.stroke.default)
         )
-        .position(x: Layout.serverX, y: serverY)
+        .position(x: Layout.relayX, y: relayY)
     }
 
-    private var serverLabel: LocalizedStringKey {
-        switch stage {
-        case .classic: return "Classic relay"
-        case .private_: return "Can't read it"
-        default: return "Osaurus servers"
-        }
-    }
-
-    /// Stage 3 on: a lock on each wire to the servers.
+    /// End-to-end encryption on both wires, Classic and Sync alike, while the relay carries anything.
     private var locks: some View {
-        let shown = stage.rawValue >= ClassicUpgradeStage.private_.rawValue
+        let shown = !relayOff
         // Each grown where it sits: scaled as one canvas-sized layer they swept in from, and out to, its middle.
         return ZStack {
-            lock.scaleEffect(shown ? 1 : 0.6).opacity(shown ? 1 : 0).position(midpoint(phonePoint, serverLeft))
-            lock.scaleEffect(shown ? 1 : 0.6).opacity(shown ? 1 : 0).position(midpoint(serverRight, macPoint))
+            lock.scaleEffect(shown ? 1 : 0.6).opacity(shown ? 1 : 0).position(midpoint(phonePoint, relayLeft))
+            lock.scaleEffect(shown ? 1 : 0.6).opacity(shown ? 1 : 0).position(midpoint(relayRight, macPoint))
         }
     }
 
     private var lock: some View {
         ZStack {
-            Circle().fill(theme.status.success.background).frame(width: 26, height: 26)
+            Circle().fill(theme.wash(behind: tint)).frame(width: 26, height: 26)
+            Circle().stroke(theme.rule(around: tint), lineWidth: theme.stroke.default).frame(width: 26, height: 26)
             Image(systemName: "lock.fill")
                 .glyphSize(.caption, weight: .semibold)
-                .foregroundStyle(theme.status.success.foreground)
+                .foregroundStyle(tint)
         }
     }
 
     private var directLabel: some View {
-        let shown = stage.rawValue >= ClassicUpgradeStage.anywhere.rawValue
-        return Text("Same network: direct", bundle: .module)
+        let label: LocalizedStringKey = relayDown ? "Still connected" : "Aware of each other"
+        return Text(label, bundle: .module)
             .font(SettingsFont.chip)
-            .foregroundStyle(theme.text.secondary)
+            .foregroundStyle(relayDown ? syncTint : theme.text.secondary)
             .padding(.horizontal, theme.space.s6)
             .background(Capsule().fill(theme.surface.raised))
-            .position(x: Layout.serverX, y: Layout.directY)
-            .opacity(shown ? 1 : 0)
+            .position(x: Layout.relayX, y: Layout.directLabelY)
+            .opacity(stage == .syncPairing ? 1 : 0)
     }
 
-    // MARK: Chats
+    // MARK: Data
 
-    /// Classic: borrowed, gone with the link. 1.0: the iPhone's own copy.
-    private var phoneChats: some View {
-        chatsPill(
-            label: isClassic ? "Borrowed live" : "Own copy",
-            glyph: isClassic ? "bubble.left.and.exclamationmark.bubble.right" : "bubble.left.and.bubble.right.fill",
-            color: tint, dashed: isClassic
-        )
-        .position(x: Layout.phoneX, y: Layout.chatsY)
-        .opacity(stage == .onlyOn10 ? 0 : 1)
+    private var phoneData: some View {
+        let label: LocalizedStringKey
+        let color: Color
+        var dashed = false
+        switch stage {
+        case .classicPairing where relayDown:
+            label = "No access"
+            color = offTint
+            dashed = true
+        case .classicPairing, .classicData:
+            label = "Only while connected"
+            color = classicTint
+            dashed = true
+        case .syncData:
+            label = "Synced data"
+            color = syncTint
+        default:
+            label = "Chats & agents"
+            color = tint
+        }
+        return dataPill(label: label, color: color, dashed: dashed)
+            .position(x: Layout.phoneX, y: Layout.dataY)
     }
 
-    private var macChats: some View {
-        chatsPill(
-            label: isClassic ? "All chats" : "Own copy", glyph: "bubble.left.and.bubble.right.fill",
-            color: isClassic ? theme.text.secondary : syncTint, dashed: false
-        )
-        .position(x: Layout.macX, y: Layout.chatsY)
-        .opacity(stage == .onlyOn10 ? 0 : 1)
+    private var macData: some View {
+        let label: LocalizedStringKey = stage == .syncData ? "Synced data" : "Chats & agents"
+        let color = stage == .classicPairing && relayDown ? offTint : tint
+        return dataPill(label: label, color: color, dashed: false)
+            .position(x: Layout.macX, y: Layout.dataY)
     }
 
-    private func chatsPill(label: LocalizedStringKey, glyph: String, color: Color, dashed: Bool) -> some View {
+    private func dataPill(label: LocalizedStringKey, color: Color, dashed: Bool) -> some View {
         HStack(spacing: theme.space.s6) {
-            Image(systemName: glyph)
+            Image(systemName: "bubble.left.and.bubble.right.fill")
                 .glyphSize(.footnote, weight: .semibold)
                 .foregroundStyle(color)
-                .contentTransition(.symbolEffect(.replace))
             Text(label, bundle: .module)
                 .font(SettingsFont.smallLabel)
                 .foregroundStyle(theme.text.primary)
                 .lineLimit(1)
+                .contentTransition(.opacity)
         }
         .padding(.horizontal, theme.space.s10)
         .frame(height: 30)
@@ -443,45 +503,73 @@ private struct ClassicUpgradeCanvas: View {
         )
     }
 
-    // MARK: Only on 1.0
-
-    private struct Feature: Identifiable {
-        let id: Int
-        let label: LocalizedStringKey
-        let glyph: String
+    /// The condition each stage turns on, under the devices.
+    private var notes: some View {
+        ZStack {
+            note("Must stay on", glyph: "power", color: classicTint)
+                .position(x: Layout.macX, y: Layout.noteY)
+                .opacity(stage == .classicData ? 1 : 0)
+            note("Available offline", glyph: "checkmark.circle.fill", color: syncTint)
+                .position(x: Layout.phoneX, y: Layout.noteY)
+                .opacity(stage == .syncData ? 1 : 0)
+            note("Available offline", glyph: "checkmark.circle.fill", color: syncTint)
+                .position(x: Layout.macX, y: Layout.noteY)
+                .opacity(stage == .syncData ? 1 : 0)
+        }
     }
 
-    private static let featureList: [Feature] = [
-        Feature(id: 0, label: "Workflows", glyph: "point.3.connected.trianglepath.dotted"),
-        Feature(id: 1, label: "Live Activities", glyph: "platter.filled.top.iphone"),
-        Feature(id: 2, label: "Agent calls", glyph: "phone.fill"),
-        Feature(id: 3, label: "Every device, one account", glyph: "person.crop.circle.badge.checkmark"),
-    ]
+    private func note(_ label: LocalizedStringKey, glyph: String, color: Color) -> some View {
+        HStack(spacing: theme.space.s4) {
+            Image(systemName: glyph).glyphSize(.caption, weight: .semibold).foregroundStyle(color)
+            Text(label, bundle: .module).font(SettingsFont.chip).foregroundStyle(theme.text.secondary)
+        }
+    }
 
-    private var features: some View {
-        let shown = stage == .onlyOn10
-        return HStack(spacing: theme.space.s8) {
-            ForEach(Self.featureList) { feature in
-                HStack(spacing: theme.space.s6) {
-                    Image(systemName: feature.glyph)
-                        .glyphSize(.footnote, weight: .semibold)
-                        .foregroundStyle(syncTint)
-                    Text(feature.label, bundle: .module)
-                        .font(SettingsFont.smallLabel)
-                        .foregroundStyle(theme.text.primary)
-                        .lineLimit(1)
+    // MARK: Classic vs. Sync
+
+    private var compared: some View {
+        HStack(spacing: theme.space.s24) {
+            card(
+                title: "Classic", detail: "Osaurus Classic", glyph: "lock.icloud",
+                points: ["Encrypted relay", "Only while connected"], color: classicTint, index: 0)
+            card(
+                title: "Osaurus Sync", detail: "Osaurus 1.0 and above", glyph: "arrow.triangle.2.circlepath",
+                points: ["Encrypted relay", "Devices aware of each other", "Data synced and offline"],
+                color: syncTint, index: 1)
+        }
+        .position(x: Layout.width / 2, y: Layout.comparedY)
+    }
+
+    private func card(
+        title: LocalizedStringKey, detail: LocalizedStringKey, glyph: String, points: [LocalizedStringKey],
+        color: Color, index: Int
+    ) -> some View {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
+                Image(systemName: glyph).glyphSize(.body, weight: .semibold).foregroundStyle(color)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title, bundle: .module).font(SettingsFont.cardTitle).foregroundStyle(theme.text.primary)
+                    Text(detail, bundle: .module).font(SettingsFont.chip).foregroundStyle(theme.text.secondary)
                 }
-                .padding(.horizontal, theme.space.s10)
-                .frame(height: 30)
-                .background(Capsule().fill(theme.wash(behind: syncTint)))
-                .overlay(Capsule().stroke(theme.rule(around: syncTint), lineWidth: theme.stroke.default))
-                .offset(y: shown ? 0 : 16)
-                .opacity(shown ? 1 : 0)
-                .animation(
-                    theme.motion.springAnimation.delay(shown ? 0.08 * Double(feature.id) : 0), value: stage)
+            }
+            ForEach(Array(points.enumerated()), id: \.offset) { _, point in
+                HStack(spacing: theme.space.s6) {
+                    Image(systemName: "checkmark").glyphSize(.caption, weight: .bold).foregroundStyle(color)
+                    Text(point, bundle: .module).font(SettingsFont.smallLabel).foregroundStyle(theme.text.primary)
+                }
             }
         }
-        .position(x: Layout.width / 2, y: Layout.featuresY - (shown ? 40 : 0))
+        .padding(theme.space.s16)
+        .frame(width: 250, height: 170, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous).fill(theme.wash(behind: color)))
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                .stroke(theme.rule(around: color), lineWidth: theme.stroke.default)
+        )
+        .offset(y: isCompared ? 0 : 20)
+        .opacity(isCompared ? 1 : 0)
+        .animation(theme.motion.springAnimation.delay(isCompared ? 0.1 * Double(index) : 0), value: stage)
     }
 
     private func midpoint(_ a: CGPoint, _ b: CGPoint) -> CGPoint {

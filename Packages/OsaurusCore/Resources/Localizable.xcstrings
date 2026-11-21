@@ -190,6 +190,12 @@
     "Archive instead" : {
 
     },
+    "Available offline" : {
+
+    },
+    "Aware of each other" : {
+
+    },
     "Borrowed live" : {
 
     },
@@ -230,13 +236,31 @@
         }
       }
     },
+    "Chats & agents" : {
+
+    },
     "Classic" : {
+
+    },
+    "Classic Data" : {
+
+    },
+    "Classic Osaurus devices pair using a secure, end-to-end encrypted relay. If the relay goes offline, so does access to your devices." : {
+
+    },
+    "Classic Pairing" : {
+
+    },
+    "Classic Pairing only lets you access your chat and agent data while your connection is active and your device is turned on." : {
 
     },
     "Classic and Osaurus 1.0 compared" : {
 
     },
     "Classic relay" : {
+
+    },
+    "Classic vs. Sync" : {
 
     },
     "Connect %@ in Settings → Providers, or pick a model that is here." : {
@@ -276,6 +300,9 @@
     "Connect iPhone Now" : {
 
     },
+    "Data synced and offline" : {
+
+    },
     "Delete %@?" : {
 
     },
@@ -297,7 +324,13 @@
     "Deselect %@" : {
 
     },
+    "Devices aware of each other" : {
+
+    },
     "Encrypted" : {
+
+    },
+    "Encrypted relay" : {
 
     },
     "Every device" : {
@@ -401,7 +434,16 @@
     "Message %@..." : {
 
     },
+    "Must stay on" : {
+
+    },
+    "New Osaurus Sync devices also pair using a secure, end-to-end encrypted relay. However, your devices are aware of each other, so if the relay goes offline, you can still connect to your other devices." : {
+
+    },
     "New chat with %@" : {
+
+    },
+    "No access" : {
 
     },
     "No devices" : {
@@ -450,6 +492,9 @@
     "Only on 1.0" : {
 
     },
+    "Only while connected" : {
+
+    },
     "Open Settings → Providers to see why %@ didn't connect, then retry." : {
       "localizations" : {
         "de" : {
@@ -484,7 +529,28 @@
         }
       }
     },
+    "Osaurus 1.0 and above" : {
+
+    },
     "Osaurus 1.0 connects your devices in a new way. Here's what changes." : {
+
+    },
+    "Osaurus Classic" : {
+
+    },
+    "Osaurus Sync" : {
+
+    },
+    "Osaurus Sync Data" : {
+
+    },
+    "Osaurus Sync Pairing" : {
+
+    },
+    "Osaurus Sync is only supported in the new architecture of Osaurus 1.0 and above." : {
+
+    },
+    "Osaurus Sync lets you sync your data across your devices and access it even when they're offline." : {
 
     },
     "Osaurus servers" : {
@@ -566,6 +632,9 @@
           }
         }
       }
+    },
+    "Relay offline" : {
+
     },
     "Retry once %@ shows as connected in Settings → Providers." : {
       "localizations" : {
@@ -686,6 +755,12 @@
           }
         }
       }
+    },
+    "Still connected" : {
+
+    },
+    "Synced data" : {
+
     },
     "The Router refused the request's signature. Check this Mac's clock and your Osaurus Identity." : {
       "localizations" : {
