@@ -4,8 +4,12 @@
 //
 //  One setup pass for every workflow an agent template brings: model slots
 //  and folders per workflow, then secrets, MCP servers, plugins, and
-//  permissions asked once however many workflows need them. Install installs them all, or
-//  none while anything still blocks.
+//  permissions asked once however many workflows need them. Install All
+//  installs them all, or none while anything Osaurus can't fetch itself
+//  still blocks. Models, the sandbox and packages it can fetch are handed
+//  to `WorkflowInstallCoordinator`, one job per workflow, and their
+//  progress shows here until they finish or the sheet goes to the
+//  background.
 //
 
 import AppKit
@@ -86,12 +90,13 @@ struct WorkflowBundleSetup {
         }
     }
 
-    /// Items other than model slots and folders (both per workflow), each
-    /// kind and value once.
+    /// Items other than models and folders (both per workflow), each kind
+    /// and value once.
     static func sharedItems(_ reports: [SetupReport]) -> [SetupItem] {
         var seen = Set<String>()
         return reports.flatMap(\.items).filter { item in
-            item.kind != .model && item.kind != .folder && seen.insert("\(item.kind.rawValue)|\(item.value)").inserted
+            item.kind != .model && item.kind != .mediaModel && !item.needsMediaModel && item.kind != .folder
+                && seen.insert("\(item.kind.rawValue)|\(item.value)").inserted
         }
     }
 }
@@ -102,7 +107,7 @@ struct WorkflowBundleSetupView: View {
     let subjects: [WorkflowSetupSubject]
     let onClose: () -> Void
     let onLeave: (ManagementTab) -> Void
-    var onFinished: ([InstalledWorkflow]) -> Void = { _ in }
+    var onFinished: () -> Void = {}
 
     private typealias Step = WorkflowSetupWizardView.Step
 
@@ -113,6 +118,16 @@ struct WorkflowBundleSetupView: View {
     @State private var footerWarning: String?
     @State private var glowingStep: Step?
     @State private var hasAppeared = false
+    /// Install jobs started by Install All; the sheet shows their progress.
+    @State private var jobIDs: [UUID] = []
+    @State private var showsDetails = false
+    @State private var isPlanning = false
+    @ObservedObject private var coordinator = WorkflowInstallCoordinator.shared
+
+    private var jobs: [WorkflowInstallCoordinator.Job] { jobIDs.compactMap { coordinator.job(id: $0) } }
+    private var allDone: Bool {
+        jobs.allSatisfy { if case .done = $0.phase { return true } else { return false } }
+    }
 
     private var shared: [SetupItem] { WorkflowBundleSetup.sharedItems(reports) }
     private var currentIndex: Int { steps.firstIndex(of: current) ?? 0 }
@@ -128,6 +143,39 @@ struct WorkflowBundleSetupView: View {
             SettingsSheetHeader(
                 icon: "flowchart", title: "Set Up Workflows",
                 subtitleText: bundle.subjects.map(\.name).joined(separator: ", "), onClose: cancel)
+            if jobIDs.isEmpty {
+                setupBody
+            } else {
+                installingBody
+            }
+            footer
+        }
+        .fittedSheetFrame(width: 820, height: 580)
+        .settingsSheetSurface()
+        .overlay(RoundedRectangle(cornerRadius: theme.radius.xlarge).stroke(theme.border.subtle, lineWidth: theme.stroke.default))
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(theme.motion.quick, value: hasAppeared)
+        .onAppear {
+            hasAppeared = true
+            if bundle.subjects.isEmpty { bundle = WorkflowBundleSetup(subjects: subjects) }
+            refresh(rebuildSteps: true)
+        }
+        .onDisappear { present(false) }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refresh(rebuildSteps: false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
+            refresh(rebuildSteps: false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
+            refresh(rebuildSteps: false)
+        }
+        .onReceive(ModelPickerItemCache.shared.$items.dropFirst()) { _ in
+            refresh(rebuildSteps: false)
+        }
+    }
+
+    private var setupBody: some View {
             HStack(spacing: theme.space.s0) {
                 SetupStepRail(steps: steps, current: $current, glowing: glowingStep, title: \.title) { step in
                     guard step != .review else { return .none }
@@ -147,9 +195,76 @@ struct WorkflowBundleSetupView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(theme.surface.overlay)
+    }
+
+    private var installingBody: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: theme.space.s24) {
+                if allDone {
+                    VStack(spacing: theme.space.s12) {
+                        SettingsCompletionMark()
+                        Text("Everything is ready", bundle: .module)
+                            .font(SettingsFont.detailTitle)
+                            .foregroundColor(theme.text.primary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .onAppear {
+                        AccessibilityNotification.Announcement(L("Everything is ready")).post()
+                    }
+                }
+                ForEach(jobs) { job in
+                    VStack(alignment: .leading, spacing: theme.space.s10) {
+                        WorkflowInstallProgressView(job: job, showsDetails: $showsDetails)
+                        jobAction(job)
+                    }
+                    .padding(theme.space.s16)
+                    .settingsChrome(.inset)
+                }
+            }
+            .padding(theme.space.s24)
+            .frame(maxWidth: 560)
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.surface.overlay)
+    }
+
+    @ViewBuilder
+    private func jobAction(_ job: WorkflowInstallCoordinator.Job) -> some View {
+        switch job.phase {
+        case .failed(let message):
+            HStack(spacing: theme.space.s8) {
+                Text(verbatim: message)
+                    .textStyle(.caption)
+                    .foregroundColor(theme.status.error.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: theme.space.s8)
+                Button(L("Try Again")) { coordinator.retry(job.id) }
+                    .buttonStyle(.settings(.secondary, size: .small))
+            }
+        case .needsYou:
+            HStack(spacing: theme.space.s8) {
+                Text("It needs one more answer from you.", bundle: .module)
+                    .textStyle(.caption)
+                    .foregroundColor(theme.text.secondary)
+                Spacer(minLength: theme.space.s8)
+                Button(L("Finish Setting Up")) {
+                    WorkflowInstallCoordinator.show(job)
+                    onClose()
+                }
+                .buttonStyle(.settings(.primary, size: .small))
+            }
+        case .running, .done:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        if jobIDs.isEmpty {
             SettingsSheetFooter(
                 primary: SettingsSheetFooter.Action(
-                    label: isLast ? "Install All" : "Next",
+                    label: isLast ? "Install All" : "Next", isLoading: isPlanning,
                     handler: { if isLast { finish() } else { move(1) } }),
                 secondary: SettingsSheetFooter.Action(
                     label: currentIndex == 0 ? "Cancel" : "Back",
@@ -157,29 +272,21 @@ struct WorkflowBundleSetupView: View {
                 hint: nil,
                 warning: footerWarning
             )
+        } else if allDone {
+            SettingsSheetFooter(primary: .init(label: "Done", handler: finishInstalls))
+        } else {
+            SettingsSheetFooter(secondary: .init(label: "Continue in Background", handler: onClose))
         }
-        .fittedSheetFrame(width: 820, height: 580)
-        .settingsSheetSurface()
-        .overlay(RoundedRectangle(cornerRadius: theme.radius.xlarge).stroke(theme.border.subtle, lineWidth: theme.stroke.default))
-        .opacity(hasAppeared ? 1 : 0)
-        .animation(theme.motion.quick, value: hasAppeared)
-        .onAppear {
-            hasAppeared = true
-            if bundle.subjects.isEmpty { bundle = WorkflowBundleSetup(subjects: subjects) }
-            refresh(rebuildSteps: true)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refresh(rebuildSteps: false)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
-            refresh(rebuildSteps: false)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
-            refresh(rebuildSteps: false)
-        }
-        .onReceive(ModelPickerItemCache.shared.$items.dropFirst()) { _ in
-            refresh(rebuildSteps: false)
-        }
+    }
+
+    private func present(_ on: Bool) {
+        for job in jobs { coordinator.setPresented(job.templateID, on) }
+    }
+
+    private func finishInstalls() {
+        for job in jobs { coordinator.dismiss(job.id) }
+        onFinished()
+        onClose()
     }
 
     private func move(_ delta: Int) {
@@ -195,7 +302,11 @@ struct WorkflowBundleSetupView: View {
         guard rebuildSteps else { return }
         let reqs = bundle.subjects.map(\.template.requirements)
         var out: [Step] = []
-        if reqs.contains(where: { !$0.models.isEmpty }) { out.append(.models) }
+        if reqs.contains(where: { !$0.models.isEmpty || !$0.mediaModels.isEmpty })
+            || reports.contains(where: { $0.items.contains(where: \.needsMediaModel) })
+        {
+            out.append(.models)
+        }
         if !bundle.secrets.isEmpty { out.append(.secrets) }
         if reqs.contains(where: { !$0.folders.isEmpty }) { out.append(.folders) }
         if reqs.contains(where: { !$0.apps.isEmpty }) { out.append(.apps) }
@@ -219,22 +330,65 @@ struct WorkflowBundleSetupView: View {
     }
 
     private func finish() {
+        guard !isPlanning else { return }
         refresh(rebuildSteps: false)
-        if let step = steps.first(where: { items($0).contains(where: \.isBlocking) }),
-            let blocker = items(step).first(where: \.isBlocking)
-        {
-            withAnimation(theme.motion.quick) { footerWarning = blocker.detail }
-            glowingStep = step
-            return
-        }
-        do {
-            let installed = try bundle.subjects.compactMap { try WorkflowSetupWizardView.commit($0) }
-            bundle.discardScratch()
-            _ = ToastManager.shared.success(L("Installed \(installed.map(\.name).joined(separator: ", "))"))
-            onFinished(installed)
-            onClose()
-        } catch {
-            withAnimation(theme.motion.quick) { footerWarning = WorkflowErrorText.text(error) }
+        isPlanning = true
+        Task { @MainActor in
+            defer { isPlanning = false }
+            let subjects = bundle.subjects
+            let reports = self.reports
+            var plans: [WorkflowInstallPlan?] = []
+            for (index, subject) in subjects.enumerated() {
+                guard subject.mode == .install, index < reports.count else {
+                    plans.append(nil)
+                    continue
+                }
+                plans.append(
+                    await WorkflowInstallPlan.live(
+                        template: subject.template, bindings: subject.bindings, report: reports[index]))
+            }
+            let blockers = reports.indices.flatMap { index in
+                let covered = Set(plans[index]?.items.flatMap(\.covers) ?? [])
+                return reports[index].blocking.filter { !covered.contains($0.id) }
+            }
+            if let blocker = blockers.first {
+                withAnimation(theme.motion.quick) { footerWarning = blocker.detail }
+                glowingStep = steps.first { !$0.items(in: SetupReport(subjectId: UUID(), items: [blocker])).isEmpty }
+                return
+            }
+            var seen = Set<String>()
+            let downloads = plans.compactMap { $0 }.flatMap(\.items).filter { seen.insert($0.id).inserted }
+            let needed = downloads.compactMap(\.sizeBytes).reduce(0, +)
+            if let free = WorkflowInstallPlan.liveFreeBytes(),
+                let refusal = ModelDownloadService.storageRefusalMessage(neededBytes: needed, freeBytes: free)
+            {
+                withAnimation(theme.motion.quick) { footerWarning = refusal }
+                return
+            }
+            do {
+                var installed: [InstalledWorkflow] = []
+                var started: [UUID] = []
+                for (index, subject) in subjects.enumerated() {
+                    if let plan = plans[index], !plan.items.isEmpty {
+                        started.append(coordinator.start(subject, items: plan.items))
+                    } else if let workflow = try subject.commit() {
+                        installed.append(workflow)
+                    }
+                }
+                bundle.discardScratch()
+                if !installed.isEmpty {
+                    _ = ToastManager.shared.success(L("Installed \(installed.map(\.name).joined(separator: ", "))"))
+                }
+                guard !started.isEmpty else {
+                    onFinished()
+                    onClose()
+                    return
+                }
+                withAnimation(theme.motion.standard) { jobIDs = started }
+                present(true)
+            } catch {
+                withAnimation(theme.motion.quick) { footerWarning = WorkflowErrorText.text(error) }
+            }
         }
     }
 
@@ -246,13 +400,16 @@ struct WorkflowBundleSetupView: View {
             case .models:
                 WorkflowModelsStep.explainer.textStyle(.caption).foregroundColor(theme.text.secondary)
                 ForEach(Array(bundle.subjects.enumerated()), id: \.element.id) { index, subject in
-                    if !subject.template.requirements.models.isEmpty {
+                    let modelItems = index < reports.count ? Step.models.items(in: reports[index]) : []
+                    if !subject.template.requirements.models.isEmpty
+                        || !WorkflowModelsStep.mediaNeeds(subject.template, items: modelItems).isEmpty
+                    {
                         Text(subject.name)
                             .font(SettingsFont.sectionTitle)
                             .foregroundColor(theme.text.primary)
                         WorkflowModelsStep(
                             template: subject.template, bindings: subject.bindings,
-                            items: index < reports.count ? Step.models.items(in: reports[index]) : [],
+                            items: modelItems,
                             onlySlots: nil,
                             setModel: { slot, model in
                                 bundle.subjects[index].bindings.models[slot] = model

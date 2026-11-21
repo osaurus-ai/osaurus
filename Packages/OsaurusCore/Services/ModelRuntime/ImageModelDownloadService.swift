@@ -25,13 +25,15 @@ public struct ImageModelDownload: Identifiable, Sendable, Hashable {
     public let id: String
     public let repoId: String
     public let displayName: String
-    public let note: String?
+    /// Published as an image-to-image pipeline: edits a source image rather
+    /// than creating one from text.
+    public let isEditOnly: Bool
 
-    public init(repoId: String, displayName: String, note: String? = nil) {
+    public init(repoId: String, displayName: String, isEditOnly: Bool = false) {
         self.id = ImageModelDownload.directoryName(forRepoId: repoId)
         self.repoId = repoId
         self.displayName = displayName
-        self.note = note
+        self.isEditOnly = isEditOnly
     }
 
     /// Local directory name for a repo id: its last path component.
@@ -72,13 +74,11 @@ final class ImageModelDownloadService: ObservableObject {
     static let curatedCatalog: [ImageModelDownload] = [
         ImageModelDownload(
             repoId: "cocktailpeanut/ideogram-4-fp8",
-            displayName: "Ideogram 4 (fp8)",
-            note: "Text-to-image · mflux · strong typography"
+            displayName: "Ideogram 4 (fp8)"
         ),
         ImageModelDownload(
             repoId: "cocktailpeanut/ideogram-4-nf4",
-            displayName: "Ideogram 4 (NF4)",
-            note: "Text-to-image · mflux · 4-bit"
+            displayName: "Ideogram 4 (NF4)"
         ),
     ]
 
@@ -279,7 +279,7 @@ final class ImageModelDownloadService: ObservableObject {
         return ImageModelDownload(
             repoId: row.id,
             displayName: tail,
-            note: isEdit ? "Image edit · mflux" : "Text-to-image · mflux"
+            isEditOnly: isEdit
         )
     }
 

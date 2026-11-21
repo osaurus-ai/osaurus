@@ -63,6 +63,10 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `agent_calls` | Agents calling the user back: PushKit grants in push registrations, `call-answer/1`, `call` in the manage state (§5.7) |
 | `workflow_step_details` | `steps` on every `workflow_outputs` message, an empty list for a run without any (§5.5) |
 | `manage_workflows` | the workflow library is a message in the manage conversation, not in the manage state, which a large library took past 64 KiB (§5.4) |
+| `workflow_live_steps` | `workflowOutput` with `partial` answers for a run still going, with its finished steps' details (§5.5) |
+| `workflow_run_approvals` | `run_id` on attention items a workflow run raises: a step's `tool_approval` (a tool node, or an agent step's tool), `config_approval`, `computer_use`, as well as its `workflow_dialog` (§4) |
+| `workflow_file_fetch` | `fetchable` on a run's `tooLarge` files and the `workflowFile` op that sends one on asking (§5.5) |
+| `workflow_file_inputs` | `runWorkflow` takes `files` the phone attached, and fills file and folder fields from the last run (`lastUsed`) (§5.4) |
 | `directory_models` | each directory entry carries the agent's `model`, and the agent directory conversation carries the models message (§5.2) too, so a new iPhone has both before the manage conversation arrives |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
@@ -481,6 +485,10 @@ While an iPhone is in the account, each Mac keeps one conversation tagged
 
   An unknown kind SHOULD be shown with its title, body and `open`.
 - Labels in `requester`, `agent` and `decided_by` are already formatted. Show them as they are.
+- An item a workflow run raised carries `run_id` (`workflow_run_approvals`): the run, as in
+  `ai.osaurus.workflow-runs/1`. An iPhone that started the run SHOULD show it on the run, as it does
+  the run's forms; it is answered like any other item (§4.1). A sub-workflow's items (a `workflow` step's run) name the
+  outermost run, the one a person started; so does a form's `detail.run_id`.
 - A pending `tool_approval` carries `arguments_preview`: the call's JSON arguments, cut to 512
   characters. Show it with the Allow buttons, so the user sees what they allow. It may not be
   valid JSON once cut.
@@ -746,11 +754,19 @@ app data `ai.osaurus.manage-workflows/1`, `{ "v": 1, "workflows": [ … ], "dige
 - `fields` is the input form the Mac's Run page shows, built from the input schema. Field
   `type`s are the dialog field types of §4 (`text`, `long_text`, `number`, `bool`, `choice`,
   `date`, `file`, `folder`).
-- `prefill` is the last run's input.
-- `phoneStartable` is false when a required field is a `file`, `folder` or `secret`. Those
-  workflows are started on the Mac: `runWorkflow` for one is refused (`invalid_input`). The Mac
-  takes `input` values only for the fields of types the phone fills in; the rest keep their
-  defaults.
+- `prefill` is the last run's input, without its `file` and `folder` fields: a path stays on the Mac.
+- `lastUsed` (`workflow_file_inputs`), on a required `file` or `folder` field, is the name of what
+  the last run used: the name only, never the path. A start from the phone that sends nothing for the
+  field reuses that same path, if it still exists on the Mac; otherwise the start fails with
+  `invalid_input`. An optional field the phone sends nothing for is left empty. From a run the phone
+  started, only a file the Mac saved for it is reused.
+- `phoneStartable` is false when a required field is a `secret`, or a `file` or `folder` with no
+  `lastUsed`. Those workflows are started on the Mac: `runWorkflow` for one is refused
+  (`invalid_input`). A phone that sees `workflow_file_inputs` can still start one whose only such
+  fields are `file`s, by attaching them (`files` below).
+- The Mac takes `input` values only for the fields of types the phone fills in. A `file` or
+  `folder` field gets only a path the Mac makes: the file the phone attached, else the last run's,
+  else its default. Never a path the phone sends.
 - `blocked`, when present, says what has to be set up on the Mac first.
 - `facts` and `steps` (`workflow_details`) are what the Mac's workflow page shows:
 
@@ -801,6 +817,14 @@ app data `ai.osaurus.manage-workflows/1`, `{ "v": 1, "workflows": [ … ], "dige
 run. Fields left out keep their defaults, and the input is checked against the schema.
 - The result's `data` is `{ "runId": "…" }`.
 - Errors: `workflow_not_found`, `needs_setup` and `invalid_input`, each with a message to show.
+- `files` (`workflow_file_inputs`) fills `file` fields with files from the phone:
+  `{ "<fieldKey>": { "message": "<messageId>", "blob": "<hash>" } }`.
+  - Send the file first, as an attachment on a message of the manage conversation, then the request
+    naming it. Its `content` is `"workflow input"` and its role `user`.
+  - The Mac takes it only from a message on its manage conversation that the requesting device wrote,
+    with that attachment, at most 10 MB, for a field of type `file`. Otherwise the request fails with
+    `invalid_input`. The Mac waits up to 30 seconds for the message to arrive.
+  - The Mac saves a copy for the run, so the phone may delete its message once the request has a result.
 - The run's forms come through the attention feed (§4) with no `session_id`.
 
 The Mac also writes its recent runs on the manage conversation, whatever started them: each
@@ -873,6 +897,17 @@ device pinned it, and removed when it's unpinned.
   without it was written before: the iPhone asks again, and the Mac rewrites it.
 - A file over 10 MiB, or past 32 MiB for the run, is listed with `skipped: "tooLarge"`. A file that
   is gone is listed with `skipped: "missing"`.
+- `workflow_file_fetch`: a `tooLarge` file of at most 512 MiB also has `fetchable: true`. The iPhone asks for it with
+  `workflowFile` `{ runId, fileId }` (owner-signed, as `workflowOutput`; ids only, the Mac reads the path from its
+  own record of the run, and sends only a plain file, never a link). It answers `{ runId, fileId }` once a system
+  message is written in the manage conversation with `ai.osaurus.workflow-file/1` `{ "v": 1, "runId", "fileId",
+  "blob": 0 }` and the file as its one attachment, or fails with `file_not_found` or `too_large`. The Mac keeps
+  the newest 2 of these messages.
+- `partial: true` (`workflow_live_steps`) answers for a run still going too, where it would otherwise fail
+  with `running`. The message then has the run's `status` (`running` or `awaiting_user`), no `output` or
+  `files` (they aren't final), and in `steps` the details of finished steps only: one not finished yet is
+  `{ "id": "…", "pending": true }`. Ask again as more steps finish; each answer replaces the message. Once the
+  run has ended, ask without `partial` for its output and files.
 - The same run's message is replaced only when its digest changes, the old one removed only once the new
   one is written. The Mac keeps the last 10 of these messages.
 - Each file is copied for its blob from the descriptor its checks were made on: a plain file, never a

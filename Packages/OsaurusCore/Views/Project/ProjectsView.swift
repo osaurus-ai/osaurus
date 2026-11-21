@@ -62,7 +62,7 @@ struct ProjectsView: View {
             applyPendingDetail()
             routeSettingsLanding(highlightCoordinator.pending)
         }
-        .onReceive(managementState.$pendingProjectDetailId) { _ in applyPendingDetail() }
+        .onPendingRequest(managementState.$pendingProjectDetailId) { applyPendingDetail() }
         .onChange(of: highlightCoordinator.pending) { _, pending in routeSettingsLanding(pending) }
     }
 

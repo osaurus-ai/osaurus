@@ -29,7 +29,7 @@ struct MultiPartyVocabularyLintTests {
         Banned(phrase: "paired phone", use: "your iPhone"),
         Banned(phrase: "Paired iPhone", use: "Your iPhone"),
         Banned(phrase: "Reach From Anywhere", use: "Remote Access (agents) or Anywhere (Sync)"),
-        Banned(phrase: "Generate Pairing Code", use: "Add a Device"),
+        Banned(phrase: "Generate Pairing Code", use: "Add Device"),
         Banned(phrase: "Allow for This Task", use: "Allow for This Conversation"),
         Banned(phrase: "Allow for this task", use: "Allow for This Conversation"),
         Banned(phrase: "Allow Once", use: "Allow"),

@@ -568,7 +568,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.sync.network",
             tab: .devices,
-            section: "Sync",
+            section: "Settings",
             title: "Sync Chats",
             keywords: ["sync", "syncing", "other devices", "multiple macs", "second mac", "cross device", "iphone sync"],
             disambiguation: "Devices ▸ Sync Chats sends and receives chats with this account's other devices, end-to-end encrypted. Off keeps chats on this Mac until it is turned back on. API, automation, channel, schedule and other headless chats never sync; they stay on this Mac. Not Knowledge git sync or workspace sharing."
@@ -576,7 +576,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.sync.networkMode",
             tab: .devices,
-            section: "Sync",
+            section: "Settings",
             title: "Find Devices",
             keywords: ["same network", "anywhere", "anywhere (beta)", "relay", "relay servers", "osaurus servers", "discovery server", "different networks", "local network", "lan", "iphone can't reach mac", "iphone on cellular", "turn on anywhere"],
             disambiguation: "Same Network finds devices on the local network only. Anywhere (Beta) also connects through Osaurus relay and discovery servers (a list Osaurus publishes, applied the next time sync starts) so devices on different networks sync, an iPhone on cellular included. Chats stay end-to-end encrypted. Not Sharing ▸ Access ▸ Remote Access, which gives an agent a public URL for other people."
@@ -584,7 +584,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.sync.hostAgents",
             tab: .devices,
-            section: "Sync",
+            section: "Settings",
             title: "Run Agents for My Other Devices",
             keywords: ["host agents", "hosted runs", "run on this mac", "agents on my other mac", "use agents from another mac", "remote agent", "own devices", "on my mac", "iphone agents", "phone uses mac"],
             disambiguation: "On (default): this Mac lists its agents to the account's other devices, and runs a chat there when one of them is picked under \"On <this Mac>\" in the chat sidebar. Runs use this Mac's models, tools and files; tool approvals are answered on the device the user is chatting on. The iPhone app needs this on to use this Mac's agents. Off: the list empties and new requests get a short reply saying so. Not workspace sharing, which shares agents with other people."
@@ -592,7 +592,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.sync.status",
             tab: .devices,
-            section: "Sync",
+            section: "Connection",
             title: "Status",
             keywords: [
                 "sync status", "connected devices", "waiting to send", "pending messages", "earlier chats", "import progress",
@@ -612,32 +612,33 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.sync.addDevice",
             tab: .devices,
-            section: "Add a Device",
-            title: "Add a Device",
+            section: "Devices",
+            title: "Add Device",
             keywords: [
                 "pair", "pairing", "pairing code", "show code", "qr code", "link device", "new device",
                 "add iphone", "pair iphone", "iphone", "ios", "mobile", "osaurus connect", "iosaurus",
+                "add a device", "add iphone or ipad", "6-digit code",
             ],
-            disambiguation: "One flow for a Mac or an iPhone: scan the code with the Osaurus iPhone app, or paste the link into Join Another Device on another Mac. Not Devices ▸ Mobile, the 6-digit code kept for one release for an iPhone app that doesn't offer Sync yet."
+            disambiguation: "Add iPhone or iPad asks what the app's Pairing Screen shows: a QR code to scan, or a 6-digit code for an iPhone app that doesn't offer Sync yet. Join Another Device takes another Mac's pairing link."
         ),
         .init(
             id: "settings.sync.join",
             tab: .devices,
-            section: "Add a Device",
+            section: "Devices",
             title: "Join Another Device",
             keywords: ["pairing link", "join account", "enter pairing code"]
         ),
         .init(
             id: "settings.devices.iPhoneApp",
             tab: .devices,
-            section: "Add a Device",
-            title: "Osaurus for iPhone",
-            keywords: ["iphone app", "testflight", "ios app", "download iphone", "mobile app", "iosaurus"]
+            section: "Devices",
+            title: "Get iOS App",
+            keywords: ["osaurus for iphone", "iphone app", "testflight", "ios app", "download iphone", "mobile app", "iosaurus"]
         ),
         .init(
             id: "settings.devices.keepAwake",
             tab: .devices,
-            section: "iPhone",
+            section: "Settings",
             title: "Keep Mac Awake for iPhone",
             keywords: ["sleep", "awake", "reachable", "phone", "remote", "idle sleep", "paired iphone"],
             disambiguation: "Keeps this Mac from idle-sleeping while an iPhone is one of the account's devices, so the iPhone can use its agents. Not General ▸ Chat ▸ Keep Mac Awake While Agents Run, which only covers runs in progress."
@@ -645,7 +646,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.devices.continuePhoneChats",
             tab: .devices,
-            section: "iPhone",
+            section: "Settings",
             title: "Continue iPhone Chats on This Mac",
             keywords: [
                 "handoff", "continue", "resume", "iphone", "phone", "bring to front", "focus", "come back",
@@ -2486,8 +2487,11 @@ public enum SettingsSearchIndex {
             id: "imageGeneration.loadPolicy",
             tab: .modelDefaults,
             section: "Images & Video",
-            title: "Image Model Load Policy",
-            keywords: ["load policy", "image jobs", "unload", "residency", "gpu"]
+            title: "Keep Image Model Loaded",
+            keywords: [
+                "image model load policy", "load policy", "image jobs", "unload", "residency", "gpu",
+                "free memory after each job", "stay ready",
+            ]
         ),
         .init(
             id: "imageGeneration.previews", tab: .models, section: "Image",
@@ -3145,6 +3149,7 @@ public enum SettingsSearchIndex {
             keywords: [
                 "hugging face", "hf cache", "lm studio", "external", "import models", "external models",
                 "models on this mac", "other apps", "model sources", "rescan",
+                "hugging face downloads and model folders", "model folders",
             ]
         ),
         .init(
@@ -4189,21 +4194,22 @@ public enum SettingsSearchIndex {
             tab: .models,
             title: "Model kind",
             keywords: [
-                "language models", "image models", "speech models", "embedding models", "privacy detection models",
-                "applescript models", "on device", "catalog", "whisper", "parakeet", "ideogram",
+                "chat models", "language models", "image models", "speech models", "search and memory models",
+                "embedding models", "privacy detection models", "applescript models", "on device", "catalog",
+                "whisper", "parakeet", "ideogram",
             ],
-            disambiguation: "Switches Local Models between Language, Image, Speech, Embedding, Privacy Detection and AppleScript models."
+            disambiguation: "Switches Local Models between Chat, Image, Speech, Search & Memory, Privacy Detection and AppleScript models. Chat was called Language and Search & Memory was called Embedding."
         ),
         .init(
             id: "models.embedding",
             tab: .models,
-            title: "Embedding",
+            title: "Search & Memory",
             keywords: [
-                "embedding models", "download embedding model", "embedder", "vector model", "qwen3 embedding",
+                "embedding", "embedding models", "search and memory models", "download embedding model", "embedder", "vector model", "qwen3 embedding",
                 "bge", "mxbai", "modernbert", "e5", "minilm", "potion", "model2vec", "sentence transformers",
             ],
             subTab: "embedding",
-            disambiguation: "Downloads embedding models. The one in use is chosen in Model Defaults → Embedding Model."
+            disambiguation: "Downloads the models behind memory and knowledge search (embedding models). The one in use is chosen in Model Defaults → Search & Memory Model."
         ),
 
         // MARK: Model Defaults (which model Osaurus uses for each kind of job)
@@ -4255,13 +4261,13 @@ public enum SettingsSearchIndex {
         .init(
             id: "modelDefaults.embedding",
             tab: .modelDefaults,
-            section: "Embedding",
-            title: "Embedding Model",
+            section: "Search & Memory",
+            title: "Search & Memory Model",
             keywords: [
-                "embedding model", "embeddings", "embedder", "vector search", "semantic search", "memory search",
+                "embedding model", "search and memory model", "embeddings", "embedder", "vector search", "semantic search", "memory search",
                 "knowledge search", "rag", "qwen3 embedding", "potion", "model2vec", "/v1/embeddings",
             ],
-            disambiguation: "Chooses the model behind memory, knowledge, skill, method and tool search and the embeddings API. Applies after Osaurus restarts; indexes rebuild in the background. Download more in Local Models → Embedding."
+            disambiguation: "Chooses the model behind memory, knowledge, skill, method and tool search and the embeddings API. Applies after Osaurus restarts; indexes rebuild in the background. Download more in Local Models → Search & Memory."
         ),
         .init(
             id: "modelDefaults.detection",
@@ -4281,8 +4287,11 @@ public enum SettingsSearchIndex {
             id: "modelDefaults.appleScriptResidency",
             tab: .modelDefaults,
             section: "AppleScript",
-            title: "AppleScript Model Residency",
-            keywords: ["applescript load policy", "keep loaded", "unload applescript", "residency"]
+            title: "Keep AppleScript Model Loaded",
+            keywords: [
+                "applescript model residency", "applescript load policy", "keep loaded", "unload applescript",
+                "residency", "stay ready briefly",
+            ]
         ),
         .init(
             id: "providers.overview",
@@ -4924,6 +4933,19 @@ public enum SettingsSearchIndex {
             ],
             subTab: "workflows",
             disambiguation: "On Workflows Home, under the title, while any workflow is running: each run with the step it is on (Step 4 of 6) and how long it has been going, Stop, and Answer when it waits on you. A run that just ended stays a few seconds, then leaves. The same live state shows in the sidebar row (a spinner and Running · Step 4 of 6) and at the top of the workflow's page."
+        ),
+        .init(
+            id: "workflows.installing",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Installing",
+            keywords: [
+                "installing workflow", "adding workflow", "download model for workflow", "workflow download",
+                "background install", "install progress", "installer", "minimise install", "cancel install",
+                "workflow needs a model", "set up workflow automatically",
+            ],
+            subTab: "workflows",
+            disambiguation: "On Workflows Home, above Running Now, while a workflow is being added in the background: each one with how far along it is, what Osaurus is doing (Downloading the image model) and the time left, Cancel, Answer when it needs one more answer, and Try Again when it stopped. Click a row (or Show in its toast) to reopen its installer. A finished one leaves for Your Workflows with a toast offering Try It. Adding a workflow opens the installer, which downloads its models, sets up the sandbox and installs packages by itself; Continue in Background minimises it."
         ),
         .init(
             id: "workflows.getStarted",

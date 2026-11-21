@@ -168,6 +168,39 @@ struct SyncWorkflowCardTests {
         #expect(SyncWorkflowOutput.payload(for: run, staging: staging).digest != before.digest)
     }
 
+    @Test func aRunStillGoingSendsOnlyItsFinishedStepsAndNoOutputOrFiles() throws {
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("output-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let report = staging.appendingPathComponent("draft.md")
+        try Data("half".utf8).write(to: report)
+
+        var run = Self.run()
+        run.status = .running
+        run.output = .object(["text": .string("not final")])
+        run.artifacts = [WorkflowArtifact(source: .shared, filename: "draft.md", path: report.path, fileSize: 4)]
+        var gathered = NodeRun(nodeID: "gather", status: .done)
+        gathered.output = .object(["notes": .string("three sources")])
+        var thinking = NodeRun(nodeID: "think", status: .running)
+        thinking.logs = ["halfway"]
+        run.nodes = [gathered, thinking, NodeRun(nodeID: "wrap", status: .pending)]
+        let payload = SyncWorkflowOutput.payload(for: run, staging: staging, finishedOnly: true)
+
+        let steps = try #require(payload.object["steps"]?.arrayValue).compactMap(\.objectValue)
+        #expect(steps.count == 3)
+        #expect(steps[0]["output"] == .object(["notes": .string("three sources")]))
+        // Not finished: by id only, nothing of what it's doing.
+        #expect(steps[1] == ["id": .string("think"), "pending": .bool(true)])
+        #expect(steps[2] == ["id": .string("wrap"), "pending": .bool(true)])
+        #expect(payload.object["output"] == nil)
+        #expect(payload.object["files"] == nil)
+        #expect(payload.blobs.isEmpty)
+
+        // The next step finishing changes the digest, so the message is written again.
+        run.nodes[1].status = .done
+        #expect(SyncWorkflowOutput.payload(for: run, staging: staging, finishedOnly: true).digest != payload.digest)
+    }
+
     @Test func aStepsLogIsCappedAndAnOversizedOutputGoesWithoutLogsOrToolCalls() throws {
         let staging = FileManager.default.temporaryDirectory.appendingPathComponent("output-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)

@@ -65,6 +65,10 @@ enum SyncDeviceFeedContract {
         "workflow_step_details",
         "directory_models",
         "manage_workflows",
+        "workflow_file_inputs",
+        "workflow_live_steps",
+        "workflow_run_approvals",
+        "workflow_file_fetch",
     ]
 
     /// Each device's record under `prefix`, keyed by device key. With
@@ -264,6 +268,9 @@ enum SyncDeviceFeedContract {
             case runWorkflow
             /// `runId`: writes a finished run's output message (§5.5) and answers once it's written.
             case workflowOutput
+            /// `runId`, `fileId` (`workflow_file_fetch`): writes one of a finished run's files too large for its output
+            /// as its own message, and answers once it's written.
+            case workflowFile
             /// An op this Mac's build doesn't know.
             case unsupported
 
@@ -307,8 +314,14 @@ enum SyncDeviceFeedContract {
         /// `runWorkflow`
         var workflowId: String?
         var input: JSONValue?
+        /// `runWorkflow` (`workflow_file_inputs`): files the phone attached, by field key.
+        var files: [String: WorkflowFileRef]?
         /// `workflowOutput`
         var runId: String?
+        /// `workflowOutput` (`workflow_live_steps`): a run still going too, with its finished steps' details.
+        var partial: Bool?
+        /// `workflowFile`: the file's id in the run's output.
+        var fileId: String?
         var requestedMs: Int64
 
         init(
@@ -335,6 +348,13 @@ enum SyncDeviceFeedContract {
             self.scope = scope
             self.requestedMs = requestedMs
         }
+    }
+
+    /// A file the phone attached for one `runWorkflow` field: its message on the manage conversation and the
+    /// attachment's hash there. A reference, never a path (`SyncWorkflowInputs`).
+    struct WorkflowFileRef: Codable, Equatable, Sendable {
+        var message: String
+        var blob: String
     }
 
     struct ManageRequests: Codable, Equatable, Sendable {

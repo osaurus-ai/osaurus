@@ -131,25 +131,27 @@ struct LocalModelsCatalogPage: View {
             if let pending = pendingSelectionId {
                 select(modelId: pending)
             } else if let selection, !ids.contains(selection) {
-                closeInspector()
+                // A model's row hands off to the row of the build that
+                // replaced it (download started, bundle deleted).
+                if let successor = source.items.first(where: { $0.versions.contains { $0.id == selection } }) {
+                    self.selection = successor.id
+                } else {
+                    closeInspector()
+                }
             }
         }
         // Replays on subscribe, so a link that arrived before this view
         // existed (cold launch) is applied on first render too.
-        .onReceive(managementState.$pendingModelDeepLink) { request in
-            guard let request, source.kind == .language else { return }
+        .onPendingRequest(managementState.$pendingModelDeepLink) {
+            guard let request = managementState.pendingModelDeepLink, source.kind == .language else { return }
             managementState.pendingModelDeepLink = nil
             applyModelDeepLink(request.modelId)
         }
-        .onReceive(managementState.$pendingModelDetailId) { _ in
-            DispatchQueue.main.async { applyPendingModelDetail() }
-        }
-        .onReceive(managementState.$pendingHuggingFaceTokenPrompt) { requested in
-            guard requested, source.kind == .language else { return }
+        .onPendingRequest(managementState.$pendingModelDetailId) { applyPendingModelDetail() }
+        .onPendingRequest(managementState.$pendingHuggingFaceTokenPrompt) {
+            guard managementState.pendingHuggingFaceTokenPrompt, source.kind == .language else { return }
             managementState.pendingHuggingFaceTokenPrompt = false
-            // Presenting from inside the publisher callback is dropped
-            // (replay lands mid-render), so hop a turn.
-            DispatchQueue.main.async { showTokenPromptForDeepLink = true }
+            showTokenPromptForDeepLink = true
         }
         .sheet(isPresented: $showTokenPromptForDeepLink) {
             HuggingFaceTokenPromptSheet { retryDeepLinkAfterTokenSaved() }
@@ -197,7 +199,7 @@ struct LocalModelsCatalogPage: View {
                 set: { if !$0 { unsupportedModelName = nil } }
             ),
             message: L(
-                "\(unsupportedModelName ?? "") isn't an MLX model, so it can't be used in Osaurus. The local engine runs MLX-format models only."
+                "\(unsupportedModelName ?? "") is in a format Osaurus can't run on this Mac. Look for a version of this model from OsaurusAI or mlx-community instead."
             ),
             primaryButton: .primary(L("OK")) { unsupportedModelName = nil }
         )

@@ -33,19 +33,27 @@ enum WorkflowExecutionContext {
         }
     }
 
-    // Split in two: one closure nesting every binding is too much for the type checker.
+    // Split up: one closure nesting every binding is too much for the type checker.
     private static func bindChatContext<T>(
         _ context: WorkflowNodeContext, caller: WorkflowCaller, granted: Set<String>, _ body: () async throws -> T
     ) async throws -> T {
         try await ChatExecutionContext.$currentWorkflowRunId.withValue(context.runID) {
-            try await ChatExecutionContext.$currentWorkflowNodeId.withValue(context.node.id) {
-                try await ChatExecutionContext.$currentWorkflowStepReason.withValue(context.node.approvalReason) {
-                    try await ChatExecutionContext.$currentAgentId.withValue(caller.agentID) {
-                        try await ChatExecutionContext.$usesSharedKeysOnly.withValue(caller.credentialAgentID == nil) {
-                            try await ChatExecutionContext.$currentSessionId.withValue(caller.sessionID) {
-                                try await ChatExecutionContext.$currentToolCallId.withValue(caller.toolCallID) {
-                                    try await bindRunScope(context, caller: caller, granted: granted, body)
-                                }
+            try await ChatExecutionContext.$currentRootWorkflowRunId.withValue(caller.rootRunID ?? context.runID) {
+                try await bindStep(context, caller: caller, granted: granted, body)
+            }
+        }
+    }
+
+    private static func bindStep<T>(
+        _ context: WorkflowNodeContext, caller: WorkflowCaller, granted: Set<String>, _ body: () async throws -> T
+    ) async throws -> T {
+        try await ChatExecutionContext.$currentWorkflowNodeId.withValue(context.node.id) {
+            try await ChatExecutionContext.$currentWorkflowStepReason.withValue(context.node.approvalReason) {
+                try await ChatExecutionContext.$currentAgentId.withValue(caller.agentID) {
+                    try await ChatExecutionContext.$usesSharedKeysOnly.withValue(caller.credentialAgentID == nil) {
+                        try await ChatExecutionContext.$currentSessionId.withValue(caller.sessionID) {
+                            try await ChatExecutionContext.$currentToolCallId.withValue(caller.toolCallID) {
+                                try await bindRunScope(context, caller: caller, granted: granted, body)
                             }
                         }
                     }

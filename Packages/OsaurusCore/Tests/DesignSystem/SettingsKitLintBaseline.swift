@@ -48,6 +48,7 @@ enum SettingsKitLintBaseline {
         "Views/Sandbox/ProvisioningJourneyView.swift": ["rawTextFont"],  // animated journey
         "Views/Template/WorkflowShareCardView.swift": ["capsuleFill", "uppercaseTitle", "rawTextFont", "rawSystemFont", "namedColor"],  // rendered share image: fixed ink-on-paper artwork
         "Views/Workspaces/WorkspacesIntroExplainer.swift": ["handChrome", "capsuleFill", "rawTextFont"],  // illustration
+        "Views/Settings/ClassicUpgradeExplainer.swift": ["handChrome", "capsuleFill", "rawFixedWidth"],  // illustration
 
         // Shared components the kit builds on.
         "Views/Common/InlineBanner.swift": ["rawTextFont"],  // shared component

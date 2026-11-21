@@ -143,6 +143,49 @@ struct WorkflowSetupStepsTests {
     }
 
     @Test
+    func mediaOnlyTemplateGetsTheModelsStep() {
+        var t = Template(name: "Character Forge", payload: .workflow(WorkflowDefinition()))
+        let media = MediaModelRequirement(action: .generate, model: MediaModelSelector(family: "qwen-image-2.1"))
+        t.requirements.mediaModels = [media]
+        var missing = SetupItem(kind: .mediaModel, severity: .blocking, title: media.label, detail: "", value: media.id)
+        missing.needsMediaModel = true
+        let report = SetupReport(subjectId: t.id, items: [missing])
+
+        #expect(WorkflowSetupWizardView.steps(for: subject(.install, t), report: report, newRequirements: nil) == [.models, .review])
+        #expect(WorkflowSetupWizardView.Step.models.items(in: report) == [missing])
+        #expect(
+            WorkflowSetupWizardView.steps(
+                for: subject(.update(UUID()), t), report: report, newRequirements: TemplateDiff.NewRequirements())
+                == [.models, .review], "a missing image model is asked about on update too")
+        let needs = WorkflowModelsStep.mediaNeeds(t, items: [missing])
+        #expect(needs.map(\.requirement) == [media])
+        #expect(needs.first?.issue == missing)
+    }
+
+    @Test
+    func imageToolWithNoModelIsAModelsItemNotATool() {
+        let t = Template(name: "Sketch", payload: .workflow(WorkflowDefinition()))
+        var noModel = blocking(.tool, "image")
+        noModel.needsMediaModel = true
+        let denied = blocking(.tool, "browser_use")
+        let report = SetupReport(subjectId: t.id, items: [noModel, denied])
+
+        #expect(WorkflowSetupWizardView.Step.models.items(in: report) == [noModel])
+        #expect(WorkflowSetupWizardView.Step.tools.items(in: report) == [denied])
+        #expect(
+            WorkflowSetupWizardView.steps(for: subject(.install, t), report: report, newRequirements: nil)
+                == [.models, .tools, .review])
+        let needs = WorkflowModelsStep.mediaNeeds(t, items: [noModel])
+        #expect(needs.map(\.tool) == ["image"])
+        #expect(needs.first?.requirement.action == .generate)
+
+        let onlyNoModel = SetupReport(subjectId: t.id, items: [noModel])
+        #expect(
+            WorkflowSetupWizardView.steps(for: subject(.install, t), report: onlyNoModel, newRequirements: nil)
+                == [.models, .review])
+    }
+
+    @Test
     func savedAnswersStepOnlyForInstalledWorkflowsWithRememberedFields() {
         var def = WorkflowDefinition()
         def.nodes = [

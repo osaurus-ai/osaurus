@@ -25,10 +25,10 @@ enum LocalModelKind: String, CaseIterable, Identifiable, Sendable, AnimatedTabIt
 
     var title: String {
         switch self {
-        case .language: L("Language")
+        case .language: L("Chat")
         case .image: L("Image")
         case .speech: L("Speech")
-        case .embedding: L("Embedding")
+        case .embedding: L("Search & Memory")
         case .detection: L("Privacy Detection")
         case .appleScript: L("AppleScript")
         }
@@ -48,9 +48,9 @@ enum LocalModelKind: String, CaseIterable, Identifiable, Sendable, AnimatedTabIt
     var subtitle: String {
         switch self {
         case .language: L("Chat and vision models that run on this Mac")
-        case .image: L("Image generation and editing bundles")
+        case .image: L("Models that create and edit images on this Mac")
         case .speech: L("Speech-to-text models for voice input and transcription")
-        case .embedding: L("Models that turn text into vectors for memory, knowledge and capability search")
+        case .embedding: L("Models that power memory and knowledge search")
         case .detection: L("On-device models that find personal data before it leaves your Mac")
         case .appleScript: L("Models that write and run AppleScript to automate this Mac")
         }

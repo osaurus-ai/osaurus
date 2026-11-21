@@ -357,10 +357,10 @@ struct ModelDetailView: View, Identifiable {
         }
     }
 
-    /// Badge showing whether model is LLM or VLM
+    /// Badge showing whether the model reads text only or text and images.
     private var modelTypeBadge: some View {
         let isVLM = detectIsVLM()
-        let typeLabel = model.isDecision ? "D3" : (isVLM ? "VLM" : "LLM")
+        let typeLabel = model.isDecision ? L("Decision") : (isVLM ? L("Vision") : L("Text"))
         let color: Color = isVLM ? theme.dataInk(.purple) : theme.action.primary.default.background
 
         return StatusChip(typeLabel, tint: color)
@@ -565,7 +565,7 @@ struct ModelDetailView: View, Identifiable {
                 SettingsFactText(label: L("Download size"), value: estimatedSizeString)
 
                 if let weights = model.weightSizeBytes {
-                    SettingsFactText(label: L("Target weight files"), value: MLXModel.formattedFileSize(weights))
+                    SettingsFactText(label: L("Model files"), value: MLXModel.formattedFileSize(weights))
                 }
                 if let memory = model.formattedEstimatedMemory {
                     SettingsFactText(label: L("Estimated memory while running"), value: memory)
@@ -582,7 +582,7 @@ struct ModelDetailView: View, Identifiable {
 
                 SettingsFactText(
                     label: L("Type"),
-                    value: detectIsVLM() ? L("Vision + Language") : L("Language")
+                    value: detectIsVLM() ? L("Text + images") : L("Text")
                 )
 
                 if let params = model.parameterCount {
@@ -590,7 +590,7 @@ struct ModelDetailView: View, Identifiable {
                 }
 
                 if let quant = model.quantization {
-                    SettingsFactText(label: L("Quantization"), value: quant)
+                    SettingsFactText(label: L("Version"), value: quant)
                 }
 
                 if let license = hfDetails?.license {
@@ -795,7 +795,7 @@ struct ModelDetailView: View, Identifiable {
 
     /// Picker over every precision/quant build of this model family, shown
     /// only when there is more than one. Rows lead with plain language
-    /// ("Highest precision" / "Smallest download") plus size and RAM fit;
+    /// ("Best quality" / "Balanced" / "Smallest download") plus size and RAM fit;
     /// selecting a row swaps the whole sheet to that build so the footer's
     /// Download/Delete act on it. The build the catalog card represents is
     /// marked Recommended.
@@ -843,14 +843,11 @@ struct ModelDetailView: View, Identifiable {
         }
     }
 
-    /// Plain-language one-liner for a variant's position in the family:
-    /// the largest build is the quality pick, the smallest the download
-    /// pick. `ordered` is size-descending.
+    /// Plain-language label for a variant's place in the family
+    /// (`ModelVersionFraming`). `ordered` is size-descending.
     private func variantFraming(_ variant: MLXModel, in ordered: [MLXModel]) -> String? {
-        guard ordered.count > 1 else { return nil }
-        if variant.id == ordered.first?.id { return L("Highest precision") }
-        if variant.id == ordered.last?.id { return L("Smallest download") }
-        return nil
+        guard let index = ordered.firstIndex(where: { $0.id == variant.id }) else { return nil }
+        return ModelVersionFraming.label(index: index, count: ordered.count)
     }
 
     private func variantRow(
@@ -895,7 +892,7 @@ struct ModelDetailView: View, Identifiable {
 
                 VStack(alignment: .leading, spacing: theme.space.s2) {
                     HStack(spacing: theme.space.s6) {
-                        Text(quantLabel)
+                        Text(framing ?? quantLabel)
                             .font(SettingsFont.compactLabel)
                             .foregroundColor(theme.text.primary)
                             .lineLimit(1)
@@ -915,17 +912,11 @@ struct ModelDetailView: View, Identifiable {
                         }
                     }
 
-                    if let framing {
-                        Text(framing)
-                            .font(SettingsFont.rowDescription)
-                            .foregroundColor(theme.text.secondary)
-                    }
-
                     Text(fitText)
                         .font(SettingsFont.chip)
                         .foregroundColor(fitTint)
 
-                    Text(repoTail)
+                    Text(framing == nil ? repoTail : "\(quantLabel) · \(repoTail)")
                         .font(SettingsFont.monoSmall)
                         .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)

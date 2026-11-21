@@ -26,7 +26,8 @@ enum WorkflowDialogAttention {
         let message = AttentionDetail.clip(dialog.message, messageCharacters)
         var object: [String: Any] = [
             "workflow": dialog.workflowName,
-            "run_id": dialog.runID.uuidString.lowercased(),
+            // The run a person started: a sub-workflow's form shows on it, the one an iPhone follows.
+            "run_id": (dialog.caller.rootRunID ?? dialog.runID).uuidString.lowercased(),
             "node_id": dialog.nodeID,
             "title": dialog.title,
             "message": message.text,

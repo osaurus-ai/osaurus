@@ -263,11 +263,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // A phone paired with the 6-digit code before this launch: take the
         // keep-awake assertion and keep agents created from now on reachable
-        // over the relay (the service's init does both). Kept for one release
-        // beside Sync; the first time an iPhone joins Sync, the migration
-        // undoes the old pairing's tunnels and key. Keep-awake holds while an
-        // iPhone syncs.
-        if !MobileConnectMigration.isRetired() { _ = MobilePairingService.shared }
+        // over the relay (the service's init does both). Kept beside Sync, also
+        // after an iPhone has joined Sync, so an iPhone still on Classic can pair;
+        // the first time one joins, the migration undoes the old pairing's
+        // tunnels and key. Keep-awake holds while an iPhone syncs.
+        _ = MobilePairingService.shared
         SyncPhoneDevices.shared.start()
         MobileConnectMigration.start()
         // Phone chats from before they were titled by content, once. Waits for
@@ -717,6 +717,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // toward self-heal.
             WorkflowSelfHealMonitor.shared.start()
             WorkflowRunService.shared.resumeAbandonedRuns()
+            WorkflowInstallCoordinator.shared.resumeAfterLaunch()
+            WorkflowInstallToasts.shared.start()
         }
 
         // Incremental knowledge index pass so collection folder changes

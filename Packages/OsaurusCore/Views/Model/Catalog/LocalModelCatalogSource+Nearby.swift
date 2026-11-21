@@ -93,7 +93,7 @@ extension LocalModelCatalogSource {
             claimed.formUnion(matching.map(\.id))
             let hosts = Self.hostNames(matching)
             row.nearbyHosts = hosts
-            row.facts.append(.init(label: "Source", value: hosts.joined(separator: ", ")))
+            row.facts.append(.init(label: "Nearby Mac", value: hosts.joined(separator: ", ")))
             guard !row.status.isOnThisMac else { return row }
             row.badges.append(Self.nearbyBadge(hosts))
             let offer = matching[0]

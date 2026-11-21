@@ -17,8 +17,8 @@
 //  - carries the keep-awake preference over to Devices and clears every
 //    `mobileConnect*` default.
 //
-//  From then on the pairing routes answer `410 update_required`
-//  (`isRetired`) and the Mobile page says the iPhone uses Sync.
+//  The 6-digit pairing itself stays open after it, so another iPhone still
+//  on Classic can pair (`isRetired` only says the migration ran).
 //
 
 import Combine
@@ -63,10 +63,8 @@ enum MobileConnectMigration {
                 disableTunnel: { RelayTunnelManager.shared.setTunnelEnabled(false, for: $0) },
                 accessKeys: { APIKeyManager.shared.listKeys() },
                 revokeKey: { APIKeyManager.shared.revoke(id: $0) },
-                endPairing: {
-                    MobilePairingService.shared.retire()
-                    MobileConnectAdvertiser.shared.stopAdvertising()
-                }
+                // The old phone is forgotten, but pairing stays open for another iPhone still on Classic.
+                endPairing: { MobilePairingService.shared.retire() }
             )
         }
     }
@@ -74,24 +72,62 @@ enum MobileConnectMigration {
     struct Outcome: Equatable {
         var tunnelsDisabled: [UUID] = []
         var keysRevoked: [UUID] = []
+        /// Left on by Move to Sync, so the old app hears it was unpaired.
+        var tunnelsKept: [UUID] = []
     }
+
+    /// Move to Sync leaves the old pairing's tunnels on until the relay itself is retired. A Classic iPhone app away
+    /// from home reaches this Mac only through them, and learns it was unpaired only from this Mac's 401 for the
+    /// revoked key: with the tunnels off it gets the relay's "offline" instead and thinks the Mac is asleep. The key
+    /// is revoked at once, so nothing gets through them. No time limit, so nothing for the user to know about.
+    /// Recorded here for whoever retires the relay.
+    static let keptTunnelsKey = "mobileConnectKeptTunnels"
 
     @MainActor private static var phoneWatch: AnyCancellable?
 
     /// Runs the migration the first time an iPhone shows up in Sync.
+    /// The Sync iPhones this Mac has seen, so one joining for the first time stands out.
+    static let seenSyncPhonesKey = "mobileConnectSeenSyncPhones"
+
+    /// Watches the account's iPhones for as long as the app runs: the first to join retires the old pairing, and
+    /// since the 6-digit pairing stays open, a later one joining while a phone is paired with it (that phone moving
+    /// to Sync) undoes that pairing too.
     @MainActor
     static func start() {
-        guard phoneWatch == nil, !isRetired() else { return }
-        phoneWatch = SyncPhoneDevices.shared.$hasPhone
+        guard phoneWatch == nil else { return }
+        phoneWatch = SyncPhoneDevices.shared.$phoneKeys
             .removeDuplicates()
-            .filter { $0 }
             .receive(on: DispatchQueue.main)
-            .sink { _ in
-                MainActor.assumeIsolated {
-                    runIfNeeded(iPhoneInSync: true)
-                    phoneWatch = nil
-                }
+            .sink { keys in
+                MainActor.assumeIsolated { _ = phonesChanged(keys) }
             }
+    }
+
+    /// `keys`: the account's iPhones now. Returns what was undone, if anything.
+    @MainActor
+    @discardableResult
+    static func phonesChanged(
+        _ keys: Set<String>,
+        defaults: UserDefaults = .standard,
+        environment: Environment? = nil
+    ) -> Outcome? {
+        guard !keys.isEmpty else { return nil }
+        let recorded = defaults.stringArray(forKey: seenSyncPhonesKey)
+        defaults.set(Array(keys.union(recorded ?? [])).sorted(), forKey: seenSyncPhonesKey)
+        // The first iPhone in Sync: the one-time retirement.
+        guard isRetired(defaults: defaults) else {
+            return runIfNeeded(iPhoneInSync: true, defaults: defaults, environment: environment)
+        }
+        // Retired before this Mac recorded its iPhones: they're taken as the ones already there.
+        guard let recorded else { return nil }
+        let joined = keys.subtracting(recorded)
+        guard !joined.isEmpty, defaults.object(forKey: pairedDeviceKey) != nil else { return nil }
+        let outcome = undoLegacyPairing(defaults: defaults, environment: environment ?? .live)
+        MobileConnectLog.write(
+            "mobile: an iPhone paired with a code joined Sync; "
+                + "\(outcome.tunnelsDisabled.count) tunnel(s) off, \(outcome.keysRevoked.count) key(s) revoked"
+        )
+        return outcome
     }
 
     /// Nil when it already ran, or when no iPhone has joined Sync yet. Once an
@@ -106,14 +142,46 @@ enum MobileConnectMigration {
     ) -> Outcome? {
         guard iPhoneInSync, !isRetired(defaults: defaults) else { return nil }
         defaults.set(true, forKey: doneKey)
-        let env = environment ?? .live
+        let outcome = undoLegacyPairing(defaults: defaults, environment: environment ?? .live)
+        MobileConnectLog.write(
+            "mobile: an iPhone joined Sync, retired the 6-digit pairing; "
+                + "\(outcome.tunnelsDisabled.count) tunnel(s) off, \(outcome.keysRevoked.count) key(s) revoked"
+        )
+        return outcome
+    }
 
+    /// Move to Sync (Devices → Upgrading from Classic?): unpairs every device paired through the relay, as an iPhone
+    /// joining Sync would. Chats stay on this Mac; the 6-digit pairing stays open.
+    @MainActor
+    static func unpairForSync(defaults: UserDefaults = .standard, environment: Environment? = nil) async {
+        // A turn first, so the button's spinner shows before the work.
+        await Task.yield()
+        let outcome = undoLegacyPairing(
+            defaults: defaults, environment: environment ?? .live, keepTunnels: true)
+        MobileConnectLog.write(
+            "mobile: moved to Sync from Devices; \(outcome.keysRevoked.count) key(s) revoked, "
+                + "\(outcome.tunnelsKept.count) tunnel(s) kept on to tell the old app it was unpaired"
+        )
+    }
+
+    /// What the 6-digit pairing left: the tunnels it turned on, its phone's key, its defaults, the paired phone.
+    @MainActor
+    private static func undoLegacyPairing(
+        defaults: UserDefaults, environment env: Environment, keepTunnels: Bool = false
+    ) -> Outcome {
         var outcome = Outcome()
         let managed = (defaults.stringArray(forKey: relayManagedAgentsKey) ?? []).compactMap(UUID.init(uuidString:))
+        var kept = Set(defaults.stringArray(forKey: keptTunnelsKey) ?? [])
         for agentId in managed.sorted(by: { $0.uuidString < $1.uuidString }) where env.isTunnelEnabled(agentId) {
-            env.disableTunnel(agentId)
-            outcome.tunnelsDisabled.append(agentId)
+            if keepTunnels {
+                kept.insert(agentId.uuidString)
+                outcome.tunnelsKept.append(agentId)
+            } else {
+                env.disableTunnel(agentId)
+                outcome.tunnelsDisabled.append(agentId)
+            }
         }
+        if !outcome.tunnelsKept.isEmpty { defaults.set(kept.sorted(), forKey: keptTunnelsKey) }
         for key in env.accessKeys() where legacyKeyLabels.contains(key.label) && !key.revoked {
             env.revokeKey(key.id)
             outcome.keysRevoked.append(key.id)
@@ -123,10 +191,6 @@ enum MobileConnectMigration {
         }
         for key in legacyDefaultsKeys { defaults.removeObject(forKey: key) }
         env.endPairing()
-        MobileConnectLog.write(
-            "mobile: an iPhone joined Sync, retired the 6-digit pairing; "
-                + "\(outcome.tunnelsDisabled.count) tunnel(s) off, \(outcome.keysRevoked.count) key(s) revoked"
-        )
         return outcome
     }
 }

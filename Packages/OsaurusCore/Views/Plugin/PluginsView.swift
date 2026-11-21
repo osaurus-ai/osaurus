@@ -235,7 +235,7 @@ struct PluginsView: View {
             }
             applyPendingPluginDetailRequest()
         }
-        .onReceive(managementState.$pendingPluginDetailId) { _ in
+        .onPendingRequest(managementState.$pendingPluginDetailId) {
             applyPendingPluginDetailRequest()
         }
         .task(id: searchText) {
@@ -255,8 +255,8 @@ struct PluginsView: View {
         .onReceive(PluginRepositoryService.shared.$isRefreshing) { isRepoRefreshing = $0 }
         .onReceive(PluginRepositoryService.shared.$updatesAvailableCount) { updatesAvailableCount = $0 }
         .onReceive(PluginRepositoryService.shared.$lastError) { repoLastError = $0 }
-        .onReceive(PluginRepositoryService.shared.$pendingSecretsPlugin) { newValue in
-            if let pluginId = newValue {
+        .onPendingRequest(PluginRepositoryService.shared.$pendingSecretsPlugin) {
+            if let pluginId = repoService.pendingSecretsPlugin {
                 showSecretsSheetForPlugin(pluginId: pluginId)
                 repoService.pendingSecretsPlugin = nil
             }

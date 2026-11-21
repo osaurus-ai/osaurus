@@ -4,9 +4,10 @@
 //
 //  Sharing → Devices: the user's own Macs and iPhones in one sync account.
 //  Whether chats sync and how devices find each other, whether this Mac
-//  runs agents for the others (what the iPhone needs), one device list,
-//  one Add a Device flow for a Mac or an iPhone, the iPhone's keep-awake and
-//  handoff, the recovery phrase, storage, a support report, and sign-out.
+//  runs agents for the others (what the iPhone needs), the iPhone's
+//  keep-awake and handoff, one device list with the iPhone app's link, an
+//  Add Device menu in the header (add an iPhone or iPad, or join another
+//  device), the recovery phrase, storage, a support report, and sign-out.
 //
 
 import AppKit
@@ -22,6 +23,7 @@ struct DevicesView: View {
     @ObservedObject private var model = SyncStatusModel.shared
     @ObservedObject private var importer = SyncLegacyImporter.shared
     @ObservedObject private var phones = SyncPhoneDevices.shared
+    @ObservedObject private var legacyPairing = MobilePairingService.shared
     @AppStorage(SyncPhoneDevices.keepAwakeDefaultsKey) private var keepMacAwake = true
     @AppStorage(PhoneChatHandoff.defaultsKey) private var continuePhoneChats = true
 
@@ -37,29 +39,70 @@ struct DevicesView: View {
     /// A removal (and its change of phrase) is running: a second can't start until it ends.
     @State private var isRemoving = false
     @State private var actionError: String?
+    /// The Add Device menu's sheet: the code an iPhone or iPad scans, or the field for another device's link.
+    @State private var pairSheet: PairSheet?
+    /// Adding an iPhone or iPad: which way its pairing screen asks, once said.
+    @State private var phoneMethod: PhoneMethod = .ask
+    /// When the 6-digit way was chosen: a phone paired since then was added by this sheet.
+    @State private var codeChosenAt: Date?
+
+    private enum PhoneMethod {
+        /// Not said yet: the sheet asks what the phone's pairing screen shows.
+        case ask
+        /// A QR code to scan: Sync.
+        case scan
+        /// A 6-digit code to type in: an app without Sync (the Mobile page's pairing).
+        case code
+    }
+
+    private enum PairSheet: String, Identifiable {
+        case addPhone, join
+        var id: String { rawValue }
+    }
 
     private static let qrSide: CGFloat = 136
+
+    /// "Upgrading from Classic?" (`ClassicUpgradeSheet`).
+    @State private var showsClassicUpgrade = false
+    /// Set once the sheet has been closed: it opens by itself only before that; the chip by the title opens it any time.
+    @AppStorage("devices.classicUpgradeSeen") private var classicUpgradeSeen = false
+    /// Its Move to Sync: the QR code opens once it has closed, as one sheet can't open over another.
+    @State private var connectsAfterClassicUpgrade = false
 
     var body: some View {
         SettingsPage {
             SettingsPageHeader(
                 title: "Devices",
-                subtitle: "Your Macs and iPhones in one end-to-end encrypted account, with no account to create"
+                subtitle: "Your Macs and iPhones in one end-to-end encrypted account, with no account to create",
+                titleAccessory: AnyView(classicUpgradeChip),
+                primary: {
+                    SettingsMenuButton(.primary, "Add Device", icon: "plus") {
+                        Button(action: addPhone) {
+                            Label(L("Add iPhone or iPad"), systemImage: "iphone")
+                        }
+                        Button(action: startJoining) {
+                            Label(L("Join Another Device"), systemImage: "link")
+                        }
+                    }
+                    .disabled(!model.isOpen || model.isConfirmingPairing || model.pairing == .joining)
+                    .settingsLandingAnchor("settings.sync.addDevice")
+                    .settingsLandingAnchor("settings.sync.join")
+                }
             )
         } content: {
             notices
+            overviewCard
             syncSection
             devicesSection
-            addDeviceSection
-            iPhoneSection
             recoverySection
-            storageSection
             supportSection
             signOutSection
         }
         .onAppear {
             model.start()
             model.beginWatching()
+            // Once, on the first visit; the chip by the title opens it after that.
+            if !classicUpgradeSeen { showsClassicUpgrade = true }
         }
         .onDisappear {
             model.endWatching()
@@ -67,6 +110,42 @@ struct DevicesView: View {
             newPhrase = nil
         }
         .onChange(of: keepMacAwake) { _, _ in phones.refreshKeepAwake() }
+        .sheet(item: $pairSheet, onDismiss: endPairing) { kind in pairingSheet(kind) }
+        .onChange(of: model.pairing) { _, pairing in
+            if pairing == .expired { renewExpiredCode() }
+        }
+        .sheet(
+            isPresented: $showsClassicUpgrade,
+            onDismiss: {
+                classicUpgradeSeen = true
+                guard connectsAfterClassicUpgrade else { return }
+                connectsAfterClassicUpgrade = false
+                isJoining = false
+                showScanCode()
+            }
+        ) {
+            ClassicUpgradeSheet(
+                onMove: {
+                    await MobileConnectMigration.unpairForSync()
+                    connectsAfterClassicUpgrade = true
+                    showsClassicUpgrade = false
+                },
+                onClose: { showsClassicUpgrade = false }
+            )
+        }
+    }
+
+    /// "Upgrading from Classic?" by the title, to open the sheet any time.
+    private var classicUpgradeChip: some View {
+        Button {
+            showsClassicUpgrade = true
+        } label: {
+            StatusChip(L("Upgrading from Classic?"), icon: "arrow.triangle.2.circlepath")
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 
     // MARK: - Notices
@@ -135,13 +214,7 @@ struct DevicesView: View {
     // MARK: - Sync
 
     private var syncSection: some View {
-        SettingsSection(title: "Sync") {
-            SettingsToggle(
-                title: "Sync Chats",
-                description: "Send and receive chats with your other devices. When off, chats stay on this Mac until you turn it back on.",
-                anchorId: "settings.sync.network",
-                isOn: Binding(get: { model.configuration.networkEnabled }, set: { model.setNetworkEnabled($0) })
-            )
+        SettingsSection(title: "Settings") {
             SettingsPickerRow(
                 title: "Find Devices",
                 description: "Same Network reaches devices on your Wi-Fi or Ethernet. Anywhere also connects through Osaurus servers, so your devices sync on different networks. Chats stay end-to-end encrypted either way.",
@@ -154,6 +227,24 @@ struct DevicesView: View {
             )
             .disabled(!model.configuration.networkEnabled)
             SettingsToggle(
+                title: "Keep Mac Awake for iPhone",
+                description: "While an iPhone is in your devices, this Mac doesn't go to sleep on its own, so your agents stay reachable. The display may still sleep, and closing a MacBook lid or choosing Sleep always wins.",
+                anchorId: "settings.devices.keepAwake",
+                isOn: $keepMacAwake
+            )
+            SettingsToggle(
+                title: "Sync Chats",
+                description: "Send and receive chats with your other devices. When off, chats stay on this Mac until you turn it back on.",
+                anchorId: "settings.sync.network",
+                isOn: Binding(get: { model.configuration.networkEnabled }, set: { model.setNetworkEnabled($0) })
+            )
+            SettingsToggle(
+                title: "Continue iPhone Chats on This Mac",
+                description: "When you come back to this Mac after this Mac answered a chat from your iPhone, that chat opens in front.",
+                anchorId: "settings.devices.continuePhoneChats",
+                isOn: $continuePhoneChats
+            )
+            SettingsToggle(
                 title: "Run Agents for My Other Devices",
                 description: "Your other devices, your iPhone included, can chat with this Mac's agents. The agents run here, with this Mac's models, tools and files, and ask before using tools on the device you're chatting on. Your iPhone needs this on.",
                 anchorId: "settings.sync.hostAgents",
@@ -162,16 +253,12 @@ struct DevicesView: View {
                     set: { model.setHostAgentsForOtherDevices($0) }
                 )
             )
-            SettingsValueRow(
-                title: "Status",
-                value: statusText,
-                dot: statusDot,
-                anchorId: "settings.sync.status"
-            )
-            if model.pendingMessages > 0 {
-                SettingsValueRow(
-                    title: "Waiting to Send",
-                    value: String(format: L("%lld messages"), model.pendingMessages)
+            if phones.hasPhone, !model.configuration.hostAgentsForOtherDevices {
+                SettingsCallout(
+                    icon: "exclamationmark.triangle.fill",
+                    title: "Your iPhone Can't Use This Mac's Agents",
+                    message: "Turn on Run Agents for My Other Devices above so your iPhone can chat with them.",
+                    tone: .warning
                 )
             }
             if model.chatsDownloading > 0, model.connectedDeviceCount > 0 {
@@ -192,12 +279,6 @@ struct DevicesView: View {
                     SettingsButton(.secondary, "Use Anywhere") { model.setNetworkMode(.anywhere) }
                 }
             }
-            if model.configuration.networkMode == .anywhere, model.configuration.networkEnabled {
-                SettingsValueRow(
-                    title: "Osaurus Servers",
-                    value: model.relays.contains(where: \.connected) ? L("Connected") : L("Not connected")
-                )
-            }
             importRow
         }
     }
@@ -205,11 +286,22 @@ struct DevicesView: View {
     private var statusText: String {
         if !model.isOpen { return L("Not running") }
         if !model.configuration.networkEnabled { return L("Off") }
-        if model.otherDeviceCount == 0 { return L("No other devices yet") }
+        if model.otherDeviceCount == 0 { return L("No devices yet") }
         if model.connectedDeviceCount > 0 {
-            return String(format: L("Connected to %lld of %lld devices"), model.connectedDeviceCount, model.otherDeviceCount)
+            return String(format: L("%lld of %lld connected"), model.connectedDeviceCount, model.otherDeviceCount)
         }
-        return L("Waiting for your other devices")
+        return L("Waiting for devices")
+    }
+
+    /// `statusText` for a narrow card: a word or two.
+    private var shortStatusText: String {
+        if !model.isOpen { return L("Not running") }
+        if !model.configuration.networkEnabled { return L("Off") }
+        if model.otherDeviceCount == 0 { return L("No devices") }
+        if model.connectedDeviceCount > 0 {
+            return String(format: L("%lld of %lld"), model.connectedDeviceCount, model.otherDeviceCount)
+        }
+        return L("Waiting")
     }
 
     private var statusDot: Color {
@@ -245,64 +337,200 @@ struct DevicesView: View {
     // MARK: - Devices
 
     private var devicesSection: some View {
-        SettingsSection(title: "Devices", anchorId: "settings.sync.devices") {
+        SettingsSection(
+            title: "Devices",
+            anchorId: "settings.sync.devices",
+            accessory: {
+                SettingsButton(.secondary, "Get iOS App", icon: "arrow.up.right", size: .compact) {
+                    NSWorkspace.shared.open(Self.iPhoneAppURL)
+                }
+                .help(L("Get the iPhone and iPad app from TestFlight"))
+                .settingsLandingAnchor("settings.devices.iPhoneApp")
+            }
+        ) {
             ForEach(model.devices, id: \.id) { device in
                 deviceRow(device)
+            }
+            // The Mobile page: an iPhone paired with a 6-digit code.
+            ManagementChildLinkRows(parent: .devices)
+        }
+    }
+
+    /// Shows the code an iPhone or iPad scans, from the header's Add Device menu.
+    private func addPhone() {
+        isJoining = false
+        // Asked always: an iPhone still on Classic pairs with a 6-digit code, also once another uses Sync.
+        model.dismissPairingResult()
+        phoneMethod = .ask
+        pairSheet = .addPhone
+    }
+
+    /// The QR code an iPhone or iPad with Sync scans.
+    private func showScanCode() {
+        asOwner(L("show a code that adds a device to your sync account")) {
+            model.dismissPairingResult()
+            model.startPairing()
+            phoneMethod = .scan
+            pairSheet = .addPhone
+        }
+    }
+
+    /// The QR code still showing ran out of time: a new one in its place, with nothing to press. The owner already
+    /// allowed showing a code for this sheet, which is still open.
+    private func renewExpiredCode() {
+        guard pairSheet == .addPhone, phoneMethod == .scan else { return }
+        model.startPairing()
+    }
+
+    /// Opens the field for another device's pairing link, from the header's Add Device menu.
+    private func startJoining() {
+        if case .offering = model.pairing { model.cancelPairing() }
+        model.dismissPairingResult()
+        joinLink = ""
+        isJoining = true
+        pairSheet = .join
+    }
+
+    /// The sheet closed: a code still showing stops working, a number not yet confirmed is turned down, and
+    /// how it went is cleared. A join already sent carries on.
+    private func endPairing() {
+        switch model.pairing {
+        case .offering: model.cancelPairing()
+        case .confirming: model.rejectPairing()
+        case .joining: break
+        case .idle, .paired, .failed, .expired: model.dismissPairingResult()
+        }
+        // A 6-digit code still showing stops working with its sheet, as the QR code does.
+        if phoneMethod == .code, MobilePairingService.shared.activeCode != nil {
+            MobilePairingService.shared.cancelCode()
+        }
+        phoneMethod = .ask
+        codeChosenAt = nil
+        isJoining = false
+        joinLink = ""
+    }
+
+    /// Adding an iPhone or iPad (the code to scan, then the number to check) or joining another device's link,
+    /// in a sheet over the page.
+    private func pairingSheet(_ kind: PairSheet) -> some View {
+        SettingsSheet(
+            icon: kind == .addPhone ? "iphone" : "link",
+            title: kind == .addPhone ? "Add iPhone or iPad" : "Join Another Device",
+            subtitle: sheetSubtitle(kind),
+            width: SettingsSheetWidth.regular,
+            primary: sheetPrimary(kind),
+            onClose: { pairSheet = nil }
+        ) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
+                switch kind {
+                case .addPhone:
+                    switch phoneMethod {
+                    case .ask:
+                        phoneMethodChoice
+                    case .code:
+                        if let device = phonePairedByCode {
+                            SettingsCallout(
+                                icon: "checkmark.circle.fill",
+                                title: "Device Added",
+                                message: String(format: L("%@ is now paired with this Mac."), device.name),
+                                tone: .success
+                            )
+                        } else {
+                            MobilePairingCodePanel()
+                        }
+                    case .scan:
+                        if case let .offering(offer) = model.pairing {
+                            pairingPanel(offer)
+                        } else if model.pairing == .idle || model.pairing == .expired {
+                            // Made, or remade after the last one expired (`renewExpiredCode`).
+                            SettingsSpinner()
+                        }
+                    }
+                case .join:
+                    if model.pairing == .joining {
+                        SettingsSpinner()
+                    } else if !isPairingDone {
+                        SettingsTextField(
+                            placeholder: "osaurus-pair:…",
+                            text: $joinLink,
+                            monospaced: true,
+                            onSubmit: join
+                        )
+                    }
+                }
+                pairingResult
             }
         }
     }
 
-    private var addDeviceSection: some View {
-        SettingsSection(title: "Add a Device") {
-            SettingsRow(
-                title: "Add a Device",
-                description: "Show a code on this Mac, then scan it with the Osaurus app on your iPhone, or paste its link on another Mac.",
-                anchorId: "settings.sync.addDevice"
+    /// Join while there's a link to send; nothing while the number is checked (its own buttons answer it);
+    /// otherwise Done.
+    private func sheetPrimary(_ kind: PairSheet) -> SettingsSheetFooter.Action? {
+        if model.isConfirmingPairing { return nil }
+        // The first step answers with its choices.
+        if kind == .addPhone, phoneMethod == .ask { return nil }
+        if kind == .join, model.pairing != .joining, !isPairingDone {
+            return SettingsSheetFooter.Action(
+                label: "Join",
+                isEnabled: !joinLink.trimmingCharacters(in: .whitespaces).isEmpty,
+                handler: join
+            )
+        }
+        return SettingsSheetFooter.Action(label: "Done") { pairSheet = nil }
+    }
+
+    private func sheetSubtitle(_ kind: PairSheet) -> LocalizedStringKey? {
+        switch (kind, phoneMethod) {
+        case (.join, _):
+            return "Paste the pairing link from a device that already syncs. This Mac's chats join that device's account."
+        case (.addPhone, .ask):
+            return nil
+        case (.addPhone, .scan):
+            return
+                "Show a code on this Mac, then scan it with the Osaurus app on your iPhone, or paste its link on another Mac."
+        case (.addPhone, .code):
+            return "Generate a code here and type it in on your iPhone, on the same network as this Mac."
+        }
+    }
+
+    /// The iPhone that typed in this sheet's 6-digit code, once it has.
+    private var phonePairedByCode: PairedMobileDevice? {
+        guard let since = codeChosenAt, let device = legacyPairing.pairedDevice, device.pairedAt >= since else {
+            return nil
+        }
+        return device
+    }
+
+    /// The first step of adding an iPhone or iPad: what its pairing screen asks for decides the way.
+    private var phoneMethodChoice: some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            Text("What does the Pairing Screen in the Osaurus app on your iPhone or iPad show?", bundle: .module)
+                .font(SettingsFont.body)
+                .foregroundColor(theme.text.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            SettingsNavigationRow(
+                icon: "qrcode.viewfinder",
+                title: "A QR Code to Scan",
+                subtitle: "This Mac shows a code for the app to scan."
             ) {
-                if case .offering = model.pairing {
-                    SettingsButton(.tertiary, "Cancel") { model.cancelPairing() }
-                } else {
-                    SettingsButton(.secondary, "Show Code") {
-                        asOwner(L("show a code that adds a device to your sync account")) { model.startPairing() }
-                    }
-                    .disabled(!model.isOpen || model.isConfirmingPairing)
-                }
+                showScanCode()
             }
-            if case let .offering(offer) = model.pairing {
-                pairingPanel(offer)
-            }
-            SettingsLinkRow(
-                title: "Osaurus for iPhone",
-                description: "Get the iPhone app from TestFlight, then add your iPhone with the code above.",
-                actionTitle: "Get the App",
-                anchorId: "settings.devices.iPhoneApp"
+            SettingsNavigationRow(
+                icon: "number",
+                title: "A 6-Digit Code to Enter",
+                subtitle: "This Mac makes a code for you to type in on the app."
             ) {
-                NSWorkspace.shared.open(Self.iPhoneAppURL)
+                codeChosenAt = Date()
+                phoneMethod = .code
             }
-            SettingsRow(
-                title: "Join Another Device",
-                description: "Paste the pairing link from a device that already syncs. This Mac's chats join that device's account.",
-                anchorId: "settings.sync.join"
-            ) {
-                if model.pairing == .joining {
-                    SettingsSpinner()
-                } else {
-                    SettingsButton(.secondary, isJoining ? "Cancel" : "Join…") {
-                        isJoining.toggle()
-                        joinLink = ""
-                        model.dismissPairingResult()
-                    }
-                    .disabled(!model.isOpen || model.isConfirmingPairing)
-                }
-            }
-            if isJoining, model.pairing != .joining {
-                HStack(spacing: theme.space.s8) {
-                    SettingsTextField(placeholder: "osaurus-pair:…", text: $joinLink, monospaced: true, onSubmit: join)
-                    SettingsButton(.primary, "Join", action: join)
-                        .disabled(joinLink.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-            pairingResult
+        }
+    }
+
+    /// Pairing has ended, added or not: the sheet only has Done left.
+    private var isPairingDone: Bool {
+        switch model.pairing {
+        case .paired, .failed: return true
+        default: return false
         }
     }
 
@@ -329,33 +557,6 @@ struct DevicesView: View {
 
     // MARK: - iPhone
 
-    private var iPhoneSection: some View {
-        SettingsSection(title: "iPhone") {
-            SettingsToggle(
-                title: "Keep Mac Awake for iPhone",
-                description: "While an iPhone is in your devices, this Mac doesn't go to sleep on its own, so your agents stay reachable. The display may still sleep, and closing a MacBook lid or choosing Sleep always wins.",
-                anchorId: "settings.devices.keepAwake",
-                isOn: $keepMacAwake
-            )
-            SettingsToggle(
-                title: "Continue iPhone Chats on This Mac",
-                description: "When you come back to this Mac after this Mac answered a chat from your iPhone, that chat opens in front.",
-                anchorId: "settings.devices.continuePhoneChats",
-                isOn: $continuePhoneChats
-            )
-            ManagementChildLinkRows(parent: .devices)
-            if !phones.hasPhone {
-                SettingsValueRow(title: "Your iPhone", value: L("Not added yet"))
-            } else if !model.configuration.hostAgentsForOtherDevices {
-                SettingsCallout(
-                    icon: "exclamationmark.triangle.fill",
-                    title: "Your iPhone Can't Use This Mac's Agents",
-                    message: "Turn on Run Agents for My Other Devices above so your iPhone can chat with them.",
-                    tone: .warning
-                )
-            }
-        }
-    }
 
     private func deviceRow(_ device: Device) -> some View {
         SettingsRow(
@@ -412,8 +613,8 @@ struct DevicesView: View {
                         .foregroundColor(theme.text.primary)
                         .textSelection(.enabled)
                 }
-                ShareCopyRow(label: L("Pairing link, for another Mac"), value: offer.payload)
-                Text("Scan the code with the Osaurus app on your iPhone, or paste the link into Join Another Device on another Mac. It works for 5 minutes.", bundle: .module)
+                ShareCopyRow(label: L("Pairing link"), value: offer.payload)
+                Text("Scan the code with the Osaurus app on your iPhone or iPad, or paste the link there with Paste Link from Mac. On another Mac, paste it into Join Another Device. It works for 5 minutes.", bundle: .module)
                     .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -441,6 +642,8 @@ struct DevicesView: View {
                     SettingsButton(.secondary, "They're Different") { model.rejectPairing() }
                 }
             }
+            // Its border breathes until the number is answered: the pairing waits on the person here.
+            .modifier(AwaitingAnswerBorder(active: !confirmation.confirmed, radius: theme.radius.medium))
             HStack(spacing: theme.space.s8) {
                 Text(verbatim: SyncStatusModel.groupedConfirmationCode(confirmation.code))
                     .font(SettingsFont.detailTitle)
@@ -477,13 +680,15 @@ struct DevicesView: View {
                 title: "Device Added",
                 message: String(format: L("Your chats now sync with %@."), name),
                 tone: .success
-            ) {
-                SettingsButton(.tertiary, "Done") { model.dismissPairingResult() }
-            }
+            )
         case let .failed(message):
-            SettingsCallout(icon: "exclamationmark.circle.fill", title: "Pairing Didn't Finish", message: message, tone: .error) {
-                SettingsButton(.tertiary, "Dismiss") { model.dismissPairingResult() }
-            }
+            // The sheet's Done closes it, and closing clears it (`endPairing`).
+            SettingsCallout(
+                icon: "exclamationmark.circle.fill",
+                title: "Pairing Didn't Finish",
+                message: message,
+                tone: .error
+            )
         default:
             EmptyView()
         }
@@ -585,20 +790,71 @@ struct DevicesView: View {
 
     // MARK: - Storage
 
-    private var storageSection: some View {
-        SettingsSection(title: "Storage", anchorId: "settings.sync.storage") {
-            if let usage = model.storage {
-                SettingsValueRow(title: "Synced Chats", value: Self.bytes(usage.syncedEventBytes))
-                SettingsValueRow(title: "This Mac Only", value: Self.bytes(usage.localEventBytes))
-                SettingsValueRow(title: "Attachments", value: Self.bytes(usage.attachmentBytes))
-                SettingsValueRow(
-                    title: "Total on Disk",
-                    value: Self.bytes(usage.databaseBytes + usage.attachmentBytes + usage.attachmentCacheBytes)
-                )
-            } else {
-                SettingsValueRow(title: "Total on Disk", value: "—")
+    // MARK: - Overview
+
+    /// Sync's live numbers and its storage, side by side above the settings: how it's doing at a glance.
+    private var overviewCard: some View {
+        // Side by side where the page is wide enough for both, one above the other where it isn't.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: theme.space.s16) {
+                statusCard
+                storageCard
+            }
+            VStack(spacing: theme.space.s16) {
+                statusCard
+                storageCard
             }
         }
+    }
+
+    /// As Memory's Statistics: a titled strip. Never narrower than this, or the two go one above the other.
+    private static let overviewCardMinWidth: CGFloat = 380
+
+    private var statusCard: some View {
+        SettingsSection(title: "Connection", anchorId: "settings.sync.status") {
+            // The status in full where it fits, else in a word or two.
+            ViewThatFits(in: .horizontal) {
+                SettingsStatStrip(stats: syncStats(short: false))
+                SettingsStatStrip(stats: syncStats(short: true))
+            }
+        }
+        .frame(minWidth: Self.overviewCardMinWidth, maxWidth: .infinity)
+    }
+
+    private var storageCard: some View {
+        SettingsSection(title: "Storage", anchorId: "settings.sync.storage") {
+            SettingsStatStrip(stats: storageStats)
+        }
+        .frame(minWidth: Self.overviewCardMinWidth, maxWidth: .infinity)
+    }
+
+    private func syncStats(short: Bool) -> [SettingsStat] {
+        var stats = [
+            SettingsStat(label: "Status", value: short ? shortStatusText : statusText, valueTint: statusDot),
+            SettingsStat(label: "Waiting to Send", value: String(format: L("%lld messages"), model.pendingMessages)),
+        ]
+        if model.configuration.networkMode == .anywhere, model.configuration.networkEnabled {
+            stats.append(
+                SettingsStat(
+                    label: "Osaurus Servers",
+                    value: model.relays.contains(where: \.connected) ? L("Connected") : L("Not connected")
+                )
+            )
+        }
+        return stats
+    }
+
+    private var storageStats: [SettingsStat] {
+        guard let usage = model.storage else { return [SettingsStat(label: "Total on Disk", value: "—")] }
+        return [
+            SettingsStat(label: "Synced Chats", value: Self.bytes(usage.syncedEventBytes)),
+            SettingsStat(label: "This Mac Only", value: Self.bytes(usage.localEventBytes)),
+            SettingsStat(label: "Attachments", value: Self.bytes(usage.attachmentBytes)),
+            SettingsStat(
+                label: "Total on Disk",
+                value: Self.bytes(usage.databaseBytes + usage.attachmentBytes + usage.attachmentCacheBytes)
+            ),
+        ]
     }
 
     private static func bytes(_ count: UInt64) -> String {
@@ -790,5 +1046,41 @@ struct DevicesView: View {
                 }
             }
         }
+    }
+}
+
+/// A slow pulse of a card's border while it waits on the person (the number check). Still, at its brighter
+/// edge, with Reduce Motion.
+private struct AwaitingAnswerBorder: ViewModifier {
+    let active: Bool
+    let radius: CGFloat
+
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// One fade in and out, in seconds.
+    private static let period: Double = 2.4
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if active {
+                // Drawn from the clock, not a repeating animation: `withAnimation(.repeatForever)` ran in the
+                // transaction that also laid out the sheet (the code giving way to this card), so the whole
+                // sheet kept animating with it.
+                TimelineView(.animation(paused: reduceMotion)) { context in
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(theme.status.info.foreground, lineWidth: theme.stroke.focus)
+                        .opacity(reduceMotion ? 0.7 : Self.opacity(at: context.date))
+                }
+                .allowsHitTesting(false)
+            }
+        }
+    }
+
+    /// 0.2 to 0.85 and back, eased.
+    private static func opacity(at date: Date) -> Double {
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+        let wave = (1 - cos(phase * 2 * .pi)) / 2
+        return 0.2 + 0.65 * wave
     }
 }

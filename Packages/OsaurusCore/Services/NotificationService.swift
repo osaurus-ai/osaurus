@@ -218,6 +218,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             link: .workflowRun(dialog.runID)
         )
         if phoneOnly { item.onlyChannels = [.phone] }
+        item.workflowRunId = dialog.caller.rootRunID ?? dialog.runID
         // The form's fields, for the iPhone to show and answer it (`submit`).
         item.detail = WorkflowDialogAttention.detail(for: dialog)
         AttentionCenter.shared.raise(item) { resolution in

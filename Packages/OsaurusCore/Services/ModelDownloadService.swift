@@ -1687,7 +1687,7 @@ final class ModelDownloadService: ObservableObject {
     /// Safety margin on top of the raw byte count, to cover Hugging Face LFS
     /// pointers that can under-report file size and the OS's need for a small
     /// amount of headroom during the atomic rename at the tail of each file.
-    static let storageSafetyMarginBytes: Int64 = 256 * 1024 * 1024  // 256 MB
+    nonisolated static let storageSafetyMarginBytes: Int64 = 256 * 1024 * 1024  // 256 MB
 
     /// Returns a user-visible refusal message if the download should be
     /// blocked, or `nil` if `freeBytes` is sufficient for `neededBytes`
@@ -1695,7 +1695,7 @@ final class ModelDownloadService: ObservableObject {
     ///
     /// Extracted so the comparison can be unit-tested without mocking the
     /// filesystem.
-    static func storageRefusalMessage(
+    nonisolated static func storageRefusalMessage(
         neededBytes: Int64,
         freeBytes: Int64
     ) -> String? {
@@ -1717,7 +1717,7 @@ final class ModelDownloadService: ObservableObject {
     /// tens of GB free, because the two used different APIs).
     /// Returns `nil` if both queries fail — callers should treat `nil` as
     /// "unknown, proceed" rather than "zero, block".
-    static func freeBytesOnVolume(containing url: URL) -> Int64? {
+    nonisolated static func freeBytesOnVolume(containing url: URL) -> Int64? {
         OsaurusPaths.volumeFreeBytes(forPath: url.path)
     }
 
