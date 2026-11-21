@@ -715,6 +715,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // toward self-heal.
             WorkflowSelfHealMonitor.shared.start()
             WorkflowRunService.shared.resumeAbandonedRuns()
+            WorkflowInstallCoordinator.shared.resumeAfterLaunch()
+            WorkflowInstallToasts.shared.start()
         }
 
         // Incremental knowledge index pass so collection folder changes

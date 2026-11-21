@@ -1090,6 +1090,21 @@ public actor ImageGenerationService {
 
     // MARK: - Defaults + helpers
 
+    /// The engine family and kind (`imageGen`, `imageEdit`, `imageUpscale`,
+    /// `videoGen`) a bundle would load as, from its directory or repo name
+    /// alone, so a catalog entry can be matched before it is downloaded.
+    /// Nil when the engine does not recognise the name.
+    nonisolated static func engineFamily(forBundleName name: String) -> (canonical: String, kind: String)? {
+        _ = registeredFamilies
+        guard let entry = ModelRegistry.lookupFuzzy(name: name) else { return nil }
+        return (entry.name, entry.kind.rawValue)
+    }
+
+    private nonisolated static let registeredFamilies: Void = {
+        VMLXFluxModels.registerAll()
+        VMLXFluxVideo.registerAll()
+    }()
+
     private static func registryEntry(for model: String) -> ModelEntry? {
         ModelRegistry.lookupFuzzy(name: model)
     }

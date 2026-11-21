@@ -233,6 +233,11 @@ public final class ManagementStateManager: ObservableObject {
     /// wizard from this and resets it to nil.
     @Published var pendingSetupSubject: PendingSetupSubject?
 
+    /// One-shot request to reopen the installer of a background workflow
+    /// install (its toast's Show, its row on Workflows Home), by template id.
+    /// `WorkflowsView` presents it and resets it to nil.
+    @Published var pendingWorkflowInstall: UUID?
+
     /// One-shot request to reveal a project's shared memory — the namespace
     /// key (`project-<uuid>`). `MemoryView` observes this, switches to its
     /// Agents subtab, opens the project's context preview, and resets it to

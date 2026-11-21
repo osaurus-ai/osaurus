@@ -185,6 +185,14 @@ struct AgentSetupWizardView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refresh(rebuildSteps: false)
         }
+        .onReceive(
+            WorkflowInstallCoordinator.shared.$jobs
+                .map { jobs in Set(jobs.filter { if case .done = $0.phase { true } else { false } }.map(\.id)) }
+                .removeDuplicates()
+                .dropFirst()
+        ) { _ in
+            refresh(rebuildSteps: false)
+        }
         .onChange(of: agentManager.agents) { _, _ in
             if !subject.isDraft { refresh(rebuildSteps: false) }
         }
@@ -208,7 +216,7 @@ struct AgentSetupWizardView: View {
                     workflowSetup = nil
                     leave(to: tab)
                 },
-                onFinished: { _ in refresh(rebuildSteps: false) }
+                onFinished: { refresh(rebuildSteps: false) }
             )
             .environment(\.theme, theme)
         }

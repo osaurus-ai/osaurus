@@ -42,6 +42,9 @@ public struct SetupItem: Identifiable, Equatable, Sendable {
     /// A model slot that runs on nothing: its model is not here and no
     /// default model stands in.
     public var hasNoModel: Bool = false
+    /// An image or video model this Mac does not have: a media step's
+    /// model, or the model an `image` or `video` tool step runs on.
+    public var needsMediaModel: Bool = false
 
     public var id: String { "\(kind.rawValue):\(value)" }
     public var isBlocking: Bool { severity == .blocking }
@@ -565,7 +568,9 @@ public enum SetupChecker {
             // means "not known yet".
             items.append(
                 env.mediaCandidatesLoaded
-                    ? SetupItem(kind: .mediaModel, severity: .blocking, title: media.label, detail: reason, value: media.id)
+                    ? SetupItem(
+                        kind: .mediaModel, severity: .blocking, title: media.label, detail: reason, value: media.id,
+                        needsMediaModel: true)
                     : SetupItem(
                         kind: .mediaModel, severity: .advisory, title: media.label,
                         detail: L("Still checking the installed models. The step looks again when it runs."),
@@ -630,7 +635,9 @@ public enum SetupChecker {
                         SetupItem(kind: .tool, severity: .blocking, title: L("Tool"), detail: reason, value: tool.name))
                 } else if let reason = capabilityBlockReason(tool.name, environment: env) {
                     items.append(
-                        SetupItem(kind: .tool, severity: .blocking, title: L("Tool"), detail: reason, value: tool.name))
+                        SetupItem(
+                            kind: .tool, severity: .blocking, title: L("Tool"), detail: reason, value: tool.name,
+                            needsMediaModel: MediaModelSourceResolver.requirement(forTool: tool.name) != nil))
                 }
             }
             items += stepAgentItems(def, environment: env)

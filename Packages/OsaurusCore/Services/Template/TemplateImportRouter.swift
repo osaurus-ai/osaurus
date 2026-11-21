@@ -145,7 +145,9 @@ public enum TemplateImportRouter {
         }
         var registry = RegistryImportSource(templateURL: url)
         let candidates = workspaceID.map { [$0] } ?? WorkspacesService.shared.workspaces.filter { !$0.isSuspended }.map(\.id)
+        let progress = ToastManager.shared.loading(L("Opening template…"), message: url.host)
         Task { @MainActor in
+            defer { ToastManager.shared.dismiss(id: progress) }
             do {
                 let fetched = try await fetch(url, workspaceCandidates: candidates)
                 registry?.workspaceID = fetched.workspaceID ?? workspaceID

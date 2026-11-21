@@ -169,16 +169,14 @@ struct WorkflowRenameTests {
 
             let v2 = Self.version(template, 2, name: "Client Onboarding")
             let kept = try #require(
-                try WorkflowSetupWizardView.commit(
-                    WorkflowSetupSubject(mode: .update(installed.id), template: v2, bindings: InstallBindings(), name: "Client Intake")))
+                try WorkflowSetupSubject(mode: .update(installed.id), template: v2, bindings: InstallBindings(), name: "Client Intake").commit())
             #expect(kept.name == "Client Intake")
             #expect(kept.templateVersion == 2)
             #expect(kept.nameMismatch == "Client Onboarding")
 
             let v3 = Self.version(template, 3, name: "Client Onboarding")
             let taken = try #require(
-                try WorkflowSetupWizardView.commit(
-                    WorkflowSetupSubject(mode: .update(installed.id), template: v3, bindings: InstallBindings(), name: "Client Onboarding")))
+                try WorkflowSetupSubject(mode: .update(installed.id), template: v3, bindings: InstallBindings(), name: "Client Onboarding").commit())
             #expect(taken.name == "Client Onboarding")
             #expect(taken.toolName == "workflow_client_onboarding")
             #expect(taken.nameMismatch == nil)

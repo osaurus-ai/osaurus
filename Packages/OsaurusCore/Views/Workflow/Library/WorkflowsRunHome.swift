@@ -3,7 +3,8 @@
 //  osaurus
 //
 //  The Workflows window's home: the title with New Workflow (everything
-//  else in ⋯), Get Started while it has steps left, what is running now,
+//  else in ⋯), Get Started while it has steps left, workflows being added
+//  in the background, what is running now,
 //  from here, from an agent, or from an automation, then what needs you,
 //  your workflows, and the Store. Drafts and workspaces list in the
 //  sidebar, not here.
@@ -16,6 +17,7 @@ extension WorkflowsView {
         VStack(alignment: .leading, spacing: theme.space.s32) {
             homeHeader
             WorkflowsGetStarted(windowState: windowState, overview: windowState.workflowsOverview, onRun: runOrSetUp)
+            WorkflowsInstalling()
             WorkflowsRunningNow(onOpen: openRun)
             WorkflowsHomeSections(
                 windowState: windowState, overview: windowState.workflowsOverview,
@@ -103,6 +105,92 @@ struct WorkflowsStoreCard: View {
         .settingsChrome(.card)
         .accessibilityElement(children: .contain)
         .settingsLandingAnchor("workflows.storeCard")
+    }
+}
+
+// MARK: - Installing
+
+/// Workflows being added in the background: their downloads and setup,
+/// what needs the person, and what stopped. Show reopens the installer.
+/// Hidden when nothing is being added; a finished one leaves for Your
+/// Workflows.
+struct WorkflowsInstalling: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var coordinator = WorkflowInstallCoordinator.shared
+    @State private var cancelling: WorkflowInstallCoordinator.Job?
+
+    private var shown: [WorkflowInstallCoordinator.Job] {
+        coordinator.jobs.filter { if case .done = $0.phase { false } else { true } }
+    }
+
+    var body: some View {
+        let shown = shown
+        Group {
+            if !shown.isEmpty {
+                SettingsSection(title: "Installing", layout: .plain) {
+                    WorkflowRowList(items: shown) { job in
+                        row(job)
+                    }
+                    .animation(theme.motion.standard, value: shown.map(\.id))
+                }
+                .settingsLandingAnchor("workflows.installing")
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(theme.motion.standard, value: shown.isEmpty)
+        .themedAlert(
+            L("Cancel Install?"),
+            isPresented: Binding(get: { cancelling != nil }, set: { if !$0 { cancelling = nil } }),
+            message: cancelling.map { L("Downloads Osaurus started for \($0.name) stop, and the workflow is not added.") },
+            primaryButton: .destructive(L("Cancel Install")) {
+                if let job = cancelling { coordinator.cancel(job.id) }
+                cancelling = nil
+            },
+            secondaryButton: .cancel(L("Keep Installing")))
+    }
+
+    private func row(_ job: WorkflowInstallCoordinator.Job) -> some View {
+        WorkflowRunRow(
+            status: Self.status(job.phase), title: job.name, line: Self.line(job),
+            lineIsProblem: { if case .failed = job.phase { true } else { false } }(),
+            onOpen: { WorkflowInstallCoordinator.show(job) }
+        ) {
+            switch job.phase {
+            case .running:
+                SettingsButton(.secondary, "Cancel", size: .extraSmall, help: "Stop adding this workflow") {
+                    cancelling = job
+                }
+            case .needsYou:
+                SettingsButton(.primary, "Answer", size: .extraSmall) { WorkflowInstallCoordinator.show(job) }
+            case .failed:
+                SettingsButton(.secondary, "Try Again", size: .extraSmall) { coordinator.retry(job.id) }
+            case .done:
+                EmptyView()
+            }
+        }
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    static func status(_ phase: WorkflowInstallCoordinator.Phase) -> WorkflowRunStatus {
+        switch phase {
+        case .running: return .running
+        case .needsYou: return .awaitingUser
+        case .failed: return .failed
+        case .done: return .completed
+        }
+    }
+
+    /// "42% · Downloading the image model · About 5 minutes left".
+    static func line(_ job: WorkflowInstallCoordinator.Job) -> String {
+        switch job.phase {
+        case .running:
+            return ["\(Int((job.progress * 100).rounded(.down)))%", job.activity,
+                job.remaining.map(WorkflowInstallCoordinator.remainingText)]
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        case .needsYou: return L("Needs one more answer from you")
+        case .failed(let message): return message
+        case .done: return L("Ready")
+        }
     }
 }
 

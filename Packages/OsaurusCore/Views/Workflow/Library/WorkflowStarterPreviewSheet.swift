@@ -5,7 +5,8 @@
 //  A starter before it is added: the form you will fill in (with its
 //  example), the steps, what you get back, and what it needs. Add to My
 //  Workflows installs straight away when nothing needs setting up, and
-//  walks through the setup wizard otherwise.
+//  opens the installer otherwise. Before it runs says what Osaurus will
+//  get ready by itself and what it will ask.
 //
 
 import SwiftUI
@@ -19,6 +20,7 @@ struct WorkflowStarterPreviewSheet: View {
     @State private var values: [String: JSONValue] = [:]
     @State private var wizard: WorkflowSetupSubject?
     @State private var failure: String?
+    @State private var plan: WorkflowInstallPlan?
 
     /// What adding would ask for, with the bindings it would start from.
     /// A missing shared key counts: the wizard asks for it even though it
@@ -39,7 +41,7 @@ struct WorkflowStarterPreviewSheet: View {
         guard blockers(template).isEmpty else { return nil }
         var subject = WorkflowSetupSubject.install(template)
         subject.bindings = MCPServerResolution.liveAutoBindings(for: template, bindings: subject.bindings)
-        return try WorkflowSetupWizardView.commit(subject)
+        return try subject.commit()
     }
 
     /// Preferred models that are not here; the slot runs on the default
@@ -59,7 +61,9 @@ struct WorkflowStarterPreviewSheet: View {
     private var fields: [DialogField] { WorkflowFormFields.fields(fromInputSchema: def.inputSchema) }
 
     var body: some View {
-        if let wizard {
+        if let wizard, wizard.mode == .install {
+            WorkflowInstallerView(subject: wizard, onClose: onClose)
+        } else if let wizard {
             WorkflowSetupWizardView(subject: wizard, onClose: onClose, onFinished: onAdded)
         } else {
             preview
@@ -114,7 +118,6 @@ struct WorkflowStarterPreviewSheet: View {
                         WorkflowAccessLine(scope: WorkflowAccessScope.derive(def))
                     }
                     section(L("Before it runs")) {
-                        let blockers = Self.blockers(template)
                         let missing = Self.missingPreferredModels(template)
                         ForEach(missing, id: \.slot.slot) { entry in
                             Label {
@@ -126,21 +129,10 @@ struct WorkflowStarterPreviewSheet: View {
                             .textStyle(.caption)
                             .foregroundColor(theme.text.secondary)
                         }
-                        if blockers.isEmpty && missing.isEmpty {
-                            note(L("Nothing to set up. It works with what this Mac already has."))
+                        if let plan {
+                            beforeItRuns(plan, missing: !missing.isEmpty)
                         } else {
-                            ForEach(blockers) { item in
-                                Label {
-                                    Text(verbatim: item.detail.isEmpty ? item.title : item.detail)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                } icon: {
-                                    Image(systemName: "exclamationmark.circle").foregroundColor(
-                                        theme.status.warning.foreground
-                                    )
-                                }
-                                .textStyle(.caption)
-                                .foregroundColor(theme.text.secondary)
-                            }
+                            SettingsSpinner(size: .small)
                         }
                     }
                 }
@@ -157,6 +149,45 @@ struct WorkflowStarterPreviewSheet: View {
         .onAppear {
             values = WorkflowFormFields.initialValues(
                 fields, prefill: def.examples.first?.input.objectValue ?? [:])
+        }
+        .task {
+            let bindings = Self.startingBindings(template)
+            let report = SetupChecker.check(
+                template, bindings: bindings, subjectId: template.id, secrets: .install, attended: true)
+            plan = await WorkflowInstallPlan.live(template: template, bindings: bindings, report: report)
+        }
+    }
+
+    /// What Osaurus gets ready by itself (with sizes), then what it asks.
+    @ViewBuilder
+    private func beforeItRuns(_ plan: WorkflowInstallPlan, missing: Bool) -> some View {
+        let questions = plan.questionSteps()
+        if plan.items.isEmpty && questions.isEmpty && !missing {
+            note(L("Nothing to set up. It works with what this Mac already has."))
+        }
+        if !plan.items.isEmpty {
+            note(
+                plan.totalBytes > 0
+                    ? L("Osaurus gets these ready for you when you add it, about \(ByteCountFormatter.string(fromByteCount: plan.totalBytes, countStyle: .file)) in all.")
+                    : L("Osaurus gets these ready for you when you add it."))
+            SettingsProgressChecklist(
+                items: plan.items.map {
+                    SettingsChecklistItem(
+                        id: $0.id, title: $0.title, detail: WorkflowInstallerView.size($0.sizeBytes), state: .waiting)
+                },
+                entrance: false)
+        }
+        if !questions.isEmpty {
+            Label {
+                Text(
+                    verbatim: L("It asks you first: \(questions.map(WorkflowInstallerView.questionTitle).joined(separator: ", ")).")
+                )
+                .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "questionmark.circle").foregroundColor(theme.status.info.foreground)
+            }
+            .textStyle(.caption)
+            .foregroundColor(theme.text.secondary)
         }
     }
 

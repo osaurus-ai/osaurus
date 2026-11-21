@@ -122,7 +122,7 @@ struct WorkflowIntegrityTests {
             let flagged = try #require(store.workflow(id: installed.id))
             #expect(store.modifiedOutsideApp == [installed.id])
 
-            let saved = try #require(try WorkflowSetupWizardView.commit(.setup(flagged)))
+            let saved = try #require(try WorkflowSetupSubject.setup(flagged).commit())
             #expect(store.modifiedOutsideApp.isEmpty)
             #expect(!SetupChecker.check(saved).blocking.contains { $0.kind == .integrity })
             store.reload()

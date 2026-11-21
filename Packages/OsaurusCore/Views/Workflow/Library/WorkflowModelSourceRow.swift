@@ -13,6 +13,7 @@ import SwiftUI
 struct WorkflowModelSourceRow: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var downloads = ModelDownloadService.shared
+    @ObservedObject private var mediaDownloads = ImageModelDownloadService.shared
 
     let plan: WorkflowModelResolution.Plan
     /// The slot falls back to the default model until this one is here;
@@ -27,6 +28,8 @@ struct WorkflowModelSourceRow: View {
     @State private var isResolving = false
     @State private var failure: String?
     @State private var sizeBytes: Int64?
+    /// Set when the repo turned out to be an image bundle.
+    @State private var imageBundle: String?
 
     var body: some View {
         switch plan {
@@ -86,40 +89,10 @@ struct WorkflowModelSourceRow: View {
     @ViewBuilder
     private func downloadRow(_ repo: String) -> some View {
         let name = WorkflowModelChoices.displayName(repo)
-        let state = downloads.downloadStates[repo] ?? .notStarted
-        switch state {
-        case .downloading(let progress):
-            VStack(alignment: .leading, spacing: theme.space.s6) {
-                HStack(spacing: theme.space.s8) {
-                    Text(verbatim: L("Downloading \(name)"))
-                        .font(SettingsFont.smallLabel)
-                        .foregroundColor(theme.text.primary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .layoutPriority(1)
-                    Spacer()
-                    button(L("Pause"), icon: "pause.fill", primary: false) { ModelManager.shared.pauseDownload(repo) }
-                    button(L("Cancel"), icon: "xmark", primary: false) { ModelManager.shared.cancelDownload(repo) }
-                }
-                SettingsProgressBar(value: progress, tint: theme.action.primary.default.background)
-                if let line = downloads.downloadMetrics[repo]?.formattedLine {
-                    Text(verbatim: line)
-                        .font(SettingsFont.monoSmall)
-                        .foregroundColor(theme.text.tertiary)
-                }
-            }
-        case .paused(let progress):
-            let percent = progress.formatted(.percent.precision(.fractionLength(0)))
-            row(icon: "pause.circle", text: L("\(name) is paused at \(percent).")) {
-                button(L("Resume"), icon: "play.fill", primary: true) { ModelManager.shared.resumeDownload(repo) }
-            }
-        case .completed:
-            row(icon: "checkmark.circle", text: L("\(name) is downloaded.")) { EmptyView() }
-        case .failed(let error):
-            row(icon: "exclamationmark.triangle", text: L("Downloading \(name) failed: \(error)")) {
-                button(L("Try Again"), icon: "arrow.clockwise", primary: true) { download(repo) }
-            }
-        case .notStarted:
+        let progress = imageBundle.map { ModelDownloadProgressRow.Source.media(bundleId: $0) } ?? .chat(repoId: repo)
+        if ModelDownloadProgressRow.state(of: progress) != .notStarted {
+            ModelDownloadProgressRow(source: progress, name: name) { download(repo) }
+        } else {
             row(
                 icon: "arrow.down.circle",
                 text: (failure
@@ -160,8 +133,9 @@ struct WorkflowModelSourceRow: View {
             case .model(let model):
                 ModelManager.shared.downloadModel(model)
             case .image(let repoId):
-                ImageModelDownloadService.shared.download(
-                    repoId: repoId, displayName: ImageModelDownload.directoryName(forRepoId: repoId))
+                let bundle = ImageModelDownload.directoryName(forRepoId: repoId)
+                imageBundle = bundle
+                ImageModelDownloadService.shared.download(repoId: repoId, displayName: bundle)
             case .unsupported:
                 failure = L("Hugging Face has no MLX model Osaurus can run at \(repo).")
             case .registryGated:
