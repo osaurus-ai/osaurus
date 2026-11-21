@@ -75,8 +75,8 @@ struct DevicesView: View {
         SettingsPage {
             SettingsPageHeader(
                 title: "Devices",
-                titleAccessory: classicUpgradeSeen ? AnyView(classicUpgradeChip) : nil,
                 subtitle: "Your Macs and iPhones in one end-to-end encrypted account, with no account to create",
+                titleAccessory: classicUpgradeSeen ? AnyView(classicUpgradeChip) : nil,
                 primary: {
                     SettingsMenuButton(.primary, "Add Device", icon: "plus") {
                         Button(action: addPhone) {
