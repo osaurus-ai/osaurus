@@ -136,12 +136,12 @@ final class PrivacyDetectionCatalogSource: LocalModelCatalogSource {
                 }
             }
             if backend == .openai {
-                item.menuActions.append(.init(title: "Re-verify", icon: "arrow.clockwise") { [weak self] in
+                item.menuActions.append(.init(title: "Check Files", icon: "arrow.clockwise") { [weak self] in
                     self?.downloader.reverify()
                 })
             }
             item.menuActions.append(.init(
-                title: "Remove Model", icon: "trash", role: .destructive,
+                title: "Delete Model", icon: "trash", role: .destructive,
                 confirmation: L("This deletes the on-disk model. Detection for it stops until you re-download.")
             ) { [weak self] in self?.remove(backend) })
         }

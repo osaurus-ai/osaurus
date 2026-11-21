@@ -78,7 +78,9 @@ private struct LocalModelCell: View, Equatable {
                         .font(SettingsFont.rowTitle)
                         .foregroundColor(theme.text.primary)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.tail)
+                        .layoutPriority(1)
+                        .help(Text(verbatim: item.name))
                     if item.isTopPick {
                         Image(systemName: "star.fill")
                             .glyphSize(.tiny, weight: .semibold)

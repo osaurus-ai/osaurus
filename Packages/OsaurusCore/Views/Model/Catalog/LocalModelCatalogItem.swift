@@ -105,6 +105,11 @@ struct LocalModelCatalogItem: Identifiable {
             if case .inProgress = self { return true }
             return false
         }
+
+        var isFailed: Bool {
+            if case .failed = self { return true }
+            return false
+        }
     }
 
     struct Badge {
@@ -139,6 +144,25 @@ struct LocalModelCatalogItem: Identifiable {
         let value: String
 
         var id: String { label }
+    }
+
+    /// One build in the detail panel's version list, for kinds whose
+    /// versions are not `MLXModel`s.
+    struct Version: Identifiable {
+        let id: String
+        /// Already localized: Best quality, Balanced, Smallest download.
+        var framing: String?
+        /// Verbatim: "8-bit", "FP8"; nil for an unquantized build.
+        var label: String?
+        /// Verbatim repo or folder name for the technical line.
+        var technicalName: String
+        var sizeText: String?
+        var isRecommended = false
+        var status: Status
+        /// The build the row itself stands for.
+        var isCurrent = false
+        /// Download or Retry while the build is not on this Mac.
+        var action: Action?
     }
 
     let id: String
@@ -177,6 +201,8 @@ struct LocalModelCatalogItem: Identifiable {
     var model: MLXModel?
     /// Every precision build of the row's family (Language catalog rows).
     var variants: [MLXModel] = []
+    /// Every build of the row's model, best first (Image rows).
+    var versions: [Version] = []
     /// Greyed: the bundle is on disk but the local engine can't load it.
     var isUnsupported = false
 }
@@ -338,6 +364,18 @@ enum LocalModelCatalogOrdering {
 }
 
 // MARK: - Formatting
+
+/// Plain words for where a build sits in its family, so a version list
+/// reads as quality versus download size instead of bit widths.
+enum ModelVersionFraming {
+    /// `index` into a best-first list of `count` versions.
+    static func label(index: Int, count: Int) -> String? {
+        guard count > 1 else { return nil }
+        if index == 0 { return L("Best quality") }
+        if index == count - 1 { return L("Smallest download") }
+        return L("Balanced")
+    }
+}
 
 enum LocalModelCatalogFormat {
     static func bytes(_ value: Int64) -> String {

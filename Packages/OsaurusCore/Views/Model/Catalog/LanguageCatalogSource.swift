@@ -497,8 +497,8 @@ final class LanguageCatalogSource: LocalModelCatalogSource {
         var badges: [LocalModelCatalogItem.Badge] = []
         if isUnsupported {
             badges.append(.init(
-                text: L("Not MLX"), tone: .warning,
-                help: L("Not an MLX model — the local engine can't load this bundle")))
+                text: L("Not supported"), tone: .warning,
+                help: L("Osaurus can't run this model's format on this Mac")))
         }
         if state == .completed {
             if check?.updateAvailable == true {
@@ -616,10 +616,10 @@ struct LanguageModelFilterPopover: View {
 
                 section("Model Type") {
                     HStack(spacing: theme.settingsControlGap) {
-                        FilterChip("LLM", isSelected: filter.wrappedValue.typeFilter.isLLM) {
+                        FilterChip(L("Text"), isSelected: filter.wrappedValue.typeFilter.isLLM) {
                             filter.wrappedValue.typeFilter = filter.wrappedValue.typeFilter.isLLM ? .all : .llm
                         }
-                        FilterChip("VLM", isSelected: filter.wrappedValue.typeFilter.isVLM) {
+                        FilterChip(L("Text + images"), isSelected: filter.wrappedValue.typeFilter.isVLM) {
                             filter.wrappedValue.typeFilter = filter.wrappedValue.typeFilter.isVLM ? .all : .vlm
                         }
                     }
@@ -694,8 +694,8 @@ struct LanguageModelFilterPopover: View {
         var parts: [String] = []
         switch state.typeFilter {
         case .all: break
-        case .llm: parts.append("LLM")
-        case .vlm: parts.append("VLM")
+        case .llm: parts.append(L("Text"))
+        case .vlm: parts.append(L("Text + images"))
         }
         if let size = state.sizeCategory { parts.append(size.displayName) }
         if let param = state.paramCategory { parts.append(param.rawValue) }

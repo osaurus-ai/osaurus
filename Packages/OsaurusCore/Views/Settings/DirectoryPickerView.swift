@@ -25,7 +25,7 @@ struct DirectoryPickerView: View {
                         .truncationMode(.middle)
 
                     if directoryPicker.hasValidDirectory {
-                        Text("Custom directory selected", bundle: .module)
+                        Text("Using a folder you chose", bundle: .module)
                             .font(SettingsFont.rowDescription)
                             .foregroundColor(theme.text.secondary)
                     } else {
@@ -40,7 +40,7 @@ struct DirectoryPickerView: View {
                 HStack(spacing: theme.space.s6) {
                     SettingsIconButton(
                         "folder.badge.gearshape",
-                        help: "Select custom directory",
+                        help: "Choose a folder",
                         size: .compact
                     ) {
                         showFilePicker = true
@@ -49,7 +49,7 @@ struct DirectoryPickerView: View {
                     if directoryPicker.hasValidDirectory {
                         SettingsIconButton(
                             "arrow.counterclockwise",
-                            help: "Reset to default directory",
+                            help: "Use the default folder",
                             size: .compact
                         ) {
                             directoryPicker.resetDirectory()
@@ -62,7 +62,7 @@ struct DirectoryPickerView: View {
             .settingsChrome(.control)
 
             // Help text
-            Text("Models will be organized in subfolders by repository name", bundle: .module)
+            Text("Each model gets its own subfolder.", bundle: .module)
                 .font(SettingsFont.rowDescription)
                 .foregroundColor(theme.text.tertiary)
         }

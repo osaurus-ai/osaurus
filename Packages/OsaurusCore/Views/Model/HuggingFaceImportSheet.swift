@@ -63,7 +63,7 @@ struct HuggingFaceImportSheet: View {
                 Text("Import from Hugging Face", bundle: .module)
                     .font(SettingsFont.cardTitle)
                     .foregroundColor(theme.text.primary)
-                Text("Paste a model URL or repo id", bundle: .module)
+                Text("Paste a link to a model on Hugging Face", bundle: .module)
                     .font(SettingsFont.caption)
                     .foregroundColor(theme.text.secondary)
             }
@@ -82,7 +82,7 @@ struct HuggingFaceImportSheet: View {
                 .foregroundColor(theme.text.link)
                 .padding(.top, theme.space.s2)
             Text(
-                "Paste an MLX language model (try `OsaurusAI` or `mlx-community`) or an mflux image model — each is routed to the right place automatically.",
+                "Paste a Hugging Face link to a chat or image model. Osaurus puts it in the right tab.",
                 bundle: .module
             )
             .font(SettingsFont.caption)
@@ -96,7 +96,7 @@ struct HuggingFaceImportSheet: View {
 
     private var inputField: some View {
         VStack(alignment: .leading, spacing: theme.space.s6) {
-            Text("Repository", bundle: .module)
+            Text("Hugging Face link", bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.tertiary)
 
@@ -139,7 +139,7 @@ struct HuggingFaceImportSheet: View {
     private func submit() {
         guard let repoId = ModelManager.parseHuggingFaceRepoId(from: trimmedInput) else {
             errorMessage = L(
-                "That doesn't look like a Hugging Face repo. Use the format org/repo or paste a huggingface.co URL."
+                "That doesn't look like a Hugging Face model. Paste a huggingface.co link, or a name such as OsaurusAI/gemma-4-E2B-it-8bit."
             )
             return
         }
@@ -175,11 +175,11 @@ struct HuggingFaceImportSheet: View {
                 onImported(repoId)
             } else if repoId.lowercased().hasPrefix("osaurusai/") {
                 errorMessage = L(
-                    "That OsaurusAI model isn't in the registry. Pick one from the Recommended list."
+                    "Osaurus doesn't offer that OsaurusAI model. Pick one from the Chat or Image tab instead."
                 )
             } else {
                 errorMessage = L(
-                    "This repo could not be verified as an MLX-compatible model. Private repos require a connected Hugging Face token with access; all repos need config, tokenizer, and model weights."
+                    "Osaurus can't run this model. It may be in a format Osaurus doesn't support, or it may be private: add a Hugging Face token that can access it and try again."
                 )
             }
         }

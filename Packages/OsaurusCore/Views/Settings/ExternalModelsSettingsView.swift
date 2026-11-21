@@ -35,9 +35,9 @@ struct ExternalModelsSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
             SettingsToggle(
-                title: "Hugging Face cache and model folder",
+                title: "Hugging Face Downloads and Model Folders",
                 description:
-                    "Use MLX models from ~/.cache/huggingface, HF_HOME / HF_HUB_CACHE, or a custom folder.",
+                    "Use models you already downloaded with Hugging Face tools, or from a folder you choose (~/.cache/huggingface, HF_HOME / HF_HUB_CACHE).",
                 badge:
                     importHFCache && hfCount + customFolderCount > 0
                     ? "\(hfCount + customFolderCount)" : nil,
@@ -50,7 +50,7 @@ struct ExternalModelsSettingsView: View {
 
             SettingsToggle(
                 title: "LM Studio",
-                description: "Use safetensors models from your LM Studio library.",
+                description: "Use models you already downloaded in LM Studio.",
                 badge: importLMStudio && lmStudioCount > 0 ? "\(lmStudioCount)" : nil,
                 isOn: $importLMStudio
             )
@@ -64,7 +64,7 @@ struct ExternalModelsSettingsView: View {
                 } else {
                     let count = hfCount + lmStudioCount + customFolderCount
                     Text(
-                        count == 1 ? L("1 external model found") : L("\(count) external models found")
+                        count == 1 ? L("1 model found on this Mac") : L("\(count) models found on this Mac")
                     )
                     .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.tertiary)
@@ -87,8 +87,8 @@ struct ExternalModelsSettingsView: View {
                         let count = scanReport.skipped.count
                         Text(
                             count == 1
-                                ? L("1 external candidate skipped")
-                                : L("\(count) external candidates skipped")
+                                ? L("1 model skipped because Osaurus can't run it")
+                                : L("\(count) models skipped because Osaurus can't run them")
                         )
                         .textStyle(.footnote, weight: 500)
                         .foregroundColor(theme.text.secondary)
@@ -125,7 +125,7 @@ struct ExternalModelsSettingsView: View {
 
     private var hfCachePathControl: some View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
-            Text("Cache or model folder path", bundle: .module)
+            Text("Folder to use", bundle: .module)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
 
@@ -139,7 +139,7 @@ struct ExternalModelsSettingsView: View {
 
                 SettingsIconButton(
                     "folder.badge.gearshape",
-                    help: "Choose Hugging Face cache or model folder",
+                    help: "Choose a folder",
                     size: .compact
                 ) {
                     showHFCachePicker = true
@@ -148,7 +148,7 @@ struct ExternalModelsSettingsView: View {
                 if !customHFCachePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     SettingsIconButton(
                         "arrow.counterclockwise",
-                        help: "Use default Hugging Face cache locations",
+                        help: "Use the usual Hugging Face locations",
                         size: .compact
                     ) {
                         customHFCachePath = ""
@@ -157,7 +157,7 @@ struct ExternalModelsSettingsView: View {
             }
 
             Text(
-                "Empty scans ~/models, HF_HUB_CACHE, HF_HOME/hub, and ~/.cache/huggingface/hub.",
+                "Leave empty to look in the usual places: ~/models, HF_HUB_CACHE, HF_HOME/hub and ~/.cache/huggingface/hub.",
                 bundle: .module
             )
             .font(SettingsFont.footnote)

@@ -163,13 +163,13 @@ private struct EmbeddingDefaultModelGroup: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
-            SettingsSectionHeader(title: "Embedding")
+            SettingsSectionHeader(title: "Search & Memory")
             EmbeddingRestartBanner()
             SettingsGroup {
                 SettingsRow(
-                    title: "Embedding Model",
+                    title: "Search & Memory Model",
                     description:
-                        "Turns text into vectors for memory, knowledge, skill, method and tool search. A change applies after Osaurus restarts.",
+                        "Powers memory, knowledge, skill and tool search. A change applies after Osaurus restarts.",
                     anchorId: "modelDefaults.embedding"
                 ) {
                     HStack(spacing: theme.space.s8) {
@@ -271,7 +271,7 @@ private struct DetectionDefaultModelGroup: View {
                 SettingsRow(
                     title: "Detection Model",
                     description: installed.isEmpty
-                        ? "Optional. Download one in Local Models → Privacy Detection; pattern rules work without it."
+                        ? "Optional. Download one in Local Models → Privacy Detection; the built-in rules work without it."
                         : "Finds names, addresses and secrets that pattern rules miss.",
                     anchorId: "modelDefaults.detection"
                 ) {

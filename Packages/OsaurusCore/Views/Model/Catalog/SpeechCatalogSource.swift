@@ -86,7 +86,7 @@ final class SpeechCatalogSource: LocalModelCatalogSource {
                 }
             }
             item.menuActions.append(.init(
-                title: "Delete", icon: "trash", role: .destructive,
+                title: "Delete Model", icon: "trash", role: .destructive,
                 confirmation: L("This removes \(model.name) from this Mac. You can download it again later.")
             ) { manager.deleteModel(model) })
         }

@@ -138,9 +138,9 @@ struct RemoteProvidersView: View {
         let totalCount = userProviders.count
 
         if totalCount == 0 {
-            return L("Connect to remote API providers")
+            return L("Connect cloud AI services such as Anthropic, Google or OpenAI")
         } else if connectedCount == 0 {
-            return L("\(totalCount) provider\(totalCount == 1 ? "" : "s") configured")
+            return totalCount == 1 ? L("1 provider added") : L("\(totalCount) providers added")
         } else {
             // Count only the providers this list shows, so paired agents with
             // no shared models (and the managed router) don't inflate the total.
@@ -148,7 +148,8 @@ struct RemoteProvidersView: View {
                 .filter { userProviderIds.contains($0.key) }
                 .values
                 .reduce(0) { $0 + $1.modelCount }
-            return L("\(connectedCount) connected • \(modelCount) model\(modelCount == 1 ? "" : "s") available")
+            let models = modelCount == 1 ? L("1 model available") : L("\(modelCount) models available")
+            return L("\(connectedCount) connected • \(models)")
         }
     }
 
@@ -206,8 +207,8 @@ struct RemoteProvidersView: View {
     private var emptyStateView: some View {
         SettingsEmptyState(
             icon: "cloud.fill",
-            title: "No Remote Providers",
-            subtitle: "Connect a provider to access remote models.",
+            title: "No Providers Yet",
+            subtitle: "Connect a provider to use cloud models in chat.",
             content: AnyView(quickAddProviders),
             compact: true,
             footnote: L("Your API keys are stored securely in Keychain.")
@@ -383,7 +384,7 @@ private struct ProviderConnectivityCenterPanel: View {
     let onSelectIssueKind: (ProviderConnectivityIssueKind?) -> Void
 
     var body: some View {
-        SettingsSection(title: "Provider Connectivity", caption: summaryText, layout: .plain) {
+        SettingsSection(title: "Connection Status", caption: summaryText, layout: .plain) {
             StatusChip(severityLabel, tint: statusColor, icon: iconName)
             SettingsButton(
                 .secondary,
@@ -398,7 +399,7 @@ private struct ProviderConnectivityCenterPanel: View {
         } content: {
             SettingsStatStrip(stats: [
                 SettingsStat(label: "Connected", value: "\(snapshot.connectedCount)"),
-                SettingsStat(label: "Attention", value: "\(snapshot.attentionCount)"),
+                SettingsStat(label: "Needs Attention", value: "\(snapshot.attentionCount)"),
                 SettingsStat(label: "Models", value: "\(snapshot.modelCount)"),
                 SettingsStat(label: "Manual models", value: "\(snapshot.manualModelProviderCount)"),
             ])
@@ -465,9 +466,9 @@ private struct ProviderConnectivityCenterPanel: View {
 
     private var summaryText: String {
         let modelLabel = snapshot.modelCount == 1 ? L("1 model") : L("\(snapshot.modelCount) models")
-        return L(
-            "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(modelLabel)"
-        )
+        let attention = snapshot.attentionCount == 1
+            ? L("1 needs attention") : L("\(snapshot.attentionCount) need attention")
+        return L("\(snapshot.connectedCount) of \(snapshot.totalCount) connected · \(attention) · \(modelLabel)")
     }
 
     private var showsIssueFilters: Bool {
@@ -557,7 +558,7 @@ private struct ProviderCardView: View {
                     // Osaurus peers talk through the Secure Channel —
                     // agent traffic is end-to-end encrypted or refused.
                     StatusChip(
-                        L("E2E"),
+                        L("Encrypted"),
                         tone: .success,
                         icon: "lock.fill",
                         help: L(
@@ -614,7 +615,7 @@ private struct ProviderCardView: View {
     private var subtitle: String {
         var lines = [provider.displayEndpoint]
         if isConnected, let modelCount = state?.modelCount, modelCount > 0 {
-            lines.append(L("\(modelCount) model\(modelCount == 1 ? "" : "s") available"))
+            lines.append(modelCount == 1 ? L("1 model available") : L("\(modelCount) models available"))
         } else if report.hasAttention {
             lines.append(report.summary)
         }

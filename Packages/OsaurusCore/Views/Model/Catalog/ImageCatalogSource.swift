@@ -3,6 +3,8 @@
 //  osaurus
 //
 //  Image models: installed mflux bundles plus the OsaurusAI image catalog.
+//  Catalog builds fold into one row per model until one is on this Mac; each
+//  installed bundle keeps its own row, since requests name its exact folder.
 //  Installed bundles open the generate / edit / upscale panel.
 //
 
@@ -78,12 +80,27 @@ final class ImageCatalogSource: LocalModelCatalogSource {
 
     private func rebuild() {
         let installedIds = Set(installed.map(\.info.id))
-        let available = downloads.fetchedCatalog.filter { !installedIds.contains($0.id) }
-        items = installed.map(item(for:)) + available.map(item(for:))
+        let catalog = downloads.fetchedCatalog
+        let families = makeFamilies(catalog: catalog)
+        var rows = installed.map { item(for: $0, family: families.byKey[Self.familyKey($0.info.id)]) }
+        for family in families.ordered {
+            let downloadable = family.entries.filter { !installedIds.contains($0.id) }
+            let active = downloadable.filter { status($0.id, installed: false).isActive }
+            rows += active.map { item(for: $0, family: family, isFamilyRow: false) }
+            guard family.installed.isEmpty, active.isEmpty else { continue }
+            // A failed download stays visible on the row; otherwise the
+            // build that suits this Mac stands for the model.
+            let failed = downloadable.first { status($0.id, installed: false).isFailed }
+            guard let representative = failed ?? downloadable.first(where: { $0.id == family.recommendedId })
+                ?? downloadable.first
+            else { continue }
+            rows.append(item(for: representative, family: family, isFamilyRow: true))
+        }
+        items = rows
         // Installed bundles come from a disk scan; until it lands, the
         // curated rows alone would read as the whole list.
         isLoading = !didScanInstalled || (items.isEmpty && downloads.isLoadingCatalog)
-        resolveSizes(for: available)
+        resolveSizes(for: catalog.filter { !installedIds.contains($0.id) })
     }
 
     /// One rebuild once every size is in: a cache hit returns without
@@ -105,6 +122,116 @@ final class ImageCatalogSource: LocalModelCatalogSource {
         }
     }
 
+    // MARK: Families
+
+    /// Every build of one model: catalog downloads (across mirrors) and
+    /// bundles already on this Mac.
+    private struct Family {
+        let key: String
+        let name: String
+        let entries: [ImageModelDownload]
+        let installed: [Installed]
+        /// Best first.
+        let versions: [ImageModelCatalogNaming.Version]
+        let recommendedId: String?
+
+        func framing(for id: String) -> String? {
+            guard let index = versions.firstIndex(where: { $0.id == id }) else { return nil }
+            return ModelVersionFraming.label(index: index, count: versions.count)
+        }
+    }
+
+    private static func familyKey(_ id: String) -> String {
+        ImageModelCatalogNaming.parse(id).familyKey
+    }
+
+    /// Families in catalog order, then installed-only ones.
+    private func makeFamilies(catalog: [ImageModelDownload]) -> (ordered: [Family], byKey: [String: Family]) {
+        var order: [String] = []
+        var entriesByKey: [String: [ImageModelDownload]] = [:]
+        for entry in catalog {
+            let key = Self.familyKey(entry.repoId)
+            if entriesByKey[key] == nil { order.append(key) }
+            entriesByKey[key, default: []].append(entry)
+        }
+        var installedByKey: [String: [Installed]] = [:]
+        for model in installed {
+            let key = Self.familyKey(model.info.id)
+            if entriesByKey[key] == nil, installedByKey[key] == nil { order.append(key) }
+            installedByKey[key, default: []].append(model)
+        }
+        let memoryGB = SystemMonitorService.shared.totalMemoryGB
+        var byKey: [String: Family] = [:]
+        let ordered = order.map { key -> Family in
+            let entries = entriesByKey[key] ?? []
+            let installed = installedByKey[key] ?? []
+            var versions: [ImageModelCatalogNaming.Version] = installed.map {
+                .init(
+                    id: $0.info.id,
+                    bits: $0.info.quantizationBits ?? ImageModelCatalogNaming.parse($0.info.id).bits,
+                    sizeBytes: $0.info.totalBytes > 0 ? Int64($0.info.totalBytes) : nil
+                )
+            }
+            let installedIds = Set(installed.map(\.info.id))
+            for entry in entries where !versions.contains(where: { $0.id == entry.id }) {
+                let version = ImageModelCatalogNaming.Version(
+                    id: entry.id,
+                    bits: ImageModelCatalogNaming.parse(entry.repoId).bits,
+                    sizeBytes: sizes[entry.repoId].flatMap { $0 > 0 ? $0 : nil }
+                )
+                // Mirrors of one build list once: the copy on this Mac, else OsaurusAI's.
+                if let bits = version.bits, let index = versions.firstIndex(where: { $0.bits == bits }) {
+                    if !installedIds.contains(versions[index].id), entry.repoId.hasPrefix("OsaurusAI/") {
+                        versions[index] = version
+                    }
+                    continue
+                }
+                versions.append(version)
+            }
+            let family = Family(
+                key: key,
+                name: ImageModelCatalogNaming.parse(entries.first?.repoId ?? installed.first?.info.id ?? key).displayName,
+                entries: entries,
+                installed: installed,
+                versions: ImageModelCatalogNaming.bestFirst(versions),
+                recommendedId: ImageModelCatalogNaming.recommendedId(versions, physicalMemoryGB: memoryGB)
+            )
+            byKey[key] = family
+            return family
+        }
+        return (ordered, byKey)
+    }
+
+    /// The panel's version list; each build not on this Mac downloads from it.
+    private func versionList(_ family: Family?, currentId: String) -> [LocalModelCatalogItem.Version] {
+        guard let family, family.versions.count > 1 else { return [] }
+        let installedIds = Set(family.installed.map(\.info.id))
+        let downloads = downloads
+        return family.versions.map { version in
+            let entry = family.entries.first { $0.id == version.id }
+            let isInstalled = installedIds.contains(version.id)
+            let status = status(version.id, installed: isInstalled)
+            var row = LocalModelCatalogItem.Version(
+                id: version.id,
+                framing: family.framing(for: version.id),
+                label: Self.versionLabel(id: version.id, bits: version.bits),
+                technicalName: entry?.repoId ?? version.id,
+                sizeText: version.sizeBytes.map(LocalModelCatalogFormat.bytes),
+                isRecommended: version.id == family.recommendedId,
+                status: status,
+                isCurrent: version.id == currentId
+            )
+            if let entry, status == .available || status.isFailed {
+                row.action = .init(
+                    title: status == .available ? "Download" : "Retry",
+                    icon: "arrow.down.circle",
+                    role: .primary
+                ) { downloads.download(entry) }
+            }
+            return row
+        }
+    }
+
     // MARK: Rows
 
     private func status(_ id: String, installed: Bool) -> LocalModelCatalogItem.Status {
@@ -118,30 +245,39 @@ final class ImageCatalogSource: LocalModelCatalogSource {
         }
     }
 
-    private func item(for model: Installed) -> LocalModelCatalogItem {
+    private func item(for model: Installed, family: Family?) -> LocalModelCatalogItem {
         let info = model.info
-        let license = ImageModelRequestPolicy.licenseLabel(canonical: info.canonicalName)
-        let quant = Self.quantization(bits: info.quantizationBits, id: info.id)
+        let fullLicense = ImageModelRequestPolicy.licenseLabel(canonical: info.canonicalName)
+        let capability = Self.capabilityLabel(info)
+        let version = Self.versionText(
+            framing: family?.framing(for: info.id),
+            label: Self.versionLabel(id: info.id, bits: info.quantizationBits)
+        )
         let size = info.totalBytes > 0 ? Int64(info.totalBytes) : nil
+        let name = family?.name ?? ImageModelCatalogNaming.parse(info.id).displayName
 
         var item = LocalModelCatalogItem(
             id: info.id,
-            name: info.displayName,
-            subtitle: [Self.kindLabel(info), quant].compactMap { $0 }.joined(separator: " · "),
+            name: name,
+            subtitle: [capability, version].compactMap { $0 }.joined(separator: " · "),
             description: info.ready ? "" : info.blockedReasons.joined(separator: "\n"),
             icon: info.capabilities.upscale ? "arrow.up.left.and.arrow.down.right" : "photo",
             sizeText: size.map(LocalModelCatalogFormat.bytes),
             sizeBytes: size,
             status: status(info.id, installed: true),
             huggingFaceRepo: model.repoId,
-            facts: Self.facts(kind: Self.kindLabel(info), quant: quant, license: license, size: size, repo: model.repoId),
-            searchHaystack: LocalModelCatalogFormat.haystack([info.displayName, info.id, model.repoId, license])
+            facts: Self.facts(
+                capability: capability, version: version, license: fullLicense, size: size,
+                source: model.repoId ?? info.id),
+            searchHaystack: LocalModelCatalogFormat.haystack(
+                [name, info.displayName, info.id, model.repoId, fullLicense, capability, version, "mflux"])
         )
+        item.versions = versionList(family, currentId: info.id)
         if !info.ready {
             item.badges.append(.init(text: L("Not ready"), tone: .warning, help: info.blockedReasons.first))
         }
-        if let license {
-            item.badges.append(.init(text: license, tone: .neutral))
+        if let chip = ImageModelRequestPolicy.shortLicenseLabel(canonical: info.canonicalName) {
+            item.badges.append(.init(text: chip, tone: .neutral, help: fullLicense))
         }
 
         let downloads = downloads
@@ -164,34 +300,43 @@ final class ImageCatalogSource: LocalModelCatalogSource {
             if info.ready { item.menuActions.append(redownload) } else { item.primaryAction = redownload }
         }
         item.menuActions.append(.init(
-            title: "Delete", icon: "trash", role: .destructive,
-            confirmation: L("This removes \(info.displayName) from this Mac. You can download it again later.")
+            title: "Delete Model", icon: "trash", role: .destructive,
+            confirmation: L("This removes \(name) from this Mac. You can download it again later.")
         ) { downloads.delete(info.id) })
         item.onCancel = { downloads.cancel(info.id) }
         return item
     }
 
-    private func item(for entry: ImageModelDownload) -> LocalModelCatalogItem {
-        let license = ImageModelRequestPolicy.licenseLabel(
-            canonical: ImageModelRequestPolicy.catalogCanonical(entry.id))
-        let quant = Self.quantization(bits: nil, id: entry.repoId)
+    /// A download: the model's row while nothing of it is on this Mac
+    /// (`isFamilyRow`), or one build's row while it downloads.
+    private func item(for entry: ImageModelDownload, family: Family, isFamilyRow: Bool) -> LocalModelCatalogItem {
+        let canonical = ImageModelRequestPolicy.catalogCanonical(entry.id)
+        let fullLicense = ImageModelRequestPolicy.licenseLabel(canonical: canonical)
+        let capability = Self.capabilityLabel(
+            ImageModelRequestPolicy.capabilities(kind: entry.isEditOnly ? "imageEdit" : "imageGen", canonical: canonical))
+        let label = Self.versionLabel(id: entry.repoId, bits: nil)
+        let version = Self.versionText(framing: family.framing(for: entry.id), label: label)
         let size = sizes[entry.repoId].flatMap { $0 > 0 ? $0 : nil }
         let status = status(entry.id, installed: false)
+        let count = family.versions.count
+        let rowDetail = isFamilyRow && count > 1 ? L("\(count) versions") : version
 
         var item = LocalModelCatalogItem(
             id: entry.id,
-            name: entry.displayName,
-            subtitle: [entry.note, quant].compactMap { $0 }.joined(separator: " · "),
+            name: family.name,
+            subtitle: [capability, rowDetail].compactMap { $0 }.joined(separator: " · "),
             icon: "photo",
             sizeText: size.map(LocalModelCatalogFormat.bytes),
             sizeBytes: size,
             status: status,
             huggingFaceRepo: entry.repoId,
-            facts: Self.facts(kind: nil, quant: quant, license: license, size: size, repo: entry.repoId),
-            searchHaystack: LocalModelCatalogFormat.haystack([entry.displayName, entry.repoId, entry.note, license])
+            facts: Self.facts(capability: capability, version: version, license: fullLicense, size: size, source: entry.repoId),
+            searchHaystack: LocalModelCatalogFormat.haystack(
+                [family.name, capability, fullLicense, "mflux"] + family.entries.map(\.repoId))
         )
-        if let license {
-            item.badges.append(.init(text: license, tone: .neutral))
+        item.versions = versionList(family, currentId: entry.id)
+        if let chip = ImageModelRequestPolicy.shortLicenseLabel(canonical: canonical) {
+            item.badges.append(.init(text: chip, tone: .neutral, help: fullLicense))
         }
         let downloads = downloads
         item.primaryAction = .init(
@@ -219,39 +364,46 @@ final class ImageCatalogSource: LocalModelCatalogSource {
     // MARK: Labels
 
     private static func facts(
-        kind: String?,
-        quant: String?,
+        capability: String?,
+        version: String?,
         license: String?,
         size: Int64?,
-        repo: String?
+        source: String?
     ) -> [LocalModelCatalogItem.Fact] {
         var facts: [LocalModelCatalogItem.Fact] = []
-        if let kind { facts.append(.init(label: "Type", value: kind)) }
-        if let quant { facts.append(.init(label: "Quantization", value: quant)) }
+        if let capability { facts.append(.init(label: "Type", value: capability)) }
+        if let version { facts.append(.init(label: "Version", value: version)) }
         if let size { facts.append(.init(label: "Size", value: LocalModelCatalogFormat.bytes(size))) }
         if let license { facts.append(.init(label: "License", value: license)) }
-        if let repo { facts.append(.init(label: "Repository", value: repo)) }
+        if let source { facts.append(.init(label: "Source", value: source)) }
         return facts
     }
 
-    private static func kindLabel(_ info: ImageModelInfo) -> String? {
-        switch info.kind {
-        case "imageEdit": return L("Edit")
-        case "imageUpscale": return L("Upscale")
-        case "videoGen": return L("Video")
-        default: return info.capabilities.textToImage ? L("Text to image") : nil
+    private static func capabilityLabel(_ info: ImageModelInfo) -> String? {
+        if info.kind == "videoGen" { return L("Create videos") }
+        return capabilityLabel(info.capabilities)
+    }
+
+    private static func capabilityLabel(_ capabilities: ImageModelCapabilities) -> String? {
+        if capabilities.upscale { return L("Upscale images") }
+        switch (capabilities.textToImage, capabilities.imageEdit) {
+        case (true, true): return L("Create and edit images")
+        case (true, false): return L("Create images")
+        case (false, true): return L("Edit images")
+        case (false, false): return nil
         }
     }
 
     /// Explicit bit width when known, else parsed from the repo or bundle name.
-    private static func quantization(bits: Int?, id: String) -> String? {
-        if let bits { return "\(bits)-bit" }
-        let lower = id.lowercased()
-        if lower.contains("fp8") { return "FP8" }
-        if lower.contains("nf4") { return "NF4" }
-        if lower.contains("8bit") || lower.contains("8-bit") { return "8-bit" }
-        if lower.contains("6bit") || lower.contains("6-bit") { return "6-bit" }
-        if lower.contains("4bit") || lower.contains("4-bit") { return "4-bit" }
-        return nil
+    private static func versionLabel(id: String, bits: Int?) -> String? {
+        bits.map { "\($0)-bit" } ?? ImageModelCatalogNaming.parse(id).versionLabel
+    }
+
+    /// "Best quality (8-bit)"; whichever half is known when only one is.
+    private static func versionText(framing: String?, label: String?) -> String? {
+        switch (framing, label) {
+        case let (framing?, label?): return "\(framing) (\(label))"
+        default: return framing ?? label
+        }
     }
 }
