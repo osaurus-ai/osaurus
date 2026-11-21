@@ -429,6 +429,31 @@ enum ModelProfileRegistry {
         return (option.id, .bool(option.inverted ? !enabled : enabled))
     }
 
+    /// The stored option that turns reasoning OFF for a background request
+    /// (titles, follow-ups, session state, judges): the profile's thinking
+    /// toggle when it has one, else the bundle's declared off rail on its
+    /// `reasoning_effort` ladder (e.g. Inkling-2-Mini's `effort_map` `none`
+    /// level, Nemotron-style `reasoning_modes` off). Without this a
+    /// ladder-only model ran every housekeeping call at its default (high)
+    /// effort, spending most of its budget thinking. Nil when the model
+    /// declares no way to turn reasoning off — nothing is invented.
+    static func thinkingOffStoredOption(
+        for modelId: String
+    ) -> (id: String, value: ModelOptionValue)? {
+        if let toggle = thinkingStoredOption(for: modelId, enabled: false) { return toggle }
+        switch DeclaredReasoningEffort.control(forModelId: modelId) {
+        case .modeKwargs(_, _, let kwargs)? where kwargs["none"] != nil:
+            return ("reasoningEffort", .string("none"))
+        case .levels(let levels, _)?:
+            guard let off = levels.first(where: { DeclaredReasoningEffort.isOffEffort($0) }) else {
+                return nil
+            }
+            return ("reasoningEffort", .string(off))
+        default:
+            return nil
+        }
+    }
+
     /// The reasoning state the Thinking control (picker row + model-chip
     /// suffix) should show when the user has made no explicit choice.
     /// Requests intentionally send nothing in that case (see

@@ -91,7 +91,7 @@ enum SessionStateExtraction {
     /// is evicted. Nil on any failure.
     static func extract(previous: SessionState, turn: [Line], model: String) async -> SessionState? {
         var options: [String: ModelOptionValue] = [:]
-        if let stored = ModelProfileRegistry.thinkingStoredOption(for: model, enabled: false) {
+        if let stored = ModelProfileRegistry.thinkingOffStoredOption(for: model) {
             options[stored.id] = stored.value
         }
         do {
