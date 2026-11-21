@@ -129,6 +129,48 @@ struct ChunkedFileDownloaderTests {
         #expect(await budget.reserve(desired: 99) == 4)
     }
 
+    // MARK: - Seeding from an interrupted nearby copy
+
+    private func seedFixture(bytes: Int64) throws -> (seed: URL, part: URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chunk-seed-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let seed = dir.appendingPathComponent(".model.safetensors.nearby.part")
+        FileManager.default.createFile(atPath: seed.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: seed)
+        try handle.truncate(atOffset: UInt64(bytes))
+        try handle.close()
+        return (seed, dir.appendingPathComponent("model.safetensors.part"))
+    }
+
+    @Test func seedBecomesItsWholeLeadingChunks() throws {
+        let chunk = ChunkedFileDownloader.chunkSize
+        let (seed, part) = try seedFixture(bytes: chunk * 2 + 5)
+        defer { try? FileManager.default.removeItem(at: seed.deletingLastPathComponent()) }
+
+        let adopted = ChunkedFileDownloader.adoptSeed(seed, as: part, size: chunk * 4, verifiable: true)
+
+        #expect(adopted == [0, 1])
+        #expect(!FileManager.default.fileExists(atPath: seed.path))
+        let size = try FileManager.default.attributesOfItem(atPath: part.path)[.size] as? NSNumber
+        #expect(size?.int64Value == chunk * 4)
+    }
+
+    @Test func seedIsIgnoredWhenItCannotBeVerifiedOrDoesNotFit() throws {
+        let chunk = ChunkedFileDownloader.chunkSize
+        for (bytes, total, verifiable) in [
+            (chunk * 2, chunk * 4, false), (chunk - 1, chunk * 4, true), (chunk * 5, chunk * 4, true),
+        ] {
+            let (seed, part) = try seedFixture(bytes: bytes)
+            defer { try? FileManager.default.removeItem(at: seed.deletingLastPathComponent()) }
+            #expect(ChunkedFileDownloader.adoptSeed(seed, as: part, size: total, verifiable: verifiable) == nil)
+            #expect(FileManager.default.fileExists(atPath: seed.path))
+        }
+        #expect(
+            ChunkedFileDownloader.adoptSeed(
+                nil, as: URL(fileURLWithPath: "/tmp/none.part"), size: chunk, verifiable: true) == nil)
+    }
+
     // MARK: - Live transfer
 
     /// 335 MB LFS object: large enough to span ~11 chunks.

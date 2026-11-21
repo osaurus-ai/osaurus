@@ -981,6 +981,7 @@ final class ModelDownloadService: ObservableObject {
                     expectedSize: file.size,
                     expectedDigest: file.digest,
                     resumeData: resumeDataForAttempt,
+                    seed: NearbyFileDownloader.partURL(for: destination),
                     onProgress: onProgress
                 )
                 finishFileTransfer(modelId: model.id, token: token, path: file.path, size: file.size)
@@ -2111,6 +2112,7 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         expectedSize: Int64,
         expectedDigest: ModelFileDigest? = nil,
         resumeData: Data? = nil,
+        seed: URL? = nil,
         onProgress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
         let fm = FileManager.default
@@ -2182,6 +2184,7 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
                     }(),
                     acceptsRanges: metadata.acceptsRanges
                 ),
+                seed: seed,
                 onProgress: onProgress
             )
             return
