@@ -981,7 +981,7 @@ public enum CapabilityClaimsEvaluator {
         request.generation.temperature = 0
         request.generation.maxOutputTokens = 1024
         // A reasoning judge spends this budget thinking and never reaches the verdict.
-        if let stored = ModelProfileRegistry.thinkingStoredOption(for: resolvedModel, enabled: false) {
+        if let stored = ModelProfileRegistry.thinkingOffStoredOption(for: resolvedModel) {
             request.context.modelOptions = [stored.id: stored.value]
         }
         let judgeAttempt = DesktopResponsesAttempt()
