@@ -243,11 +243,11 @@ struct DevicesView: View {
     private var statusText: String {
         if !model.isOpen { return L("Not running") }
         if !model.configuration.networkEnabled { return L("Off") }
-        if model.otherDeviceCount == 0 { return L("No other devices yet") }
+        if model.otherDeviceCount == 0 { return L("No devices yet") }
         if model.connectedDeviceCount > 0 {
-            return String(format: L("Connected to %lld of %lld devices"), model.connectedDeviceCount, model.otherDeviceCount)
+            return String(format: L("%lld of %lld connected"), model.connectedDeviceCount, model.otherDeviceCount)
         }
-        return L("Waiting for your other devices")
+        return L("Waiting for devices")
     }
 
     /// `statusText` for a narrow card: a word or two.

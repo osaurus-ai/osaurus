@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%lld of %lld connected" : {
+
+    },
     "A 6-Digit Code to Enter" : {
 
     },
@@ -159,6 +162,9 @@
       }
     },
     "No devices" : {
+
+    },
+    "No devices yet" : {
 
     },
     "Pairing link" : {
@@ -1623,6 +1629,9 @@
           }
         }
       }
+    },
+    "Waiting for devices" : {
+
     },
     "What does the Pairing Screen in the Osaurus app on your iPhone or iPad show?" : {
 
