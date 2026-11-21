@@ -141,6 +141,7 @@ struct ShareAgentSheet: View {
         }
         .fittedSheetFrame(width: 520, height: 640)
         .background(theme.surface.raised)
+        .themedAlertSheetHost()
         .onChange(of: relayStatus) { _, newValue in
             if destination == .guestLink, case .connected = newValue, generatedInvite == nil {
                 Task { await generateInvite() }
