@@ -75,7 +75,7 @@ struct ClassicUpgradeSheet: View {
             subtitle: "Osaurus 1.0 connects your devices in a new way. Here's what changes.",
             width: SettingsSheetWidth.wide,
             primary: .init(label: "Connect iPhone Now", handler: onConnect),
-            secondary: .init(label: "Got It", handler: onClose),
+            secondary: .init(label: "I'll Do It Later", handler: onClose),
             onClose: onClose
         ) {
             ClassicUpgradeExplainer()
@@ -138,8 +138,8 @@ struct ClassicUpgradeExplainer: View {
                     .id(stage)
                     .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity))
             }
-            // A fixed height: with only `reservesSpace` a one-line caption came out 36pt and a two-line one 42pt, so the
-            // sheet grew and shrank 6pt between steps, re-centring the window and flashing a scroll bar as it did.
+            // A fixed height: with only `reservesSpace` a one-line caption came out 36pt and a two-line one 42pt, so
+            // the sheet grew and shrank 6pt between steps, re-centring the window and flashing a scroll bar as it did.
             .frame(maxWidth: .infinity)
             .frame(height: Self.captionHeight)
         }

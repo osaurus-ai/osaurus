@@ -189,6 +189,8 @@ struct SettingsPageHeader<
     let subtitle: String?
     let verbatimSubtitle: Bool
     let count: Int?
+    /// A small control right after the title (a chip that reopens an explainer).
+    let titleAccessory: AnyView?
     let onRefresh: (() -> Void)?
     let refreshHelp: String
     let isRefreshing: Bool
@@ -213,6 +215,7 @@ struct SettingsPageHeader<
         subtitle: String? = nil,
         verbatimSubtitle: Bool = false,
         count: Int? = nil,
+        titleAccessory: AnyView? = nil,
         onRefresh: (() -> Void)? = nil,
         refreshHelp: String = "Refresh",
         isRefreshing: Bool = false,
@@ -231,6 +234,7 @@ struct SettingsPageHeader<
         self.subtitle = subtitle
         self.verbatimSubtitle = verbatimSubtitle
         self.count = count
+        self.titleAccessory = titleAccessory
         self.onRefresh = onRefresh
         self.refreshHelp = refreshHelp
         self.isRefreshing = isRefreshing
@@ -366,6 +370,7 @@ struct SettingsPageHeader<
             if let count, count > 0 {
                 CountBadge(count)
             }
+            if let titleAccessory { titleAccessory }
         }
         .fixedSize()
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { titleWidth = $0 }

@@ -66,6 +66,8 @@ struct DevicesView: View {
 
     /// "Upgrading from Classic?" (`ClassicUpgradeSheet`).
     @State private var showsClassicUpgrade = false
+    /// Set once the sheet has been closed: from then on a chip by the title opens it again.
+    @AppStorage("devices.classicUpgradeSeen") private var classicUpgradeSeen = false
     /// Its Connect iPhone Now: Add iPhone or iPad opens once it has closed, as one sheet can't open over another.
     @State private var connectsAfterClassicUpgrade = false
 
@@ -73,6 +75,7 @@ struct DevicesView: View {
         SettingsPage {
             SettingsPageHeader(
                 title: "Devices",
+                titleAccessory: classicUpgradeSeen ? AnyView(classicUpgradeChip) : nil,
                 subtitle: "Your Macs and iPhones in one end-to-end encrypted account, with no account to create",
                 primary: {
                     SettingsMenuButton(.primary, "Add Device", icon: "plus") {
@@ -113,6 +116,7 @@ struct DevicesView: View {
         .sheet(
             isPresented: $showsClassicUpgrade,
             onDismiss: {
+                classicUpgradeSeen = true
                 guard connectsAfterClassicUpgrade else { return }
                 connectsAfterClassicUpgrade = false
                 addPhone()
@@ -126,6 +130,30 @@ struct DevicesView: View {
                 onClose: { showsClassicUpgrade = false }
             )
         }
+    }
+
+    /// "Upgrading from Classic?" again, by the title, once the sheet has been seen.
+    private var classicUpgradeChip: some View {
+        Button {
+            showsClassicUpgrade = true
+        } label: {
+            HStack(spacing: theme.space.s4) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .glyphSize(.caption, weight: .semibold)
+                Text("Upgrading from Classic?", bundle: .module)
+                    .textStyle(.caption, weight: 600)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(theme.text.primary)
+            .padding(.horizontal, theme.space.s10)
+            .frame(height: 26)
+            .background(Capsule().fill(theme.surface.subtle))
+            .overlay(Capsule().stroke(theme.border.subtle, lineWidth: theme.stroke.default))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 
     // MARK: - Notices
