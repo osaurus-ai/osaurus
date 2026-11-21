@@ -161,14 +161,15 @@ enum ShareableFiles {
 
 /// Language, embedding and AppleScript bundles in the models folder, plus
 /// MLX bundles found in the Hugging Face cache, LM Studio and custom folders.
+/// The built-in embedder ships with every copy of Osaurus, so it isn't offered.
 enum MLXBundleShareProvider: ShareableModelProvider {
     static func shareableModels() -> [ShareableModel] {
         let fm = FileManager.default
         var seen = Set<String>()
         return ModelManager.localModelsSnapshotNonBlocking().compactMap { model in
-            guard model.id.contains("/"), seen.insert(model.id.lowercased()).inserted, model.isDownloaded else {
-                return nil
-            }
+            guard model.id.contains("/"), seen.insert(model.id.lowercased()).inserted, model.isDownloaded,
+                !EmbeddingProfile.isBuiltInId(model.id)
+            else { return nil }
             let directory = model.localDirectory
             if fm.fileExists(atPath: directory.appendingPathComponent(ModelManifest.pendingUpdateFilename).path) {
                 return nil

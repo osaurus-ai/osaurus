@@ -115,7 +115,7 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
         let known = EmbeddingModelCatalog.curated.map(\.mlxModel) + osaurusAI + discovered
         items = mergingNearby(
             curated + published + local,
-            localIds: { EmbeddingProfile.isBuiltInId($0.id) ? [] : [$0.id] },
+            localIds: { [$0.id] },
             download: { offer, _ in
                 let id = offer.model.repoId ?? offer.localId
                 let model =

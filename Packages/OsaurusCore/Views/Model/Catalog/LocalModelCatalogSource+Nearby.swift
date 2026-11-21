@@ -24,8 +24,9 @@ extension LocalModelCatalogSource {
     ///
     /// - Parameters:
     ///   - localIds: the share ids (`ShareableModel.localId`) a row stands
-    ///     for, first the one sharing would publish; empty for rows that
-    ///     can't be shared or matched.
+    ///     for, first the one sharing would publish; empty for rows no
+    ///     offer can match. Share on This Network shows only for installed
+    ///     rows this Mac can publish.
     ///   - repoId: the row's Hugging Face repo, which also matches an offer.
     ///   - addsUnlisted: add a row for each shared model no row matches.
     ///   - download: starts a download from the offer's Mac; the row is nil
@@ -49,8 +50,8 @@ extension LocalModelCatalogSource {
             let ids = localIds(row)
             guard let primaryId = ids.first else { return row }
 
-            if row.status == .installed {
-                let shareId = ShareableModel.id(kind: shareKind, localId: primaryId)
+            let shareId = ShareableModel.id(kind: shareKind, localId: primaryId)
+            if row.status == .installed, service.shareable.contains(where: { $0.id == shareId }) {
                 if service.isShared(shareId) {
                     row.badges.append(
                         .init(
@@ -70,18 +71,18 @@ extension LocalModelCatalogSource {
                         }
                     )
                 }
-                if let host = service.uncheckedCopies[primaryId.lowercased()] {
-                    row.badges.append(
-                        .init(
-                            text: L("Not Checked"),
-                            tone: .warning,
-                            icon: "exclamationmark.shield",
-                            help: L(
-                                "Copied from \(host) while Hugging Face couldn't be reached, so its files were checked only against that Mac's list. Repair checks them against Hugging Face."
-                            )
+            }
+            if row.status == .installed, let host = service.uncheckedCopies[primaryId.lowercased()] {
+                row.badges.append(
+                    .init(
+                        text: L("Not Checked"),
+                        tone: .warning,
+                        icon: "exclamationmark.shield",
+                        help: L(
+                            "Copied from \(host) while Hugging Face couldn't be reached, so its files were checked only against that Mac's list. Repair checks them against Hugging Face."
                         )
                     )
-                }
+                )
             }
 
             let rowRepo = repoId(row)
