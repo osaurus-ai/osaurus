@@ -196,4 +196,40 @@ struct LifecycleConcurrencyTests {
         #expect(!LaunchGuard.shouldSkip(.distillation))
         #expect(!LaunchGuard.shouldSkip(.autoModelLoad))
     }
+
+    /// APPLE-MACOS-178: `/health` must not rewrite UserDefaults on every
+    /// request once the healthy crash state has been persisted this session.
+    @Test @MainActor func launchguard_health_check_skips_redundant_defaults_writes() {
+        let defaults = UserDefaults.standard
+        let startupInProgressKey = "LaunchGuard.startupInProgress"
+        let crashCountKey = "LaunchGuard.consecutiveCrashCount"
+        let previousInProgress = defaults.object(forKey: startupInProgressKey)
+        let previousCrashCount = defaults.object(forKey: crashCountKey)
+
+        defer {
+            if let previousInProgress {
+                defaults.set(previousInProgress, forKey: startupInProgressKey)
+            } else {
+                defaults.removeObject(forKey: startupInProgressKey)
+            }
+            if let previousCrashCount {
+                defaults.set(previousCrashCount, forKey: crashCountKey)
+            } else {
+                defaults.removeObject(forKey: crashCountKey)
+            }
+        }
+
+        defaults.set(true, forKey: startupInProgressKey)
+        defaults.set(4, forKey: crashCountKey)
+        #expect(LaunchGuard.checkOnLaunch())
+        LaunchGuard.markStartupComplete()
+
+        // Sentinel values: a redundant write from the health check would reset them.
+        defaults.set(7, forKey: crashCountKey)
+        LaunchGuard.noteHealthyHealthCheck()
+        LaunchGuard.noteHealthyHealthCheck()
+
+        #expect(defaults.integer(forKey: crashCountKey) == 7)
+        #expect(!LaunchGuard.isSafeMode)
+    }
 }
