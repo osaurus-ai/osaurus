@@ -99,7 +99,7 @@ enum MobileConnectMigration {
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { keys in
-                MainActor.assumeIsolated { phonesChanged(keys) }
+                MainActor.assumeIsolated { _ = phonesChanged(keys) }
             }
     }
 
