@@ -269,6 +269,23 @@ struct TemplateImportReviewView: View {
                 .foregroundColor(theme.text.tertiary)
             }
         }
+        if !requirements.apps.isEmpty {
+            box(icon: "macwindow", title: L("Apps it uses"), tint: theme.text.secondary) {
+                ForEach(requirements.apps) { app in
+                    line(
+                        app.name,
+                        MacAppLocator.isInstalled(bundleID: app.bundleID)
+                            ? L("Installed")
+                            : app.optional ? L("Not installed, optional") : L("Not installed"))
+                }
+                Text(
+                    "Setup checks that each app is installed on this Mac before the workflow runs.",
+                    bundle: .module
+                )
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
+            }
+        }
         if !requirements.secrets.isEmpty {
             box(icon: "key", title: L("Secrets requested"), tint: theme.text.secondary) {
                 ForEach(requirements.secrets) { secret in

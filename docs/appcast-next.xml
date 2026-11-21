@@ -3,6 +3,31 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>1.0.9</title>
+            <pubDate>Sat, 21 Nov 2026 04:11:53 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.9</sparkle:version>
+            <sparkle:shortVersionString>1.0.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.9/Osaurus-1.0.9.dmg" length="124773612" type="application/octet-stream" sparkle:edSignature="0bk7pJvq6g+XTrnjrOkyQXQV3Q1yLgWV21xxTLB0LzroihdjLmjDVdV91/J7BHw71AceP7H05dQW2owD+JdVBA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Claude Code: agent tools, delegation, sign-in from the picker, and Orchestrator options by @tpae in https://github.com/osaurus-ai/osaurus/pull/3478
+* Keep raw API and plugin inference out of chat history by @tpae in https://github.com/osaurus-ai/osaurus/pull/3480
+* MCP: offer Always Allow for custom MCP tools by @tpae in https://github.com/osaurus-ai/osaurus/pull/3481
+* Workflows: classify instant failures, wait for providers at launch, keep agent steps on their own model by @tpae in https://github.com/osaurus-ai/osaurus/pull/3483
+* Settings: keep native pickers from re-dirtying window layout under the titlebar by @tpae in https://github.com/osaurus-ai/osaurus/pull/3484
+* Help: redesigned Report a Problem, report list, images, and Osaurus Cloud reports by @tpae in https://github.com/osaurus-ai/osaurus/pull/3485
+* Slack: cache workspace connection IDs to prevent main-thread hang in chat preview by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3482
+* Chat sidebar: select chats, All chats page, simpler agent section by @tpae in https://github.com/osaurus-ai/osaurus/pull/3486
+* Share Agent: show the remote access consent over the sheet by @tpae in https://github.com/osaurus-ai/osaurus/pull/3487
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.8...1.0.9
+]]></description>
+        </item>
+        <item>
             <title>1.0.8</title>
             <pubDate>Thu, 19 Nov 2026 10:41:36 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

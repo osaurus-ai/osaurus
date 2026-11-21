@@ -1219,6 +1219,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .POST, Self.localWorkflowRunID(path) != nil {
+                handleLocalWorkflowRunEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path.hasPrefix("/workflows/runs/"), !path.contains("/dialogs/") {
                 handleWorkflowRunStatusEndpoint(
                     head: head,
@@ -7365,6 +7373,83 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     static func encodeHostedStatus(_ status: HostedWorkflowStatus) -> String {
         (try? JSONEncoder.osaurusCanonical().encode(status)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    }
+
+    /// The workflow id in `/workflows/{id}/run`, or nil for any other path.
+    static func localWorkflowRunID(_ path: String) -> UUID? {
+        let components = path.split(separator: "/").map(String.init)
+        guard components.count == 3, components[0] == "workflows", components[2] == "run" else { return nil }
+        return UUID(uuidString: components[1])
+    }
+
+    private struct LocalWorkflowRunRequest: Decodable {
+        let input: JSONValue?
+        let text: String?
+    }
+
+    /// POST /workflows/{id}/run — `{"input": {...}}` or `{"text": "..."}`
+    /// starts one of the owner's workflows in the background and answers
+    /// 202 `{"run_id": ...}`; 409 `needs_setup` while its setup is not
+    /// done. Only the app's own intents call it: physical loopback with the
+    /// per-launch app session token, never a key or a relay.
+    private func handleLocalWorkflowRunEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let requestBody: String? = stateRef.value.requestBodyBuffer.map { buffer in
+            var copy = buffer
+            return copy.readString(length: copy.readableBytes) ?? ""
+        }
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let reply: (HTTPResponseStatus, String) -> Void = { status, body in
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: body)
+                self.logRequest(
+                    method: "POST", path: path, userAgent: userAgent, requestBody: requestBody, responseBody: body,
+                    responseStatus: Int(status.code), startTime: startTime)
+            }
+        }
+        guard isPhysicalLoopbackConnection(context),
+            LocalAPIKeyPolicy.isAppSessionToken(head.headers.first(name: LocalAPIKeyPolicy.appTokenHeaderName))
+        else {
+            reply(.forbidden, #"{"error":"app_only","message":"Only Osaurus's own Shortcuts actions can start this."}"#)
+            return
+        }
+        guard let workflowID = Self.localWorkflowRunID(path) else {
+            reply(.badRequest, #"{"error":"invalid_path","message":"Expected /workflows/{id}/run"}"#)
+            return
+        }
+        let body = requestBody.flatMap { $0.isEmpty ? nil : $0 } ?? "{}"
+        guard let request = try? JSONDecoder().decode(LocalWorkflowRunRequest.self, from: Data(body.utf8)) else {
+            reply(.badRequest, #"{"error":"invalid_input","message":"Expected {\"input\": {...}} or {\"text\": \"...\"}"}"#)
+            return
+        }
+        runRequestTask(priority: .userInitiated) {
+            let started = await MainActor.run {
+                WorkflowLocalStart.start(workflowID: workflowID, text: request.text, values: request.input)
+            }
+            switch started {
+            case .success(let runID):
+                reply(.accepted, Self.jsonObjectString(["ok": .bool(true), "run_id": .string(runID.uuidString)]))
+            case .failure(let failure):
+                reply(
+                    HTTPResponseStatus(statusCode: failure.status),
+                    Self.jsonObjectString(["error": .string(failure.code), "message": .string(failure.message)]))
+            }
+        }
+    }
+
+    static func jsonObjectString(_ object: [String: JSONValue]) -> String {
+        (try? JSONEncoder.osaurusCanonical().encode(JSONValue.object(object))).map { String(decoding: $0, as: UTF8.self) }
+            ?? "{}"
     }
 
     /// GET /workflows/runs/{runId} — the state of one workflow run in the

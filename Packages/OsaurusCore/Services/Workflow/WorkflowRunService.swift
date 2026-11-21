@@ -30,6 +30,10 @@ public final class WorkflowRunService {
     private var runsByToolCall: [String: UUID] = [:]
     /// Each in-flight run's step timeouts, by node id.
     private var stepTimeouts: [UUID: [String: TimeInterval]] = [:]
+    /// What `workflow_run_finished` needs about each in-flight run: when it
+    /// started on this launch (a resumed run's `startedAt` is the earlier
+    /// launch's), whether it was resumed, and its step kinds by node id.
+    private var launchRecords: [UUID: (startedAt: Date, resumed: Bool, stepKinds: [String: String])] = [:]
     private var parkWaiters: [UUID: [CheckedContinuation<WorkflowRun, Never>]] = [:]
     private var resumePassDone = false
     private var resumePassWaiters: [CheckedContinuation<Void, Never>] = []
@@ -321,6 +325,12 @@ public final class WorkflowRunService {
         if let callID = request.caller.toolCallID { runsByToolCall[callID] = runID }
         stepTimeouts[runID] = Dictionary(
             (request.template.workflow?.nodes ?? []).map { ($0.id, $0.timeout) }, uniquingKeysWith: max)
+        launchRecords[runID] = (
+            Date(), request.resuming != nil,
+            Dictionary(
+                (request.template.workflow?.nodes ?? []).map { ($0.id, $0.kindName) },
+                uniquingKeysWith: { first, _ in first })
+        )
         WorkflowActivityLogger.shared.begin(runID: runID, definition: request.template.workflow)
         WorkflowTaskRecorder.began(request, resuming: request.resuming != nil)
         FeatureTelemetry.workflowRunStarted(caller: request.caller.kind.rawValue, resumed: request.resuming != nil)
@@ -360,10 +370,19 @@ public final class WorkflowRunService {
         WorkflowRunStore.shared.record(run)
         WorkflowActivityLogger.shared.finished(run)
         WorkflowTaskRecorder.finished(run)
+        let launch = launchRecords.removeValue(forKey: run.id)
+        let resumed = launch?.resumed ?? false
+        let startedHere = resumed ? (launch?.startedAt ?? run.startedAt) : run.startedAt
         FeatureTelemetry.workflowRunFinished(
             caller: run.caller.kind.rawValue,
             status: run.status.rawValue,
-            duration: run.finishedAt.map { $0.timeIntervalSince(run.startedAt) }
+            duration: run.finishedAt.map { $0.timeIntervalSince(startedHere) },
+            runKind: WorkflowRunTelemetry.runKind(run),
+            resumed: resumed,
+            retry: run.retryOf != nil,
+            sinceLaunch: launch.map { max(0, $0.startedAt.timeIntervalSince(ProcessLaunch.date)) },
+            failure: WorkflowRunTelemetry.failure(
+                run, stepKinds: launch?.stepKinds ?? [:], route: WorkflowRunTelemetry.liveRoute)
         )
         tasks[run.id] = nil
         stepTimeouts[run.id] = nil

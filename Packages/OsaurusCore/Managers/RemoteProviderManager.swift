@@ -591,8 +591,16 @@ public final class RemoteProviderManager: ObservableObject {
         try await connect(providerId: providerId)
     }
 
+    /// True from launch until the launch connect pass returns. `AppDelegate`
+    /// sets it before scheduling the pass, so a request that arrives before
+    /// a provider's first connect waits for it (`awaitService`) instead of
+    /// failing on a provider that is about to come up.
+    static var launchConnectPending = false
+
     /// Connect to all enabled providers on app launch
     public func connectEnabledProviders() async {
+        Self.launchConnectPending = true
+        defer { Self.launchConnectPending = false }
         ensureManagedOsaurusRouterProviderIfNeeded()
         // Honor the per-provider "Auto-connect" setting: only providers the
         // user left enabled AND auto-connect connect at launch. A provider
@@ -2068,6 +2076,135 @@ public final class RemoteProviderManager: ObservableObject {
         testIdentityExistsOverride = nil
         testRetrySleepOverride = nil
         testNetworkRecoverySettleDelayOverride = nil
+        Self.launchConnectPending = false
+    }
+}
+
+// MARK: - Service readiness
+
+/// A model names a configured remote provider that has no live service.
+/// `provider` is the provider's display name.
+struct RemoteProviderUnavailable: Error, LocalizedError, Equatable, Sendable {
+    enum Reason: String, Sendable {
+        case offline
+        case disabled
+        case signInRequired
+        case connectFailed
+        case stillConnecting
+        case awaitingFirstCredit
+        case notConnected
+    }
+
+    var provider: String
+    var reason: Reason
+    var detail: String?
+
+    var errorDescription: String? {
+        switch reason {
+        case .offline:
+            return L("\(provider) can't be reached: this Mac is offline.")
+        case .disabled:
+            return L("\(provider) is turned off in Settings → Providers.")
+        case .signInRequired:
+            return L("\(provider) needs you to sign in again.")
+        case .connectFailed:
+            let why = detail.map { ": " + ProviderDiagnosticRedactor.safe($0, maxLength: 200) } ?? "."
+            return L("\(provider) didn't connect") + why
+        case .stillConnecting:
+            return L("\(provider) was still connecting when this step gave up waiting for it.")
+        case .awaitingFirstCredit:
+            return L("\(provider) is waiting for you to choose your welcome credit.")
+        case .notConnected:
+            return L("\(provider) isn't connected.")
+        }
+    }
+
+    /// The next thing to do, in one sentence.
+    var hint: String {
+        switch reason {
+        case .offline, .stillConnecting:
+            return L("Retry once \(provider) shows as connected in Settings → Providers.")
+        case .disabled, .notConnected:
+            return L("Connect \(provider) in Settings → Providers, or pick a model that is here.")
+        case .signInRequired:
+            return L("Sign in to \(provider) again in Settings → Providers.")
+        case .connectFailed:
+            return L("Open Settings → Providers to see why \(provider) didn't connect, then retry.")
+        case .awaitingFirstCredit:
+            return L("Finish choosing your welcome credit, then retry.")
+        }
+    }
+
+    /// Whether waiting and asking again could succeed without the person
+    /// changing anything.
+    var retryable: Bool {
+        switch reason {
+        case .offline, .stillConnecting: return true
+        case .connectFailed: return detail != nil
+        case .disabled, .signInRequired, .awaitingFirstCredit, .notConnected: return false
+        }
+    }
+}
+
+extension RemoteProviderManager {
+    /// How long a request waits for a provider that is connecting.
+    nonisolated static let serviceReadinessWaitLimit: TimeInterval = 45
+
+    /// The configured provider whose picker prefix `model` carries.
+    func configuredProvider(forModel model: String) -> RemoteProvider? {
+        let lowered = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let spawn = SpawnRemoteModelIdentity.parse(model) {
+            return configuration.provider(id: spawn.providerId)
+        }
+        return configuration.providers.first { lowered.hasPrefix(Self.pickerPrefix(for: $0.name) + "/") }
+    }
+
+    /// Waits up to `limit` for the provider `model` names to have a live
+    /// service, when a connect for it is under way: it is connecting now,
+    /// or the launch connect pass has not reached it yet. Returns nil when
+    /// the model is not a configured provider's or its service is live,
+    /// else why it is not. Never waits when nothing is connecting it.
+    func awaitService(
+        forModel model: String, limit: TimeInterval = RemoteProviderManager.serviceReadinessWaitLimit
+    ) async -> RemoteProviderUnavailable? {
+        guard let provider = configuredProvider(forModel: model) else { return nil }
+        let deadline = Date().addingTimeInterval(limit)
+        while true {
+            if let reason = readiness(of: provider) {
+                guard reason == .stillConnecting, Date() < deadline, !Task.isCancelled else {
+                    return RemoteProviderUnavailable(
+                        provider: provider.name, reason: reason,
+                        detail: reason == .connectFailed ? providerStates[provider.id]?.lastError : nil)
+                }
+            } else {
+                return nil
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
+    /// Nil when `provider` has a live service; `.stillConnecting` while a
+    /// connect for it is under way; else why it has none.
+    private func readiness(of provider: RemoteProvider) -> RemoteProviderUnavailable.Reason? {
+        guard !isOffline else { return .offline }
+        if services[provider.id] != nil { return nil }
+        guard provider.enabled else { return .disabled }
+        let state = providerStates[provider.id]
+        if state?.requiresAuth == true { return .signInRequired }
+        if state?.isConnecting == true { return .stillConnecting }
+        if Self.isManagedOsaurusRouterProvider(provider),
+            RouterCreditAcquisitionCoordinator.shared.blocksGeneralSignedRequests
+        {
+            return .awaitingFirstCredit
+        }
+        // The launch pass retries a transient failure after a backoff, with
+        // `isConnecting` briefly false in between.
+        let launchWillConnect =
+            Self.launchConnectPending && provider.autoConnect
+            && (state?.lastError == nil || state?.lastFailureWasTransient == true)
+        if launchWillConnect { return .stillConnecting }
+        if state?.lastError != nil { return .connectFailed }
+        return .notConnected
     }
 }
 

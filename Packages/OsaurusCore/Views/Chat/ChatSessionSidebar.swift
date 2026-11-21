@@ -32,6 +32,13 @@ struct ChatSessionSidebar: View {
     var openChats: [ChatTab] = []
     var onSelectOpenChat: ((UUID) -> Void)? = nil
     var onCloseOpenChat: ((UUID) -> Void)? = nil
+    /// The window's chat selection. nil leaves rows without checkboxes.
+    var chatSelection: Binding<ChatSelection>? = nil
+    /// False while a page with its own batch bar (All chats) is on screen.
+    var showsBatchBar = true
+    /// Selectable chat ids in the order their rows sit on screen, for
+    /// Shift-click ranges. Reported by the rows themselves.
+    @State private var visibleChatOrder: [UUID] = []
     @State private var navigatorRenameId: UUID?
     @ObservedObject private var conversations = ChatSessionsManager.shared
     @State private var agentExpansion: [UUID: Bool] = [:]
@@ -52,9 +59,10 @@ struct ChatSessionSidebar: View {
     /// Workspace agent rows folded open or closed, by `workspaceRowKey`.
     @State private var workspaceAgentExpansion: [String: Bool] = [:]
     @State private var visibleWorkspaceChatCounts: [String: Int] = [:]
-    /// The ⋯ menu's Show Archived filter: archived chats rejoin their
-    /// agent's list, marked, instead of staying hidden.
-    @AppStorage("chatSidebar.showArchived") private var showArchived = false
+    /// Open the All chats page. Archived chats are listed there only.
+    var onShowAllChats: ((AllChatsRequest) -> Void)? = nil
+    /// The All chats page is on screen: its row is the highlighted one.
+    var isShowingAllChats = false
     /// Open a chat in the window's current tab (e.g. a workspace agent's
     /// row resuming its last conversation).
     let onSelect: (ChatSessionData) -> Void
@@ -65,12 +73,8 @@ struct ChatSessionSidebar: View {
     var onStop: ((UUID) -> Void)? = nil
     /// Open a chat in a new tab of this window (browser-style).
     var onOpenInNewTab: ((ChatSessionData) -> Void)? = nil
-    /// Select an agent for this window (agents-focused sidebar prototype —
-    /// replaces the removed agent-selector pill; same effect as picking an
-    /// agent from it).
-    var onSelectAgent: ((UUID) -> Void)? = nil
-    /// Start a fresh chat with a local agent straight from its row (hover
-    /// "+" / context menu), without selecting the agent first.
+    /// Start a fresh chat with a local agent: its row's click (when
+    /// closed), its `New chat` row and its menu's New Chat.
     var onNewChatWithAgent: ((UUID) -> Void)? = nil
     /// Lowercased address of the workspace teammate's agent the window's
     /// active tab is chatting with, or nil for a local chat. While set, the
@@ -91,7 +95,7 @@ struct ChatSessionSidebar: View {
     var onSelectHostedAgent: ((String, UUID) -> Void)? = nil
     /// Export formats offered by chat rows; the type lives here because the
     /// sidebar has always been its home (`ChatSessionExportCoordinator`,
-    /// `ExportChooserSheet` and `ChatHistoryList` share it).
+    /// `ExportChooserSheet` and `AllChatsList` share it).
     enum ExportFormat {
         case markdown
         case pdf
@@ -142,6 +146,15 @@ struct ChatSessionSidebar: View {
             navigatorSearchRow
             ScrollView {
                 VStack(spacing: theme.space.s2) {
+                    if let onShowAllChats {
+                        NavigatorLinkRow(
+                            icon: "clock",
+                            title: L("All chats"),
+                            count: Self.allChatsCount(conversations.sessions),
+                            isSelected: isShowingAllChats
+                        ) { onShowAllChats(AllChatsRequest()) }
+                        .padding(.bottom, theme.space.s8)
+                    }
                     if let orchestrator = agentManager.agent(for: Agent.defaultId),
                         navigatorShows(orchestrator)
                     {
@@ -169,6 +182,13 @@ struct ChatSessionSidebar: View {
                     }
                     workspaceSections
                     if !directlySharedAgents.isEmpty { sharedAgentsSection(directlySharedAgents) }
+                    if isFilteringNavigator, let onShowAllChats {
+                        NavigatorLinkRow(
+                            icon: "text.magnifyingglass",
+                            title: L("Search messages for “\(trimmedNavigatorQuery)”")
+                        ) { onShowAllChats(AllChatsRequest(query: trimmedNavigatorQuery)) }
+                        .padding(.top, theme.space.s8)
+                    }
                 }
                 .padding(.horizontal, theme.space.s16)
                 .padding(.bottom, theme.space.s16)
@@ -176,7 +196,27 @@ struct ChatSessionSidebar: View {
             .sidebarScrollEdgeFade()
             .coordinateSpace(name: "agentList")
             .onPreferenceChange(AgentRowFramesKey.self) { agentRowFrames = $0 }
+            .onPreferenceChange(VisibleChatOrderKey.self) { visibleChatOrder = Self.visibleChatOrder($0) }
+            if showsBatchBar, let binding = chatSelection, binding.wrappedValue.isActive {
+                ChatBatchBar(
+                    placement: .sidebar,
+                    selectedCount: binding.wrappedValue.count,
+                    onArchive: {
+                        ChatBatchActions.setArchived(binding.wrappedValue.selectedIds, archived: true)
+                        binding.wrappedValue.clear()
+                    },
+                    onDelete: {
+                        ChatBatchActions.requestDelete(binding.wrappedValue.selectedIds, scope: alertScope) {
+                            binding.wrappedValue.clear()
+                        }
+                    },
+                    onDone: { binding.wrappedValue.clear() }
+                )
+                .padding(theme.space.s8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(theme.motion.quick, value: chatSelection?.wrappedValue.isActive ?? false)
         .onChange(of: agentId) { _, newAgentId in
             // Opening an agent by any route (row tap, tab switch, deep link)
             // is "seen": the new-agent ring comes off.
@@ -218,11 +258,6 @@ struct ChatSessionSidebar: View {
                     let activity = activityStatus(for: agent)
                     AgentSidebarRow(
                         agent: agent,
-                        // A team-agent or network-agent tab owns the
-                        // selection: no local row is highlighted while one
-                        // is active.
-                        isSelected: agent.id == agentId && workspaceAgentAddress == nil
-                            && activeHostedAgent == nil,
                         isExpanded: isAgentExpanded(agent),
                         activityStatus: activity,
                         activityStep: activity == nil ? nil : activityStep(for: agent),
@@ -239,16 +274,13 @@ struct ChatSessionSidebar: View {
                         isNew: newAgentHighlight.isNew(localAgentId: agent.id),
                         onSelect: {
                             newAgentHighlight.markSeen(localAgentId: agent.id)
-                            // An agent with no chats has nothing to browse, so
-                            // the click starts one. Otherwise it only browses the
-                            // history: it never selects the agent or starts a chat.
-                            if historyItems(for: agent.id).isEmpty, let start = onNewChatWithAgent {
-                                start(agent.id)
-                                return
+                            switch Self.agentRowClick(isOpen: isAgentExpanded(agent)) {
+                            case .close:
+                                agentExpansion[agent.id] = false
+                            case .openToNewChat:
+                                agentExpansion[agent.id] = true
+                                showNewChat(with: agent)
                             }
-                            let wasExpanded = agentExpansion[agent.id] ?? (agent.id == agentId)
-                            agentExpansion[agent.id] = !wasExpanded
-                            if wasExpanded { visibleChatCounts.removeValue(forKey: agent.id) }
                         },
                         onNewChat: onNewChatWithAgent.map { start in
                             {
@@ -257,6 +289,22 @@ struct ChatSessionSidebar: View {
                             }
                         },
                         onStop: activity == nil ? nil : { stopActivity(for: agent) },
+                        onRename: agent.isBuiltIn ? nil : { AgentSidebarActions.rename(agent, to: $0) },
+                        onDelete: agent.isBuiltIn ? nil : {
+                            AgentSidebarActions.requestDelete(
+                                agent, chatCount: Self.agentChatCount(conversations.sessions, agentId: agent.id),
+                                scope: alertScope)
+                        },
+                        onShowAllChats: onShowAllChats.map { show in { show(AllChatsRequest(agentId: agent.id)) } },
+                        onSelectChats: chatSelection.flatMap { binding in
+                            onShowAllChats.map { show in
+                                {
+                                    binding.wrappedValue.select(
+                                        Self.allChatsIds(conversations.sessions, agentId: agent.id))
+                                    show(AllChatsRequest(agentId: agent.id))
+                                }
+                            }
+                        },
                         // A filtered list is not the real order: no reordering
                         // until the query clears.
                         isReorderable: !agent.isBuiltIn && !isFilteringNavigator,
@@ -273,16 +321,28 @@ struct ChatSessionSidebar: View {
                         }
                     )
         if isAgentExpanded(agent) {
+            if !isFilteringNavigator {
+                NavigatorLinkRow(
+                    icon: "plus",
+                    title: L("New chat"),
+                    isSelected: navigatorHighlight == .newChat(agent.id)
+                ) { showNewChat(with: agent) }
+                .accessibilityLabel(Text(verbatim: L("New chat with \(agent.displayName)")))
+            }
             let recent = navigatorChats(for: agent.id)
-            let count = visibleChatCounts[agent.id] ?? 5
-            let visible = Self.navigatorVisibleChats(recent, cap: count, activeIds: Set(activityMonitor.statuses.keys))
+            let visible = Self.navigatorVisibleChats(
+                recent, cap: Self.chatsPerAgent, activeIds: Set(activityMonitor.statuses.keys))
             ForEach(visible) { chat in
                 navigatorConversationRow(chat, agent: agent)
             }
-            if recent.count > visible.count {
-                Button { visibleChatCounts[agent.id] = count + 5 } label: {
-                    Text("Show more", bundle: .module)
+            let total = Self.allChatsCount(conversations.sessions, agentId: agent.id)
+            if let onShowAllChats, recent.count > visible.count || (!isFilteringNavigator && total > visible.count) {
+                Button {
+                    onShowAllChats(AllChatsRequest(agentId: agent.id, query: trimmedNavigatorQuery))
+                } label: {
+                    Text(verbatim: L("All \(total) chats"))
                         .textStyle(.label)
+                        .monospacedDigit()
                         .foregroundStyle(theme.text.tertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.leading, NavigatorRowMetrics.textLeading)
@@ -291,6 +351,37 @@ struct ChatSessionSidebar: View {
                 }.buttonStyle(.plain)
             }
         }
+    }
+
+    /// The agent's new chat screen: its untouched chat when one is on
+    /// screen, else a fresh one.
+    private func showNewChat(with agent: Agent) {
+        newAgentHighlight.markSeen(localAgentId: agent.id)
+        keepAgentExpansion(for: [agentId, agent.id])
+        if navigatorHighlight == .newChat(agent.id) { return }
+        onNewChatWithAgent?(agent.id)
+    }
+
+    /// Chats listed under an open agent; the rest are on the All chats page.
+    static let chatsPerAgent = 5
+
+    /// Every saved chat of the agent, archived included: what deleting the
+    /// agent removes.
+    nonisolated static func agentChatCount(_ sessions: [ChatSessionData], agentId: UUID) -> Int {
+        sessions.reduce(0) { $0 + (($1.agentId ?? Agent.defaultId) == agentId ? 1 : 0) }
+    }
+
+    /// Pure rule (testable): the chats the All chats page counts, archived
+    /// ones aside, for one agent or (nil) everyone.
+    nonisolated static func allChatsCount(_ sessions: [ChatSessionData], agentId: UUID? = nil) -> Int {
+        allChatsIds(sessions, agentId: agentId).count
+    }
+
+    nonisolated static func allChatsIds(_ sessions: [ChatSessionData], agentId: UUID? = nil) -> [UUID] {
+        sessions.filter { session in
+            !session.archived && AllChatsModel.isListed(session)
+                && (agentId.map { (session.agentId ?? Agent.defaultId) == $0 } ?? true)
+        }.map(\.id)
     }
 
     /// Opening a chat can change the window's agent, which moves the
@@ -359,7 +450,9 @@ struct ChatSessionSidebar: View {
             updatedAt: chat.updatedAt, agentId: agent?.id ?? chat.agentId, archived: live?.archived ?? false,
             pinned: live?.pinned ?? false, projectId: live?.projectId)
         let isWorkspaceChat = metadata.workspace != nil || live?.workspaceContext != nil
+        let selection = rowSelection(for: chat)
         return SessionRow(session: metadata, agent: agent, isSelected: chat.isSelected,
+            selection: selection,
             navigatorStyle: true, showsAgentAvatar: showsAgentAvatar, sharedAvatar: sharedAvatar,
             activityStatus: activityMonitor.statuses[chat.id],
             isEditing: navigatorRenameId == chat.id,
@@ -417,6 +510,71 @@ struct ChatSessionSidebar: View {
                 }
             },
             onOpenInNewTab: onOpenInNewTab.map { open in { open(savedConversation(chat)) } })
+            .preference(key: VisibleChatOrderKey.self, value: selection == nil ? [] : [chat.id])
+    }
+
+    /// A saved chat's part in the window's selection; drafts have none.
+    private func rowSelection(for chat: HistoryItem) -> SessionRowSelection? {
+        guard let binding = chatSelection, chat.saved != nil else { return nil }
+        return SessionRowSelection.make(
+            for: chat.id, in: binding, visibleOrder: visibleChatOrder, fallbackAnchor: activeSessionId,
+            sessions: conversations.sessions, scope: alertScope)
+    }
+
+    /// The one sidebar row that reads as current.
+    enum NavigatorHighlight: Equatable {
+        case allChats
+        /// The `New chat` row of this local agent.
+        case newChat(UUID)
+        /// A chat row, by its list id (session id, else tab id).
+        case chat(UUID)
+        case none
+    }
+
+    /// Pure rule (testable): All chats while the page is on screen, else
+    /// the `New chat` row of the agent whose untouched chat is on screen,
+    /// else the chat on screen. Agent rows are never highlighted.
+    nonisolated static func highlightedRow(
+        showingAllChats: Bool, activeChatId: UUID?, untouchedChatAgentId: UUID?
+    ) -> NavigatorHighlight {
+        if showingAllChats { return .allChats }
+        if let untouchedChatAgentId { return .newChat(untouchedChatAgentId) }
+        return activeChatId.map(NavigatorHighlight.chat) ?? .none
+    }
+
+    /// What clicking an agent row does.
+    enum AgentRowClick: Equatable {
+        /// Fold it; nothing on screen changes.
+        case close
+        /// Unfold it and show its new chat.
+        case openToNewChat
+    }
+
+    nonisolated static func agentRowClick(isOpen: Bool) -> AgentRowClick {
+        isOpen ? .close : .openToNewChat
+    }
+
+    private var navigatorHighlight: NavigatorHighlight {
+        let activeTab = openChats.first { $0.id == activeOpenTabId }
+        var untouchedAgentId: UUID?
+        if let activeTab, Self.isUntouchedChat(activeTab),
+            !(activeTab.session.projectId.map(existingProjectIds.contains) ?? false),
+            case .local(let id) = ChatTabScope.of(activeTab.session)
+        {
+            untouchedAgentId = id
+        }
+        return Self.highlightedRow(
+            showingAllChats: isShowingAllChats,
+            activeChatId: activeSessionId ?? activeOpenTabId,
+            untouchedChatAgentId: untouchedAgentId)
+    }
+
+    /// Pure rule (testable): the selectable rows' ids as reported top to
+    /// bottom, each once. Rows of folded groups never render, so they
+    /// never report.
+    nonisolated static func visibleChatOrder(_ reported: [UUID]) -> [UUID] {
+        var seen = Set<UUID>()
+        return reported.filter { seen.insert($0).inserted }
     }
 
     private func savedConversation(_ chat: HistoryItem) -> ChatSessionData {
@@ -454,7 +612,7 @@ struct ChatSessionSidebar: View {
         let projectIds = existingProjectIds
         let served = servedWorkspaceIds(for: agentId)
         let saved = Self.agentHistorySessions(
-            conversations.sessions, agentId: agentId, includeArchived: showArchived,
+            conversations.sessions, agentId: agentId,
             keepingArchived: Set(activityMonitor.statuses.keys), excludingProjects: projectIds,
             excludingServedIn: served)
         let live = openChats.filter {
@@ -462,14 +620,13 @@ struct ChatSessionSidebar: View {
                 && !($0.session.projectId.map(projectIds.contains) ?? false)
                 && !($0.session.workspaceContext.map { $0.isServedForTeammate && served.contains($0.workspaceId) } ?? false)
         }
-        return mergedHistory(saved: saved, live: live)
+        return mergedHistory(saved: saved, live: live, underAgent: true)
     }
 
     /// A project's chats, from every local agent, merged the same way.
     private func projectHistoryItems(for projectId: UUID) -> [HistoryItem] {
         let saved = Self.projectHistorySessions(
-            conversations.sessions, projectId: projectId, includeArchived: showArchived,
-            keepingArchived: Set(activityMonitor.statuses.keys))
+            conversations.sessions, projectId: projectId, keepingArchived: Set(activityMonitor.statuses.keys))
         let live = openChats.filter { tab in
             guard tab.kind == .chat, !tab.session.pinned, tab.session.projectId == projectId else { return false }
             if case .local = ChatTabScope.of(tab.session) { return true }
@@ -484,30 +641,40 @@ struct ChatSessionSidebar: View {
             && !session.isStreaming && session.awaitingClarify == nil
     }
 
-    private func mergedHistory(saved: [ChatSessionData], live: [ChatTab]) -> [HistoryItem] {
+    /// Pure rule (testable): whether a live tab gets its own row. An
+    /// untouched chat under an agent is that agent's `New chat` row; in a
+    /// project or workspace list, which has no such row, it is listed only
+    /// while it is the chat on screen. Any chat with a message is listed.
+    nonisolated static func listsLiveChat(isUntouched: Bool, isOnScreen: Bool, underAgent: Bool) -> Bool {
+        guard isUntouched else { return true }
+        return !underAgent && isOnScreen
+    }
+
+    private func mergedHistory(saved: [ChatSessionData], live: [ChatTab], underAgent: Bool = false) -> [HistoryItem] {
         let activeIds = Set(activityMonitor.statuses.keys)
+        let highlight = navigatorHighlight
         var items = saved.map { data in
             let tab = live.first { $0.session.sessionId == data.id }
             return HistoryItem(id: data.id, title: data.title, updatedAt: data.updatedAt,
-                saved: data, openTabId: tab?.id, isSelected: data.id == activeSessionId,
+                saved: data, openTabId: tab?.id, isSelected: highlight == .chat(data.id),
                 agentId: data.agentId ?? Agent.defaultId)
         }
         let savedIds = Set(saved.map(\.id))
         for tab in live where tab.session.sessionId.map({ !savedIds.contains($0) }) ?? true {
-            // A New Chat nothing happened in is listed only while it is the
-            // chat on screen.
-            if Self.isUntouchedChat(tab), tab.id != activeOpenTabId { continue }
+            guard Self.listsLiveChat(
+                isUntouched: Self.isUntouchedChat(tab), isOnScreen: tab.id == activeOpenTabId, underAgent: underAgent)
+            else { continue }
             // Archived sessions stay out of the recent list even if still
-            // alive in memory, unless the Show Archived filter is on or a
-            // run is live on them.
+            // alive in memory, unless a run is live on them.
             if let id = tab.session.sessionId,
                 conversations.sessions.contains(where: {
-                    $0.id == id && (($0.archived && !showArchived && !activeIds.contains(id)) || $0.pinned)
+                    $0.id == id && (($0.archived && !activeIds.contains(id)) || $0.pinned)
                 })
             { continue }
-            items.append(HistoryItem(id: tab.session.sessionId ?? tab.id, title: tab.session.title,
+            let id = tab.session.sessionId ?? tab.id
+            items.append(HistoryItem(id: id, title: tab.session.title,
                 updatedAt: tab.session.updatedAt, saved: nil, openTabId: tab.id,
-                isSelected: tab.id == activeOpenTabId, agentId: tab.session.agentId ?? Agent.defaultId))
+                isSelected: highlight == .chat(id), agentId: tab.session.agentId ?? Agent.defaultId))
         }
         return items.sorted {
             $0.updatedAt == $1.updatedAt ? $0.id.uuidString < $1.id.uuidString : $0.updatedAt > $1.updatedAt
@@ -519,13 +686,14 @@ struct ChatSessionSidebar: View {
     /// Pinned chats across local agents and workspaces, newest first, each
     /// with the agent its row shows: a local agent, or a teammate's.
     private var pinnedItems: [(item: HistoryItem, agent: Agent?, shared: SharedAgentIdentity?)] {
-        Self.pinnedSessions(
-            conversations.sessions, includeArchived: showArchived, keepingArchived: Set(activityMonitor.statuses.keys))
+        let highlight = navigatorHighlight
+        return Self.pinnedSessions(
+            conversations.sessions, keepingArchived: Set(activityMonitor.statuses.keys))
             .compactMap { data in
                 let tab = openChats.first { $0.kind == .chat && $0.session.sessionId == data.id }
                 let item = HistoryItem(
                     id: data.id, title: data.title, updatedAt: data.updatedAt,
-                    saved: data, openTabId: tab?.id, isSelected: data.id == activeSessionId,
+                    saved: data, openTabId: tab?.id, isSelected: highlight == .chat(data.id),
                     agentId: data.agentId ?? Agent.defaultId)
                 if data.isWorkspaceAgentChat, let context = data.workspace {
                     let shared = SharedAgentIdentity.resolve(
@@ -541,15 +709,15 @@ struct ChatSessionSidebar: View {
     /// Pinned group shows those), team-agent chats, chats in one of
     /// `excludingProjects` (their project lists them), chats it served for
     /// teammates in one of `excludingServedIn` (its row in that workspace
-    /// lists them) and, unless `includeArchived`, archived ones. Archived
+    /// lists them) and archived ones (All chats lists those). Archived
     /// chats in `keepingArchived` (live runs) stay listed regardless.
     nonisolated static func agentHistorySessions(
-        _ sessions: [ChatSessionData], agentId: UUID, includeArchived: Bool = false,
+        _ sessions: [ChatSessionData], agentId: UUID,
         keepingArchived: Set<UUID> = [], excludingProjects: Set<UUID> = [],
         excludingServedIn servedWorkspaceIds: Set<String> = []
     ) -> [ChatSessionData] {
         sessions.filter {
-            (includeArchived || !$0.archived || keepingArchived.contains($0.id))
+            (!$0.archived || keepingArchived.contains($0.id))
                 && !$0.pinned && !$0.isWorkspaceAgentChat
                 && ($0.agentId ?? Agent.defaultId) == agentId
                 && !($0.projectId.map(excludingProjects.contains) ?? false)
@@ -561,24 +729,24 @@ struct ChatSessionSidebar: View {
     /// agent, with the same pinned, team-agent and archived rules as
     /// `agentHistorySessions`.
     nonisolated static func projectHistorySessions(
-        _ sessions: [ChatSessionData], projectId: UUID, includeArchived: Bool = false,
+        _ sessions: [ChatSessionData], projectId: UUID,
         keepingArchived: Set<UUID> = []
     ) -> [ChatSessionData] {
         sessions.filter {
-            (includeArchived || !$0.archived || keepingArchived.contains($0.id))
+            (!$0.archived || keepingArchived.contains($0.id))
                 && !$0.pinned && !$0.isWorkspaceAgentChat
                 && $0.projectId == projectId
         }
     }
 
     /// The Pinned group's chats: pinned chats of any agent, local or a
-    /// teammate's, newest first; archived ones only when `includeArchived`
-    /// or listed in `keepingArchived` (live runs).
+    /// teammate's, newest first; archived ones only when listed in
+    /// `keepingArchived` (live runs).
     nonisolated static func pinnedSessions(
-        _ sessions: [ChatSessionData], includeArchived: Bool = false, keepingArchived: Set<UUID> = []
+        _ sessions: [ChatSessionData], keepingArchived: Set<UUID> = []
     ) -> [ChatSessionData] {
         sessions
-            .filter { $0.pinned && (includeArchived || !$0.archived || keepingArchived.contains($0.id)) }
+            .filter { $0.pinned && (!$0.archived || keepingArchived.contains($0.id)) }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
@@ -779,21 +947,43 @@ struct ChatSessionSidebar: View {
     @ViewBuilder
     private var agentsHeaderMenuItems: some View {
         Button {
+            AgentCreatorLauncher.open(source: .sidebar)
+        } label: {
+            Label {
+                Text("New Agent…", bundle: .module)
+            } icon: {
+                Image(systemName: "plus")
+            }
+        }
+        Button {
             ConversationImportRequest.present(agentId: agentId, scope: alertScope, onOpen: onSelect)
         } label: {
             Label {
-                Text("Import Conversations", bundle: .module)
+                Text("Import Conversations…", bundle: .module)
             } icon: {
                 Image(systemName: "square.and.arrow.down")
             }
         }
-        Button {
-            withAnimation(theme.motion.quick) { showArchived.toggle() }
-        } label: {
-            Label {
-                Text(showArchived ? "Hide Archived" : "Show Archived", bundle: .module)
-            } icon: {
-                Image(systemName: showArchived ? "eye.slash" : "archivebox")
+        if let chatSelection {
+            Button {
+                chatSelection.wrappedValue.requestMode()
+            } label: {
+                Label {
+                    Text("Select chats", bundle: .module)
+                } icon: {
+                    Image(systemName: "checkmark.circle")
+                }
+            }
+        }
+        if let onShowAllChats {
+            Button {
+                onShowAllChats(AllChatsRequest(filter: .archived))
+            } label: {
+                Label {
+                    Text("Archived chats", bundle: .module)
+                } icon: {
+                    Image(systemName: "archivebox")
+                }
             }
         }
     }
@@ -833,19 +1023,7 @@ struct ChatSessionSidebar: View {
         .padding(.bottom, theme.space.s16)
     }
 
-    // MARK: - Agent List (prototype)
-
-    /// Agents-focused sidebar: one row per local agent, active row
-    /// highlighted, tap to make it this window's agent.
-    private var agentListView: some View {
-        Group {
-            if isFilteringNavigator, !hasAgentMatches {
-                SidebarEmptyState(icon: "magnifyingglass", title: "No agents match")
-            } else {
-                agentList
-            }
-        }
-    }
+    // MARK: - Agent List
 
     /// Whether any row in any section survives the current query.
     private var hasAgentMatches: Bool {
@@ -862,98 +1040,6 @@ struct ChatSessionSidebar: View {
     /// Local agents after the query (drag order is only live unfiltered).
     private var filteredLocalAgents: [Agent] {
         displayedAgents.filter { $0.id != Agent.defaultId && $0.id != Agent.architectId && navigatorShows($0) }
-    }
-
-    private var agentList: some View {
-        ScrollView {
-            // Plain VStack: every row needs a live frame for drag-to-reorder
-            // hit testing, and the agent list is small.
-            VStack(spacing: theme.space.s2) {
-                // Background runs (scheduled / API / channel / delegated)
-                // are tabs of their agent, not rows here; each agent row
-                // rolls its live work up into a ring + status line.
-                ForEach(filteredLocalAgents) { agent in
-                    let activity = activityStatus(for: agent)
-                    AgentSidebarRow(
-                        agent: agent,
-                        // A team-agent or hosted-agent tab owns the
-                        // selection: no local row is highlighted while one
-                        // is active.
-                        isSelected: agent.id == agentId && workspaceAgentAddress == nil
-                            && activeHostedAgent == nil,
-                        activityStatus: activity,
-                        activityStep: activity == nil ? nil : activityStep(for: agent),
-                        sharedWorkspaceNames: sharedWorkspaceNames(for: agent),
-                        shareableWorkspaces: shareableWorkspaces(for: agent),
-                        sharedWorkspaces: sharedWorkspaces(for: agent),
-                        onShareToWorkspace: { workspace in
-                            RemoteAgentWorkspaceAttribution.shareAgent(agent.id, toWorkspace: workspace.id)
-                        },
-                        onUnshareFromWorkspace: { workspace in
-                            guard let address = agent.agentAddress else { return }
-                            unshare(SharedAgentIdentity.resolve(address: address, workspaceId: workspace.id), from: workspace)
-                        },
-                        isNew: newAgentHighlight.isNew(localAgentId: agent.id),
-                        onSelect: {
-                            newAgentHighlight.markSeen(localAgentId: agent.id)
-                            onSelectAgent?(agent.id)
-                        },
-                        onNewChat: onNewChatWithAgent.map { start in
-                            {
-                                newAgentHighlight.markSeen(localAgentId: agent.id)
-                                start(agent.id)
-                            }
-                        },
-                        onStop: activity == nil ? nil : { stopActivity(for: agent) },
-                        // A filtered list is not the real order: no reordering
-                        // until the query clears.
-                        isReorderable: !agent.isBuiltIn && !isFilteringNavigator,
-                        isDragging: draggingAgentId == agent.id,
-                        dragOffset: draggingAgentId == agent.id ? agentDragOffset : 0,
-                        onDragChanged: { handleAgentDrag(agent.id, translation: $0) },
-                        onDragEnded: { endAgentDrag() }
-                    )
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: AgentRowFramesKey.self,
-                                value: [agent.id: proxy.frame(in: .named("agentList"))])
-                        }
-                    )
-                }
-
-                // The user's agents on their other Macs, which run them.
-                ForEach(visibleHostedAgents) { host in
-                    hostedAgentsSection(host)
-                }
-
-                // Workspaces: one section per team the user belongs to,
-                // listing every shared agent — teammates' (chat over the
-                // relay) and the user's own (badged "local", routed to the
-                // local agent so the team roster reads complete). Before the
-                // first roster lands / when the router can't be reached /
-                // when Router is off, a single explanatory section stands in.
-                workspaceSections
-
-                // Agents shared with the user directly (an invite link, not a
-                // workspace). They live in the same paired-agent store as
-                // team agents but sit on no roster, so they get their own
-                // section — otherwise the only way to reach them from a chat
-                // window is Settings ▸ Agents.
-                if !directlySharedAgents.isEmpty {
-                    sharedAgentsSection(directlySharedAgents)
-                }
-            }
-            .padding(.vertical, theme.space.s8)
-            .padding(.horizontal, theme.space.s8)
-            .coordinateSpace(name: "agentList")
-            .onPreferenceChange(AgentRowFramesKey.self) { agentRowFrames = $0 }
-            .animation(theme.motion.quick, value: displayedAgents.map(\.id))
-            .animation(theme.motion.quick, value: rosterStore.rosters.map(\.id))
-            .animation(theme.motion.quick, value: directlySharedAgents.map(\.id))
-            .animation(theme.motion.quick, value: visibleHostedAgents.map(\.id))
-        }
-        .scrollIndicators(.hidden)
     }
 
     // MARK: On My Other Macs
@@ -988,7 +1074,8 @@ struct ChatSessionSidebar: View {
                     entry: entry,
                     hostName: host.name,
                     isOnline: hostedRunMonitor.isConnected(host.device),
-                    isSelected: activeHostedAgent.map { $0.device == host.device && $0.agentId == agentId } ?? false,
+                    isSelected: !isShowingAllChats
+                        && (activeHostedAgent.map { $0.device == host.device && $0.agentId == agentId } ?? false),
                     onSelect: {
                         guard let agentId else { return }
                         onSelectHostedAgent?(host.device, agentId)
@@ -1549,7 +1636,7 @@ struct ChatSessionSidebar: View {
     private func workspaceHistoryItems(address: String, workspaceId: String) -> [HistoryItem] {
         let saved = Self.workspaceAgentSessions(
             conversations.sessions, address: address, workspaceId: workspaceId,
-            includeArchived: showArchived, keepingArchived: Set(activityMonitor.statuses.keys))
+            keepingArchived: Set(activityMonitor.statuses.keys))
         let live = openChats.filter {
             $0.kind == .chat && !$0.session.pinned
                 && ChatTabScope.of($0.session) == .workspace(address, workspaceId: workspaceId)
@@ -1562,7 +1649,7 @@ struct ChatSessionSidebar: View {
     private func servedHistoryItems(agentId: UUID, workspaceId: String) -> [HistoryItem] {
         let saved = Self.servedSessions(
             conversations.sessions, agentId: agentId, workspaceId: workspaceId,
-            includeArchived: showArchived, keepingArchived: Set(activityMonitor.statuses.keys))
+            keepingArchived: Set(activityMonitor.statuses.keys))
         let live = openChats.filter { tab in
             guard tab.kind == .chat, !tab.session.pinned, let context = tab.session.workspaceContext else { return false }
             return context.isServedForTeammate && context.workspaceId == workspaceId
@@ -1573,11 +1660,11 @@ struct ChatSessionSidebar: View {
 
     /// Saved chats under a teammate's agent row: the user's own chats with
     /// it in that workspace, minus pinned (the Pinned group shows those)
-    /// and, unless `includeArchived`, archived ones. Archived chats in
-    /// `keepingArchived` (live runs) stay listed regardless.
+    /// and archived ones. Archived chats in `keepingArchived` (live runs)
+    /// stay listed regardless.
     nonisolated static func workspaceAgentSessions(
         _ sessions: [ChatSessionData], address: String, workspaceId: String,
-        includeArchived: Bool = false, keepingArchived: Set<UUID> = []
+        keepingArchived: Set<UUID> = []
     ) -> [ChatSessionData] {
         let address = address.lowercased()
         return sessions.filter { session in
@@ -1585,7 +1672,7 @@ struct ChatSessionSidebar: View {
                 context.agentAddress.lowercased() == address, context.workspaceId == workspaceId
             else { return false }
             return !session.pinned
-                && (includeArchived || !session.archived || keepingArchived.contains(session.id))
+                && (!session.archived || keepingArchived.contains(session.id))
         }
     }
 
@@ -1594,7 +1681,7 @@ struct ChatSessionSidebar: View {
     /// archived rules.
     nonisolated static func servedSessions(
         _ sessions: [ChatSessionData], agentId: UUID, workspaceId: String,
-        includeArchived: Bool = false, keepingArchived: Set<UUID> = []
+        keepingArchived: Set<UUID> = []
     ) -> [ChatSessionData] {
         sessions.filter { session in
             guard let context = session.workspace, context.isServedForTeammate,
@@ -1602,7 +1689,7 @@ struct ChatSessionSidebar: View {
                 (session.agentId ?? Agent.defaultId) == agentId
             else { return false }
             return !session.pinned
-                && (includeArchived || !session.archived || keepingArchived.contains(session.id))
+                && (!session.archived || keepingArchived.contains(session.id))
         }
     }
 
@@ -1699,7 +1786,7 @@ struct ChatSessionSidebar: View {
     /// Only the row whose workspace matches the active tab's stamped
     /// workspace highlights when an agent is shared into several.
     private func isWorkspaceRowSelected(address: String, workspaceId: String) -> Bool {
-        guard workspaceAgentAddress == address else { return false }
+        guard !isShowingAllChats, workspaceAgentAddress == address else { return false }
         return (workspaceAgentWorkspaceId ?? "") == workspaceId
     }
 
@@ -1951,6 +2038,52 @@ enum NavigatorRowMetrics {
     static let trailingInset: CGFloat = 8
 }
 
+/// A navigator row that opens a page: glyph in the icon column, a title,
+/// and an optional count where a chat row shows its age.
+struct NavigatorLinkRow: View {
+    let icon: String
+    let title: String
+    var count: Int?
+    var isSelected = false
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: theme.space.s0) {
+                Image(systemName: icon)
+                    .glyphSize(.footnote)
+                    .foregroundStyle(isSelected ? theme.text.primary : theme.text.secondary)
+                    .frame(width: NavigatorRowMetrics.iconColumn)
+                    .padding(.leading, NavigatorRowMetrics.leadingInset)
+                    .padding(.trailing, NavigatorRowMetrics.iconGap)
+                Text(verbatim: title)
+                    .textStyle(.label)
+                    .foregroundStyle(isSelected ? theme.text.primary : theme.text.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let count {
+                    Text(verbatim: "\(count)")
+                        .textStyle(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(theme.text.tertiary)
+                        .padding(.trailing, NavigatorRowMetrics.trailingInset)
+                }
+            }
+            .frame(height: NavigatorRowMetrics.rowHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .sidebarRowChrome(isSelected: isSelected, isHovered: isHovered, compactChatStyle: true)
+        .onHover { isHovered = $0 }
+        .help(Text(verbatim: title))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 /// A collapsible group's header ("Pinned", "Agents"): the whole row is the
 /// toggle, with optional actions on the trailing end that keep their own
 /// clicks. The Workflows sidebar's sections use it too.
@@ -2020,11 +2153,11 @@ struct NavigatorGroupHeader<Trailing: View>: View {
     }
 }
 
-/// Row in the agents-focused sidebar. Mirrors `SessionRow`'s hover and
-/// selection treatment: avatar, name, hover-only gear to the agent's settings.
+/// Row in the agents-focused sidebar: avatar, name, and one hover-only ⋯
+/// holding the agent's actions (Stop while a run is live). Never
+/// highlighted: its `New chat` row or a chat row is.
 private struct AgentSidebarRow: View {
     let agent: Agent
-    let isSelected: Bool
     var isExpanded: Bool = false
     /// Live activity rolled up from the agent's sessions: `.working`
     /// animates the avatar ring exactly like the old session rows.
@@ -2054,6 +2187,14 @@ private struct AgentSidebarRow: View {
     /// Stop every live run on this agent. Shown on hover while
     /// `activityStatus` is non-nil.
     var onStop: (() -> Void)? = nil
+    /// Rename in place (custom agents only).
+    var onRename: ((String) -> Void)? = nil
+    /// Ask to delete the agent (custom agents only).
+    var onDelete: (() -> Void)? = nil
+    /// The All chats page filtered to this agent.
+    var onShowAllChats: (() -> Void)? = nil
+    /// The same page with every one of the agent's chats selected.
+    var onSelectChats: (() -> Void)? = nil
     /// Drag-to-reorder (custom agents only; built-ins are pinned to the
     /// top). The list owns the state; the row just reports translation.
     var isReorderable: Bool = false
@@ -2067,28 +2208,56 @@ private struct AgentSidebarRow: View {
     private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @State private var isHovered = false
     @State private var hoverControlsWidth: CGFloat = 0
+    @State private var isRenaming = false
+    @State private var renameText = ""
+    @FocusState private var isRenameFocused: Bool
 
-    /// Stop while a run is live on this agent, otherwise New Chat and the
-    /// gear opening this agent's settings in Settings: the
-    /// Agents detail page for a user agent, Settings → Orchestrator for the
-    /// built-in Osaurus agent. Always laid out and revealed on hover, so
-    /// showing them never changes the row's layout.
+    /// Stop while a run is live on this agent, otherwise the ⋯ menu. Always
+    /// laid out and revealed on hover, so showing it never changes the
+    /// row's layout.
     @ViewBuilder private var hoverControls: some View {
         if activityStatus != nil, let onStop {
             SessionStopButton(action: onStop)
         } else {
-            HStack(spacing: theme.space.s4) {
-                if let onNewChat {
-                    // The compose square carries its ink low and to the
-                    // left; lifted, it lines up with the gear beside it.
-                    SettingsIconButton("square.and.pencil", help: "New Chat",
-                                       size: .extraSmall, role: .tertiary,
-                                       glyphNudge: CGSize(width: 0, height: -0.75), action: onNewChat)
-                }
-                SettingsIconButton("gearshape", help: agent.id == Agent.defaultId ? "Orchestrator settings" : "Agent settings",
-                                   size: .extraSmall, role: .tertiary, action: openAgentSettings)
+            let size = environmentTheme.assignedMetric(
+                SettingsButtonSize.extraSmall.assignment("height"), fallback: environmentTheme.space.s24)
+            AssignedActionMenu(accessibilityLabel: L("More actions"), appearance: .chatContext) {
+                agentContextMenu
+            } label: {
+                Image(systemName: "ellipsis")
             }
+            .buttonStyle(ConversationEllipsisStyle())
+            .frame(width: size, height: size)
+            .help(Text("More actions", bundle: .module))
         }
+    }
+
+    private var renameField: some View {
+        TextField(text: $renameText, prompt: Text("Name", bundle: .module)) {
+            Text("Name", bundle: .module)
+        }
+        .textFieldStyle(.plain)
+        .textStyle(.label, weight: 500)
+        .foregroundStyle(environmentTheme.text.primary)
+        .focused($isRenameFocused)
+        .onSubmit(commitRename)
+        .onExitCommand { isRenaming = false }
+        .onChange(of: isRenameFocused) { _, focused in
+            if !focused, isRenaming { commitRename() }
+        }
+        .onAppear {
+            // After the menu that started the rename has closed, or AppKit
+            // hands first responder back to the previous field.
+            DispatchQueue.main.async { isRenameFocused = true }
+        }
+    }
+
+    /// Return commits; an empty or unchanged name cancels.
+    private func commitRename() {
+        let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        isRenaming = false
+        guard !name.isEmpty, name != agent.name else { return }
+        onRename?(name)
     }
 
     var body: some View {
@@ -2116,10 +2285,14 @@ private struct AgentSidebarRow: View {
                 // Baseline-aligned so the Orchestrator star sits on the
                 // name's line like an inline glyph, not on the row's center.
                 HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.agentSidebarRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s4, theme))) {
-                    Text(agent.displayName)
-                        .componentInspectionText(41, role: .label, fallback: .caption, weight: 500, theme: theme)
-                        .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
-                        .lineLimit(1)
+                    if isRenaming {
+                        renameField
+                    } else {
+                        Text(agent.displayName)
+                            .componentInspectionText(41, role: .label, fallback: .caption, weight: 500, theme: theme)
+                            .foregroundColor(theme.text.primary)
+                            .lineLimit(1)
+                    }
                     if agent.id == Agent.defaultId {
                         Image(systemName: "star.circle")
                             .componentInspectionText(41, role: .label, fallback: .label, theme: theme)
@@ -2159,8 +2332,8 @@ private struct AgentSidebarRow: View {
         .overlay(alignment: .trailing) {
             hoverControls
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { hoverControlsWidth = $0 }
-                .opacity(isHovered ? 1 : 0)
-                .allowsHitTesting(isHovered)
+                .opacity(isHovered && !isRenaming ? 1 : 0)
+                .allowsHitTesting(isHovered && !isRenaming)
         }
         .padding(.leading, NavigatorRowMetrics.leadingInset)
         .padding(.trailing, NavigatorRowMetrics.trailingInset)
@@ -2174,7 +2347,7 @@ private struct AgentSidebarRow: View {
         .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
         .offset(y: dragOffset)
         .zIndex(isDragging ? 1 : 0)
-        .onTapGesture(perform: onSelect)
+        .onTapGesture { if !isRenaming { onSelect() } }
         .accessibilityAction(named: Text(isExpanded ? "Collapse chats" : "Expand chats"), onSelect)
         .assignedContextMenu { agentContextMenu }
         // Same threshold as the tab strip: a short travel keeps clicks as
@@ -2196,12 +2369,6 @@ private struct AgentSidebarRow: View {
             // Hover reveals controls; it must not animate the row's geometry.
             isHovered = hovering
         }
-        .animation(theme.motion.quick, value: isSelected)
-    }
-
-    private var settingsHelpKey: LocalizedStringKey {
-        if agent.id == Agent.architectId { return "Architect Settings" }
-        return agent.isBuiltIn ? "Orchestrator Settings" : "Agent Settings"
     }
 
     /// Where this agent is configured: a user agent's detail page under
@@ -2219,8 +2386,9 @@ private struct AgentSidebarRow: View {
         }
     }
 
-    /// Parity with session / project rows: settings, address, and the
-    /// share/unshare actions that otherwise live only in Settings.
+    /// The ⋯ and right-click menu: New Chat, Open Settings, the agent's
+    /// chats, Rename, the share/unshare actions that otherwise live only
+    /// in Settings, and Delete Agent… last.
     @ViewBuilder
     private var agentContextMenu: some View {
         if let onNewChat {
@@ -2230,6 +2398,24 @@ private struct AgentSidebarRow: View {
         }
         Button(action: openAgentSettings) {
             Label(LCached("Open Settings"), systemImage: "gearshape")
+        }
+        if onRename != nil {
+            Button {
+                renameText = agent.name
+                isRenaming = true
+            } label: {
+                Label(LCached("Rename"), systemImage: "pencil")
+            }
+        }
+        if let onShowAllChats {
+            Button(action: onShowAllChats) {
+                Label(L("All chats with \(agent.displayName)"), systemImage: "clock")
+            }
+        }
+        if let onSelectChats {
+            Button(action: onSelectChats) {
+                Label(LCached("Select chats"), systemImage: "checkmark.circle")
+            }
         }
         if !shareableWorkspaces.isEmpty, let onShareToWorkspace {
             Menu {
@@ -2248,6 +2434,12 @@ private struct AgentSidebarRow: View {
                 } label: {
                     Label(String(format: LCached("Unshare from %@"), workspace.name), systemImage: "person.2.slash")
                 }
+            }
+        }
+        if let onDelete {
+            Divider()
+            Button(role: .destructive, action: onDelete) {
+                Label(LCached("Delete Agent…"), systemImage: "trash")
             }
         }
     }
@@ -2925,6 +3117,65 @@ private struct SidebarFooterRow: View {
 
 // MARK: - Session Row
 
+/// A chat row's part in the window's selection: its checkbox, its
+/// modifier clicks, and the menu that acts on several chats at once.
+struct SessionRowSelection {
+    var isChecked: Bool
+    var isModeActive: Bool
+    /// Set when the row's menu acts on the selection: how many chats.
+    var batchCount: Int?
+    var allPinned = false
+    var allArchived = false
+    var onToggle: () -> Void
+    var onExtend: () -> Void
+    /// The row menu's Select: enters selection mode with this chat ticked.
+    var onSelectThis: () -> Void
+    var onBatchPin: () -> Void = {}
+    var onBatchArchive: () -> Void = {}
+    var onBatchDelete: () -> Void = {}
+
+    /// Wires a row to the window's selection. `visibleOrder` is the rows on
+    /// screen top to bottom (Shift-click ranges); `fallbackAnchor` is the
+    /// chat on screen.
+    @MainActor
+    static func make(
+        for id: UUID, in binding: Binding<ChatSelection>, visibleOrder: [UUID], fallbackAnchor: UUID?,
+        sessions: [ChatSessionData], scope: ThemedAlertScope
+    ) -> SessionRowSelection {
+        let current = binding.wrappedValue
+        var batchCount: Int?
+        if case .batch(let count) = current.menuScope(for: id) { batchCount = count }
+        let ids = current.selectedIds
+        let allPinned = batchCount != nil && ChatBatchActions.allPinned(ids, in: sessions)
+        let allArchived = batchCount != nil && ChatBatchActions.allArchived(ids, in: sessions)
+        return SessionRowSelection(
+            isChecked: current.contains(id),
+            isModeActive: current.isActive,
+            batchCount: batchCount,
+            allPinned: allPinned,
+            allArchived: allArchived,
+            onToggle: { binding.wrappedValue.toggle(id) },
+            onExtend: {
+                binding.wrappedValue.selectRange(to: id, visibleOrder: visibleOrder, fallbackAnchor: fallbackAnchor)
+            },
+            onSelectThis: {
+                if !binding.wrappedValue.contains(id) { binding.wrappedValue.toggle(id) }
+            },
+            onBatchPin: {
+                ChatBatchActions.setPinned(ids, pinned: !allPinned)
+                binding.wrappedValue.clear()
+            },
+            onBatchArchive: {
+                ChatBatchActions.setArchived(ids, archived: !allArchived)
+                binding.wrappedValue.clear()
+            },
+            onBatchDelete: {
+                ChatBatchActions.requestDelete(ids, scope: scope) { binding.wrappedValue.clear() }
+            }
+        )
+    }
+}
+
 private struct SessionRow: View {
     let session: ChatSessionData
     let agent: Agent?
@@ -2932,6 +3183,11 @@ private struct SessionRow: View {
     /// Whether this row is part of an active multi-selection. Drives the
     /// accent background and the leading checkmark.
     var isMultiSelected: Bool = false
+    /// The row's part in the window's chat selection. nil for rows that
+    /// can't be selected (an unsaved draft).
+    var selection: SessionRowSelection? = nil
+    /// All chats rows: the first user message, under the title.
+    var preview: String? = nil
     var navigatorStyle: Bool = false
     /// Navigator rows outside their agent's group (Pinned) show the agent's
     /// avatar in the icon column.
@@ -2978,28 +3234,11 @@ private struct SessionRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var fileChanges = FileChangeSummaryStore.shared
     @State private var isHovered = false
-    @State private var hoverControlsWidth: CGFloat = 0
-    @State private var showActionsPopover = false
-    /// Drill-in page state for the actions popover: false shows the main
-    /// action list, true shows the project picker rows.
-    @State private var showProjectPicker = false
     /// Local buffer for the rename TextField. Kept on the row (not the
     /// sidebar) so focus churn during popover dismissal cannot desync it
     /// from the focused row.
     @State private var editBuffer: String = ""
     @FocusState private var isTextFieldFocused: Bool
-
-    /// Whether this is the default agent
-    private var isDefaultAgent: Bool {
-        guard let agent = agent else { return true }
-        return agent.isBuiltIn
-    }
-
-    /// Get a consistent color for the agent based on its ID
-    private var agentColor: Color {
-        guard let agent = agent, !agent.isBuiltIn else { return theme.text.secondary }
-        return theme.dataInk(seed: agent.id.uuidString)
-    }
 
     var body: some View {
         if isEditing {
@@ -3011,146 +3250,8 @@ private struct SessionRow: View {
         } else if navigatorStyle {
             navigatorRow
         } else {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s10, theme))) {
-                // Multi-select check, shown in place of leading padding so the
-                // row doesn't shift when selection toggles.
-                if isMultiSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .glyphSize(.label, weight: .semibold)
-                        .foregroundColor(theme.text.primary)
-                        .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                }
-
-                // Agent indicator, ringed while the session's run is live.
-                Group {
-                    if isDefaultAgent {
-                        defaultAgentIndicator
-                    } else if let agent = agent {
-                        agentIndicatorView(agent)
-                    }
-                }
-                .overlay(
-                    Group {
-                        if let activityStatus {
-                            SessionActivityRing(status: activityStatus)
-                        }
-                    }
-                    .allowsHitTesting(false)
-                )
-                .animation(theme.motion.springAnimation(responseMultiplier: 0.8), value: activityStatus)
-
-                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
-                    HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s4, theme))) {
-                        if session.pinned {
-                            Image(systemName: "pin.fill")
-                                .glyphSize(.tiny, weight: .semibold)
-                                .foregroundColor(theme.text.secondary)
-                                .rotationEffect(.degrees(45))
-                        }
-
-                        Text(session.title)
-                            .componentInspectionText(41, role: .bodySmall, fallback: .caption, weight: 500, theme: theme)
-                            .foregroundColor(theme.text.primary)
-                            .lineLimit(1)
-                            // The Text itself must be greedy so it claims all
-                            // free width and pushes the trailing badges to the
-                            // right; putting maxWidth on the enclosing HStack
-                            // instead let the text hug its ideal and truncate
-                            // early while empty space sat after the badges.
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        if session.source != .chat || isFromPairedPhone {
-                            sourceBadge
-                        }
-
-                        if !session.capabilities.isEmpty {
-                            capabilityBadges
-                        }
-
-                        if let summary = fileChanges.summary(for: session.id), summary.setCount > 0 {
-                            fileChangesBadge(summary)
-                        }
-                    }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.horizontalGap2")
-
-                    // Live status replaces the relative timestamp while the
-                    // session's run is active so the state is glanceable.
-                    Group {
-                        switch activityStatus {
-                        case .working:
-                            Text("Running…", bundle: .module)
-                                .foregroundColor(theme.status.info.foreground)
-                        case .waitingForInput:
-                            Text("Needs your input", bundle: .module)
-                                .foregroundColor(theme.status.warning.foreground)
-                        case nil:
-                            Text(metadataLine)
-                                .foregroundColor(theme.text.secondary)
-                        }
-                    }
-                    .componentInspectionText(41, role: .caption, fallback: .micro, theme: theme)
-                    .lineLimit(1)
-                }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.verticalGap")
-                // Fill the row so the title uses the full available width
-                // instead of hugging its ideal size and letting the trailing
-                // Spacer eat the slack (which truncated titles prematurely).
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                // Persistent (not hover-gated) Stop for the live run, so an
-                // active task can be halted straight from the sidebar.
-                if activityStatus != nil, let onStop {
-                    SessionStopButton(action: onStop)
-                }
-
-                if isHovered || showActionsPopover {
-                    SidebarRowActionButton(
-                        icon: "ellipsis",
-                        help: "Actions",
-                        action: {
-                            // Always reopen on the main page, not a stale
-                            // project-picker drill-in from last time.
-                            showProjectPicker = false
-                            showActionsPopover.toggle()
-                        }
-                    )
-                    .assignedPopover(isPresented: $showActionsPopover, width: 220, accessibilityLabel: L("Conversation actions"), arrowEdge: .trailing) {
-                        actionsPopover
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                }
-            }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.horizontalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.paddingX2", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.paddingX2")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.paddingY2", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.paddingY2")
-            .frame(minHeight: NativeComponentInspectionStyle.metric(41, "height", 0, theme))
-            .sidebarRowChrome(isSelected: isSelected || isMultiSelected, isHovered: isHovered)
-            .overlay(
-                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                    .stroke(
-                        isImportHighlighted ? theme.border.focus : Color.clear,
-                        lineWidth: theme.stroke.focus
-                    )
-                    .allowsHitTesting(false)
-            )
-            .animation(theme.motion.slow, value: isImportHighlighted)
-            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
-            .onTapGesture {
-                onSelect()
-            }
-            .animation(theme.motion.springAnimation(responseMultiplier: 0.8), value: isMultiSelected)
-            .onHover { hovering in
-                withAnimation(theme.motion.springAnimation(responseMultiplier: 0.8)) {
-                    isHovered = hovering
-                }
-            }
-            .animation(theme.motion.springAnimation(responseMultiplier: 0.8), value: isSelected)
-            .assignedContextMenu(chatMenu: true) { conversationContextMenu }
+            pageRow
         }
-    }
-
-    /// Archived chats read as set aside: tertiary ink at rest (below the
-    /// secondary titles around them, still legible), lifted to secondary on
-    /// hover. Disabled ink is for unavailable controls, not readable titles.
-    private var archivedInk: Color {
-        isHovered ? environmentTheme.text.secondary : environmentTheme.text.tertiary
     }
 
     private var navigatorActivityLine: String? {
@@ -3169,6 +3270,169 @@ private struct SessionRow: View {
         environmentTheme.motion.springAnimation(responseMultiplier: 0.8)
     }
 
+    /// An All chats row: checkbox, the agent's avatar, the title over the
+    /// first message, the agent and age; the ⋯ replaces those on hover.
+    private var pageRow: some View {
+        let theme = environmentTheme
+        let trailingControl = theme.assignedMetric(
+            SettingsButtonSize.extraSmall.assignment("height"), fallback: theme.space.s24)
+        let title = session.title.isEmpty ? L("New chat") : session.title
+        return HStack(spacing: theme.space.s10) {
+            if let selection {
+                ZStack {
+                    if showsCheckbox { selectionCheckbox(selection) }
+                }
+                .frame(width: NavigatorRowMetrics.iconColumn)
+            } else if isMultiSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .glyphSize(.label, weight: .semibold)
+                    .foregroundColor(theme.text.primary)
+            }
+            Group {
+                if let agent {
+                    agentIndicatorView(agent)
+                } else {
+                    defaultAgentIndicator
+                }
+            }
+            .overlay {
+                if let activityStatus { SessionActivityRing(status: activityStatus).allowsHitTesting(false) }
+            }
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s4) {
+                    Text(verbatim: title)
+                        .textStyle(.label, weight: 500)
+                        .foregroundStyle(session.archived ? theme.text.secondary : theme.text.primary)
+                        .lineLimit(1)
+                        .help(Text(verbatim: title))
+                    if session.pinned {
+                        Image(systemName: "pin.fill")
+                            .glyphSize(.tiny, weight: .semibold)
+                            .rotationEffect(.degrees(45))
+                            .foregroundStyle(theme.text.tertiary)
+                            .help(Text("Pinned", bundle: .module))
+                            .accessibilityLabel(Text("Pinned", bundle: .module))
+                    }
+                    if session.source != .chat || isFromPairedPhone { sourceBadge }
+                    if let summary = fileChanges.summary(for: session.id), summary.setCount > 0 {
+                        fileChangesBadge(summary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                Group {
+                    switch activityStatus {
+                    case .working:
+                        Text("Running…", bundle: .module).foregroundStyle(theme.status.info.foreground)
+                    case .waitingForInput:
+                        Text("Needs your input", bundle: .module).foregroundStyle(theme.status.warning.foreground)
+                    case nil:
+                        Text(verbatim: preview ?? metadataLine).foregroundStyle(theme.text.secondary)
+                    }
+                }
+                .textStyle(.caption)
+                .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if activityStatus != nil, let onStop {
+                SessionStopButton(action: onStop)
+            }
+            ZStack(alignment: .trailing) {
+                pageRowTrailingLabel
+                    .opacity(showsHoverActions ? 0 : 1)
+                AssignedActionMenu(accessibilityLabel: L("More actions"), appearance: .chatContext) {
+                    conversationContextMenu
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .buttonStyle(ConversationEllipsisStyle())
+                .frame(width: trailingControl, height: trailingControl)
+                .opacity(showsHoverActions ? 1 : 0)
+                .allowsHitTesting(showsHoverActions)
+            }
+        }
+        .padding(.leading, theme.space.s4)
+        .padding(.trailing, theme.space.s10)
+        .padding(.vertical, theme.space.s8)
+        .background(checkedRowFill)
+        .sidebarRowChrome(isSelected: isSelected || isMultiSelected, isHovered: isHovered, compactChatStyle: true)
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .stroke(isImportHighlighted ? theme.border.focus : Color.clear, lineWidth: theme.stroke.focus)
+                .allowsHitTesting(false)
+        )
+        .animation(theme.motion.slow, value: isImportHighlighted)
+        .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
+        .onTapGesture(perform: handleNavigatorClick)
+        .onHover { isHovered = $0 }
+        .assignedContextMenu(chatMenu: true) { conversationContextMenu }
+        .environment(\.assignedMenuAppearance, .chatContext)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// The agent and the age in two right-aligned columns, so both line up
+    /// down the page.
+    private var pageRowTrailingLabel: some View {
+        HStack(spacing: environmentTheme.space.s12) {
+            Text(verbatim: agent?.displayName ?? "")
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: 104, alignment: .trailing)
+            TimelineView(.everyMinute) { context in
+                Text(verbatim: compactRelativeAge(session.updatedAt, now: context.date))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .frame(width: 32, alignment: .trailing)
+            }
+        }
+        .textStyle(.caption)
+        .foregroundStyle(environmentTheme.text.tertiary)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(Text(verbatim: formatRelativeDate(session.updatedAt)))
+    }
+
+    /// The checkbox takes the icon column on hover, while ticked, and for
+    /// every row in selection mode.
+    private var showsCheckbox: Bool {
+        guard let selection else { return false }
+        return isHovered || selection.isChecked || selection.isModeActive
+    }
+
+    private var showsHoverActions: Bool {
+        isHovered && !(selection?.isModeActive ?? false)
+    }
+
+    /// A plain click always opens the chat; Command toggles it, Shift
+    /// extends the selection to it.
+    private func handleNavigatorClick() {
+        guard let selection else { return onSelect() }
+        let flags = NSEvent.modifierFlags
+        switch ChatSelection.clickOutcome(command: flags.contains(.command), shift: flags.contains(.shift)) {
+        case .open: onSelect()
+        case .toggle: selection.onToggle()
+        case .extendRange: selection.onExtend()
+        }
+    }
+
+    private func selectionCheckbox(_ selection: SessionRowSelection) -> some View {
+        let title = session.title.isEmpty ? L("New chat") : session.title
+        return ChatSelectionCheckbox(
+            isChecked: selection.isChecked,
+            accessibilityLabel: selection.isChecked ? L("Deselect \(title)") : L("Select \(title)"),
+            action: selection.onToggle
+        )
+        .transition(.opacity)
+    }
+
+    /// Ticked rows sit on the selected surface, a step above the hover wash
+    /// that marks the chat on screen.
+    @ViewBuilder private var checkedRowFill: some View {
+        if selection?.isChecked == true {
+            RoundedRectangle(cornerRadius: environmentTheme.radius.medium, style: .continuous)
+                .fill(environmentTheme.surface.selected)
+        }
+    }
+
     private var navigatorAgeLabel: some View {
         TimelineView(.everyMinute) { context in
             Text(verbatim: compactRelativeAge(session.updatedAt, now: context.date))
@@ -3185,11 +3449,13 @@ private struct SessionRow: View {
         let trailingControl = environmentTheme.assignedMetric(
             SettingsButtonSize.extraSmall.assignment("height"), fallback: environmentTheme.space.s24)
         return HStack(spacing: theme.space.s0) {
-            Button(action: onSelect) {
+            Button(action: handleNavigatorClick) {
                 HStack(spacing: theme.space.s0) {
                     // A real view, so the column keeps its width when empty.
                     ZStack {
-                        if showsAgentAvatar, let sharedAvatar {
+                        if showsCheckbox, let selection {
+                            selectionCheckbox(selection)
+                        } else if showsAgentAvatar, let sharedAvatar {
                             AgentAvatarView(
                                 mascotId: sharedAvatar.avatar,
                                 name: sharedAvatar.name,
@@ -3226,14 +3492,9 @@ private struct SessionRow: View {
                         } else if let activityStatus {
                             NavigatorActivityIndicator(status: activityStatus)
                                 .transition(navigatorActivityTransition)
-                        } else if session.archived {
-                            Image(systemName: "archivebox")
-                                .glyphSize(.footnote)
-                                .foregroundStyle(archivedInk)
-                                .help(Text("Archived", bundle: .module))
-                                .transition(.opacity)
                         }
                     }
+                    .animation(navigatorActivityAnimation, value: showsCheckbox)
                     .frame(width: NavigatorRowMetrics.iconColumn)
                     .animation(navigatorActivityAnimation, value: activityStatus)
                     .padding(.leading, NavigatorRowMetrics.leadingInset)
@@ -3243,69 +3504,39 @@ private struct SessionRow: View {
                         .foregroundStyle(
                             isSelected || activityStatus == .waitingForInput
                                 ? environmentTheme.text.primary
-                                : session.archived ? archivedInk : environmentTheme.text.secondary
+                                : environmentTheme.text.secondary
                         )
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        // The title runs under Pin / Archive and fades out
-                        // there instead of re-truncating, so hovering never
-                        // shifts the row.
-                        .mask(alignment: .leading) {
-                            HStack(spacing: theme.space.s0) {
-                                Rectangle()
-                                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
-                                    .frame(width: isHovered ? environmentTheme.space.s12 : 0)
-                                Color.clear.frame(width: isHovered ? hoverControlsWidth : 0)
-                            }
-                        }
                 }
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
             }.buttonStyle(.plain)
-            .help(navigatorActivityLine ?? "")
+            .help(navigatorActivityLine ?? session.title)
             .accessibilityValue(Text(verbatim: [navigatorActivityLine, formatRelativeDate(session.updatedAt)]
                 .compactMap { $0 }.joined(separator: ", ")))
-            .overlay(alignment: .trailing) {
-                HStack(spacing: environmentTheme.space.s4) {
-                    // Tilted like a pushpin: upright, the head-heavy glyph
-                    // floats high and reads as an hourglass at this size.
-                    SettingsIconButton(
-                        session.pinned ? "pin.fill" : "pin",
-                        help: session.pinned ? "Unpin" : "Pin",
-                        size: .extraSmall, role: .tertiary,
-                        glyphTilt: .degrees(45), glyphNudge: CGSize(width: -0.75, height: 1),
-                        action: onTogglePin)
-                    SettingsIconButton(
-                        session.archived ? "tray.and.arrow.up" : "archivebox",
-                        help: session.archived ? "Unarchive" : "Archive",
-                        size: .extraSmall, role: .tertiary,
-                        glyphNudge: CGSize(width: 0, height: session.archived ? -1.25 : 0.5),
-                        action: onToggleArchive)
-                }
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { hoverControlsWidth = $0 }
-                .opacity(isHovered ? 1 : 0)
-                .allowsHitTesting(isHovered)
-            }
             // The age and the ⋯ share one slot; the menu stays mounted so it
             // can present, and the age keeps its width while hidden so the
-            // slot never resizes on hover.
+            // slot never resizes on hover. Selection mode hides the ⋯; the
+            // right-click menu still opens.
             ZStack(alignment: .trailing) {
                 navigatorAgeLabel
-                    .opacity(isHovered ? 0 : 1)
-                AssignedActionMenu(accessibilityLabel: "Conversation actions for \(session.title)", appearance: .chatContext) {
+                    .opacity(showsHoverActions ? 0 : 1)
+                AssignedActionMenu(accessibilityLabel: L("More actions"), appearance: .chatContext) {
                     conversationContextMenu
                 } label: {
                     Image(systemName: "ellipsis")
                 }
                 .buttonStyle(ConversationEllipsisStyle())
                 .frame(width: trailingControl, height: trailingControl)
-                .opacity(isHovered ? 1 : 0)
-                .allowsHitTesting(isHovered)
+                .opacity(showsHoverActions ? 1 : 0)
+                .allowsHitTesting(showsHoverActions)
             }
             .padding(.leading, environmentTheme.space.s4)
             .padding(.trailing, NavigatorRowMetrics.trailingInset)
         }
         .frame(height: NavigatorRowMetrics.rowHeight)
+        .background(checkedRowFill)
         .sidebarRowChrome(isSelected: isSelected, isHovered: isHovered, compactChatStyle: true)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
@@ -3315,6 +3546,32 @@ private struct SessionRow: View {
     }
 
     @ViewBuilder private var conversationContextMenu: some View {
+        if let selection, let count = selection.batchCount {
+            batchContextMenu(selection, count: count)
+        } else {
+            singleContextMenu
+        }
+    }
+
+    /// Opened on one of several selected rows: the menu acts on all of them.
+    @ViewBuilder
+    private func batchContextMenu(_ selection: SessionRowSelection, count: Int) -> some View {
+        Section {
+            Button(action: selection.onBatchPin) {
+                Text(selection.allPinned ? "Unpin" : "Pin", bundle: .module)
+            }
+            Button(action: selection.onBatchArchive) {
+                Text(selection.allArchived ? "Unarchive" : "Archive", bundle: .module)
+            }
+            Button(role: .destructive, action: selection.onBatchDelete) {
+                Text(verbatim: ChatBatchActions.deleteButtonTitle(count: count))
+            }
+        } header: {
+            Text(verbatim: L("\(count) chats selected"))
+        }
+    }
+
+    @ViewBuilder private var singleContextMenu: some View {
                 if activityStatus != nil, let onStop {
                     Button {
                         onStop()
@@ -3361,6 +3618,9 @@ private struct SessionRow: View {
                     }
                 }
                 Button(action: requestExport) { Text("Export…", bundle: .module) }
+                if let selection {
+                    Button(action: selection.onSelectThis) { Text("Select", bundle: .module) }
+                }
                 Divider()
                 Button(action: onToggleArchive) {
                     Text(session.archived ? "Unarchive" : "Archive", bundle: .module)
@@ -3394,102 +3654,6 @@ private struct SessionRow: View {
                 Text("Remove from Project", bundle: .module)
             }
         }
-    }
-
-    // MARK: - Actions Popover
-
-    @ViewBuilder
-    private var actionsPopover: some View {
-        if showProjectPicker {
-            projectPickerPopoverPage
-        } else {
-            mainActionsPopoverPage
-        }
-    }
-
-    /// Second page of the actions popover: one row per project, plus
-    /// "Remove from Project" and a back row. Same `ActionsPopoverButton`
-    /// styling as the main page.
-    private var projectPickerPopoverPage: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
-            ActionsPopoverButton(icon: "chevron.left", label: "Back", isDestructive: false) {
-                showProjectPicker = false
-            }
-            Divider().padding(.vertical, theme.space.s2)
-            ForEach(projects) { project in
-                ActionsPopoverButton(
-                    icon: project.id == session.projectId ? "checkmark" : "folder",
-                    label: project.name,
-                    labelIsVerbatim: true,
-                    isDestructive: false
-                ) {
-                    dismissProjectPicker()
-                    onSetProject?(project.id)
-                }
-            }
-            if session.projectId != nil {
-                Divider().padding(.vertical, theme.space.s2)
-                ActionsPopoverButton(
-                    icon: "folder.badge.minus", label: "Remove from Project", isDestructive: true
-                ) {
-                    dismissProjectPicker()
-                    onSetProject?(nil)
-                }
-            }
-        }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.verticalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.horizontal").catalogLayoutTarget("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.vertical")
-        .frame(minWidth: 180)
-    }
-
-    private func dismissProjectPicker() {
-        showProjectPicker = false
-        showActionsPopover = false
-    }
-
-    private var mainActionsPopoverPage: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
-            ActionsPopoverButton(icon: "pencil", label: "Rename", isDestructive: false) {
-                showActionsPopover = false
-                onStartRename()
-            }
-            ActionsPopoverButton(
-                icon: session.pinned ? "pin.slash" : "pin",
-                label: session.pinned ? "Unpin" : "Pin",
-                isDestructive: false
-            ) {
-                showActionsPopover = false
-                onTogglePin()
-            }
-            if !projects.isEmpty, onSetProject != nil {
-                ActionsPopoverButton(
-                    icon: "folder",
-                    label: session.projectId == nil ? "Move to Project" : "Change Project",
-                    isDestructive: false
-                ) {
-                    showProjectPicker = true
-                }
-            }
-            Divider().padding(.vertical, theme.space.s2)
-            ActionsPopoverButton(icon: "square.and.arrow.up", label: "Export…", isDestructive: false) {
-                showActionsPopover = false
-                requestExport()
-            }
-            Divider().padding(.vertical, theme.space.s2)
-            ActionsPopoverButton(
-                icon: session.archived ? "tray.and.arrow.up" : "archivebox",
-                label: session.archived ? "Unarchive" : "Archive",
-                isDestructive: false
-            ) {
-                showActionsPopover = false
-                onToggleArchive()
-            }
-            ActionsPopoverButton(icon: "trash", label: "Delete", isDestructive: true) {
-                showActionsPopover = false
-                requestDelete()
-            }
-        }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.verticalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.horizontal").catalogLayoutTarget("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.vertical")
-        .frame(minWidth: 180)
     }
 
     // MARK: - Export Format Chooser
@@ -3530,6 +3694,10 @@ private struct SessionRow: View {
     /// Entry point for both the context menu and the popover's Delete row.
     /// Skips the dialog if the user opted out earlier this app session.
     private func requestDelete() {
+        if selection != nil {
+            ChatBatchActions.requestDelete([session.id], scope: alertScope)
+            return
+        }
         if DeleteConfirmationPreference.shared.skipForSession {
             onDelete()
             return
@@ -3552,38 +3720,6 @@ private struct SessionRow: View {
             ),
             scope: alertScope
         )
-    }
-
-    // MARK: - Capability Badges
-
-    /// Stable rendering order.
-    private var orderedCapabilities: [SessionCapability] {
-        SessionCapability.allCases.filter { session.capabilities.contains($0) }
-    }
-
-    /// Up to 3 icons, then a `+N` pill.
-    private var capabilityBadges: some View {
-        let visibleLimit = 3
-        let ordered = orderedCapabilities
-        let visible = Array(ordered.prefix(visibleLimit))
-        let overflow = ordered.count - visible.count
-        return HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.capabilityBadges.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
-            ForEach(visible, id: \.self) { cap in
-                capabilityIcon(cap)
-            }
-            if overflow > 0 {
-                Text(verbatim: "+\(overflow)")
-                    .componentInspectionText(41, role: .caption, fallback: .micro, weight: 600, theme: theme)
-                    .foregroundColor(theme.text.secondary)
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.capabilityBadges.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.capabilityBadges.paddingX")
-                    .padding(.vertical, theme.space.s2)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(theme.surface.pressed)
-                    )
-                    .help(Text(verbatim: ordered.dropFirst(visibleLimit).map(\.label).joined(separator: ", ")))
-            }
-        }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.capabilityBadges.horizontalGap")
     }
 
     /// File history badge: outstanding changed files (or a dimmed icon when
@@ -3619,18 +3755,6 @@ private struct SessionRow: View {
                 : Text("File changes in this chat were reverted", bundle: .module)
         )
         .accessibilityLabel(Text("Show file changes", bundle: .module))
-    }
-
-    private func capabilityIcon(_ cap: SessionCapability) -> some View {
-        Image(systemName: cap.iconName)
-            .glyphSize(.tiny, weight: .semibold)
-            .foregroundColor(theme.text.secondary)
-            .frame(width: 14, height: 14)
-            .background(
-                RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
-                    .fill(theme.surface.pressed)
-            )
-            .help(Text(LocalizedStringKey(cap.label), bundle: .module))
     }
 
     // MARK: - Source Badge
@@ -3757,18 +3881,20 @@ private struct SessionRow: View {
         .localizedHelp("Default")
     }
 
+    /// The agent's avatar as the rail draws it, so a page row and its
+    /// sidebar row read as the same agent.
     @ViewBuilder
     private func agentIndicatorView(_ agent: Agent) -> some View {
         AgentAvatarView(
             mascotId: agent.avatar,
-            name: agent.name,
-            tint: agentColor,
+            name: agent.displayName,
+            tint: theme.dataInk(seed: agent.name),
             diameter: 24,
             customImageURL: agent.customAvatarURL,
-            monogramFontSize: 10,
-            borderWidth: 1
+            monogramFontSize: 11,
+            borderWidth: 0
         )
-        .help(agent.name)
+        .help(Text(verbatim: agent.displayName))
     }
 
     private var editingView: some View {
@@ -3842,65 +3968,6 @@ private struct SessionRow: View {
         }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.keyHintChip.horizontalGap")
     }
 
-}
-
-// MARK: - Actions Popover Button
-
-/// Menu-style row used inside the actions popover. Owns its own hover state.
-private struct ActionsPopoverButton: View {
-    let icon: String
-    let label: String
-    /// True when `label` is user content (e.g. a project name) that must
-    /// render verbatim instead of through the localization table.
-    var labelIsVerbatim: Bool = false
-    let isDestructive: Bool
-    let action: () -> Void
-
-    @Environment(\.theme) private var environmentTheme
-    @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.actionsPopoverButton.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s8, theme))) {
-                Image(systemName: icon)
-                    .glyphSize(.footnote, weight: .medium)
-                    .frame(width: 14)
-                Group {
-                    if labelIsVerbatim {
-                        Text(verbatim: label)
-                    } else {
-                        Text(LocalizedStringKey(label), bundle: .module)
-                    }
-                }
-                .componentInspectionText(41, role: .label, fallback: .caption, weight: 500, theme: theme)
-                .lineLimit(1)
-                Spacer(minLength: 0)
-            }.catalogLayoutTarget("component.library.41.elements.layout.actionsPopoverButton.body.horizontalGap")
-            .foregroundColor(foreground)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.actionsPopoverButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.41.elements.layout.actionsPopoverButton.body.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.actionsPopoverButton.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.41.elements.layout.actionsPopoverButton.body.paddingY")
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                    .fill(isHovered ? hoverFill : .clear)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-    }
-
-    private var foreground: Color {
-        if isDestructive { return theme.danger.default }
-        return theme.text.primary
-    }
-
-    private var hoverFill: Color {
-        if isDestructive { return theme.status.error.background }
-        return theme.surface.hover
-    }
 }
 
 // MARK: - Session Activity Ring
@@ -4175,224 +4242,58 @@ struct DontAskAgainToggle: View {
     }
 #endif
 
-// MARK: - History List (inspector pane)
+// MARK: - All chats list
 
-/// The chat list behind the inspector's History pane (`ChatHistoryPaneView`):
-/// search (title, metadata and full-text over message bodies) above the
-/// same `SessionRow`s with activity rings, capability badges and the
-/// per-row actions popover. Reuses the sidebar's private row types.
-struct ChatHistoryList: View {
-    let sessions: [ChatSessionData]
+/// The All chats page's rows (`AllChatsPage`): day groups of `SessionRow`s
+/// with the sidebar's click rules and menus, each group with Select all.
+/// Lives here because it reuses the sidebar's private row types.
+struct AllChatsList: View {
+    let groups: [AllChatsModel.Group]
+    let hasMore: Bool
+    let onLoadMore: () -> Void
     let currentSessionId: UUID?
-    /// Alert scope for the batch-delete confirmation.
-    let scope: ThemedAlertScope
+    let selection: Binding<ChatSelection>
+    /// First user message per chat, for the rows' second line.
+    let previews: [UUID: String]
+    let actions: ChatHistoryWindowActions
     let onSelect: (ChatSessionData) -> Void
-    let onDelete: (UUID) -> Void
-    let onRename: (UUID, String) -> Void
-    let onSetArchived: (UUID, Bool) -> Void
-    let onSetPinned: (UUID, Bool) -> Void
-    let onSetProject: (UUID, UUID?) -> Void
-    let onExport: (ChatSessionData, ChatSessionSidebar.ExportFormat) -> Void
-    var onStop: ((UUID) -> Void)? = nil
-    var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
-    var onOpenInNewTab: ((ChatSessionData) -> Void)? = nil
-    /// Origin lens chosen in the dialog's Filter popover.
-    var sourceFilter: ChatHistorySourceFilter = .all
-    /// Archived lens: true lists only archived chats, false hides them.
-    var showArchived: Bool = false
-    /// Project lens chosen in the dialog's Filter popover (nil = any).
-    var projectFilter: UUID? = nil
-    /// Workspace lens chosen in the dialog's Filter popover (nil = any).
-    var workspaceFilter: String? = nil
-    /// Plugin lens chosen in the dialog's Filter popover (nil = any; "" =
-    /// plugin chats with no recorded plugin id).
-    var pluginFilter: String? = nil
-    /// Schedule / watcher lenses: the schedule or watcher id those runs
-    /// stamp as the session's external key (nil = any).
-    var scheduleFilter: String? = nil
-    var watcherFilter: String? = nil
-    /// Capability lenses; a chat must carry every selected badge.
-    var capabilityFilter: Set<SessionCapability> = []
-    /// Resets the dialog's source / archived lenses from the empty state.
-    var onClearFilters: (() -> Void)? = nil
-    /// Cap on the list's height. The dialog capped it at 360pt; the
-    /// inspector's History pane passes nil so the list fills the rail.
-    var listMaxHeight: CGFloat? = 360
-    /// Control shown at the trailing end of the search row (the host's
-    /// Filter button), so search and filter form one row.
-    var searchAccessory: AnyView? = nil
-    /// Hint under "No chats yet": whose chats the host lists.
-    var emptyHint: LocalizedStringKey = "Chats with this agent appear here."
+    let onOpenInNewTab: (ChatSessionData) -> Void
 
     @Environment(\.theme) private var theme
     @Environment(\.themedAlertScope) private var alertScope
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var projectManager = ProjectManager.shared
+    @ObservedObject private var conversations = ChatSessionsManager.shared
     @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
     @ObservedObject private var importHighlight = ChatSessionImportHighlight.shared
-
-    @State private var searchQuery: String = ""
-    @State private var contentMatchedSessionIds: Set<UUID> = []
-    @State private var contentSearchTask: Task<Void, Never>?
-    @State private var isContentSearchInFlight = false
-    @FocusState private var isSearchFocused: Bool
     @State private var editingSessionId: UUID?
-    /// Multi-selection (⌘-click toggles, ⇧-click extends from the anchor).
-    @State private var selectedIds: Set<UUID> = []
-    @State private var selectionAnchorId: UUID?
-
-    private var hasActiveFilter: Bool {
-        showArchived || sourceFilter != .all || projectFilter != nil || workspaceFilter != nil
-            || pluginFilter != nil || scheduleFilter != nil || watcherFilter != nil
-            || !capabilityFilter.isEmpty
-    }
-
-    private var filteredSessions: [ChatSessionData] {
-        let visible = sessions.filter { session in
-            session.archived == showArchived && sourceFilter.matches(session)
-                && (projectFilter == nil || session.projectId == projectFilter)
-                && (workspaceFilter == nil || session.workspace?.workspaceId == workspaceFilter)
-                && (pluginFilter == nil
-                    || (session.source == .plugin && (session.sourcePluginId ?? "") == pluginFilter))
-                && (scheduleFilter == nil
-                    || (session.runtimeSource == .schedule && session.externalSessionKey == scheduleFilter))
-                && (watcherFilter == nil
-                    || (session.runtimeSource == .watcher && session.externalSessionKey == watcherFilter))
-                && capabilityFilter.isSubset(of: session.capabilities)
-        }
-        let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
-        let matched: [ChatSessionData]
-        if trimmed.isEmpty {
-            matched = visible
-        } else {
-            matched = visible.filter { session in
-                if SearchService.matches(query: searchQuery, in: session.title) { return true }
-                if let key = session.externalSessionKey,
-                    SearchService.matches(query: searchQuery, in: key)
-                {
-                    return true
-                }
-                if contentMatchedSessionIds.contains(session.id) { return true }
-                return session.capabilities.contains { cap in
-                    SearchService.matches(query: searchQuery, in: cap.label)
-                }
-            }
-        }
-        return SessionActivityOrdering.ordered(
-            matched,
-            activeIds: Set(activityMonitor.statuses.keys)
-        )
-    }
 
     var body: some View {
-        VStack(spacing: theme.space.s12) {
-            HStack(spacing: theme.space.s8) {
-                SidebarSearchField(
-                    text: $searchQuery,
-                    placeholder: "Search chats...",
-                    isFocused: $isSearchFocused,
-                    isSearching: isContentSearchInFlight
-                )
-                if let searchAccessory {
-                    searchAccessory
-                }
-            }
-
-            if !selectedIds.isEmpty {
-                selectionActionBar
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-
-            if sessions.isEmpty {
-                SidebarEmptyState(
-                    icon: "bubble.left.and.bubble.right",
-                    title: "No chats yet",
-                    hint: emptyHint
-                )
-            } else if filteredSessions.isEmpty, isContentSearchInFlight {
-                placeholder(icon: nil, text: "Searching conversations…")
-            } else if filteredSessions.isEmpty, hasActiveFilter,
-                searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
-            {
-                // Lens (not search) produced the empty list: offer a way
-                // back instead of the search-flavored no-results view.
-                VStack(spacing: theme.space.s8) {
-                    placeholder(
-                        icon: showArchived ? "archivebox" : "line.3.horizontal.decrease.circle",
-                        text: showArchived ? "No archived chats" : "No chats match this filter"
+        let order = groups.flatMap { $0.rows.map(\.id) }
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: theme.space.s2) {
+                ForEach(groups) { group in
+                    AllChatsGroupHeader(
+                        title: AllChatsModel.title(for: group.key),
+                        count: group.rows.count,
+                        ids: group.rows.map(\.id),
+                        selection: selection
                     )
-                    if let onClearFilters {
-                        Button {
-                            withAnimation(theme.motion.quick) { onClearFilters() }
-                        } label: {
-                            Text("Clear Filters", bundle: .module)
-                                .textStyle(.footnote, weight: 500)
-                                .foregroundColor(theme.text.link)
-                        }
-                        .buttonStyle(.plain)
-                        .pointingHandCursor()
-                        .padding(.bottom, theme.space.s16)
-                    }
-                }
-            } else if filteredSessions.isEmpty {
-                SidebarNoResultsView(searchQuery: searchQuery) {
-                    withAnimation(theme.motion.quick) { searchQuery = "" }
-                }
-                .frame(maxHeight: listMaxHeight ?? .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: theme.space.s2) {
-                        ForEach(filteredSessions) { session in
-                            SessionRow(
-                                session: session,
-                                agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
-                                isSelected: session.id == currentSessionId,
-                                isMultiSelected: selectedIds.contains(session.id),
-                                isImportHighlighted: importHighlight.sessionIds.contains(session.id),
-                                activityStatus: activityMonitor.statuses[session.id],
-                                isEditing: editingSessionId == session.id,
-                                onSelect: { handleTap(session) },
-                                onStartRename: { editingSessionId = session.id },
-                                onConfirmRename: { newTitle in
-                                    let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
-                                    if !trimmed.isEmpty { onRename(session.id, trimmed) }
-                                    editingSessionId = nil
-                                },
-                                onCancelRename: { editingSessionId = nil },
-                                onDelete: {
-                                    editingSessionId = nil
-                                    onDelete(session.id)
-                                },
-                                onToggleArchive: { onSetArchived(session.id, !session.archived) },
-                                onTogglePin: { onSetPinned(session.id, !session.pinned) },
-                                projects: projectManager.projects,
-                                onSetProject: { onSetProject(session.id, $0) },
-                                onExport: { onExport(session, $0) },
-                                onStop: onStop.map { stop in { stop(session.id) } },
-                                onOpenInNewWindow: onOpenInNewWindow.map { open in { open(session) } },
-                                onOpenInNewTab: onOpenInNewTab.map { open in { open(session) } },
-                                onShowFileChanges: {
-                                    onSelect(session)
-                                    FileChangeSummaryStore.requestPanel(sessionId: session.id.uuidString)
-                                }
-                            )
+                    ForEach(group.rows) { session in
+                        row(session, order: order)
                             .id(session.id)
-                        }
                     }
-                    .padding(.bottom, theme.space.s4)
-                    .animation(
-                        theme.motion.springAnimation(responseMultiplier: 0.9),
-                        value: filteredSessions.map(\.id)
-                    )
                 }
-                .scrollIndicators(.hidden)
-                .frame(maxHeight: listMaxHeight ?? .infinity)
+                if hasMore {
+                    SettingsSpinner()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, theme.space.s12)
+                        .onAppear(perform: onLoadMore)
+                }
             }
+            .padding(.bottom, theme.space.s64)
         }
-        .animation(theme.motion.quick, value: selectedIds)
-        .onChange(of: searchQuery) { _, query in
-            scheduleContentSearch(query)
-        }
+        .scrollIndicators(.automatic)
         .onChange(of: editingSessionId) { _, editing in
             guard case .chat(let windowId) = alertScope,
                 let state = ChatWindowManager.shared.windowState(id: windowId) else { return }
@@ -4404,163 +4305,89 @@ struct ChatHistoryList: View {
         }
     }
 
-    // MARK: Multi-selection
-
-    private func handleTap(_ session: ChatSessionData) {
-        let flags = NSEvent.modifierFlags
-        if flags.contains(.command) {
-            toggleSelection(session.id)
-        } else if flags.contains(.shift) {
-            extendSelection(to: session.id)
-        } else if !selectedIds.isEmpty {
-            toggleSelection(session.id)
-        } else {
-            selectionAnchorId = session.id
-            onSelect(session)
-        }
+    private func row(_ session: ChatSessionData, order: [UUID]) -> some View {
+        SessionRow(
+            session: session,
+            agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
+            isSelected: session.id == currentSessionId,
+            selection: SessionRowSelection.make(
+                for: session.id, in: selection, visibleOrder: order, fallbackAnchor: currentSessionId,
+                sessions: conversations.sessions, scope: alertScope),
+            preview: previews[session.id],
+            isImportHighlighted: importHighlight.sessionIds.contains(session.id),
+            activityStatus: activityMonitor.statuses[session.id],
+            isEditing: editingSessionId == session.id,
+            onSelect: { onSelect(session) },
+            onStartRename: { editingSessionId = session.id },
+            onConfirmRename: { newTitle in
+                let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { actions.rename(session.id, trimmed) }
+                editingSessionId = nil
+            },
+            onCancelRename: { editingSessionId = nil },
+            onDelete: {
+                editingSessionId = nil
+                actions.delete(session.id)
+            },
+            onToggleArchive: { actions.setArchived(session.id, !session.archived) },
+            onTogglePin: { actions.setPinned(session.id, !session.pinned) },
+            projects: session.workspace == nil ? projectManager.projects : [],
+            onSetProject: { actions.setProject(session.id, $0) },
+            onExport: { actions.export(session, $0) },
+            onStop: { actions.stop(session.id) },
+            onOpenInNewWindow: { actions.openInNewWindow(session) },
+            onOpenInNewTab: { onOpenInNewTab(session) },
+            onShowFileChanges: {
+                onSelect(session)
+                FileChangeSummaryStore.requestPanel(sessionId: session.id.uuidString)
+            }
+        )
     }
+}
 
-    private func toggleSelection(_ id: UUID) {
-        if selectedIds.contains(id) { selectedIds.remove(id) } else { selectedIds.insert(id) }
-        selectionAnchorId = id
-    }
+/// A day group's header on the All chats page: its name and count, and
+/// Select all / Deselect all on hover (the floating bar's Select all
+/// covers the whole list).
+private struct AllChatsGroupHeader: View {
+    let title: String
+    let count: Int
+    let ids: [UUID]
+    let selection: Binding<ChatSelection>
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
 
-    private func extendSelection(to id: UUID) {
-        let ids = filteredSessions.map(\.id)
-        guard
-            let anchor = selectionAnchorId ?? currentSessionId,
-            let anchorIndex = ids.firstIndex(of: anchor),
-            let targetIndex = ids.firstIndex(of: id)
-        else {
-            selectedIds.insert(id)
-            selectionAnchorId = id
-            return
-        }
-        let range = anchorIndex <= targetIndex ? anchorIndex...targetIndex : targetIndex...anchorIndex
-        selectedIds.formUnion(ids[range])
-    }
-
-    private func clearSelection() {
-        selectedIds.removeAll()
-        selectionAnchorId = nil
-    }
-
-    /// Batch bar for the selection: move to project, archive, delete, clear.
-    private var selectionActionBar: some View {
-        HStack(spacing: theme.space.s8) {
-            Text("\(selectedIds.count) selected", bundle: .module)
+    var body: some View {
+        let current = selection.wrappedValue
+        let allSelected = !ids.isEmpty && ids.allSatisfy(current.contains)
+        let showsToggle = isHovered
+        HStack(spacing: theme.space.s6) {
+            Text(verbatim: title)
                 .textStyle(.caption, weight: 600)
-                .foregroundColor(theme.text.primary)
-                .lineLimit(1)
-
-            Spacer(minLength: 4)
-
-            if !projectManager.projects.isEmpty {
-                SettingsOverflowMenu(icon: "folder.badge.plus", help: "Move to Project", size: .extraSmall) {
-                    ForEach(projectManager.projects) { project in
-                        Button { moveSelected(to: project.id) } label: { Text(verbatim: project.name) }
-                    }
-                    Divider()
-                    Button { moveSelected(to: nil) } label: {
-                        Text("Remove from Project", bundle: .module)
-                    }
-                }
-            }
-            SettingsIconButton("archivebox", help: "Archive", size: .extraSmall) {
-                for id in selectedIds { onSetArchived(id, true) }
-                clearSelection()
-            }
-            SettingsIconButton("trash", help: "Delete", size: .extraSmall, isDestructive: true) {
-                requestDeleteSelected()
-            }
-            SettingsIconButton("xmark", help: "Clear Selection", size: .extraSmall) {
-                clearSelection()
-            }
-        }
-        .padding(.horizontal, theme.space.s10)
-        .padding(.vertical, theme.space.s6)
-        .background(
-            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .fill(theme.surface.selected)
-        )
-    }
-
-    private func moveSelected(to projectId: UUID?) {
-        for id in selectedIds { onSetProject(id, projectId) }
-        clearSelection()
-    }
-
-    /// Confirms once, then deletes every selected session; honors the
-    /// "don't ask again" opt-out like the single-row flow.
-    private func requestDeleteSelected() {
-        let ids = selectedIds
-        guard !ids.isEmpty else { return }
-        if DeleteConfirmationPreference.shared.skipForSession {
-            performDelete(ids)
-            return
-        }
-        let requestId = UUID()
-        let scope = self.scope
-        ThemedAlertCenter.shared.present(
-            ThemedAlertRequest(
-                id: requestId,
-                title: "Delete Conversations?",
-                message: ids.count == 1
-                    ? L("1 conversation will be removed permanently. This can't be undone.")
-                    : L("\(ids.count) conversations will be removed permanently. This can't be undone."),
-                accessory: AnyView(DontAskAgainToggle()),
-                buttons: [
-                    .cancel(L("Cancel")),
-                    .destructive(L("Delete")) { performDelete(ids) },
-                ],
-                onDismiss: {
-                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
-                }
-            ),
-            scope: scope
-        )
-    }
-
-    private func performDelete(_ ids: Set<UUID>) {
-        for id in ids { onDelete(id) }
-        clearSelection()
-    }
-
-    private func placeholder(icon: String?, text: LocalizedStringKey) -> some View {
-        VStack(spacing: theme.space.s6) {
-            if let icon {
-                Image(systemName: icon)
-                    .glyphSize(.xlarge)
-                    .foregroundColor(theme.text.tertiary)
-            } else {
-                SettingsSpinner()
-            }
-            Text(text, bundle: .module)
+                .foregroundStyle(theme.text.secondary)
+            Text(verbatim: "\(count)")
                 .textStyle(.caption)
-                .foregroundColor(theme.text.secondary)
+                .monospacedDigit()
+                .foregroundStyle(theme.text.tertiary)
+            Spacer(minLength: 0)
+            SettingsButton(.tertiary, allSelected ? "Deselect all" : "Select all", size: .extraSmall) {
+                if allSelected {
+                    selection.wrappedValue.deselect(ids)
+                } else {
+                    selection.wrappedValue.select(ids)
+                }
+            }
+            .opacity(showsToggle ? 1 : 0)
+            .allowsHitTesting(showsToggle)
+            .accessibilityHidden(!showsToggle)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, theme.space.s24)
-    }
-
-    /// Debounced full-text lookup, mirroring the sidebar's implementation.
-    private func scheduleContentSearch(_ query: String) {
-        contentSearchTask?.cancel()
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else {
-            contentMatchedSessionIds = []
-            isContentSearchInFlight = false
-            return
-        }
-        isContentSearchInFlight = true
-        contentSearchTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            let ids = await ChatSessionStore.sessionIds(withContentContaining: trimmed)
-            guard !Task.isCancelled else { return }
-            contentMatchedSessionIds = ids
-            isContentSearchInFlight = false
-        }
+        .padding(.leading, theme.space.s10)
+        .padding(.trailing, theme.space.s4)
+        .padding(.top, theme.space.s16)
+        .padding(.bottom, theme.space.s4)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -4569,6 +4396,15 @@ private struct AgentRowFramesKey: PreferenceKey {
     static let defaultValue: [UUID: CGRect] = [:]
     static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+/// Selectable chat rows in view-tree order, which is top-to-bottom order
+/// in the rail's stack.
+private struct VisibleChatOrderKey: PreferenceKey {
+    static let defaultValue: [UUID] = []
+    static func reduce(value: inout [UUID], nextValue: () -> [UUID]) {
+        value.append(contentsOf: nextValue())
     }
 }
 

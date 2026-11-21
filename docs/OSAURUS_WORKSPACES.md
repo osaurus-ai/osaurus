@@ -468,7 +468,7 @@ If a release lands out of order:
 
 | Mismatch | What happens |
 | --- | --- |
-| App ahead of registry | Sharing a workflow that has agent steps fails with "The store doesn't accept agent steps yet." A workspace share publishes the page unlisted, then reports "The store doesn't support workspace sharing yet." The Workspaces tab shows the same message. Other shares work. |
+| App ahead of registry | Sharing a workflow in a format the registry doesn't know yet (agent steps, declared apps) fails with "The store doesn't accept this workflow's newer steps yet." A workspace share publishes the page unlisted, then reports "The store doesn't support workspace sharing yet." The Workspaces tab shows the same message. Other shares work. |
 | App or registry ahead of router | Attestations without `workspace_status` read as active. A failed `/id/lookup` shows the short wallet. The registry's removal sweep logs `workspace_removals.failed` on each tick and removes nothing until the router ships. |
 
 Client coverage is in `WorkflowShareServiceTests`

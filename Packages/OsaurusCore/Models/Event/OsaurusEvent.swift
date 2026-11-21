@@ -23,6 +23,7 @@ public enum EventSourceKind: String, Codable, CaseIterable, Sendable, Identifiab
     case sse
     case runFailed = "run_failed"
     case app
+    case macApp = "mac_app"
     case email
     case channelMessage = "channel_message"
 
@@ -352,6 +353,7 @@ public enum EventSource: Equatable, Sendable {
     case sse(SSESourceConfig)
     case runFailed(RunFailedSourceConfig)
     case app(AppEventsSourceConfig)
+    case macApp(MacAppSourceConfig)
     case email(EmailSourceConfig)
     case channelMessage(ChannelMessageSourceConfig)
 
@@ -364,6 +366,7 @@ public enum EventSource: Equatable, Sendable {
         case .sse: .sse
         case .runFailed: .runFailed
         case .app: .app
+        case .macApp: .macApp
         case .email: .email
         case .channelMessage: .channelMessage
         }
@@ -386,6 +389,11 @@ public enum EventSource: Equatable, Sendable {
 
     public var app: AppEventsSourceConfig? {
         if case .app(let c) = self { return c }
+        return nil
+    }
+
+    public var macApp: MacAppSourceConfig? {
+        if case .macApp(let c) = self { return c }
         return nil
     }
 
@@ -419,14 +427,14 @@ public enum EventSource: Equatable, Sendable {
     public var connectionId: String? {
         switch self {
         case .email(let config): config.connectionId.isEmpty ? nil : config.connectionId
-        case .schedule, .folder, .webhook, .rss, .sse, .runFailed, .app, .channelMessage: nil
+        case .schedule, .folder, .webhook, .rss, .sse, .runFailed, .app, .macApp, .channelMessage: nil
         }
     }
 }
 
 extension EventSource: Codable {
     private enum CodingKeys: String, CodingKey {
-        case kind, schedule, folder, webhook, rss, sse, runFailed, app, email, channelMessage
+        case kind, schedule, folder, webhook, rss, sse, runFailed, app, macApp, email, channelMessage
     }
 
     public init(from decoder: Decoder) throws {
@@ -439,6 +447,7 @@ extension EventSource: Codable {
         case .sse: self = .sse(try c.decode(SSESourceConfig.self, forKey: .sse))
         case .runFailed: self = .runFailed(try c.decode(RunFailedSourceConfig.self, forKey: .runFailed))
         case .app: self = .app(try c.decode(AppEventsSourceConfig.self, forKey: .app))
+        case .macApp: self = .macApp(try c.decode(MacAppSourceConfig.self, forKey: .macApp))
         case .email: self = .email(try c.decode(EmailSourceConfig.self, forKey: .email))
         case .channelMessage:
             self = .channelMessage(try c.decode(ChannelMessageSourceConfig.self, forKey: .channelMessage))
@@ -456,6 +465,7 @@ extension EventSource: Codable {
         case .sse(let config): try c.encode(config, forKey: .sse)
         case .runFailed(let config): try c.encode(config, forKey: .runFailed)
         case .app(let config): try c.encode(config, forKey: .app)
+        case .macApp(let config): try c.encode(config, forKey: .macApp)
         case .email(let config): try c.encode(config, forKey: .email)
         case .channelMessage(let config): try c.encode(config, forKey: .channelMessage)
         }
@@ -1058,6 +1068,10 @@ public struct OsaurusEvent: Codable, Identifiable, Equatable, Sendable {
             return f.includeAutomationRuns ? workflows + " · " + L("or an automation") : workflows
         case .app(let a):
             return a.reasons.isEmpty ? L("No app events chosen") : a.reasons.map(\.displayName).joined(separator: ", ")
+        case .macApp(let m):
+            guard !m.bundleID.isEmpty else { return L("No app chosen") }
+            return m.events.isEmpty
+                ? m.displayName : "\(m.displayName) · " + m.events.map(\.displayName).joined(separator: ", ")
         case .email(let e): return e.effectiveMailboxes.map(EmailMailboxName.display).joined(separator: ", ")
         case .channelMessage(let m):
             let platform = m.kind.displayName

@@ -22,6 +22,15 @@ struct WorkflowSettingBlock: Error, LocalizedError, Equatable {
     var errorDescription: String? { message }
 }
 
+/// A failure classified where it happened and carried here intact, e.g. a
+/// delegated agent's model error that came back as a tool envelope.
+struct ClassifiedNodeFailure: Error, LocalizedError, Equatable {
+    var message: String
+    var failure: NodeRunFailure
+
+    var errorDescription: String? { message }
+}
+
 enum WorkflowFailure {
 
     static func message(_ error: Error) -> String {
@@ -50,6 +59,8 @@ enum WorkflowFailure {
 
     static func classify(_ error: Error) -> NodeRunFailure {
         if let recorded = error as? RecordedNodeFailure { return classify(recorded.underlying) }
+        if let classified = error as? ClassifiedNodeFailure { return classified.failure }
+        if let route = routeFailure(error) { return route }
         let retryable = WorkflowNodeError.isRetryable(error)
         func make(_ kind: String, _ fixIn: NodeRunFailure.FixIn, _ hint: String? = nil, type: String? = nil)
             -> NodeRunFailure
@@ -215,6 +226,187 @@ enum WorkflowFailure {
         }
     }
 
+    /// Failures on the way to a model: no route, a provider that is down or
+    /// refused the request, the Osaurus Router's account state. Each says
+    /// for itself whether another attempt could help. Nil for anything else.
+    static func routeFailure(_ error: Error) -> NodeRunFailure? {
+        func make(
+            _ kind: String, _ fixIn: NodeRunFailure.FixIn, retryable: Bool, type: String, _ hint: String? = nil
+        ) -> NodeRunFailure {
+            NodeRunFailure(kind: kind, retryable: retryable, errorType: type, fixIn: fixIn, hint: hint)
+        }
+        let retryHint = L("Retry from the failed step.")
+        switch error {
+        case let unavailable as RemoteProviderUnavailable:
+            return make(
+                "provider_disconnected", unavailable.retryable ? .retry : .setup, retryable: unavailable.retryable,
+                type: "RemoteProviderUnavailable." + unavailable.reason.rawValue, unavailable.hint)
+        case let engine as ChatEngine.EngineError:
+            switch engine.kind {
+            case .providerUnavailable(let unavailable):
+                return routeFailure(unavailable).map { failure in
+                    var failure = failure
+                    failure.errorType = "ChatEngine.EngineError.providerUnavailable"
+                    return failure
+                }
+            case .modelNotFound, .noServiceAvailable, .agentModelUnavailable:
+                return make(
+                    "model_unavailable", .setup, retryable: false, type: "ChatEngine.EngineError." + engine.caseName,
+                    L("Pick a model that is installed or connected, for the step or the agent it asks."))
+            case .remoteAgentUnavailable:
+                return make(
+                    "remote_agent_unavailable", .setup, retryable: false, type: "ChatEngine.EngineError.remoteAgentUnavailable",
+                    L("Reconnect to the remote agent, then retry."))
+            case .routerSpendNotAuthorized:
+                return make(
+                    "router_spend_not_authorized", .settings, retryable: false,
+                    type: "ChatEngine.EngineError.routerSpendNotAuthorized",
+                    L("Allow this caller to spend Osaurus credits in Osaurus Credits settings, or pick a model that doesn't route through the Router."))
+            case .invalidStructuredOutput:
+                return make(
+                    "output_mismatch", .workflow, retryable: false, type: "ChatEngine.EngineError.invalidStructuredOutput",
+                    L("Change the step's instructions or its output schema so what it returns matches."))
+            }
+        case let provider as RemoteProviderServiceError:
+            let type = "RemoteProviderServiceError." + provider.caseName
+            switch provider {
+            case .requestFailed(let message), .requestFailedWithDiagnostics(let message, _):
+                return httpFailure(message: message, type: type)
+            case .rateLimited:
+                return make(
+                    "provider_rate_limited", .retry, retryable: true, type: type,
+                    L("The provider is busy. Retry in a moment, or add a retry policy to the step."))
+            case .notConnected, .sessionReplaced:
+                return make(
+                    "provider_disconnected", .retry, retryable: true, type: type,
+                    L("The provider dropped its connection. Retry once it shows as connected in Settings → Providers."))
+            case .invalidResponse, .streamingError:
+                return make("provider_error", .retry, retryable: true, type: type, retryHint)
+            case .noModelsAvailable:
+                return make(
+                    "provider_model_unavailable", .setup, retryable: false, type: type,
+                    L("The provider lists no models. Check it in Settings → Providers, or pick another model."))
+            case .unsupportedParameter:
+                return make(
+                    "provider_refused", .workflow, retryable: false, type: type,
+                    L("Change the step's input or settings; the provider names what it can't take."))
+            case .outputTruncated:
+                return make(
+                    "output_truncated", .workflow, retryable: false, type: type,
+                    L("The answer hit the output limit. Ask for less, or raise the step's output limit."))
+            case .invalidURL, .mcpEndpointDetected:
+                return make(
+                    "provider_misconfigured", .setup, retryable: false, type: type,
+                    L("Fix the provider's address in Settings → Providers."))
+            }
+        case let router as OsaurusRouterAPIError:
+            let type = "OsaurusRouterAPIError." + router.caseName
+            switch router {
+            case .noIdentity:
+                return make(
+                    "router_no_identity", .setup, retryable: false, type: type,
+                    L("Set up your Osaurus Identity, then retry."))
+            case .firstActionPending:
+                return make(
+                    "router_first_credit_pending", .person, retryable: false, type: type,
+                    L("Finish choosing your welcome credit, then retry."))
+            case .insufficientFunds, .belowMinimumTopUp:
+                return make(
+                    "insufficient_funds", .person, retryable: false, type: type,
+                    L("Add Osaurus credits, then retry."))
+            case .accountFrozen:
+                return make(
+                    "router_account_frozen", .person, retryable: false, type: type,
+                    L("Your Osaurus billing account is on hold; resolve it in Osaurus Credits."))
+            case .unauthorized:
+                return make(
+                    "provider_auth", .setup, retryable: false, type: type,
+                    L("The Router refused the request's signature. Check this Mac's clock and your Osaurus Identity."))
+            case .rateLimited:
+                return make("provider_rate_limited", .retry, retryable: true, type: type, retryHint)
+            case .transport, .invalidResponse:
+                return make("provider_error", .retry, retryable: true, type: type, retryHint)
+            case .server(_, _, let status) where status >= 500:
+                return make("provider_http_5xx", .retry, retryable: true, type: type, retryHint)
+            case .server, .invalidURL, .paidWebDisabled, .idempotencyConflict:
+                return make("provider_error", .workflow, retryable: false, type: type)
+            }
+        default:
+            return nil
+        }
+    }
+
+    /// A provider's HTTP failure, by the status its message carries
+    /// (`HTTP 402: …`) and the Router's credit codes.
+    private static func httpFailure(message: String, type: String) -> NodeRunFailure {
+        func make(_ kind: String, _ fixIn: NodeRunFailure.FixIn, retryable: Bool, _ hint: String? = nil)
+            -> NodeRunFailure
+        {
+            NodeRunFailure(kind: kind, retryable: retryable, errorType: type, fixIn: fixIn, hint: hint)
+        }
+        if OsaurusRouter.isWorkspaceInsufficientFundsError(message) {
+            return make(
+                "workspace_insufficient_funds", .person, retryable: false,
+                L("The workspace is out of credits. Ask its owner to add more, then retry."))
+        }
+        let status = httpStatus(in: message)
+        if status == 402 || OsaurusRouter.isInsufficientFundsError(message) {
+            return make("insufficient_funds", .person, retryable: false, L("Add credits with the provider, then retry."))
+        }
+        switch status {
+        case 401?, 403?:
+            return make(
+                "provider_auth", .setup, retryable: false,
+                L("The provider refused the credentials. Check its key or sign-in in Settings → Providers."))
+        case let code? where code >= 500:
+            return make("provider_http_5xx", .retry, retryable: true, L("The provider is failing. Retry from the failed step."))
+        case let code? where code >= 400:
+            return make(
+                "provider_http_4xx", .workflow, retryable: false,
+                L("The provider refused the request; the message says why. Change the step or its model."))
+        default:
+            return make("provider_error", .retry, retryable: true, L("Retry from the failed step."))
+        }
+    }
+
+    /// `envelope` with `error`'s classification added as `cause_*` keys, so
+    /// a step that gets the failure back as a tool envelope (a built-in
+    /// worker) records what actually failed. Unchanged when the error has
+    /// no classification beyond the generic `error`.
+    static func attachingCause(of error: Error, to envelope: String) -> String {
+        let failure = classify(error)
+        guard failure.kind != "error",
+            var object = (try? JSONSerialization.jsonObject(with: Data(envelope.utf8))) as? [String: Any]
+        else { return envelope }
+        object["cause_kind"] = failure.kind
+        object["cause_type"] = failure.errorType
+        object["cause_fix_in"] = failure.fixIn.rawValue
+        object["cause_retryable"] = failure.retryable
+        if let hint = failure.hint { object["cause_hint"] = hint }
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+            let text = String(data: data, encoding: .utf8)
+        else { return envelope }
+        return text
+    }
+
+    /// The failure `attachingCause` carried in a failure envelope, or nil.
+    static func carriedCause(in object: [String: JSONValue], message: String) -> ClassifiedNodeFailure? {
+        guard let kind = object["cause_kind"]?.stringValue, !kind.isEmpty else { return nil }
+        return ClassifiedNodeFailure(
+            message: message,
+            failure: NodeRunFailure(
+                kind: kind, retryable: object["cause_retryable"]?.boolValue ?? false,
+                errorType: object["cause_type"]?.stringValue ?? "",
+                fixIn: object["cause_fix_in"]?.stringValue.flatMap(NodeRunFailure.FixIn.init(rawValue:)) ?? .workflow,
+                hint: object["cause_hint"]?.stringValue))
+    }
+
+    /// The status in a provider message of the form `HTTP 429: …`.
+    static func httpStatus(in message: String) -> Int? {
+        guard let range = message.range(of: #"HTTP (\d{3})"#, options: .regularExpression) else { return nil }
+        return Int(message[range].dropFirst(5))
+    }
+
     /// A tool's failure envelope, by its kind.
     private static func toolFailure(tool: String, kind: String, retryable: Bool, type: String) -> NodeRunFailure {
         func make(_ fixIn: NodeRunFailure.FixIn, _ hint: String? = nil) -> NodeRunFailure {
@@ -258,6 +450,59 @@ extension WorkflowNodeError {
         case .unsupported: return "unsupported"
         case .toolFailed: return "toolFailed"
         case .missingSecret: return "missingSecret"
+        }
+    }
+}
+
+extension ChatEngine.EngineError {
+    var caseName: String {
+        switch kind {
+        case .modelNotFound: return "modelNotFound"
+        case .noServiceAvailable: return "noServiceAvailable"
+        case .remoteAgentUnavailable: return "remoteAgentUnavailable"
+        case .routerSpendNotAuthorized: return "routerSpendNotAuthorized"
+        case .invalidStructuredOutput: return "invalidStructuredOutput"
+        case .agentModelUnavailable: return "agentModelUnavailable"
+        case .providerUnavailable: return "providerUnavailable"
+        }
+    }
+}
+
+extension RemoteProviderServiceError {
+    var caseName: String {
+        switch self {
+        case .invalidURL: return "invalidURL"
+        case .notConnected: return "notConnected"
+        case .requestFailed: return "requestFailed"
+        case .requestFailedWithDiagnostics: return "requestFailedWithDiagnostics"
+        case .invalidResponse: return "invalidResponse"
+        case .streamingError: return "streamingError"
+        case .noModelsAvailable: return "noModelsAvailable"
+        case .rateLimited: return "rateLimited"
+        case .unsupportedParameter: return "unsupportedParameter"
+        case .mcpEndpointDetected: return "mcpEndpointDetected"
+        case .sessionReplaced: return "sessionReplaced"
+        case .outputTruncated: return "outputTruncated"
+        }
+    }
+}
+
+extension OsaurusRouterAPIError {
+    var caseName: String {
+        switch self {
+        case .noIdentity: return "noIdentity"
+        case .firstActionPending: return "firstActionPending"
+        case .invalidURL: return "invalidURL"
+        case .invalidResponse: return "invalidResponse"
+        case .transport: return "transport"
+        case .server: return "server"
+        case .belowMinimumTopUp: return "belowMinimumTopUp"
+        case .insufficientFunds: return "insufficientFunds"
+        case .accountFrozen: return "accountFrozen"
+        case .unauthorized: return "unauthorized"
+        case .rateLimited: return "rateLimited"
+        case .paidWebDisabled: return "paidWebDisabled"
+        case .idempotencyConflict: return "idempotencyConflict"
         }
     }
 }

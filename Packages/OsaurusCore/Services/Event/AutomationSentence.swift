@@ -93,6 +93,7 @@ enum AutomationSentence {
         case .runFailed: return L("When a run fails")
         case .app(let app):
             return app.fires(on: .appLaunched) ? L("When Osaurus opens") : L("Custom trigger")
+        case .macApp(let mac): return L("When \(mac.phrase)")
         case .webhook(let webhook):
             guard let provider = providerName(webhook.provider) else { return L("Custom trigger") }
             return L("When \(provider) has news")
@@ -140,6 +141,7 @@ enum AutomationSentence {
         case .runFailed: return L("runs when another workflow fails")
         case .app(let app):
             return app.fires(on: .appLaunched) ? L("runs when Osaurus opens") : L("runs from a custom trigger")
+        case .macApp(let mac): return L("runs when \(mac.phrase)")
         case .webhook(let webhook):
             guard let provider = providerName(webhook.provider) else { return L("runs from a custom trigger") }
             return L("runs when \(provider) has news")

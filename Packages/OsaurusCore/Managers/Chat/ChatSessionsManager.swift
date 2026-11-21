@@ -265,9 +265,16 @@ final class ChatSessionsManager: ObservableObject {
             session.agentId == agentId
                 || (agentId == Agent.defaultId && session.agentId == nil)
         }
-        guard !owned.isEmpty else { return }
-        let ids = owned.map(\.id)
-        let idSet = Set(ids)
+        await delete(ids: Set(owned.map(\.id)))
+    }
+
+    /// Delete several sessions at once (the sidebar's batch delete). Same
+    /// shape as `deleteAll(for:)`: the in-memory list updates synchronously,
+    /// the database rows go in one background batch. Returns once that
+    /// batch has finished.
+    func delete(ids idSet: Set<UUID>) async {
+        guard !idSet.isEmpty else { return }
+        let ids = Array(idSet)
         if let current = currentSessionId, idSet.contains(current) {
             currentSessionId = nil
         }

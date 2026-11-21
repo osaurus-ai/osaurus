@@ -11801,6 +11801,10 @@ struct ChatView: View {
             openChats: windowState.tabs,
             onSelectOpenChat: { windowState.selectTab(id: $0); closeCompactDrawer() },
             onCloseOpenChat: { windowState.closeTab(id: $0) },
+            chatSelection: $windowState.chatSelection,
+            showsBatchBar: !windowState.chatPage.isAllChats,
+            onShowAllChats: { windowState.showAllChats($0) },
+            isShowingAllChats: windowState.mainSurface == .chat && windowState.chatPage.isAllChats,
             onSelect: { data in
                 windowState.loadSession(data)
                 isPinnedToBottom = true
@@ -11826,10 +11830,6 @@ struct ChatView: View {
             },
             onOpenInNewTab: { sessionData in
                 windowState.openSessionInNewTab(sessionData)
-                closeCompactDrawer()
-            },
-            onSelectAgent: { newAgentId in
-                windowState.switchAgent(to: newAgentId)
                 closeCompactDrawer()
             },
             onNewChatWithAgent: { newAgentId in
@@ -12320,6 +12320,25 @@ struct ChatView: View {
                                 .padding(.top, Self.headerHeight(theme))
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .transition(pageTransition)
+                        } else if windowState.mainSurface == .chat, case .allChats(let request) = windowState.chatPage {
+                            // Like Insights and Settings: the titlebar strip
+                            // stays window material and the page names itself.
+                            VStack(spacing: theme.space.s0) {
+                                Color.clear.frame(height: Self.headerHeight(theme))
+                                AllChatsPage(
+                                    windowState: windowState,
+                                    request: request,
+                                    scope: .chat(windowState.windowId),
+                                    onSelect: { data in
+                                        windowState.loadSession(data)
+                                        isPinnedToBottom = true
+                                    },
+                                    onOpenInNewTab: { windowState.openSessionInNewTab($0) }
+                                )
+                                .background(theme.surface.canvas)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(pageTransition)
                         } else if windowState.mainSurface == .insights {
                             InsightsView()
                                 .padding(.top, Self.headerHeight(theme))
@@ -12824,6 +12843,7 @@ struct ChatView: View {
     private var isChatContentCovered: Bool {
         (windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary)
             || windowState.showsPageSurface
+            || (windowState.mainSurface == .chat && windowState.chatPage.isAllChats)
     }
 
     /// A short fade carried by the transition alone, so nothing inside the
@@ -13914,6 +13934,18 @@ extension ChatView {
                     ourWindow.sendEvent(event)
                     if ourWindow.firstResponder === field {
                         ourWindow.makeFirstResponder(nil)
+                    }
+                    return nil
+                }
+
+                // Stage 4.4: Selection mode. An inline rename still takes
+                // Esc first; then Esc clears the selection, before it can
+                // close the drawer the selection lives in.
+                if let windowState, windowState.chatSelection.isActive {
+                    if let cancelRename = windowState.cancelHistoryRename {
+                        cancelRename()
+                    } else {
+                        windowState.chatSelection.clear()
                     }
                     return nil
                 }

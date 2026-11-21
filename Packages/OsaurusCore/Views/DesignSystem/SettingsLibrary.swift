@@ -26,13 +26,16 @@ struct LibraryCard<Hero: View, Leading: View, Badges: View, Accessory: View, Con
 
     /// Verbatim (user data).
     let title: String
-    /// Verbatim, one line. Pass a placeholder ("No description") rather
+    /// Verbatim, one line unless `wrapsText`. Pass a placeholder ("No description") rather
     /// than nil to keep card heights even across a grid.
     var subtitle: String?
     /// Dims the subtitle (placeholder text).
     var subtitleIsPlaceholder: Bool
     var isSelected: Bool
     var minHeight: CGFloat
+    /// Title and subtitle wrap instead of truncating, and the card grows to
+    /// the height it is offered so a `Grid` row stays even.
+    var wrapsText: Bool
     /// Already-localized tooltip for the open action.
     var help: String?
     var animationDelay: Double
@@ -56,6 +59,7 @@ struct LibraryCard<Hero: View, Leading: View, Badges: View, Accessory: View, Con
         subtitleIsPlaceholder: Bool = false,
         isSelected: Bool = false,
         minHeight: CGFloat = 140,
+        wrapsText: Bool = false,
         help: String? = nil,
         animationDelay: Double = 0,
         hasAppeared: Bool = true,
@@ -73,6 +77,7 @@ struct LibraryCard<Hero: View, Leading: View, Badges: View, Accessory: View, Con
         self.subtitleIsPlaceholder = subtitleIsPlaceholder
         self.isSelected = isSelected
         self.minHeight = minHeight
+        self.wrapsText = wrapsText
         self.help = help
         self.animationDelay = animationDelay
         self.hasAppeared = hasAppeared
@@ -128,15 +133,17 @@ struct LibraryCard<Hero: View, Leading: View, Badges: View, Accessory: View, Con
                         Text(verbatim: title)
                             .assignedTypography("component.library.\(assignmentFamily).heading", fallback: SettingsFont.cardTitle)
                             .foregroundColor(theme.text.primary)
-                            .lineLimit(1)
+                            .lineLimit(wrapsText ? nil : 1)
+                            .fixedSize(horizontal: false, vertical: wrapsText)
                         badges
                     }.catalogLayoutTarget("component.library.13.elements.layout.libraryCard.cardBody.horizontalGap2")
                     if let subtitle {
                         Text(verbatim: subtitle)
                             .assignedTypography("component.library.\(assignmentFamily).caption", fallback: SettingsFont.rowDescription)
                             .foregroundColor(subtitleIsPlaceholder ? theme.text.tertiary : theme.text.secondary)
-                            .lineLimit(1)
+                            .lineLimit(wrapsText ? nil : 1)
                             .truncationMode(.tail)
+                            .fixedSize(horizontal: false, vertical: wrapsText)
                     }
                 }
 
@@ -157,7 +164,12 @@ struct LibraryCard<Hero: View, Leading: View, Badges: View, Accessory: View, Con
                 footer
             }
         }.catalogLayoutTarget("component.library.13.elements.layout.libraryCard.cardBody.verticalGap")
-        .frame(maxWidth: .infinity, minHeight: theme.catalogMetric("height", fallback: minHeight), alignment: .topLeading)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: theme.catalogMetric("height", fallback: minHeight),
+            maxHeight: wrapsText ? .infinity : nil,
+            alignment: .topLeading
+        )
         .padding(.horizontal, theme.catalogLayoutMetric("component.library.13.elements.layout.libraryCard.cardBody.padding.horizontal", inheriting: theme.catalogMetric("padding", fallback: theme.space.s16))).padding(.vertical, theme.catalogLayoutMetric("component.library.13.elements.layout.libraryCard.cardBody.padding.vertical", inheriting: theme.catalogMetric("padding", fallback: theme.space.s16))).catalogLayoutTarget("component.library.13.elements.layout.libraryCard.cardBody.padding.horizontal").catalogLayoutTarget("component.library.13.elements.layout.libraryCard.cardBody.padding.vertical")
     }
 }

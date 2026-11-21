@@ -270,6 +270,8 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
     public var mediaModels: [MediaModelRequirement]
     /// Workflow only: the agents its agent steps hand work to.
     public var agents: [AgentRequirement]
+    /// Workflow only: the Mac apps its steps drive.
+    public var apps: [AppRequirement]
     /// Agent only: knowledge collection names.
     public var knowledge: [String]
     /// Agent only: the skill allow-list (`agents[].skills`), by name or slug.
@@ -291,6 +293,7 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         folders: [FolderRequirement] = [],
         mediaModels: [MediaModelRequirement] = [],
         agents: [AgentRequirement] = [],
+        apps: [AppRequirement] = [],
         knowledge: [String] = [],
         skills: [String] = [],
         workingFolder: PathHint? = nil,
@@ -298,6 +301,7 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
     ) {
         self.mediaModels = mediaModels
         self.agents = agents
+        self.apps = apps
         self.tools = tools
         self.dependencies = dependencies
         self.folders = folders
@@ -322,7 +326,7 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         case mcpServers = "mcp_servers"
         case workingFolder = "working_folder"
         case mediaModels = "media_models"
-        case agents
+        case agents, apps
     }
 
     public init(from decoder: Decoder) throws {
@@ -338,14 +342,15 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         folders = try c.decodeIfPresent([FolderRequirement].self, forKey: .folders) ?? []
         mediaModels = try c.decodeIfPresent([MediaModelRequirement].self, forKey: .mediaModels) ?? []
         agents = try c.decodeIfPresent([AgentRequirement].self, forKey: .agents) ?? []
+        apps = try c.decodeIfPresent([AppRequirement].self, forKey: .apps) ?? []
         knowledge = try c.decodeIfPresent([String].self, forKey: .knowledge) ?? []
         skills = try c.decodeIfPresent([String].self, forKey: .skills) ?? []
         workingFolder = try c.decodeIfPresent(PathHint.self, forKey: .workingFolder)
         notes = try c.decodeIfPresent([String: String].self, forKey: .notes) ?? [:]
     }
 
-    /// `tools`, `dependencies`, `folders`, `media_models`, `agents`, and
-    /// `skills` are left out when empty so templates without them keep
+    /// `tools`, `dependencies`, `folders`, `media_models`, `agents`, `apps`,
+    /// and `skills` are left out when empty so templates without them keep
     /// their content hash.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -360,6 +365,7 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         if !folders.isEmpty { try c.encode(folders, forKey: .folders) }
         if !mediaModels.isEmpty { try c.encode(mediaModels, forKey: .mediaModels) }
         if !agents.isEmpty { try c.encode(agents, forKey: .agents) }
+        if !apps.isEmpty { try c.encode(apps, forKey: .apps) }
         try c.encode(knowledge, forKey: .knowledge)
         if !skills.isEmpty { try c.encode(skills, forKey: .skills) }
         try c.encodeIfPresent(workingFolder, forKey: .workingFolder)
@@ -412,6 +418,9 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
             },
             agents: (agents + other.agents).reduce(into: [AgentRequirement]()) { out, req in
                 if !out.contains(where: { $0.id == req.id }) { out.append(req) }
+            },
+            apps: (apps + other.apps).reduce(into: [AppRequirement]()) { out, app in
+                if !out.contains(where: { $0.id == app.id }) { out.append(app) }
             },
             knowledge: union(knowledge, other.knowledge),
             skills: union(skills, other.skills),
@@ -474,6 +483,9 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
                         kind: .agent, value: agent.id,
                         label: agent.isShared ? L("\(agent.name) (shared in a workspace)") : agent.name)))
         }
+        for app in apps {
+            out.append(note(TemplateRequirement(kind: .app, value: app.bundleID, label: app.name)))
+        }
         for name in knowledge {
             out.append(note(TemplateRequirement(kind: .knowledgeCollection, value: name)))
         }
@@ -508,6 +520,8 @@ public struct TemplateRequirement: Codable, Equatable, Sendable, Identifiable {
         case mediaModel = "media_model"
         /// Workflow only: an agent an agent step hands work to.
         case agent
+        /// Workflow only: a Mac app its steps drive.
+        case app
         /// Agent only: a skill on the agent's allow-list.
         case skill
         /// Installed workflow only: its file changed outside Osaurus.

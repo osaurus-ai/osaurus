@@ -113,6 +113,7 @@ extension EvalRunner {
             structure.keepsNodes = s.keepsNodes ?? []
             structure.editsSeed = s.editsSeed ?? false
             structure.declaresFolder = s.declaresFolder ?? false
+            structure.declaresApps = s.declaresApps ?? []
             structure.folderInput = s.folderInput ?? false
             structure.maxAddedNodes = s.maxAddedNodes
         }

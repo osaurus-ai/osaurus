@@ -89,6 +89,7 @@ public enum WorkflowRequirementsDeriver {
             folders: def.folders,
             mediaModels: mediaModels,
             agents: agents,
+            apps: def.apps,
             notes: def.requirementNotes
         )
     }
@@ -102,7 +103,7 @@ public enum WorkflowRequirementsDeriver {
     /// template carries; this is what the setup wizard and import review
     /// show.
     ///
-    /// Children's hosts, MCP servers, plugins, and tools are merged into
+    /// Children's hosts, MCP servers, plugins, tools, and apps are merged into
     /// `requirements`: the parent reaches them transitively. Children's
     /// models and secrets are not: a sub-workflow runs with its own install
     /// bindings, so listing them on the parent would ask the person to bind
@@ -158,6 +159,9 @@ public enum WorkflowRequirementsDeriver {
                     own.permissions.forEach { appendUnique($0, to: &merged.permissions) }
                     for media in own.mediaModels where !merged.mediaModels.contains(where: { $0.id == media.id }) {
                         merged.mediaModels.append(media)
+                    }
+                    for app in own.apps where !merged.apps.contains(where: { $0.id == app.id }) {
+                        merged.apps.append(app)
                     }
                     next.append((child, name))
                 }

@@ -4,8 +4,8 @@
 //
 //  Contract tests for Help (bug reports and the team's replies): the request
 //  budget (who may fetch, when, and how often), the open-report flag that
-//  gates background fetches, unread counting behind the Help badge, and the
-//  "a failed refresh keeps what we had" rule.
+//  gates background fetches, unread counting behind the Help badge, the
+//  "a failed refresh keeps what we had" rule, Mark as Resolved, and images.
 //
 
 import Foundation
@@ -27,13 +27,17 @@ struct SupportServiceTests {
         private var _listCalls = 0
         private var _created: [OsaurusRouterSupportReportBody] = []
         private var _detailCalls: [String] = []
-        private var _replies: [(id: String, body: String)] = []
+        private var _replies: [(id: String, body: String, attachments: [OsaurusRouterSupportAttachmentUpload])] = []
         private var _readCalls: [String] = []
+        private var _closeCalls: [String] = []
+        private var _attachmentCalls: [String] = []
 
         var createResult: Result<OsaurusRouterSupportThread, Error>?
         var detailResult: Result<OsaurusRouterSupportThread, Error>?
         var replyResult: Result<OsaurusRouterSupportThread, Error>?
         var readResult: Result<OsaurusRouterSupportThread, Error>?
+        var closeResult: Result<OsaurusRouterSupportThread, Error>?
+        var attachmentResult: Result<OsaurusRouterSupportAttachmentData, Error>?
 
         init(_ lists: [Result<OsaurusRouterSupportThreadsResponse, Error>]) {
             self.lists = lists
@@ -42,8 +46,12 @@ struct SupportServiceTests {
         var listCalls: Int { lock.withLock { _listCalls } }
         var created: [OsaurusRouterSupportReportBody] { lock.withLock { _created } }
         var detailCalls: [String] { lock.withLock { _detailCalls } }
-        var replies: [(id: String, body: String)] { lock.withLock { _replies } }
+        var replies: [(id: String, body: String, attachments: [OsaurusRouterSupportAttachmentUpload])] {
+            lock.withLock { _replies }
+        }
         var readCalls: [String] { lock.withLock { _readCalls } }
+        var closeCalls: [String] { lock.withLock { _closeCalls } }
+        var attachmentCalls: [String] { lock.withLock { _attachmentCalls } }
 
         func list() throws -> OsaurusRouterSupportThreadsResponse {
             let result: Result<OsaurusRouterSupportThreadsResponse, Error> = lock.withLock {
@@ -63,9 +71,22 @@ struct SupportServiceTests {
             return try unwrap(detailResult)
         }
 
-        func reply(_ id: String, _ body: String) throws -> OsaurusRouterSupportThread {
-            lock.withLock { _replies.append((id, body)) }
+        func reply(_ id: String, _ body: String, _ attachments: [OsaurusRouterSupportAttachmentUpload]) throws
+            -> OsaurusRouterSupportThread
+        {
+            lock.withLock { _replies.append((id, body, attachments)) }
             return try unwrap(replyResult)
+        }
+
+        func close(_ id: String) throws -> OsaurusRouterSupportThread {
+            lock.withLock { _closeCalls.append(id) }
+            return try unwrap(closeResult)
+        }
+
+        func attachment(_ threadId: String, _ attachmentId: String) throws -> OsaurusRouterSupportAttachmentData {
+            lock.withLock { _attachmentCalls.append(attachmentId) }
+            guard let attachmentResult else { throw OsaurusRouterAPIError.invalidResponse }
+            return try attachmentResult.get()
         }
 
         func markRead(_ id: String) throws -> OsaurusRouterSupportThread {
@@ -125,8 +146,10 @@ struct SupportServiceTests {
             list: { try script.list() },
             create: { try script.create($0) },
             detail: { try script.detail($0) },
-            reply: { try script.reply($0, $1) },
-            markRead: { try script.markRead($0) }
+            reply: { try script.reply($0, $1, $2) },
+            markRead: { try script.markRead($0) },
+            close: { try script.close($0) },
+            attachment: { try script.attachment($0, $1) }
         )
     }
 
@@ -185,6 +208,17 @@ struct SupportServiceTests {
         diagnosticsBytes: 19
     )
 
+    private static func draft(_ description: String, category: SupportCategory? = .bug) -> SupportReportDraft {
+        var draft = SupportReportDraft()
+        draft.category = category
+        draft.description = description
+        return draft
+    }
+
+    private static func image(_ byte: UInt8 = 1) -> SupportImageAttachment {
+        SupportImageAttachment(id: UUID(), data: Data([0xFF, 0xD8, byte]), mimeType: "image/jpeg", width: 4, height: 3)
+    }
+
     // MARK: - Decoding
 
     /// The list sample from `docs/osaurus-integration.md` in osaurus-router.
@@ -217,6 +251,47 @@ struct SupportServiceTests {
         #expect(!detail.isOpen)
         #expect(detail.messages?.map(\.isFromUser) == [true, false])
         #expect(detail.createdDate != nil)
+    }
+
+    /// Category and images, as the router sends them since categories and
+    /// attachments; an unknown category reads as none.
+    @Test func decodesCategoryAndAttachments() throws {
+        let body = #"""
+            {"id":"t1","subject":"S","status":"open","category":"workflow","unread":false,
+             "last_user_message_at":"2026-11-13T21:22:28Z","last_staff_message_at":null,
+             "created_at":"2026-11-13T21:22:28Z","updated_at":"2026-11-13T21:22:28Z",
+             "messages":[{"id":"m1","author":"user","body":"Hello","created_at":"2026-11-13T21:22:28Z",
+               "attachments":[{"id":"a1","mime_type":"image/png","width":640,"height":480,"byte_size":1234}]}]}
+            """#
+        let detail = try JSONDecoder().decode(OsaurusRouterSupportThread.self, from: Data(body.utf8))
+        #expect(detail.category == .workflow)
+        #expect(detail.summary.category == .workflow)
+        #expect(detail.withUnread(true).categoryRaw == "workflow")
+        let attachment = try #require(detail.messages?.first?.attachments.first)
+        #expect(attachment == OsaurusRouterSupportAttachment(id: "a1", mimeType: "image/png", width: 640, height: 480, byteSize: 1234))
+
+        let unknown = #"""
+            {"id":"t2","subject":"S","status":"open","category":"billing","unread":false,
+             "last_user_message_at":"2026-11-13T21:22:28Z","created_at":"2026-11-13T21:22:28Z",
+             "updated_at":"2026-11-13T21:22:28Z"}
+            """#
+        let other = try JSONDecoder().decode(OsaurusRouterSupportThread.self, from: Data(unknown.utf8))
+        #expect(other.categoryRaw == "billing")
+        #expect(other.category == nil)
+    }
+
+    /// Reports from before categories and images: no `category`, messages
+    /// without `attachments`.
+    @Test func decoding_toleratesMissingCategoryAndAttachments() throws {
+        let body = #"""
+            {"id":"t1","subject":"S","status":"open","unread":false,
+             "last_user_message_at":"2026-11-13T21:22:28Z","created_at":"2026-11-13T21:22:28Z",
+             "updated_at":"2026-11-13T21:22:28Z",
+             "messages":[{"id":"m1","author":"user","body":"Hello","created_at":"2026-11-13T21:22:28Z"}]}
+            """#
+        let detail = try JSONDecoder().decode(OsaurusRouterSupportThread.self, from: Data(body.utf8))
+        #expect(detail.category == nil)
+        #expect(detail.messages?.first?.attachments == [])
     }
 
     /// A status this build has never heard of must not fail the whole list,
@@ -470,15 +545,24 @@ struct SupportServiceTests {
                     .init(id: "m1", author: "user", body: "It broke", createdAt: "2026-11-13T10:00:00Z")
                 ]))
 
-        let created = try await h.service.submit(description: "It broke when I did X", report: Self.report)
+        var draft = Self.draft("  It broke when I did X  ", category: .model)
+        draft.model = SupportPick(id: "mlx-community/Qwen3-8B-4bit", name: "Qwen3 8B")
+        draft.problemId = "load"
+        draft.images = [Self.image()]
+        let extras = JSONValue.object(["model": .object(["id": .string("mlx-community/Qwen3-8B-4bit")])])
+        let created = try await h.service.submit(draft: draft, report: Self.report, extras: extras)
 
         #expect(created.id == "new")
         let body = try #require(h.script.created.first)
         #expect(body.consent)
         #expect(body.description == "It broke when I did X")
+        #expect(body.category == "model")
+        #expect(body.details == .object(["model": .string("mlx-community/Qwen3-8B-4bit"), "problem": .string("load")]))
+        #expect(body.attachments == [draft.images[0].upload])
+        #expect(body.attachments[0].dataBase64 == Data([0xFF, 0xD8, 1]).base64EncodedString())
         #expect(body.app.version == "1.2.3")
         #expect(body.hardware.memoryGB == 24)
-        #expect(body.diagnostics == Self.report.diagnostics)
+        #expect(body.diagnostics == .object(["schemaVersion": .number(1), "extras": extras]))
 
         #expect(h.script.listCalls == 0)
         #expect(h.service.threads.map(\.id) == ["new"])
@@ -495,7 +579,7 @@ struct SupportServiceTests {
             OsaurusRouterAPIError.server(code: "INVALID_STATE", message: "too many open threads", status: 409))
 
         await #expect(throws: OsaurusRouterAPIError.self) {
-            try await h.service.submit(description: "It broke when I did X", report: Self.report)
+            try await h.service.submit(draft: Self.draft("It broke when I did X"), report: Self.report, extras: nil)
         }
         #expect(h.service.threads.isEmpty)
         #expect(!h.service.hasOpenThreads)
@@ -516,12 +600,80 @@ struct SupportServiceTests {
                     .init(id: "m1", author: "user", body: "First", createdAt: "2026-11-13T10:00:00Z"),
                     .init(id: "m2", author: "user", body: "Still broken", createdAt: "2026-11-13T11:00:00Z"),
                 ]))
-        try await h.service.reply(threadId: "a", body: "Still broken")
+        let image = Self.image()
+        try await h.service.reply(threadId: "a", body: "Still broken", images: [image])
 
         #expect(h.script.replies.map(\.body) == ["Still broken"])
+        #expect(h.script.replies.first?.attachments == [image.upload])
         #expect(h.service.threads.map(\.status) == [.open])
         #expect(h.service.conversations["a"]?.messages?.count == 2)
         #expect(h.service.hasOpenThreads)
+    }
+
+    // MARK: - Mark as Resolved
+
+    /// Resolving frees an open slot and, with nothing else open, stops the
+    /// background checks; writing again reopens it.
+    @Test func close_resolvesTheReportAndStopsWatching() async throws {
+        let h = makeHarness([list([thread("a", status: "answered")])])
+        defer { h.tearDown() }
+        await h.service.refreshIfDue(trigger: .helpOpened)
+        #expect(h.service.openThreadCount == 1)
+        #expect(h.service.hasOpenThreads)
+
+        h.script.closeResult = .success(
+            thread(
+                "a", status: "closed",
+                messages: [.init(id: "m1", author: "user", body: "Hello", createdAt: "2026-11-13T10:00:00Z")]))
+        try await h.service.close(threadId: "a")
+
+        #expect(h.script.closeCalls == ["a"])
+        #expect(h.service.threads.map(\.status) == [.closed])
+        #expect(h.service.openThreadCount == 0)
+        #expect(!h.service.hasOpenThreads)
+        #expect(h.service.conversations["a"]?.messages?.count == 1)
+        #expect(h.script.listCalls == 1)
+    }
+
+    @Test func close_failureLeavesTheReportOpen() async {
+        let h = makeHarness([list([thread("a")])])
+        defer { h.tearDown() }
+        await h.service.refreshIfDue(trigger: .helpOpened)
+        h.script.closeResult = .failure(OsaurusRouterAPIError.transport("offline"))
+
+        await #expect(throws: OsaurusRouterAPIError.self) { try await h.service.close(threadId: "a") }
+        #expect(h.service.threads.map(\.status) == [.open])
+        #expect(h.service.hasOpenThreads)
+    }
+
+    // MARK: - Images
+
+    /// An image is fetched once; reopening the conversation reads memory.
+    @Test func attachmentData_isFetchedOnceAndCached() async throws {
+        let h = makeHarness([list([])])
+        defer { h.tearDown() }
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47])
+        h.script.attachmentResult = .success(
+            OsaurusRouterSupportAttachmentData(mimeType: "image/png", dataBase64: bytes.base64EncodedString()))
+
+        #expect(try await h.service.attachmentData(threadId: "t", attachmentId: "a1") == bytes)
+        #expect(try await h.service.attachmentData(threadId: "t", attachmentId: "a1") == bytes)
+        #expect(h.script.attachmentCalls == ["a1"])
+    }
+
+    @Test func attachmentData_rejectsBadBase64AndDoesNotCacheIt() async {
+        let h = makeHarness([list([])])
+        defer { h.tearDown() }
+        h.script.attachmentResult = .success(
+            OsaurusRouterSupportAttachmentData(mimeType: "image/png", dataBase64: "not base64!"))
+
+        await #expect(throws: OsaurusRouterAPIError.self) {
+            try await h.service.attachmentData(threadId: "t", attachmentId: "a1")
+        }
+        await #expect(throws: OsaurusRouterAPIError.self) {
+            try await h.service.attachmentData(threadId: "t", attachmentId: "a1")
+        }
+        #expect(h.script.attachmentCalls == ["a1", "a1"])
     }
 
     // MARK: - Unread

@@ -44,3 +44,22 @@ struct RunAgentIntent: AppIntent {
         return .result(dialog: "Started \(agent.name).")
     }
 }
+
+/// Start one of your installed Osaurus workflows in the background
+/// (fire-and-confirm), e.g. from a Shortcuts personal automation.
+///
+/// Uses `POST /workflows/{id}/run`. Input goes to the workflow's main text
+/// field; its forms and result show in Osaurus. A workflow that still needs
+/// setup is refused with what is missing.
+struct RunWorkflowIntent: AppIntent {
+    static let title: LocalizedStringResource = "Run Osaurus Workflow"
+    static let description = IntentDescription("Start one of your Osaurus workflows in the background.")
+
+    @Parameter(title: "Workflow") var workflow: WorkflowEntity
+    @Parameter(title: "Input") var input: String?
+
+    func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
+        let runID = try await OsaurusLocalClient.shared.startWorkflow(id: workflow.id, input: input)
+        return .result(value: runID, dialog: "Started \(workflow.name).")
+    }
+}

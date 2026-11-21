@@ -432,6 +432,7 @@ extension TemplateRequirement.Kind {
         case .folder: return L("Folder")
         case .mediaModel: return L("Media Model")
         case .agent: return L("Agent")
+        case .app: return L("App")
         case .skill: return L("Skill")
         case .integrity: return L("Review")
         }
@@ -452,6 +453,7 @@ extension TemplateRequirement.Kind {
         case .folder: return "folder"
         case .mediaModel: return "photo.on.rectangle.angled"
         case .agent: return "person.2"
+        case .app: return "macwindow"
         case .skill: return "lightbulb"
         case .integrity: return "exclamationmark.shield"
         }

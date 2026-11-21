@@ -65,7 +65,73 @@ public enum WorkflowValidator {
                 "is bypassed and has nothing to hand on, so steps that bind its output get empty values; "
                     + "remove `mode: \"bypass\"` or bypass the steps after it too")
         }
-        return mapReplies + bypassed + toolOutputs
+        return mapReplies + bypassed + toolOutputs + undeclaredAppWarnings(def)
+    }
+
+    /// Tools that drive whichever Mac app the step names.
+    static let appDrivingTools: Set<String> = [
+        AppleScriptTool.toolName, MacQueryTool.toolName, ComputerUseTool.toolName,
+    ]
+
+    /// Apps that come with macOS, by the name a script uses; a step that
+    /// drives one needs no `declare_app`.
+    static let builtInAppNames: Set<String> = [
+        "finder", "safari", "mail", "notes", "calendar", "reminders", "contacts", "messages", "music", "photos",
+        "preview", "textedit", "terminal", "shortcuts", "maps", "facetime", "podcasts", "tv", "books", "news",
+        "stocks", "weather", "clock", "freeform", "home", "passwords", "calculator", "dictionary", "font book",
+        "photo booth", "voice memos", "quicktime player", "script editor", "automator", "console",
+        "activity monitor", "system events", "system settings", "system preferences", "image events",
+        "screenshot", "app store", "launchpad", "mission control",
+    ]
+
+    private static let scriptedAppPattern = try! NSRegularExpression(  // swiftlint:disable:this force_try
+        pattern: #"\b(?:application|app)\s+"([^"]+)""#, options: [.caseInsensitive])
+
+    /// Apps a step's text names the AppleScript way (`application "X"`).
+    static func scriptedAppNames(in text: String) -> [String] {
+        let range = NSRange(text.startIndex..., in: text)
+        var names: [String] = []
+        for match in scriptedAppPattern.matches(in: text, range: range) {
+            guard let r = Range(match.range(at: 1), in: text) else { continue }
+            let name = text[r].trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty, !names.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+                names.append(name)
+            }
+        }
+        return names
+    }
+
+    /// Steps that drive a Mac app the workflow does not declare, so setup
+    /// on another Mac cannot check it is installed. Names a script uses
+    /// are compared with the declared apps; a step whose app is unnamed is
+    /// flagged only while the workflow declares none and the step mentions
+    /// no app that comes with macOS.
+    private static func undeclaredAppWarnings(_ def: WorkflowDefinition) -> [WorkflowIssue] {
+        let declared = Set(def.apps.map { $0.name.lowercased() })
+        return def.nodes.compactMap { node in
+            guard let tool = node.calledTools.map(\.name).first(where: appDrivingTools.contains) else { return nil }
+            let text = bindingStrings(in: encoded(node)).joined(separator: "\n")
+            let named = scriptedAppNames(in: text)
+            let missing = named.filter {
+                !builtInAppNames.contains($0.lowercased()) && !declared.contains($0.lowercased())
+            }
+            if !missing.isEmpty {
+                let list = missing.map { "\"\($0)\"" }.joined(separator: ", ")
+                return WorkflowIssue(
+                    nodeID: node.id,
+                    "drives \(list) through `\(tool)` but the workflow declares no such app; add `declare_app` "
+                        + "(bundle id from `workflow_discover` action `apps`) so setup on another Mac checks it is installed")
+            }
+            let words = text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            let spaced = " " + words.joined(separator: " ") + " "
+            guard named.isEmpty, def.apps.isEmpty,
+                !builtInAppNames.contains(where: { spaced.contains(" \($0) ") })
+            else { return nil }
+            return WorkflowIssue(
+                nodeID: node.id,
+                "calls `\(tool)`; if it drives an app that does not come with macOS, declare that app with "
+                    + "`declare_app` so setup on another Mac checks it is installed")
+        }
     }
 
     private static func toolOutputWarnings(
@@ -234,6 +300,7 @@ public enum WorkflowValidator {
         issues += dependencyIssues(def, allowPlaceholders: allowPlaceholders)
         if checkSandboxCommands { issues += sandboxCommandIssues(def) }
         issues += folderIssues(def)
+        issues += appIssues(def)
         issues += secretIssues(def)
         issues += def.modelSlots.compactMap { slot in
             guard slot.strictness == .always, slot.requiredModel == nil else { return nil }
@@ -269,6 +336,18 @@ public enum WorkflowValidator {
                 issues.append(WorkflowIssue("folders list `\(folder.key)` more than once; declare each folder once"))
             }
             issues += folder.issues.map { WorkflowIssue($0) }
+        }
+        return issues
+    }
+
+    private static func appIssues(_ def: WorkflowDefinition) -> [WorkflowIssue] {
+        var issues: [WorkflowIssue] = []
+        var ids = Set<String>()
+        for app in def.apps {
+            if !ids.insert(app.id).inserted {
+                issues.append(WorkflowIssue("apps list `\(app.bundleID)` more than once; declare each app once"))
+            }
+            issues += app.issues.map { WorkflowIssue($0) }
         }
         return issues
     }

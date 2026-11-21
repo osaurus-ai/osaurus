@@ -134,8 +134,9 @@ struct WorkflowDefinitionCodingTests {
     @Test
     func templateNewerThanThisBuild_isRefusedWithTheUpdateError() throws {
         var json = try WF.template(WF.intake()).jsonString()
-        json = json.replacingOccurrences(of: "\"format_version\" : 1", with: "\"format_version\" : 6")
-        #expect(throws: TemplateError.unsupportedVersion(6)) { _ = try Template.parse(json) }
+        let newer = Template.currentFormatVersion + 1
+        json = json.replacingOccurrences(of: "\"format_version\" : 1", with: "\"format_version\" : \(newer)")
+        #expect(throws: TemplateError.unsupportedVersion(newer)) { _ = try Template.parse(json) }
     }
 
     /// Format 2 shipped without media steps and bypass, so a template using

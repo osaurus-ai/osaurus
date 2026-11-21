@@ -92,6 +92,11 @@ struct ConfigEventsRoundTripTests {
                 source: .app(AppEventsSourceConfig(reasons: [.appLaunched, .automationUpdated])),
                 action: agent("Warm up")),
             OsaurusEvent(
+                name: "Xcode sessions",
+                source: .macApp(
+                    MacAppSourceConfig(bundleID: "com.apple.dt.Xcode", name: "Xcode", events: [.quit, .launched])),
+                action: agent("Log {{mac_app.event}}")),
+            OsaurusEvent(
                 name: "Support room",
                 source: .channelMessage(
                     ChannelMessageSourceConfig(
@@ -170,6 +175,14 @@ struct ConfigEventsRoundTripTests {
         let app = try Self.build(entry("app") { $0.reasons = ["automation_enabled", "app_launched"] }).get().event
         #expect(app.source.app?.reasons == [.appLaunched, .automationEnabled])
         #expect(app.delivery.dedupe == .none)
+        let finder = try Self.build(entry("mac_app") { $0.bundleID = "com.apple.finder" }).get()
+        #expect(finder.event.source.macApp?.events == [.launched], "events default to opening")
+        #expect(finder.event.source.macApp?.name.isEmpty == false, "the name comes from the installed app")
+        #expect(finder.event.delivery.maxQueued == 0, "an app event while a run goes is skipped, not queued")
+        let missing = try Self.build(entry("mac_app") { $0.bundleID = "com.example.not-here"; $0.appEvents = ["quit"] })
+            .get()
+        #expect(missing.event.source.macApp?.events == [.quit])
+        #expect(missing.notes.contains { $0.contains("not installed") })
 
         let workflowID = UUID()
         let named = ConfigEvents.build(
@@ -233,6 +246,10 @@ struct ConfigEventsRoundTripTests {
         #expect(failure("run_failed") { $0.workflows = ["Missing"] }?.contains("source.workflows") == true)
         #expect(failure("app") { $0.reasons = ["reboot"] }?.contains("source.reasons") == true)
         #expect(failure("app") { $0.reasons = [] }?.contains("at least one") == true)
+        #expect(failure("mac_app") { _ in }?.contains("`bundle_id` is required") == true)
+        #expect(failure("mac_app") { $0.bundleID = "Xcode" }?.contains("source.bundle_id") == true)
+        #expect(failure("mac_app") { $0.bundleID = "com.apple.finder"; $0.appEvents = ["crash"] }?.contains("app_events") == true)
+        #expect(failure("mac_app") { $0.bundleID = "com.apple.finder"; $0.appEvents = [] }?.contains("at least one") == true)
     }
 
     @Test func emailAutomationsAreRetiredWithANoteAndLeftAlone() throws {

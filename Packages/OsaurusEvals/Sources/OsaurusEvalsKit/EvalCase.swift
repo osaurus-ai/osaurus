@@ -1155,6 +1155,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public let keepsNodes: [String]?
             public let editsSeed: Bool?
             public let declaresFolder: Bool?
+            public let declaresApps: [String]?
             public let folderInput: Bool?
             public let maxAddedNodes: Int?
         }

@@ -18,6 +18,11 @@ struct SupportReportBuilderTests {
     private static let app = SupportDiagnosticsBundle.AppSnapshot(
         name: "OsaurusTests", version: "1.2.3", build: "456", osVersion: "Version 26.5 (Build 25F71)")
     private static let profile = MacProfile(modelName: "MacBook Air", chip: "M4", memoryGB: 24)
+    private static let draft: SupportReportDraft = {
+        var draft = SupportReportDraft()
+        draft.description = "It broke when I did X"
+        return draft
+    }()
 
     private func log(_ index: Int, path: String = "/v1/chat/completions") -> RequestLog {
         RequestLog(
@@ -73,7 +78,7 @@ struct SupportReportBuilderTests {
         #expect(report.diagnostics != nil)
         #expect(report.diagnosticsBytes > 0)
 
-        let json = try encoded(report.body(description: "It broke when I did X"))
+        let json = try encoded(report.body(draft: Self.draft, extras: nil))
         #expect(json.contains(#""consent":true"#))
         #expect(json.contains(#""description":"It broke when I did X""#))
         #expect(json.contains(#""os_version":"Version 26.5 (Build 25F71)""#))
@@ -87,7 +92,7 @@ struct SupportReportBuilderTests {
             bundle: bundle(), profile: MacProfile(modelName: "Mac", chip: nil, memoryGB: 0))
         #expect(report.hardware.memoryGB == nil)
         #expect(report.hardware.chip == nil)
-        let json = try encoded(report.body(description: "It broke when I did X"))
+        let json = try encoded(report.body(draft: Self.draft, extras: nil))
         #expect(!json.contains("memory_gb"))
         #expect(!json.contains(#""chip""#))
     }
@@ -100,20 +105,77 @@ struct SupportReportBuilderTests {
         let report = SupportReportBuilder.make(
             bundle: bundle(logs: (0 ..< 3).map { log($0) }), profile: Self.profile)
 
-        let preview = try JSONDecoder().decode(JSONValue.self, from: Data(report.previewJSON.utf8))
+        let previewText = report.previewJSON(draft: Self.draft, extras: nil)
+        let preview = try JSONDecoder().decode(JSONValue.self, from: Data(previewText.utf8))
         let body = try JSONDecoder().decode(
             JSONValue.self,
-            from: JSONEncoder.osaurusCanonical().encode(report.body(description: "It broke when I did X")))
+            from: JSONEncoder.osaurusCanonical().encode(report.body(draft: Self.draft, extras: nil)))
 
         var sent = object(body)
         let description = sent.removeValue(forKey: "description")
         let consent = sent.removeValue(forKey: "consent")
+        let attachments = sent.removeValue(forKey: "attachments")
         #expect(description == .string("It broke when I did X"))
         #expect(consent == .bool(true))
+        #expect(attachments == .array([]))
         #expect(JSONValue.object(sent) == preview)
         #expect(Set(object(preview).keys) == ["app", "hardware", "diagnostics"])
         // The preview never claims consent or shows the user's own text.
-        #expect(!report.previewJSON.contains("consent"))
+        #expect(!previewText.contains("consent"))
+    }
+
+    /// With a category, picks, extras and images, the preview still shows
+    /// every field the request carries, images as their size rather than
+    /// their bytes.
+    @Test func previewShowsCategoryDetailsExtrasAndImageSizes() throws {
+        let report = SupportReportBuilder.make(bundle: bundle(), profile: Self.profile)
+        var draft = Self.draft
+        draft.category = .agent
+        draft.agent = SupportPick(id: UUID().uuidString, name: "Research")
+        draft.problemId = "tool_misuse"
+        let pixels = Data(repeating: 7, count: 300)
+        draft.images = [
+            SupportImageAttachment(id: UUID(), data: pixels, mimeType: "image/png", width: 640, height: 480)
+        ]
+        let extras = SupportReportExtras.agent(
+            Agent(name: "Research", systemPrompt: "secret instructions", defaultModel: "provider/model"))
+
+        let body = try JSONDecoder().decode(
+            JSONValue.self, from: JSONEncoder.osaurusCanonical().encode(report.body(draft: draft, extras: extras)))
+        let previewText = report.previewJSON(draft: draft, extras: extras)
+        let preview = object(try JSONDecoder().decode(JSONValue.self, from: Data(previewText.utf8)))
+        let sent = object(body)
+
+        #expect(sent["category"] == .string("agent"))
+        #expect(sent["details"] == .object(["agent": .string("Research"), "problem": .string("tool_misuse")]))
+        #expect(object(sent["diagnostics"])["extras"] == extras)
+        #expect(array(sent["attachments"]).count == 1)
+
+        for key in ["category", "details", "app", "hardware", "diagnostics"] {
+            #expect(preview[key] == sent[key], "preview differs from the request at \(key)")
+        }
+        #expect(
+            array(preview["images"])
+                == [.object([
+                    "mime_type": .string("image/png"), "width": .number(640), "height": .number(480),
+                    "bytes": .number(300),
+                ])])
+        #expect(!previewText.contains(pixels.base64EncodedString()))
+        #expect(!previewText.contains("secret instructions"))
+    }
+
+    /// Extras are only added when there are some, and a report whose bundle
+    /// did not fit still carries them.
+    @Test func extrasMergeIntoDiagnostics() {
+        let report = SupportReportBuilder.make(bundle: bundle(), profile: Self.profile)
+        let extras = JSONValue.object(["pairing": .object(["paired": .bool(false)])])
+        #expect(report.diagnostics(with: nil) == report.diagnostics)
+        #expect(object(report.diagnostics(with: extras))["extras"] == extras)
+        #expect(object(report.diagnostics(with: extras)).count == object(report.diagnostics).count + 1)
+
+        let empty = SupportReportBuilder.make(bundle: bundle(), profile: Self.profile, maxDiagnosticsBytes: 64)
+        #expect(empty.diagnostics(with: nil) == nil)
+        #expect(empty.diagnostics(with: extras) == .object(["extras": extras]))
     }
 
     /// Dates are ISO 8601 text, which is what the admin console and a person
@@ -174,14 +236,15 @@ struct SupportReportBuilderTests {
             logs: [noisy]
         )
         let report = SupportReportBuilder.make(bundle: bundle, profile: Self.profile)
-        let json = try encoded(report.body(description: "It broke when I did X"))
+        let json = try encoded(report.body(draft: Self.draft, extras: nil))
 
         for forbidden in [
             secret, prompt, response, toolArgument, errorText, sessionId, agentAddress,
             "router-request-do-not-export", "sk-test-do-not-export",
         ] {
             #expect(!json.contains(forbidden), "report leaked: \(forbidden)")
-            #expect(!report.previewJSON.contains(forbidden), "preview leaked: \(forbidden)")
+            #expect(
+                !report.previewJSON(draft: Self.draft, extras: nil).contains(forbidden), "preview leaked: \(forbidden)")
         }
         // What is there instead: names, counts and fingerprints.
         #expect(json.contains("web_search"))
@@ -265,7 +328,7 @@ struct SupportReportBuilderTests {
         #expect(report.diagnostics == nil)
         #expect(report.diagnosticsBytes == 0)
 
-        let json = try encoded(report.body(description: "It broke when I did X"))
+        let json = try encoded(report.body(draft: Self.draft, extras: nil))
         #expect(!json.contains("diagnostics"))
         #expect(json.contains(#""consent":true"#))
         #expect(json.contains(#""version":"1.2.3""#))

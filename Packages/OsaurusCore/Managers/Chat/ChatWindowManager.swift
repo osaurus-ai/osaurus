@@ -442,6 +442,21 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         showWorkflowsSurface(destination: tab.map { .home($0) })
     }
 
+    /// All chats in the window the person is in (else a new one): the
+    /// `osaurus://chats/all` deep link.
+    func showAllChats(_ request: AllChatsRequest) {
+        let state: ChatWindowState
+        if let current = shortcutTargetState {
+            state = current
+        } else {
+            let id = createWindow()
+            guard let created = windowStates[id] else { return }
+            state = created
+        }
+        state.showAllChats(request)
+        showWindow(id: state.windowId)
+    }
+
     /// Where a Settings search result for Workflows lands.
     func showWorkflowsSurface(destination: ChatWindowState.WorkflowsDestination?) {
         let state: ChatWindowState
@@ -857,6 +872,28 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             state.prepareForSessionDeletion(id: id)
         }
         ChatSessionsManager.shared.delete(id: id)
+        for state in windowStates.values {
+            state.refreshSessions()
+        }
+    }
+
+    /// Every open window's state, for refreshes that span windows.
+    var allWindowStates: [ChatWindowState] { Array(windowStates.values) }
+
+    /// `deleteSession(id:)` for several chats (the sidebar's batch delete):
+    /// the same per-chat steps, then one database batch instead of a
+    /// synchronous transaction per chat.
+    func deleteSessions(ids: Set<UUID>) async {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+                BackgroundTaskManager.shared.cancelTask(liveTask.id)
+            }
+            for state in windowStates.values {
+                state.prepareForSessionDeletion(id: id)
+            }
+        }
+        await ChatSessionsManager.shared.delete(ids: ids)
         for state in windowStates.values {
             state.refreshSessions()
         }

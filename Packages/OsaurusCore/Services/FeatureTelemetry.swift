@@ -937,17 +937,106 @@ enum FeatureTelemetry {
         service.track("workflow_run_started", ["caller": caller, "resumed": resumed])
     }
 
+    /// Why a run failed, in closed tokens. `kind` is the
+    /// `NodeRunFailure.kind`, `errorType` the Swift type (and case) that
+    /// raised it, `fixIn` the `NodeRunFailure.FixIn`. `stepKind` and the
+    /// model fields are nil when the failure was not on a step, or the step
+    /// has no model slot.
+    struct WorkflowRunFailure: Equatable, Sendable {
+        var stage: String
+        var kind: String
+        var errorType: String
+        var fixIn: String
+        var stepKind: String?
+        var stepsDone: Int
+        var modelSource: String?
+        var providerType: String?
+    }
+
     /// A workflow run's task ended. `status` is the `WorkflowRunStatus`
-    /// token; `duration_bucket` uses the `waitBucket` buckets.
+    /// token; `duration_bucket` uses the `waitBucket` buckets and, for a
+    /// resumed run, counts only this launch. `run_kind` is `installed`,
+    /// `wrapper`, `ephemeral`, or `test`; `since_launch_bucket` is how long
+    /// after the app launched the run started. A failed run adds the
+    /// `failure_*` fields.
     static func workflowRunFinished(
         caller: String,
         status: String,
         duration: TimeInterval?,
+        runKind: String = "installed",
+        resumed: Bool = false,
+        retry: Bool = false,
+        sinceLaunch: TimeInterval? = nil,
+        failure: WorkflowRunFailure? = nil,
         service: TelemetryService = .shared
     ) {
-        service.track(
-            "workflow_run_finished",
-            ["caller": caller, "status": status, "duration_bucket": waitBucket(duration)])
+        var props: [String: Value] = [
+            "caller": caller, "status": status, "duration_bucket": waitBucket(duration),
+            "run_kind": runKind, "resumed": resumed, "retry": retry,
+        ]
+        if let sinceLaunch { props["since_launch_bucket"] = sinceLaunchBucket(sinceLaunch) }
+        if let failure {
+            props["failure_stage"] = failure.stage
+            props["failure_kind"] = closedToken(failure.kind, maxLength: 40, allowsUppercase: false)
+            props["error_type"] = closedToken(failure.errorType, maxLength: 64, allowsUppercase: true)
+            props["fix_in"] = failure.fixIn
+            props["steps_done"] = countBucket(failure.stepsDone)
+            if let step = failure.stepKind { props["step_kind"] = step }
+            if let source = failure.modelSource { props["model_source"] = source }
+            if let provider = failure.providerType { props["provider_type"] = provider }
+        }
+        service.track("workflow_run_finished", props)
+    }
+
+    /// A request to run a workflow was turned away before a run started.
+    /// `caller` is the `WorkflowCaller.Kind` token; `target` is `installed`,
+    /// `wrapper`, `prepared`, `hosted` (a teammate's workflow link), or
+    /// `unknown` (the name matched nothing); `reason` is one of `needs_setup`,
+    /// `no_model`, `missing_keys`, `agent_unavailable`, `invalid_input`,
+    /// `not_installed`, `not_visible`, `not_enabled`,
+    /// `not_open_to_teammates`, `unknown_workflow`.
+    static func workflowRunRefused(
+        caller: String, target: String, reason: String, service: TelemetryService = .shared
+    ) {
+        service.track("workflow_run_refused", ["caller": caller, "target": target, "reason": reason])
+    }
+
+    nonisolated static func sinceLaunchBucket(_ interval: TimeInterval) -> String {
+        switch interval {
+        case ..<120: return "lt_2m"
+        case ..<600: return "2_10m"
+        case ..<3600: return "10_60m"
+        case ..<21_600: return "1_6h"
+        default: return "gte_6h"
+        }
+    }
+
+    nonisolated static func countBucket(_ count: Int) -> String {
+        switch count {
+        case ..<1: return "0"
+        case 1: return "1"
+        case 2...5: return "2_5"
+        default: return "6_plus"
+        }
+    }
+
+    /// `raw` when it is an identifier-shaped token (letters, digits, `_`,
+    /// and `.` when uppercase is allowed, as in `Type.case`), else `other`.
+    /// Failure kinds and error types are closed in code, but a plugin's
+    /// envelope `kind` is not, so free text never reaches the wire.
+    nonisolated static func closedToken(_ raw: String, maxLength: Int, allowsUppercase: Bool) -> String {
+        guard !raw.isEmpty, raw.count <= maxLength, let first = raw.unicodeScalars.first,
+            CharacterSet.letters.contains(first), first.isASCII
+        else { return "other" }
+        let ok = raw.unicodeScalars.allSatisfy { scalar in
+            guard scalar.isASCII else { return false }
+            switch scalar {
+            case "a"..."z", "0"..."9", "_": return true
+            case "A"..."Z", ".": return allowsUppercase
+            default: return false
+            }
+        }
+        return ok ? raw : "other"
     }
 
     /// A workflow draft was created. `origin` is `blank` (new in the
