@@ -42,6 +42,69 @@ extension SyncDeviceFeedContract {
         /// The device that took it.
         var answeredBy: String?
     }
+
+    /// One call the user arranged (`arrange_callback`), in the manage state's `callbacks` (`callback_inbox`).
+    struct ArrangedCall: Codable, Equatable, Sendable {
+        var id: String
+        var sessionId: String
+        var agentId: String
+        /// When the agent will call, in the user's words.
+        var about: String
+        /// Absent on a call arranged before this Mac kept them.
+        var createdMs: Int64?
+        var expiresMs: Int64
+        /// `waiting`, `ringing`, or how it ended: `answered`, `missed`, `declined`, `calledOff` (the run
+        /// that placed it stopped), `cancelled` (the user), `expired` (no call in time), `replaced`.
+        var state: String
+        var endedMs: Int64?
+        /// Tries that rang nothing: `busy`, `unavailable`, `notSent`.
+        var attempts: [AgentCallPolicy.Attempt]?
+        /// While waiting: background work its chat started is still going on this Mac.
+        var working: Bool?
+    }
+
+    /// Ended calls the manage state carries, newest first.
+    static let callbackHistoryLimit = 20
+}
+
+extension SyncAgentCalls {
+    /// The manage state's `callbacks`: what's still to come, then what ended.
+    nonisolated static func arrangedCalls(
+        waiting: [(grant: AgentCallPolicy.Grant, ringing: Bool)],
+        history: [AgentCallPolicy.Grant],
+        workingSessions: Set<UUID>
+    ) -> [SyncDeviceFeedContract.ArrangedCall] {
+        func listed(
+            _ grant: AgentCallPolicy.Grant, state: String, working: Bool?
+        ) -> SyncDeviceFeedContract.ArrangedCall {
+            SyncDeviceFeedContract.ArrangedCall(
+                id: grant.id.uuidString.lowercased(),
+                sessionId: grant.sessionId.uuidString.lowercased(),
+                agentId: grant.agentId.uuidString.lowercased(),
+                about: grant.about,
+                createdMs: grant.createdMs,
+                expiresMs: grant.expiresMs,
+                state: state,
+                endedMs: grant.endedMs,
+                attempts: grant.attempts?.isEmpty == false ? grant.attempts : nil,
+                working: working
+            )
+        }
+        let coming = waiting.map { item in
+            listed(
+                item.grant, state: item.ringing ? "ringing" : "waiting",
+                working: !item.ringing && workingSessions.contains(item.grant.sessionId) ? true : nil)
+        }
+        let ended = history.prefix(SyncDeviceFeedContract.callbackHistoryLimit).map {
+            listed($0, state: ($0.end ?? .expired).rawValue, working: nil)
+        }
+        return coming + ended
+    }
+
+    /// Chats with background work (a helper, a dispatched agent, a workflow) still going on this Mac.
+    static func workingSessions() -> Set<UUID> {
+        Set(TaskStore.shared.live.values.filter { !$0.state.isTerminal }.compactMap(\.sessionId))
+    }
 }
 
 @MainActor

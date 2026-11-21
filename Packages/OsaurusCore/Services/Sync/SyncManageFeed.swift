@@ -12,6 +12,7 @@
 
 import Combine
 import Foundation
+import Observation
 import OsaurusSync
 import os
 
@@ -132,6 +133,12 @@ final class SyncManageFeed {
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
             .store(in: &cancellables)
+        // The Inbox's arranged calls (`callback_inbox`), and whether their chats' work is still going.
+        AgentCallPolicy.shared.$state.map { _ in () }
+            .receive(on: DispatchQueue.main)
+            .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
+            .store(in: &cancellables)
+        observeTasks()
         SyncWorkflowRunsFeed.shared.start()
         // Workflow notifications (`workflow_push`): an iPhone that leaves the account gets none.
         NotificationCenter.default.publisher(for: SyncService.devicesDidChangeNotification)
@@ -152,6 +159,19 @@ final class SyncManageFeed {
                 SyncWorkflowPush.shared.refresh()
             },
             detach: { SyncManageFeed.shared.detach() })
+    }
+
+    /// Tasks starting and ending change an arranged call's `working`; only republished while one waits.
+    private func observeTasks() {
+        withObservationTracking {
+            _ = TaskStore.shared.live
+        } onChange: {
+            Task { @MainActor in
+                let feed = SyncManageFeed.shared
+                if !AgentCallPolicy.shared.state.grants.isEmpty { feed.schedulePublish() }
+                feed.observeTasks()
+            }
+        }
     }
 
     private func detach() {
@@ -189,7 +209,8 @@ final class SyncManageFeed {
         filters: HistoryFilters = HistoryFilters(),
         workflows: [SyncDeviceFeedContract.ManagedWorkflow]? = nil,
         pushRegistered: [String] = [],
-        call: SyncDeviceFeedContract.CallState? = nil
+        call: SyncDeviceFeedContract.CallState? = nil,
+        callbacks: [SyncDeviceFeedContract.ArrangedCall]? = nil
     ) -> SyncDeviceFeedContract.ManageState {
         let manager = AgentManager.shared
         let listed = agents.filter(SyncHostRunner.canHost).map { agent -> SyncDeviceFeedContract.ManagedAgent in
@@ -219,6 +240,7 @@ final class SyncManageFeed {
             workflows: workflows,
             pushRegistered: pushRegistered.isEmpty ? nil : pushRegistered,
             call: call,
+            callbacks: callbacks,
             updatedMs: SyncHostedRunContract.nowMs()
         )
     }
@@ -294,7 +316,12 @@ final class SyncManageFeed {
             filters: Self.historyFilters(),
             // The workflow library is its own message now (`manage_workflows`, `SyncManageDetail`).
             pushRegistered: SyncWorkflowPush.shared.registeredDevices,
-            call: SyncAgentCalls.shared.state
+            call: SyncAgentCalls.shared.state,
+            callbacks: SyncAgentCalls.arrangedCalls(
+                waiting: AgentCallPolicy.shared.waiting,
+                history: AgentCallPolicy.shared.history,
+                workingSessions: SyncAgentCalls.workingSessions()
+            )
         )
         Task.detached(priority: .utility) {
             do {
@@ -364,6 +391,7 @@ final class SyncManageFeed {
         var state = state
         let trims: [(String, (inout SyncDeviceFeedContract.ManageState) -> Void)] = [
             ("workflows", { $0.workflows = nil }),
+            ("ended callbacks", { $0.callbacks = $0.callbacks?.filter { ["waiting", "ringing"].contains($0.state) } }),
             ("models", { $0.models = [] }),
             ("workspace agents", { $0.workspaceAgents = [] }),
             (
@@ -735,6 +763,15 @@ final class SyncManageFeed {
             }.value
             guard written else { return failed("failed", "The run's output couldn't be sent.") }
             return answered(["runId": payload.runId])
+        case .cancelCallback:
+            guard let id = request.callbackId.flatMap(UUID.init(uuidString:)) else {
+                return failed("bad_request", "Expected callbackId")
+            }
+            switch AgentCallPolicy.shared.cancel(id, nowMs: SyncHostedRunContract.nowMs()) {
+            case .cancelled, .ringing: return done()
+            case .alreadyEnded: return failed("already_ended", "That call already happened or ended.")
+            case .notFound: return failed("not_found", "That call isn't on this Mac any more.")
+            }
         case .workflowFile:
             let source: SyncWorkflowFile.Source
             switch SyncWorkflowFile.source(runId: request.runId, fileId: request.fileId) {

@@ -67,6 +67,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `workflow_run_approvals` | `run_id` on attention items a workflow run raises: a step's `tool_approval` (a tool node, or an agent step's tool), `config_approval`, `computer_use`, as well as its `workflow_dialog` (§4) |
 | `workflow_file_fetch` | `fetchable` on a run's `tooLarge` files and the `workflowFile` op that sends one on asking (§5.5) |
 | `workflow_file_inputs` | `runWorkflow` takes `files` the phone attached, and fills file and folder fields from the last run (`lastUsed`) (§5.4) |
+| `callback_inbox` | `callbacks` in the manage state, the calls the user arranged and how each ended, and the `cancelCallback` op (§5.10) |
 | `directory_models` | each directory entry carries the agent's `model`, and the agent directory conversation carries the models message (§5.2) too, so a new iPhone has both before the manage conversation arrives |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
@@ -627,6 +628,7 @@ and appends to it, and each request has a unique `id`:
 | `setFavorite` | `key` (a model's `favorite_key`), `favorite` | `{favorites}` |
 | `getModelOptions` | `model` | the model's options |
 | `setModelOption` | `model`, `option`, `value` (a segment id or a bool) or `clearValue: true` | the model's options |
+| `cancelCallback` | `callbackId` (`callback_inbox`, §5.10) | — |
 
 Op notes:
 
@@ -1088,6 +1090,39 @@ An iPhone that shows workflow runs on its Lock Screen writes
 - Under APNs' 4 KB: `name` at most 80 characters and `mac` 40; every step's status is kept, but
   step names (at most 40 characters) only for the six around the current step. A card still
   too large goes without step names, then without steps.
+
+### 5.10 Arranged calls (`callback_inbox`)
+
+A call the user arranged in a chat (`arrange_callback`, §5.7) is kept until it ends and for seven
+days after, so the user can see whether it was made and call off one no longer needed. The manage
+state lists them in `callbacks`: those still to come first (ringing, then waiting, newest first),
+then at most 20 that ended, newest first.
+
+```json
+{ "id": "…", "sessionId": "…", "agentId": "…", "about": "when the build finishes",
+  "createdMs": 1767571200000, "expiresMs": 1767657600000, "state": "waiting",
+  "attempts": [ { "atMs": 1767571260000, "outcome": "busy" } ], "working": true }
+```
+
+- `state` is `waiting`, `ringing`, or how it ended (with `endedMs`):
+  - `answered`, `missed` (rang out), `declined`;
+  - `calledOff`: the run that placed the call stopped while it rang;
+  - `cancelled`: the user called it off, on the Mac or an iPhone;
+  - `expired`: the agent didn't call before `expiresMs`;
+  - `replaced`: a new call was arranged in the same chat.
+
+  An unknown state SHOULD be shown as ended.
+- `attempts` are tries that rang nothing (`busy`, `unavailable`, `notSent`). The call stays
+  `waiting` after one.
+- `working` is set on a `waiting` call while background work its chat started (a helper, a
+  dispatched agent, a workflow) is still going on the Mac. Without it, the work has ended or there
+  was none, and the agent may still call when its chat continues.
+- `createdMs` is absent on a call arranged before the Mac kept them.
+- The ended calls go first when the manage state is too large.
+- `cancelCallback {callbackId}` (§5.1) calls one off: a waiting call ends `cancelled` at once; a
+  ringing one stops ringing on every device and ends `cancelled`. A call about an approval ringing in
+  that chat (§5.8) stops too. The agent is told not to call about it until the call would have
+  expired. Errors: `not_found`, `already_ended`, `bad_request`.
 
 ## 6. HTTP routes and their Sync replacements
 
