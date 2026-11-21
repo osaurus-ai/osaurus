@@ -335,6 +335,18 @@ struct ModelFormatDetectionTests {
         #expect(report.preflight.blocksRuntimeLoad)
     }
 
+    /// Inkling-2-Mini's upstream checkpoint is pt-tagged ModelOpt NVFP4 / MXFP8; vmlx loads it as published
+    /// (`NativeCheckpointFormats`), so it must not be refused as "not MLX".
+    @Test func upstreamCheckpointVmlxConvertsIsLoadable() throws {
+        let dir = try makeBundle(
+            config: ["model_type": "inkling2_loop", "text_config": ["model_type": "inkling2_loop_text"]],
+            safetensors: [("model-00001-of-00001.safetensors", ["format": "pt"])],
+            extraFiles: ["tokenizer.json"]
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(ModelFormatDetection.isMLXFormat(at: dir, refresh: true))
+    }
+
     @Test func diagnosticsAllowsMLXBundle() throws {
         let dir = try makeBundle(
             config: [

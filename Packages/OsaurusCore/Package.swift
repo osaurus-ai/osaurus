@@ -368,9 +368,12 @@ let package = Package(
         // DFlash chain sampling is isolated per request.
         // vmlx-swift#772 keeps a declared string argument's edge whitespace in
         // GLM4/Spark2.5 tool calls (a `file_write` append lost its blank line).
+        // vmlx-swift#779 adds the Inkling-2-Mini runtime (`inkling2_loop`: fused decode, the
+        // bundled dSpark drafter, channel reasoning and JSON tool parsing); main also carries
+        // #774 (Qwen-VL resizes an image smaller than the patch factor).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "2073a764e61e6efad2322684720c8716ac92f4ff"
+            revision: "df828bac9988bc194e284335ee6324e9fe779269"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the

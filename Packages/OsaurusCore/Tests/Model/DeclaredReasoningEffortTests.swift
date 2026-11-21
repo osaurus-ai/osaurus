@@ -442,6 +442,25 @@ struct DeclaredReasoningEffortTests {
         #expect(declared?.preserveThinking != nil)
     }
 
+    @Test("an effort_map template (Inkling-2) derives its levels, default and an explicit Off")
+    func effortMapTemplateDerivesModes() {
+        let template = """
+            {%- set effort_map = {"none": 0.0, "minimal": 0.1, "low": 0.2, "medium": 0.7, "high": 0.9, "xhigh": 0.99, "max": 0.99} -%}
+            {%- macro emit_thinking_effort() -%}
+                {%- set eff = reasoning_effort if reasoning_effort is defined and reasoning_effort is not none else 0.9 -%}
+                {%- if eff is string -%}{%- set key = eff | trim -%}{%- if key not in effort_map -%}{{- raise_exception("Unknown reasoning_effort: " ~ eff) -}}{%- endif -%}{%- endif -%}
+            {%- endmacro -%}
+            """
+        let declared = DeclaredReasoningEffort.templateDerivedDeclaration(template: template)
+        let levels = ["minimal", "low", "medium", "high", "xhigh", "max"]
+        var kwargs: [String: [String: DeclaredReasoningEffort.ReasoningModeValue]] = [
+            "none": ["reasoning_effort": .string("none")]
+        ]
+        for level in levels { kwargs[level] = ["reasoning_effort": .string(level)] }
+        #expect(declared?.control == .modeKwargs(levels, defaultLevel: "high", kwargs: kwargs))
+        #expect(declared?.preserveThinking == nil)
+    }
+
     @Test("templates that never read the kwarg derive nothing")
     func templateWithoutEffortDerivesNil() {
         let qwen36ish = """
