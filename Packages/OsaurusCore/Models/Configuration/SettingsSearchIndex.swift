@@ -613,12 +613,13 @@ public enum SettingsSearchIndex {
             id: "settings.sync.addDevice",
             tab: .devices,
             section: "Devices",
-            title: "Add a Device",
+            title: "Add Device",
             keywords: [
                 "pair", "pairing", "pairing code", "show code", "qr code", "link device", "new device",
                 "add iphone", "pair iphone", "iphone", "ios", "mobile", "osaurus connect", "iosaurus",
+                "add a device", "add iphone or ipad", "6-digit code",
             ],
-            disambiguation: "One flow for a Mac or an iPhone: scan the code with the Osaurus iPhone app, or paste the link into Join Another Device on another Mac. Not Devices ▸ Mobile, the 6-digit code kept for one release for an iPhone app that doesn't offer Sync yet."
+            disambiguation: "Add iPhone or iPad asks what the app's Pairing Screen shows: a QR code to scan, or a 6-digit code for an iPhone app that doesn't offer Sync yet. Join Another Device takes another Mac's pairing link."
         ),
         .init(
             id: "settings.sync.join",
@@ -631,8 +632,8 @@ public enum SettingsSearchIndex {
             id: "settings.devices.iPhoneApp",
             tab: .devices,
             section: "Devices",
-            title: "Osaurus for iPhone",
-            keywords: ["iphone app", "testflight", "ios app", "download iphone", "mobile app", "iosaurus"]
+            title: "Get iOS App",
+            keywords: ["osaurus for iphone", "iphone app", "testflight", "ios app", "download iphone", "mobile app", "iosaurus"]
         ),
         .init(
             id: "settings.devices.keepAwake",

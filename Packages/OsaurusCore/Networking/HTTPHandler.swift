@@ -713,8 +713,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Access key authentication gate (all data snapshotted at server start, zero locks)
             // Plugin routes handle their own auth per-route, so skip the global gate.
             // Loopback connections (CLI / local tools) are trusted without a token.
-            // The 6-digit pairing routes stay public for one release beside
-            // Sync; once an iPhone joins Sync they only answer 410.
+            // The 6-digit pairing routes stay public beside Sync; they answer 410
+            // only when pairing is closed (`pairingRetiredProvider`, open by default).
             let publicPaths =
                 pairingRetiredProvider()
                 ? Set(["/", "/health", "/pair-invite", "/secure/session"]).union(Self.retiredPhonePairingPaths)
@@ -7607,9 +7607,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    /// The 6-digit phone pairing routes. Once an iPhone has joined Sync
-    /// (`MobileConnectMigration.isRetired`), an older iPhone app that still
-    /// calls them is told to update instead of getting a bare 404.
+    /// The 6-digit phone pairing routes. When pairing is closed
+    /// (`pairingRetiredProvider`; open by default, kept beside Sync), an older
+    /// iPhone app that still calls them is told to update instead of getting a bare 404.
     static let retiredPhonePairingPaths: Set<String> = ["/pair/hello", "/pair/code", "/pair/confirm", "/pair/unpair"]
     static let retiredPhonePairingBody =
         #"{"error":"update_required","message":"Update Osaurus for iPhone, then add your iPhone in Sharing → Devices on your Mac."}"#
