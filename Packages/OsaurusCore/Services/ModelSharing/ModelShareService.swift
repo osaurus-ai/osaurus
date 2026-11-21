@@ -101,6 +101,12 @@ final class ModelShareService: ObservableObject {
             .dropFirst()
             .sink { [weak self] _ in self?.scheduleRescan() }
             .store(in: &subscriptions)
+        RampartModelManager.shared.$state
+            .map { $0 == .ready }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.scheduleRescan() }
+            .store(in: &subscriptions)
         refreshUncheckedCopies()
         apply()
     }
@@ -338,6 +344,9 @@ final class ModelShareService: ObservableObject {
         switch PrivacyFilterModelDownloader.shared.state {
         case .ready, .idle, .failed: break
         default: busy.insert(ShareableModel.id(kind: .privacy, localId: PrivacyFilterModelBundle.version))
+        }
+        if case .downloading = RampartModelManager.shared.state {
+            busy.insert(ShareableModel.id(kind: .privacy, localId: RampartModelManager.version))
         }
         return busy
     }

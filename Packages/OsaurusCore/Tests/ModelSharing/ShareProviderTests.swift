@@ -107,6 +107,23 @@ struct ShareProviderTests {
         #expect(!model.files.contains { $0.path == ".osaurus-source" })
     }
 
+    @Test func rampartProviderOffersOnlyTheInstallerFilesOfACompleteBundle() throws {
+        let bundle = try scratch()
+        defer { try? fm.removeItem(at: bundle) }
+        for file in RampartModelManager.requiredFiles.dropLast() {
+            try write(file, under: bundle)
+        }
+        #expect(RampartShareProvider.shareableModels(in: bundle).isEmpty)
+
+        try write(RampartModelManager.requiredFiles.last!, under: bundle)
+        try write("notes.txt", under: bundle)
+        let models = RampartShareProvider.shareableModels(in: bundle)
+        #expect(models.map(\.id) == ["privacy:\(RampartModelManager.version)"])
+        let model = try #require(models.first)
+        #expect(model.repoId == RampartModelManager.repoId)
+        #expect(Set(model.files.map(\.path)) == Set(RampartModelManager.requiredFiles))
+    }
+
     @Test func kindsMapToCatalogKindsAndFormats() {
         for kind in ModelShareKind.allCases {
             #expect(ModelShareKind(kind.localModelKind) == kind)

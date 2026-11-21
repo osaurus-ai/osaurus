@@ -53,12 +53,22 @@ final class PrivacyDetectionCatalogSource: LocalModelCatalogSource {
 
     private func rebuild() {
         let downloader = downloader
+        let rampart = rampart
         items = mergingNearby(
             backends.map(item(for:)),
-            localIds: { $0.id == PrivacyAIBackend.openai.rawValue ? [PrivacyFilterModelBundle.version] : [] },
+            localIds: {
+                $0.id == PrivacyAIBackend.openai.rawValue
+                    ? [PrivacyFilterModelBundle.version] : [RampartModelManager.version]
+            },
             repoId: { _ in nil },
             addsUnlisted: false,
-            download: { offer, _ in downloader.startDownload(fromNearby: offer) }
+            download: { offer, _ in
+                if offer.localId == RampartModelManager.version {
+                    rampart.startDownload(fromNearby: offer)
+                } else {
+                    downloader.startDownload(fromNearby: offer)
+                }
+            }
         )
     }
 

@@ -83,6 +83,7 @@ enum ShareableModelInventory {
             ImageBundleShareProvider.self,
             SpeechModelShareProvider.self,
             PrivacyFilterShareProvider.self,
+            RampartShareProvider.self,
         ]
     }
 
@@ -275,6 +276,33 @@ enum PrivacyFilterShareProvider: ShareableModelProvider {
                 name: displayName,
                 repoId: manifest?.repoId,
                 revision: manifest?.revision,
+                files: files
+            )
+        ]
+    }
+}
+
+/// The Rampart bundle, limited to the files its installer fetches.
+enum RampartShareProvider: ShareableModelProvider {
+    static let displayName = "Rampart"
+
+    static func shareableModels() -> [ShareableModel] {
+        shareableModels(in: RampartModelManager.directoryURL())
+    }
+
+    static func shareableModels(in directory: URL) -> [ShareableModel] {
+        guard RampartModelManager.bundleExists(at: directory),
+            let files = ShareableFiles.list(root: directory)?.filter({
+                RampartModelManager.requiredFiles.contains($0.path)
+            })
+        else { return [] }
+        return [
+            ShareableModel(
+                kind: .privacy,
+                localId: RampartModelManager.version,
+                name: displayName,
+                repoId: RampartModelManager.repoId,
+                revision: nil,
                 files: files
             )
         ]
