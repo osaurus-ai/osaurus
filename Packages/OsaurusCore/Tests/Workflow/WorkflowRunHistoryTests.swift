@@ -148,15 +148,6 @@ struct WorkflowRunHistoryListTests {
         let scheduled = makeRun(caller: WorkflowCaller(kind: .agent, agentID: agent, isUnattendedDispatch: true))
         #expect(Model.startedBy(scheduled) { _ in "Scout" } == "Scheduled")
     }
-
-    @Test
-    func runsBadgePrefersAttentionOverActivity() {
-        #expect(ChatHistoryPaneView.runsBadge([makeRun()]) == nil)
-        #expect(ChatHistoryPaneView.runsBadge([makeRun(status: .running)]) == .activity)
-        #expect(
-            ChatHistoryPaneView.runsBadge([makeRun(status: .running), makeRun(status: .awaitingUser)]) == .attention
-        )
-    }
 }
 
 @Suite

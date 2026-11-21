@@ -48,6 +48,7 @@ struct LocalizationCacheTests {
         "Attach one image, then describe the video...",
         "Describe how the image should move...",
         "Message or attach files...",
+        "Message %@...",
     ]
 
     @Test("LCached matches L for composer placeholders", arguments: composerPlaceholders)

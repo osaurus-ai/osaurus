@@ -114,6 +114,23 @@ enum ChatSessionStore {
         }.value
     }
 
+    /// One line of each chat's first user message, for the All chats rows.
+    /// Off the main actor, like the content search.
+    static func firstUserMessagePreviews(ids: [UUID]) async -> [UUID: String] {
+        ensureOpen()
+        guard didOpen, !ids.isEmpty else { return [:] }
+        let db = store
+        let raw = await Task.detached(priority: .userInitiated) { db.firstUserMessages(ids: ids) }.value
+        return raw.compactMapValues(previewLine)
+    }
+
+    /// The text collapsed to one line and capped; nil when blank.
+    nonisolated static func previewLine(_ text: String) -> String? {
+        let line = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !line.isEmpty else { return nil }
+        return line.count > 200 ? String(line.prefix(200)) + "…" : line
+    }
+
     /// Save a session (creates or updates)
     static func save(_ session: ChatSessionData) {
         guard !pendingDeletes.contains(session.id) else { return }
@@ -382,6 +399,8 @@ enum ChatSessionStore {
             return
         }
         for id in ids {
+            saveVersions.removeValue(forKey: id)
+            ChatPersistenceStatus.shared.unsaved.remove(id)
             pendingSaves.removeValue(forKey: id)
         }
         Task.detached(priority: .utility) {

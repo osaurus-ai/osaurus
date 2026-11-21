@@ -2598,6 +2598,8 @@ extension AppDelegate {
     /// store registry (no other host) and open its import review.
     /// `osaurus://workflows[/<tab>[/<workspace id>]]` — the Workflows window on a tab
     /// (`osaurus://workflows/workspaces` for what your workspaces share).
+    /// `osaurus://chats/all[?agent=<agent id>]` — the All chats page, optionally
+    /// filtered to one agent.
     /// `osaurus://workspaces/activate?code=<code>` — activate a Workspaces subscription purchased on osaurus.ai.
     /// `osaurus://workspaces/join?code=<code>` — join a workspace through an invite link.
     /// (`osaurus://teams/...` is the pre-rename host and is still routed to Workspaces.)
@@ -2625,6 +2627,11 @@ extension AppDelegate {
 
             if let destination = ChatWindowState.WorkflowsDestination(url: url) {
                 ChatWindowManager.shared.showWorkflowsSurface(destination: destination)
+                return
+            }
+
+            if let request = AllChatsRequest(url: url) {
+                ChatWindowManager.shared.showAllChats(request)
                 return
             }
 

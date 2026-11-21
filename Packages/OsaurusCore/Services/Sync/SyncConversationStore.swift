@@ -1007,6 +1007,41 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
         return counts
     }
 
+    func firstUserMessages(ids: [UUID]) -> [UUID: String] {
+        afterQueuedWrites { firstUserMessagesNow(ids: ids) }
+    }
+
+    /// Reads back to each chat's oldest page; a chat longer than a few
+    /// pages gets no preview rather than a long scan.
+    private func firstUserMessagesNow(ids: [UUID]) -> [UUID: String] {
+        guard let core = currentCore() else { return [:] }
+        var previews: [UUID: String] = [:]
+        for id in ids {
+            if let draft = lock.withLock({ drafts[id] }) {
+                if let text = draft.turns.first(where: { $0.role == .user })?.content {
+                    previews[id] = text
+                }
+                continue
+            }
+            guard let scope = scope(for: id, core: core) else { continue }
+            var cursor: PageCursor?
+            var oldest: [SyncMessage] = []
+            var pages = 0
+            repeat {
+                guard let page = try? core.messages(scope: scope, before: cursor, limit: Self.pageSize) else {
+                    cursor = nil
+                    break
+                }
+                oldest = page.messages
+                cursor = page.nextCursor
+                pages += 1
+            } while cursor != nil && pages < 4
+            guard cursor == nil, let first = oldest.first(where: { $0.role == .user }) else { continue }
+            previews[id] = first.content
+        }
+        return previews
+    }
+
     func sessionIds(withContentContaining text: String) -> Set<UUID> {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, let core = currentCore() else { return [] }

@@ -1,6 +1,57 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ and its memory are removed from this Mac. This cannot be undone." : {
+
+    },
+    "%@, its memory and its %lld chats are removed from this Mac. This cannot be undone." : {
+
+    },
+    "%@, its memory and its 1 chat are removed from this Mac. This cannot be undone." : {
+
+    },
+    "%lld archived, %lld skipped" : {
+
+    },
+    "%lld chats archived" : {
+
+    },
+    "%lld chats deleted" : {
+
+    },
+    "%lld chats moved back to the list" : {
+
+    },
+    "%lld chats on this Mac, newest first." : {
+
+    },
+    "%lld chats selected" : {
+
+    },
+    "%lld chats with %@, newest first." : {
+
+    },
+    "%lld deleted, %lld skipped" : {
+
+    },
+    "%lld moved back to the list, %lld skipped" : {
+
+    },
+    "1 chat archived" : {
+
+    },
+    "1 chat deleted" : {
+
+    },
+    "1 chat moved back to the list" : {
+
+    },
+    "1 chat on this Mac, newest first." : {
+
+    },
+    "1 chat with %@, newest first." : {
+
+    },
     "Add Osaurus credits, then retry." : {
       "localizations" : {
         "de" : {
@@ -69,6 +120,15 @@
         }
       }
     },
+    "All %lld chats" : {
+
+    },
+    "All chats" : {
+
+    },
+    "All chats with %@" : {
+
+    },
     "Allow this caller to spend Osaurus credits in Osaurus Credits settings, or pick a model that doesn't route through the Router." : {
       "localizations" : {
         "de" : {
@@ -102,6 +162,9 @@
           }
         }
       }
+    },
+    "Archive instead" : {
+
     },
     "Change the step's input or settings; the provider names what it can't take." : {
       "localizations" : {
@@ -171,6 +234,27 @@
         }
       }
     },
+    "Delete %@?" : {
+
+    },
+    "Delete %lld chats" : {
+
+    },
+    "Delete %lld chats?" : {
+
+    },
+    "Delete 1 chat" : {
+
+    },
+    "Delete 1 chat?" : {
+
+    },
+    "Delete Agent…" : {
+
+    },
+    "Deselect %@" : {
+
+    },
     "Finish choosing your welcome credit, then retry." : {
       "localizations" : {
         "de" : {
@@ -238,6 +322,12 @@
           }
         }
       }
+    },
+    "Message %@..." : {
+
+    },
+    "New chat with %@" : {
+
     },
     "No model is selected for %@ to run on." : {
       "localizations" : {
@@ -341,6 +431,9 @@
         }
       }
     },
+    "Previous 7 days" : {
+
+    },
     "Reconnect to the remote agent, then retry." : {
       "localizations" : {
         "de" : {
@@ -408,6 +501,18 @@
           }
         }
       }
+    },
+    "Search messages for “%@”" : {
+
+    },
+    "Select %@" : {
+
+    },
+    "Select all %lld" : {
+
+    },
+    "Select chats" : {
+
     },
     "Set up your Osaurus Identity, then retry." : {
       "localizations" : {
@@ -782,6 +887,15 @@
           }
         }
       }
+    },
+    "These chats and their messages are removed from this Mac. This cannot be undone." : {
+
+    },
+    "This chat and its messages are removed from this Mac. This cannot be undone." : {
+
+    },
+    "Tick chats to select" : {
+
     },
     "Your Osaurus billing account is on hold; resolve it in Osaurus Credits." : {
       "localizations" : {

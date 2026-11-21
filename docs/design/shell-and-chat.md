@@ -32,7 +32,34 @@ Rules that follow from this:
   belongs to Chat; Workflows has none.
 - The sidebar navigates. Opening a chat, starting one, or switching agents
   from it is navigation, so in a compact window the drawer closes on those
-  picks (folding an agent or Show more keeps it open).
+  picks (folding an agent keeps it open). Opening the All chats page is
+  navigation too.
+- All chats is a page of the Chat destination's content column
+  (`ChatWindowState.chatPage`, `AllChatsPage`), not a context lens. The
+  sidebar row `All chats` sits first under the search (clock glyph, the
+  count of chats that are not archived) and is highlighted while the page
+  is on screen. Chats of hidden built-ins (the Configurator's New Agent
+  chats) are neither listed nor counted (`AllChatsModel.isListed`). An
+  open agent lists five chats (`chatsPerAgent`); when it has more,
+  `All N chats` opens the page filtered to it, and the list
+  never grows in place. While the sidebar search has a query, a last row
+  `Search messages for "<query>"` opens the page with that query. The
+  sidebar search stays titles and names; message text is searched on the
+  page. Deep link: `osaurus://chats/all`, with an optional `?agent=<id>`.
+- The page: title, "N chats on this Mac, newest first." (or "with
+  <Agent>"), Import and Select/Done; a search field over titles, agent
+  names and message text; one filter row with the All / Pinned /
+  Untitled / Archived chips (a count only when it is above zero; All,
+  Pinned and Untitled leave archived chats out) and an agent menu, so the
+  row holds any number of agents; rows grouped Today, Yesterday, Previous
+  7 days, then by month, each header with its count and a hover Select
+  all; rows of two lines (title over the first user message) with the
+  agent's avatar and right-aligned agent and age columns, no resting fill,
+  50 at a time (`AllChatsModel`). The selection is the window's: in selection mode, or
+  whenever a chip or search narrows the list, a bar floats over the foot
+  of the list with "N selected", Select all M, Pin/Unpin,
+  Archive/Unarchive, Delete and a clear button; the sidebar's own bar
+  hides while the page is on screen.
 - Sidebar groups (Pinned, Agents, each agent) fold from anywhere on their
   row; a trailing action such as Agents' + keeps its own click. The
   Orchestrator is always the first row, in no group: it is the core agent
@@ -40,11 +67,63 @@ Rules that follow from this:
   Pinned group below it, where its row carries the agent's avatar;
   unpinning returns it.
 - The Agents header's ⋯ (hover-only, the same trigger and plain-text menu
-  as a chat row's) holds the sidebar's list-level actions: Import
-  Conversations (into the agent on screen) and Show/Hide Archived, which
-  returns archived chats to their agent's
-  list (and Pinned) with an archive glyph in the icon column; glyph and
-  title use the disabled ink, lifted to tertiary on hover. Workflow runs move to the Workflows destination, not here.
+  as a chat row's)   holds the sidebar's list-level actions: New Agent…, Import
+  Conversations… (into the agent on screen), Select chats (selection
+  mode with nothing ticked) and Archived chats (the All chats page on its
+  Archived chip). The sidebar never lists archived chats, except one a
+  run is live on; they are found on the All chats page. Workflow runs
+  are in the Workflows destination, not here.
+- An open agent's first row is `New chat` (plus glyph in the icon
+  column; hidden while searching), then its chats. An untouched chat
+  (`ChatSessionSidebar.isUntouchedChat`) is that row, never a row of its
+  own under the agent; it gets its own row once it has a message. An
+  agent with no chats shows only `New chat`. Clicking a closed agent
+  opens it and shows its new chat; clicking an open agent folds it and
+  navigates nowhere.
+- Exactly one row is highlighted (`ChatSessionSidebar.highlightedRow`):
+  All chats while that page is on screen, else the `New chat` row of the
+  agent whose untouched chat is on screen, else the chat on screen.
+  Local agent rows are never highlighted.
+- An agent row shows one hover-only ⋯ (Stop while a run is live); the
+  gear and pencil are gone. Its menu, also on right-click: New Chat,
+  Open Settings, All chats with <Agent> (the page filtered to it),
+  Select chats (the same, with all its chats ticked), Rename (custom
+  agents; in place, Return commits, Escape or an empty name cancels),
+  Share to Workspace… / Unshare from …, and Delete Agent… (custom agents;
+  one confirmation: "<Agent>, its memory and its N chats are removed
+  from this Mac. This cannot be undone."; with no chats, "<Agent> and its
+  memory are removed…"). Deleting moves every window off the agent's
+  chats first, and a window that was on the agent opens a new chat with
+  the Orchestrator (`AgentSidebarActions`).
+- The composer's placeholder names the local agent: "Message <Agent>...".
+- Chats are selected in place (`ChatWindowState.chatSelection`, pure
+  rules in `ChatSelection`). Hovering a saved chat row puts a checkbox in
+  its icon column (over the avatar in Pinned); ticked rows keep it. A
+  plain click always opens the chat, even with others selected; the
+  checkbox and Command-click toggle; Shift-click selects the visible rows
+  between the anchor (the last chat toggled, else the chat on screen) and
+  the clicked row, in rail order, skipping folded agents. While at least
+  one chat is ticked, or after Select chats, the window is in selection
+  mode: every chat row shows its checkbox, row hover actions hide, and a
+  bar at the foot of the sidebar reads "N selected", then Archive and
+  Delete as icon buttons and Done ("Tick chats to select · Done" when
+  none is ticked). The checkbox (`ChatSelectionCheckbox`) is a 14-point
+  square inside the icon column, accent-filled when ticked; ticked rows
+  sit on `surface.selected`, a step above the hover wash that marks the
+  chat on screen. The sidebar bar and the All chats page's floating bar
+  are one component (`ChatBatchBar`). Both read the window's theme, not
+  the rail's sidebar-family scope, so they look the same in both places.
+  The
+  selection is per window, not persisted, and survives navigation; a
+  batch action, Done or Escape clears it (Escape after an open menu and
+  an inline rename). Toggling a checkbox keeps a compact drawer open.
+- A chat row's ⋯ and right-click open one menu. It adds Select; opened
+  on one of several selected rows it acts on all of them instead: a
+  "N chats selected" header, Pin/Unpin, Archive/Unarchive, Delete N
+  chats. Batch archive offers Undo, which restores each chat's own prior
+  state. Deleting one chat or many asks once (Cancel, Archive instead,
+  Delete N chats; "don't ask again" applies) and deletes in one batch
+  (`ChatSessionsManager.delete(ids:)`).
 - Sidebar rows share one grid (`NavigatorRowMetrics`): 32 points tall,
   content 8 in, a 24-point icon column (the agent's avatar, or empty under
   an agent), text 8 after it, hover actions 8 from the trailing edge. So a
@@ -93,7 +172,10 @@ Rules that follow from this:
   is active, each agent opens on its matching chats and the Agents section's
   fold is ignored.
 - The chat's title is always on screen, centered in the content column's
-  title strip, with the agent name beside it in the quieter style.
+  title strip, with the agent name beside it in the quieter style. On the
+  All chats page, as on Insights and Settings, the strip stays window
+  material with no title; the page's own heading names it. On the
+  All chats page the strip stays and reads "All chats", with no agent.
 
 ## Breakpoints
 

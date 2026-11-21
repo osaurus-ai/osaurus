@@ -5482,6 +5482,10 @@ extension FloatingInputCard {
         if selectedImagePickerItem != nil {
             return LCached("Describe the image...")
         }
+        // A teammate's or another Mac's agent is not the local agent id.
+        if !isRemoteAgentRun, let name = agentManager.agent(for: effectiveAgentId)?.displayName, !name.isEmpty {
+            return String(format: LCached("Message %@..."), name)
+        }
         return LCached("Message or attach files...")
     }
 

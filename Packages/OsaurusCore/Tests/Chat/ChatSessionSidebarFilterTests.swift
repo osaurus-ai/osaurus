@@ -79,25 +79,7 @@ struct ChatSessionSidebarFilterTests {
         #expect(ChatSessionSidebar.pinnedSessions(sessions).map(\.title) == ["Plan", "Taxes"])
     }
 
-    @Test("Show Archived brings archived chats back into their agent's list and the Pinned group")
-    func showArchivedIncludesArchived() {
-        let dinoki = UUID()
-        let now = Date()
-        let sessions = [
-            ChatSessionData(title: "Fetch Downloads", updatedAt: now, agentId: dinoki),
-            ChatSessionData(title: "hey", updatedAt: now.addingTimeInterval(-60), agentId: dinoki, archived: true),
-            ChatSessionData(title: "Old", updatedAt: now, agentId: dinoki, archived: true, pinned: true),
-        ]
-
-        #expect(
-            ChatSessionSidebar.agentHistorySessions(sessions, agentId: dinoki, includeArchived: true).map(\.title)
-                == ["Fetch Downloads", "hey"]
-        )
-        #expect(ChatSessionSidebar.pinnedSessions(sessions, includeArchived: true).map(\.title) == ["Old"])
-        #expect(ChatSessionSidebar.pinnedSessions(sessions).isEmpty)
-    }
-
-    @Test("an archived chat with a live run stays listed while Show Archived is off")
+    @Test("an archived chat with a live run stays listed")
     func liveArchivedChatsStayListed() {
         let dinoki = UUID()
         let now = Date()
@@ -167,9 +149,6 @@ struct ChatSessionSidebarFilterTests {
         #expect(
             ChatSessionSidebar.projectHistorySessions(sessions, projectId: project, keepingArchived: [running.id])
                 .map(\.title) == ["Spec", "Running"])
-        #expect(
-            ChatSessionSidebar.projectHistorySessions(sessions, projectId: project, includeArchived: true)
-                .map(\.title) == ["Spec", "Archived", "Running"])
         #expect(ChatSessionSidebar.pinnedSessions(sessions).map(\.title) == ["Pinned"])
     }
 
@@ -205,9 +184,6 @@ struct ChatSessionSidebarFilterTests {
         #expect(
             ChatSessionSidebar.workspaceAgentSessions(sessions, address: "0xABC", workspaceId: "w1").map(\.title)
                 == ["Brief"])
-        #expect(
-            ChatSessionSidebar.workspaceAgentSessions(sessions, address: Self.teamAgent, workspaceId: "w1",
-                includeArchived: true).map(\.title) == ["Brief", "Old"])
         #expect(
             ChatSessionSidebar.agentHistorySessions(sessions, agentId: Agent.defaultId).map(\.title) == ["Local"])
         var inProject = teamChat("Filed", workspace: "w1")
@@ -288,5 +264,24 @@ struct ChatSessionSidebarFilterTests {
                 == Array(ids[0..<5]) + [ids[6]]
         )
         #expect(ChatSessionSidebar.navigatorVisibleChats(chats, cap: 20, activeIds: [ids[7]]).map(\.id) == ids)
+    }
+
+    @Test("the Shift-click order is the rows as reported top to bottom, each once")
+    func visibleChatOrderKeepsFirstReport() {
+        let a = UUID(), b = UUID(), c = UUID()
+        #expect(ChatSessionSidebar.visibleChatOrder([a, b, a, c, b]) == [a, b, c])
+        #expect(ChatSessionSidebar.visibleChatOrder([]) == [])
+    }
+
+    @Test("a Shift-click range across two agents covers the rows between, in rail order")
+    func shiftRangeAcrossAgents() {
+        // Agent A's three chats, then agent B's two, as the rail reports them.
+        let a = (0..<3).map { _ in UUID() }
+        let b = (0..<2).map { _ in UUID() }
+        let order = ChatSessionSidebar.visibleChatOrder(a + b)
+        var selection = ChatSelection()
+        selection.toggle(a[1])
+        selection.selectRange(to: b[0], visibleOrder: order, fallbackAnchor: nil)
+        #expect(selection.selectedIds == [a[1], a[2], b[0]])
     }
 }
