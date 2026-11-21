@@ -66,6 +66,8 @@ struct DevicesView: View {
 
     /// "Upgrading from Classic?" (`ClassicUpgradeSheet`).
     @State private var showsClassicUpgrade = false
+    /// Its Connect iPhone Now: Add iPhone or iPad opens once it has closed, as one sheet can't open over another.
+    @State private var connectsAfterClassicUpgrade = false
 
     var body: some View {
         SettingsPage {
@@ -108,8 +110,21 @@ struct DevicesView: View {
         }
         .onChange(of: keepMacAwake) { _, _ in phones.refreshKeepAwake() }
         .sheet(item: $pairSheet, onDismiss: endPairing) { kind in pairingSheet(kind) }
-        .sheet(isPresented: $showsClassicUpgrade) {
-            ClassicUpgradeSheet { showsClassicUpgrade = false }
+        .sheet(
+            isPresented: $showsClassicUpgrade,
+            onDismiss: {
+                guard connectsAfterClassicUpgrade else { return }
+                connectsAfterClassicUpgrade = false
+                addPhone()
+            }
+        ) {
+            ClassicUpgradeSheet(
+                onConnect: {
+                    connectsAfterClassicUpgrade = true
+                    showsClassicUpgrade = false
+                },
+                onClose: { showsClassicUpgrade = false }
+            )
         }
     }
 

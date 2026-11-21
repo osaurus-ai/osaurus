@@ -16,22 +16,7 @@
 //  - Only on 1.0: workflows, their Live Activities, and agents calling the iPhone.
 //
 
-import AppKit
 import SwiftUI
-import os
-
-/// DEBUG [CUPG]: the sheet's jitter between steps; remove once found.
-private let cupgLog = Logger(subsystem: "ai.osaurus", category: "classic-upgrade")
-
-private extension View {
-    /// DEBUG [CUPG]: logs `name`'s frame in the window each time it changes.
-    func cupgFrame(_ name: String) -> some View {
-        onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame in
-            cupgLog.notice(
-                "[CUPG] \(name, privacy: .public) x=\(frame.minX) y=\(frame.minY) w=\(frame.width) h=\(frame.height)")
-        }
-    }
-}
 
 // MARK: - Stages
 
@@ -79,6 +64,8 @@ enum ClassicUpgradeStage: Int, CaseIterable, Identifiable {
 // MARK: - Sheet
 
 struct ClassicUpgradeSheet: View {
+    /// Connect iPhone Now: closes this, and Devices opens Add iPhone or iPad.
+    let onConnect: () -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -87,7 +74,8 @@ struct ClassicUpgradeSheet: View {
             title: "Upgrading from Classic?",
             subtitle: "Osaurus 1.0 connects your devices in a new way. Here's what changes.",
             width: SettingsSheetWidth.wide,
-            primary: .init(label: "Got It", handler: onClose),
+            primary: .init(label: "Connect iPhone Now", handler: onConnect),
+            secondary: .init(label: "Got It", handler: onClose),
             onClose: onClose
         ) {
             ClassicUpgradeExplainer()
@@ -114,14 +102,13 @@ struct ClassicUpgradeExplainer: View {
 
     var body: some View {
         VStack(spacing: Self.rowSpacing) {
-            chips.cupgFrame("chips")
+            chips
             Color.clear
                 .frame(maxWidth: .infinity)
                 .frame(height: Self.canvasDesignSize.height * scale)
                 .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
                     if width > 0 { availableWidth = width }
                 }
-                .cupgFrame("canvasRow")
                 .overlay {
                     ClassicUpgradeCanvas(stage: stage, reduceMotion: reduceMotion)
                         .scaleEffect(scale)
@@ -155,24 +142,9 @@ struct ClassicUpgradeExplainer: View {
             // sheet grew and shrank 6pt between steps, re-centring the window and flashing a scroll bar as it did.
             .frame(maxWidth: .infinity)
             .frame(height: Self.captionHeight)
-            .cupgFrame("caption")
         }
         .frame(maxWidth: .infinity)
-        .cupgFrame("explainer")
         .task(id: stage) { await autoAdvance() }
-        .onChange(of: stage) { old, new in
-            cupgLog.notice("[CUPG] stage \(old.rawValue + 1) -> \(new.rawValue + 1)")
-            // The sheet window itself, as the change lands and as its animation runs.
-            for delay in [0.0, 0.1, 0.25, 0.5, 0.9] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                    for window in NSApp.windows where window.isSheet {
-                        let f = window.frame
-                        cupgLog.notice(
-                            "[CUPG] +\(delay)s sheet window x=\(f.minX) y=\(f.minY) w=\(f.width) h=\(f.height)")
-                    }
-                }
-            }
-        }
     }
 
     private var chips: some View {
@@ -302,8 +274,8 @@ private struct ClassicUpgradeCanvas: View {
             if !reduceMotion { pulses.id(stage) }
             device(glyph: "iphone", label: "iPhone", x: Layout.phoneX)
             device(glyph: "laptopcomputer", label: "Mac", x: Layout.macX)
-            server.cupgFrame("server")
-            locks.cupgFrame("locks")
+            server
+            locks
             directLabel
             phoneChats
             macChats
@@ -577,6 +549,6 @@ private struct Pulse: View {
 
 #if DEBUG
     #Preview("Upgrading from Classic") {
-        ClassicUpgradeSheet(onClose: {})
+        ClassicUpgradeSheet(onConnect: {}, onClose: {})
     }
 #endif
