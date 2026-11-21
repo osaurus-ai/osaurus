@@ -262,8 +262,12 @@ private struct ClassicUpgradeCanvas: View {
 
     @Environment(\.theme) private var theme
 
-    /// The pairing stages: partway through, the relay goes offline.
-    @State private var relayDown = false
+    /// Partway through a Classic stage or Sync Pairing, something drops: the relay in the pairing stages, the Mac in
+    /// Classic Data.
+    @State private var dropped = false
+    private var relayDown: Bool { dropped && (stage == .classicPairing || stage == .syncPairing) }
+    /// Classic Data: the Mac itself offline, taking the iPhone's access with it.
+    private var macDown: Bool { dropped && stage == .classicData }
 
     private enum Layout {
         static let width: CGFloat = 656
@@ -303,9 +307,9 @@ private struct ClassicUpgradeCanvas: View {
         ZStack {
             Group {
                 wires
-                if !reduceMotion { pulses.id("\(stage.rawValue)-\(relayOff)") }
+                if !reduceMotion { pulses.id("\(stage.rawValue)-\(linkOff)") }
                 device(glyph: "iphone", label: "iPhone", x: Layout.phoneX)
-                device(glyph: "laptopcomputer", label: "Mac", x: Layout.macX)
+                device(glyph: "laptopcomputer", label: "Mac", x: Layout.macX, isMac: true)
                 relay
                 locks
                 directLabel
@@ -319,29 +323,32 @@ private struct ClassicUpgradeCanvas: View {
         .frame(width: Layout.width, height: Layout.height)
         .clipped()
         .animation(theme.motion.springAnimation, value: stage)
-        .animation(theme.motion.springAnimation, value: relayDown)
-        .task(id: stage) { await dropRelay() }
+        .animation(theme.motion.springAnimation, value: dropped)
+        .task(id: stage) { await drop() }
     }
 
-    /// In the pairing stages, the relay goes offline after a beat: Classic loses access, Sync keeps its own link.
-    private func dropRelay() async {
-        relayDown = false
-        guard !reduceMotion, stage == .classicPairing || stage == .syncPairing else { return }
+    /// After a beat, the relay (pairing stages) or the Mac (Classic Data) goes offline: Classic loses access, Sync
+    /// keeps its own link.
+    private func drop() async {
+        dropped = false
+        guard !reduceMotion, stage != .syncData, stage != .compared else { return }
         try? await Task.sleep(for: .seconds(2.4))
         guard !Task.isCancelled else { return }
-        relayDown = true
+        dropped = true
     }
 
     // MARK: Wires
 
-    private var relayWireColor: Color { relayOff ? offTint.opacity(0.5) : tint.opacity(0.7) }
+    /// Nothing gets through: the relay offline, or the Mac on the other end of it.
+    private var linkOff: Bool { relayOff || macDown }
+    private var relayWireColor: Color { linkOff ? offTint.opacity(0.5) : tint.opacity(0.7) }
 
     private var wires: some View {
         ZStack {
             Wire(from: phonePoint, to: relayLeft)
-                .stroke(relayWireColor, style: stroke(dashed: relayOff))
+                .stroke(relayWireColor, style: stroke(dashed: linkOff))
             Wire(from: relayRight, to: macPoint)
-                .stroke(relayWireColor, style: stroke(dashed: relayOff))
+                .stroke(relayWireColor, style: stroke(dashed: linkOff))
             // Sync: the devices know each other, so they reach each other without the relay.
             Wire(from: phonePoint, to: macPoint, bow: 44)
                 .trim(from: 0, to: hasDirect ? 1 : 0)
@@ -351,7 +358,7 @@ private struct ClassicUpgradeCanvas: View {
 
     private var pulses: some View {
         ZStack {
-            if !relayOff {
+            if !linkOff {
                 Pulse(from: phonePoint, to: relayLeft, color: tint, delay: 0)
                 Pulse(from: relayRight, to: macPoint, color: tint, delay: 0.8)
                 if !isClassic {
@@ -372,8 +379,8 @@ private struct ClassicUpgradeCanvas: View {
     // MARK: Nodes
 
     /// A device, greyed when it can't be reached (Classic with the relay down) or is offline (Sync Data).
-    private func device(glyph: String, label: LocalizedStringKey, x: CGFloat) -> some View {
-        let dimmed = (stage == .classicPairing && relayDown) || stage == .syncData
+    private func device(glyph: String, label: LocalizedStringKey, x: CGFloat, isMac: Bool = false) -> some View {
+        let dimmed = (stage == .classicPairing && relayDown) || stage == .syncData || (isMac && macDown)
         return VStack(spacing: theme.space.s6) {
             ZStack {
                 Circle().fill(theme.surface.raised).frame(width: 64, height: 64)
@@ -455,7 +462,7 @@ private struct ClassicUpgradeCanvas: View {
         let color: Color
         var dashed = false
         switch stage {
-        case .classicPairing where relayDown:
+        case .classicPairing where relayDown, .classicData where macDown:
             label = "No access"
             color = offTint
             dashed = true
@@ -476,7 +483,7 @@ private struct ClassicUpgradeCanvas: View {
 
     private var macData: some View {
         let label: LocalizedStringKey = stage == .syncData ? "Synced data" : "Chats & agents"
-        let color = stage == .classicPairing && relayDown ? offTint : tint
+        let color = (stage == .classicPairing && relayDown) || macDown ? offTint : tint
         return dataPill(label: label, color: color, dashed: false)
             .position(x: Layout.macX, y: Layout.dataY)
     }
@@ -506,7 +513,10 @@ private struct ClassicUpgradeCanvas: View {
     /// The condition each stage turns on, under the devices.
     private var notes: some View {
         ZStack {
-            note("Must stay on", glyph: "power", color: classicTint)
+            note(
+                macDown ? "Offline" : "Must stay on", glyph: macDown ? "wifi.slash" : "power",
+                color: macDown ? offTint : classicTint
+            )
                 .position(x: Layout.macX, y: Layout.noteY)
                 .opacity(stage == .classicData ? 1 : 0)
             note("Available offline", glyph: "checkmark.circle.fill", color: syncTint)
