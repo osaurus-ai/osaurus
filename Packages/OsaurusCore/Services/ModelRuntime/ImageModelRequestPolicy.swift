@@ -10,12 +10,13 @@ struct ImageModelRequestPolicy: Sendable {
         canonical == "qwen-image-2.1" || canonical == "qwen-image-2.1-turbo"
     }
     var isFlux3: Bool { canonical == "flux3-image-klein" }
+    var isZImageTurbo: Bool { canonical == "z-image-turbo" }
     var usesBundleParameters: Bool { isQwen21 || isFlux3 }
     static func usesBundleParameters(_ canonical: String?) -> Bool {
         Self(canonical: canonical).usesBundleParameters
     }
     var estimatesAreAdvisory: Bool { isFlux3 }
-    var supportsGuidance: Bool { !isFlux3 }
+    var supportsGuidance: Bool { !isFlux3 && !isZImageTurbo }
     var supportsEditNegativePrompt: Bool { !isQwen21 && !isFlux3 }
     var supportsEditStrength: Bool { !isQwen21 && !isFlux3 }
     var dimensionMultiple: Int { isQwen21 ? 32 : 16 }
@@ -27,13 +28,14 @@ struct ImageModelRequestPolicy: Sendable {
         -> ImageModelCapabilities
     {
         let flux3 = canonical == "flux3-image-klein"
+        let turbo = canonical == "z-image-turbo"
         let dual = isQwen21Family(canonical) || flux3
         return ImageModelCapabilities(
             textToImage: kind == "imageGen" || dual,
             imageEdit: kind == "imageEdit" || dual,
             upscale: kind == "imageUpscale",
-            negativePrompt: !flux3 && (kind == "imageGen" || kind == "imageEdit"),
-            editNegativePrompt: !dual && (kind == "imageGen" || kind == "imageEdit"),
+            negativePrompt: !flux3 && !turbo && (kind == "imageGen" || kind == "imageEdit"),
+            editNegativePrompt: !dual && !turbo && (kind == "imageGen" || kind == "imageEdit"),
             editStrength: !dual,
             dimensionMultiple: isQwen21Family(canonical) ? 32 : 16,
             mask: false,
