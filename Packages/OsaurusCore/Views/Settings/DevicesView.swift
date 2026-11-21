@@ -347,7 +347,7 @@ struct DevicesView: View {
             title: "Devices",
             anchorId: "settings.sync.devices",
             accessory: {
-                SettingsButton(.tertiary, "Get iOS App", icon: "arrow.up.right", size: .compact) {
+                SettingsButton(.secondary, "Get iOS App", icon: "arrow.up.right", size: .compact) {
                     NSWorkspace.shared.open(Self.iPhoneAppURL)
                 }
                 .help(L("Get the iPhone and iPad app from TestFlight"))
