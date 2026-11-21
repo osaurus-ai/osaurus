@@ -314,7 +314,8 @@ struct WorkflowDetailPage<Actions: View>: View {
         let tools = workflow.definition.calledTools
         let usesNothing =
             reqs.models.isEmpty && reqs.secrets.isEmpty && reqs.network.isEmpty && tools.isEmpty
-            && reqs.dependencies.isEmpty && reqs.folders.isEmpty && workflow.bindings.folderGrants.isEmpty
+            && reqs.dependencies.isEmpty && reqs.folders.isEmpty && reqs.apps.isEmpty
+            && workflow.bindings.folderGrants.isEmpty
             && workflow.bindings.folderReadGrants.isEmpty && workflow.bindings.replaceGrants.isEmpty
             && reach.subworkflows.isEmpty
         let report = model.report
@@ -395,6 +396,12 @@ struct WorkflowDetailPage<Actions: View>: View {
                     ForEach(reqs.folders) { folder in
                         let path = workflow.bindings.folders[folder.key]
                         requirementRow("folder", folder.label, path ?? L("Not chosen yet"), isProblem: path == nil)
+                    }
+                    ForEach(reqs.apps) { app in
+                        let missing = report?.items.contains { $0.kind == .app && $0.value == app.bundleID } == true
+                        requirementRow(
+                            "macwindow", app.name, missing ? L("Not installed") : L("Installed"),
+                            isProblem: missing && !app.optional)
                     }
                     ForEach(workflow.bindings.folderGrants, id: \.self) { path in
                         folderGrantRow(path, title: L("Always allowed to save")) {

@@ -522,5 +522,12 @@ enum ArchitectSystemPromptBuilder {
         `permission_denied`, `user_denied`, or `unavailable`, follow its `hint`: setup items open the \
         wizard, `user_denied` means the person declined the approval card, and a tool set to Deny in \
         Tools & MCP needs the person to change its policy.
+
+        Apps: whenever a step drives a Mac app other than the built-in Apple app tools (an \
+        `applescript`, `computer_use`, or `mac_query` step that names the app, or a `shell_run` step \
+        that runs its command-line tool), declare the app with `declare_app` `{bundle_id, name, help?, \
+        url?, optional?}` so setup on another Mac checks it is installed before a run. Get the bundle \
+        id from `workflow_discover` action `apps` (never guess one); `url` is where to get it, \
+        `optional: true` when the workflow still runs without it. One declaration per app.
         """
 }

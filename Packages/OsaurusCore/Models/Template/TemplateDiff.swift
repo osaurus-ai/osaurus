@@ -115,10 +115,13 @@ public enum TemplateDiff {
         public var folders: Set<String> = []
         /// Agents (`AgentRequirement.id`) the old version did not ask.
         public var agents: Set<String> = []
+        /// Mac apps (`AppRequirement.id`) the old version did not need.
+        public var apps: Set<String> = []
 
         public var isEmpty: Bool {
             slots.isEmpty && secrets.isEmpty && mcpServers.isEmpty && plugins.isEmpty && permissions.isEmpty
                 && network.isEmpty && tools.isEmpty && dependencies.isEmpty && folders.isEmpty && agents.isEmpty
+                && apps.isEmpty
         }
 
         /// The new version reaches further than the pinned one: new hosts,
@@ -139,6 +142,7 @@ public enum TemplateDiff {
             case .dependency: return dependencies.contains(item.value)
             case .folder: return folders.contains(item.value)
             case .agent: return agents.contains(item.value)
+            case .app: return apps.contains(item.value.lowercased())
             default: return true
             }
         }
@@ -175,6 +179,7 @@ public enum TemplateDiff {
         }
         out.folders = Set(new.folders.map(\.key)).subtracting(old.folders.map(\.key))
         out.agents = Set(new.agents.map(\.id)).subtracting(old.agents.map(\.id))
+        out.apps = Set(new.apps.map(\.id)).subtracting(old.apps.map(\.id))
         return out
     }
 

@@ -64,6 +64,18 @@ A step's file tools may use the folder of the chat or agent that runs it, the ru
 - Before a step replaces or changes a file that's already on your Mac (outside the run's workspace), the run asks once per folder: **Replace files in** *folder*? with the same three choices. **Don't allow** stops the step (nothing is replaced); a run nobody can answer for fails the same way. Workflow file steps don't delete files on your Mac; a workflow that calls `file_undo`, which can take back a file it created, names it under **Also uses**.
 - The workflow's details list its chosen folders and every always-allowed folder under **Before It Runs** (**Always allowed to save**, **Always allowed to read**, **Always allowed to replace files**); **Remove** takes one back. **Change…** picks a different folder for a declared one.
 
+### Apps
+
+A workflow made for a particular Mac app (Google Chrome, Xcode, an app it scripts with AppleScript or drives with Computer Use) names that app, so whoever installs it knows to get it first. The Architect does this when a step drives an app that does not come with macOS; it looks the app up among yours, or asks you for it.
+
+- The import review lists **Apps it uses**, each **Installed** or **Not installed** on this Mac.
+- The setup wizard gains an **Apps** step: each app with its icon, why the workflow needs it, **Get App** (the author's link, or the App Store) and **Check Again** after you install it. A missing app blocks the workflow from running, unless the author marked it **Optional**.
+- The workflow's details show its apps under **Before It Runs**, and **What gets shared** names them when you share it.
+
+### Run from Shortcuts
+
+Shortcuts has a **Run Osaurus Workflow** action: pick one of your workflows and, if you like, give it **Input** (text that goes to its main text field). It starts the workflow in the background and says **Started** *workflow*; any form it asks for shows as a notification, and the result is in the run's page in Workflows. A workflow that still needs setup is refused with what it is missing. With Shortcuts' own personal automations (a time, arriving somewhere, a Focus turning on), that lets things outside Osaurus start a workflow. To start one when an app opens, quits or comes to the front, use a **Mac App** automation instead (see Automations).
+
 ### Files
 
 A run can hand you files: the ones its result names as files (the saved invoice PDF, the downloaded video) and any a step shares with `share_artifact`. They show under **Files** in the run's result, on the run page in Workflows and in the Architect's test result, each with its type and size, **Open**, and **Show in Finder** (double-click opens it too). A file the result names that is missing, or that lies outside the run's folders, shows why instead. A shared file is copied into the run's own files, so it stays even if the step's workspace changes; uninstalling the workflow deletes them with its runs.

@@ -37,6 +37,8 @@ public struct WorkflowDefinition: Codable, Equatable, Sendable {
     /// Fixed folders the steps use, bound to a real folder on each Mac in
     /// the setup wizard and named in steps as `{{folders.<key>}}`.
     public var folders: [FolderRequirement]
+    /// Mac apps the steps drive, checked for on each Mac in setup.
+    public var apps: [AppRequirement]
 
     public init(
         inputSchema: JSONValue = .object(["type": .string("object"), "properties": .object([:])]),
@@ -49,7 +51,8 @@ public struct WorkflowDefinition: Codable, Equatable, Sendable {
         requirementNotes: [String: String] = [:],
         examples: [WorkflowExample] = [],
         dependencies: [WorkflowDependency] = [],
-        folders: [FolderRequirement] = []
+        folders: [FolderRequirement] = [],
+        apps: [AppRequirement] = []
     ) {
         self.inputSchema = inputSchema
         self.outputSchema = outputSchema
@@ -62,18 +65,19 @@ public struct WorkflowDefinition: Codable, Equatable, Sendable {
         self.examples = examples
         self.dependencies = dependencies
         self.folders = folders
+        self.apps = apps
     }
 
     enum CodingKeys: String, CodingKey {
-        case nodes, edges, output, secrets, examples, dependencies, folders
+        case nodes, edges, output, secrets, examples, dependencies, folders, apps
         case inputSchema = "input_schema"
         case outputSchema = "output_schema"
         case modelSlots = "model_slots"
         case requirementNotes = "requirement_notes"
     }
 
-    /// `dependencies` and `folders` are left out when empty so templates
-    /// without any keep their content hash.
+    /// `dependencies`, `folders` and `apps` are left out when empty so
+    /// templates without any keep their content hash.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(inputSchema, forKey: .inputSchema)
@@ -87,6 +91,7 @@ public struct WorkflowDefinition: Codable, Equatable, Sendable {
         try c.encode(examples, forKey: .examples)
         if !dependencies.isEmpty { try c.encode(dependencies, forKey: .dependencies) }
         if !folders.isEmpty { try c.encode(folders, forKey: .folders) }
+        if !apps.isEmpty { try c.encode(apps, forKey: .apps) }
     }
 
     public init(from decoder: Decoder) throws {
@@ -102,6 +107,7 @@ public struct WorkflowDefinition: Codable, Equatable, Sendable {
         examples = try c.decodeIfPresent([WorkflowExample].self, forKey: .examples) ?? []
         dependencies = try c.decodeIfPresent([WorkflowDependency].self, forKey: .dependencies) ?? []
         folders = try c.decodeIfPresent([FolderRequirement].self, forKey: .folders) ?? []
+        apps = try c.decodeIfPresent([AppRequirement].self, forKey: .apps) ?? []
     }
 
     public func node(_ id: String) -> WorkflowNode? {
@@ -206,10 +212,17 @@ public struct WorkflowDefinition: Codable, Equatable, Sendable {
     /// drop `tool.agent` and run the step under the workflow's own grants.
     public var usesFormat5Features: Bool { !agentKeyedToolCalls.isEmpty }
 
+    /// Whether the workflow declares the Mac apps it needs (format 6).
+    /// Format 5 would drop `apps` on re-encode, which breaks a signed
+    /// template's hash, and would install without checking for the apps.
+    public var usesFormat6Features: Bool { !apps.isEmpty }
+
     /// The lowest template format that can carry this graph.
     public var requiredFormatVersion: Int {
-        usesFormat5Features
-            ? 5 : usesFormat4Features ? 4 : usesFormat3Features ? 3 : usesPostV1Features ? 2 : 1
+        usesFormat6Features
+            ? 6
+            : usesFormat5Features
+                ? 5 : usesFormat4Features ? 4 : usesFormat3Features ? 3 : usesPostV1Features ? 2 : 1
     }
 
     /// The agents this workflow's agent steps hand work to, in step order.

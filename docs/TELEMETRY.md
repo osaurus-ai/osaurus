@@ -406,7 +406,7 @@ Each step of a run also sends `message_sent` with `source=workflow`.
 
 | Event | Properties |
 |-------|------------|
-| `automation_created` | `trigger`: `schedule`, `folder`, `webhook`, `rss`, `sse`, `run_failed`, `app`, `email`, or `channel_message`; `origin`: `user` (Settings, the editor, or a workflow's page in Workflows) or `config` (`osaurus_config`, including onboarding's Turn On). Automations an agent schedules for itself and those a plugin installs are not counted |
+| `automation_created` | `trigger`: `schedule`, `folder`, `webhook`, `rss`, `sse`, `run_failed`, `app`, `mac_app`, `email`, or `channel_message`; `origin`: `user` (Settings, the editor, or a workflow's page in Workflows) or `config` (`osaurus_config`, including onboarding's Turn On). Automations an agent schedules for itself and those a plugin installs are not counted |
 | `automation_run_finished` | `trigger`, as above; `status`: `succeeded`, `failed`, `cancelled`, or `awaiting_user`. Deliveries dropped as filtered or duplicate never reach this |
 
 ### Computer Use

@@ -34,6 +34,7 @@ enum AutomationDefaults {
         case .folder: return L("\(workflowName) folder")
         case .rss: return L("\(workflowName) feed")
         case .app: return L("\(workflowName) on launch")
+        case .macApp: return L("\(workflowName) app trigger")
         default: return L("\(workflowName) automation")
         }
     }

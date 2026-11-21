@@ -149,6 +149,8 @@ public enum SetupChecker {
             var isDirectory: ObjCBool = false
             return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
         }
+        /// Whether an app with this bundle id is installed here.
+        var appInstalled: (String) -> Bool = { MacAppLocator.isInstalled(bundleID: $0) }
         /// Skills installed here; nil skips the skill allow-list check.
         var installedSkills: [Skill]? = nil
         /// Why an agent step's agent (with the one chosen for it at setup)
@@ -553,6 +555,7 @@ public enum SetupChecker {
 
         items += dependencyItems(reqs.dependencies, environmentID: template.id, environment: env)
         items += folderItems(reqs.folders, bindings: bindings, environment: env)
+        items += appItems(reqs.apps, environment: env)
         items += agentItems(
             def?.agentCalls.map(\.requirement) ?? reqs.agents, bindings: bindings, choiceRequired: !agentsByName,
             environment: env)
@@ -754,6 +757,21 @@ public enum SetupChecker {
                     value: folder.key)
             }
             return nil
+        }
+    }
+
+    /// Declared apps: each must be installed here. A missing app blocks
+    /// unless the workflow marks it optional.
+    static func appItems(_ apps: [AppRequirement], environment env: Environment) -> [SetupItem] {
+        apps.compactMap { app in
+            guard !env.appInstalled(app.bundleID) else { return nil }
+            let detail =
+                app.optional
+                ? L("\(app.name) is not installed on this Mac. The workflow runs without it, but the steps that use it may not work.")
+                : L("\(app.name) is not installed on this Mac. Install it, then check again.")
+            return SetupItem(
+                kind: .app, severity: app.optional ? .advisory : .blocking, title: app.name, detail: detail,
+                value: app.bundleID)
         }
     }
 

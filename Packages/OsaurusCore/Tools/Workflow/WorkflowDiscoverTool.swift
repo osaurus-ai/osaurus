@@ -25,7 +25,7 @@ final class WorkflowDiscoverTool: OsaurusTool, @unchecked Sendable {
         + "draft to adapt (the draft stops editing any saved workflow). `models` lists, for each model slot, "
         + "the models on this Mac and connected providers that can serve it, and the ones that cannot, with why. "
         + "`agents` lists the agents an `agent` step can ask (this Mac's and those shared in workspaces) with "
-        + "the exact spec to write."
+        + "the exact spec to write. `apps` finds Mac apps installed here by name, with the bundle id `declare_app` takes."
 
     static let maxDocsBytes = 2 * 1024 * 1024
 
@@ -107,13 +107,13 @@ final class WorkflowDiscoverTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("string"),
                 "enum": .array([
                     .string("mcp"), .string("docs"), .string("registry"), .string("templates"), .string("adopt"),
-                    .string("models"), .string("agents"),
+                    .string("models"), .string("agents"), .string("apps"),
                 ]),
             ]),
             "query": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "For `mcp`, `registry`, `templates`: words to search for (service or task name)."),
+                    "For `mcp`, `registry`, `templates`: words to search for (service or task name). For `apps`: the app's name."),
             ]),
             "url": .object([
                 "type": .string("string"),
@@ -135,7 +135,7 @@ final class WorkflowDiscoverTool: OsaurusTool, @unchecked Sendable {
             ]),
             "limit": .object([
                 "type": .string("integer"),
-                "description": .string("For `mcp`, `registry`, `templates`: results to return (default 10, max 25)."),
+                "description": .string("For `mcp`, `registry`, `templates`, `apps`: results to return (default 10, max 25)."),
             ]),
         ]),
         "required": .array([.string("action")]),
@@ -174,11 +174,40 @@ final class WorkflowDiscoverTool: OsaurusTool, @unchecked Sendable {
             return await Self.models(slot: slot?.isEmpty == true ? nil : slot, tool: tool)
         case "agents":
             return await Self.agents(tool: tool)
+        case "apps":
+            guard !query.isEmpty else { return Self.needs("query", for: action, tool: tool) }
+            return Self.apps(query: query, limit: limit, installed: MacAppLocator.installedApps(), tool: tool)
         default:
             return ToolEnvelope.failure(
                 kind: .invalidArgs, message: "Unknown action `\(action)`.", field: "action",
-                expected: "mcp | docs | registry | templates | adopt | models | agents", tool: tool)
+                expected: "mcp | docs | registry | templates | adopt | models | agents | apps", tool: tool)
         }
+    }
+
+    // MARK: - apps
+
+    /// Installed Mac apps matching `query`, each with the `declare_app` op
+    /// to write. Nothing found is not an error: the app may be one the
+    /// person has not installed, whose bundle id the Architect must ask for.
+    static func apps(query: String, limit: Int, installed: [InstalledMacApp], tool: String) -> String {
+        let found = MacAppLocator.search(query, in: installed, limit: limit)
+        let rows: [[String: Any]] = found.map { app in
+            var row: [String: Any] = [
+                "name": app.name, "bundle_id": app.bundleID,
+                "declare": ["op": "declare_app", "bundle_id": app.bundleID, "name": app.name],
+            ]
+            if let version = app.version { row["version"] = version }
+            return row
+        }
+        var result: [String: Any] = ["apps": rows, "count": rows.count]
+        if rows.isEmpty {
+            result["hint"] =
+                "No installed app matches “\(query)”. If the workflow needs an app this Mac lacks, ask the person for its bundle id (or its App Store link) rather than guessing one."
+        } else {
+            result["hint"] =
+                "Declare each app a step drives with its `declare` op; add `help` (what the workflow uses it for) and `url` (where to get it) when you know them."
+        }
+        return ToolEnvelope.success(tool: tool, result: result)
     }
 
     // MARK: - agents

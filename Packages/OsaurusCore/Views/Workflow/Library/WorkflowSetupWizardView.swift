@@ -107,13 +107,14 @@ struct WorkflowSetupWizardView: View {
     var onFinished: (InstalledWorkflow) -> Void = { _ in }
 
     enum Step: Hashable {
-        case models, secrets, folders, agents, tools, dependencies, permissions, answers, review
+        case models, secrets, folders, apps, agents, tools, dependencies, permissions, answers, review
 
         var title: String {
             switch self {
             case .models: return L("Models")
             case .secrets: return L("Secrets")
             case .folders: return L("Folders")
+            case .apps: return L("Apps")
             case .agents: return L("Agents")
             case .tools: return L("Tools")
             case .dependencies: return L("Dependencies")
@@ -128,6 +129,7 @@ struct WorkflowSetupWizardView: View {
             case .models: return "cube"
             case .secrets: return "key"
             case .folders: return "folder"
+            case .apps: return "macwindow"
             case .agents: return "person.2"
             case .tools: return "wrench.and.screwdriver"
             case .dependencies: return "shippingbox"
@@ -143,6 +145,7 @@ struct WorkflowSetupWizardView: View {
                 case .models: return item.kind == .model
                 case .secrets: return item.kind == .secret
                 case .folders: return item.kind == .folder
+                case .apps: return item.kind == .app
                 case .agents: return item.kind == .agent
                 case .tools:
                     return item.kind == .mcpServer || item.kind == .plugin || item.kind == .network
@@ -160,6 +163,8 @@ struct WorkflowSetupWizardView: View {
     @State private var steps: [Step] = [.review]
     @State private var current: Step = .review
     @State private var footerWarning: String?
+    /// The blocker `footerWarning` shows, so a recheck that clears it clears the footer too.
+    @State private var warnedBlocker: String?
     @State private var glowingStep: Step?
     @State private var glowClearTask: Task<Void, Never>?
     @State private var hasAppeared = false
@@ -359,6 +364,9 @@ struct WorkflowSetupWizardView: View {
             working.template, bindings: working.bindings, subjectId: working.subjectID,
             reconfirmSecrets: reconfirmSecrets, secrets: .install, agentsByName: working.isDraft, attended: true)
         report = fresh
+        if let shown = footerWarning, shown == warnedBlocker, !fresh.blocking.contains(where: { $0.detail == shown }) {
+            withAnimation(theme.motion.quick) { footerWarning = nil }
+        }
         if rebuildSteps {
             steps = Self.steps(for: working, report: fresh, newRequirements: newRequirements)
             current = steps.first ?? .review
@@ -382,6 +390,7 @@ struct WorkflowSetupWizardView: View {
         // not only new keys: the old value would travel somewhere new.
         if wanted(!reqs.secrets.isEmpty, !new.secrets.isEmpty || new.widensAccess, [.secret]) { out.append(.secrets) }
         if wanted(!reqs.folders.isEmpty, !new.folders.isEmpty, [.folder]) { out.append(.folders) }
+        if wanted(!reqs.apps.isEmpty, !new.apps.isEmpty, [.app]) { out.append(.apps) }
         if wanted(!reqs.agents.isEmpty, !new.agents.isEmpty, [.agent]) { out.append(.agents) }
         if wanted(
             !reqs.mcpServers.isEmpty || !reqs.plugins.isEmpty || blocking.contains(.network)
@@ -416,6 +425,7 @@ struct WorkflowSetupWizardView: View {
         if let blocker = report.blocking.first {
             let step = steps.first { !$0.items(in: report).filter(\.isBlocking).isEmpty } ?? .review
             warn(blocker.detail, glowing: step)
+            warnedBlocker = blocker.detail
             return
         }
         if case .draft(let id) = working.mode {
@@ -516,6 +526,10 @@ struct WorkflowSetupWizardView: View {
                 WorkflowFoldersStep(
                     folders: working.template.requirements.folders, bindings: working.bindings, items: items,
                     onChoose: { key, path in setBindings { $0.folders[key] = path } })
+            case .apps:
+                WorkflowAppsStep(
+                    apps: working.template.requirements.apps, items: items,
+                    onCheckAgain: { refresh(rebuildSteps: false) })
             case .agents:
                 WorkflowAgentsStep(
                     agents: working.template.requirements.agents, bindings: working.bindings, items: items,
@@ -1366,6 +1380,98 @@ struct WorkflowFoldersStep: View {
     }
 }
 
+// MARK: - Apps
+
+/// The Mac apps a workflow's steps drive. Nothing here is chosen: the app
+/// is installed or it is not, so each row offers where to get it and a
+/// fresh check once it is.
+struct WorkflowAppsStep: View {
+    @Environment(\.theme) private var theme
+    let apps: [AppRequirement]
+    let items: [SetupItem]
+    let onCheckAgain: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
+            if !items.contains(where: \.isBlocking) {
+                StepDoneBanner(text: L("Every app this workflow needs is installed."))
+            }
+            Text(
+                "Steps of this workflow drive these apps. Install any that are missing, then check again.",
+                bundle: .module
+            )
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            ForEach(apps) { app in row(app) }
+            HStack {
+                Spacer()
+                Button(action: onCheckAgain) { Text("Check Again", bundle: .module) }
+                    .assignedSettingsButtonStyle(.secondary)
+            }
+        }
+    }
+
+    private func row(_ app: AppRequirement) -> some View {
+        let missing = items.contains { $0.value == app.bundleID }
+        let installed = missing ? nil : MacAppLocator.locate(bundleID: app.bundleID)
+        return VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
+                AppRequirementIcon(url: installed?.url, size: 20)
+                Text(app.name).font(SettingsFont.compactLabel).foregroundColor(theme.text.primary)
+                if app.optional { StatusChip(L("Optional"), tone: .neutral) }
+                Spacer()
+                Text(missing ? L("Not installed") : L("Installed"))
+                    .font(SettingsFont.chip)
+                    .foregroundColor(missing ? theme.status.warning.foreground : theme.status.success.foreground)
+            }
+            if let help = app.help, !help.isEmpty {
+                Text(help).font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: theme.space.s8) {
+                Text(verbatim: installed?.version.map { "\(app.bundleID) · \($0)" } ?? app.bundleID)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                if missing, let url = app.downloadURL {
+                    Button {
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        Text("Get App", bundle: .module)
+                    }
+                    .assignedSettingsButtonStyle(.primary)
+                }
+            }
+        }
+        .padding(theme.space.s16)
+        .settingsChrome(.inset)
+    }
+}
+
+/// The app's own icon when it is installed, a placeholder otherwise.
+struct AppRequirementIcon: View {
+    @Environment(\.theme) private var theme
+    let url: URL?
+    var size: CGFloat = 16
+
+    var body: some View {
+        Group {
+            if let url {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .frame(width: size, height: size)
+            } else {
+                Image(systemName: "app.dashed").glyphSize(.caption).foregroundColor(theme.text.tertiary)
+                    .frame(width: size, height: size)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Tools
 
 struct WorkflowToolsStep: View {
@@ -1687,6 +1793,10 @@ struct WorkflowReviewStep: View {
         }
         for folder in reqs.folders {
             rows.append(("folder", folder.label, subject.bindings.folders[folder.key] ?? L("Not chosen")))
+        }
+        for app in reqs.apps {
+            let installed = !report.items.contains { $0.kind == .app && $0.value == app.bundleID }
+            rows.append(("macwindow", app.name, installed ? L("Installed") : L("Not installed")))
         }
         for agent in reqs.agents {
             rows.append(

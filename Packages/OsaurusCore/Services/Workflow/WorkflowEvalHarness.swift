@@ -188,6 +188,8 @@ public enum WorkflowEvalHarness {
             /// The draft still edits the seeded saved workflow.
             public var editsSeed = false
             public var declaresFolder = false
+            /// Bundle ids the draft must declare under `apps`.
+            public var declaresApps: [String] = []
             /// An input field is a folder picked on the run form.
             public var folderInput = false
             /// The draft has at most this many more steps than the seed.
@@ -1132,6 +1134,12 @@ public enum WorkflowEvalHarness {
         }
         if want.declaresFolder {
             checks.append((!definition.folders.isEmpty, "declares a folder (\(definition.folders.map(\.key)))"))
+        }
+        if !want.declaresApps.isEmpty {
+            let declared = Set(definition.apps.map { $0.bundleID.lowercased() })
+            let missing = want.declaresApps.filter { !declared.contains($0.lowercased()) }
+            checks.append(
+                (missing.isEmpty, missing.isEmpty ? "declares apps \(want.declaresApps)" : "does not declare \(missing)"))
         }
         if want.folderInput {
             let keys = WorkflowFormFields.fields(fromInputSchema: definition.inputSchema)

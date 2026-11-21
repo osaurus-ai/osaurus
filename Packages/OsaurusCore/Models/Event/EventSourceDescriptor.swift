@@ -119,6 +119,7 @@ enum EventSourceRegistry {
         case .sse: SSESourceDescriptor()
         case .runFailed: RunFailedSourceDescriptor()
         case .app: AppEventsSourceDescriptor()
+        case .macApp: MacAppSourceDescriptor()
         case .email: EmailSourceDescriptor()
         case .channelMessage: ChannelMessageSourceDescriptor()
         }
@@ -433,6 +434,45 @@ struct AppEventsSourceDescriptor: EventSourceDescriptor {
     func knownBinding(field: String) -> String? {
         if ["reason", "trigger", "why"].contains(field) { return "{{app.reason}}" }
         if ["version", "app_version"].contains(field) { return "{{app.app_version}}" }
+        return nil
+    }
+}
+
+struct MacAppSourceDescriptor: EventSourceDescriptor {
+    var kind: EventSourceKind { .macApp }
+    var displayName: String { L("Mac App") }
+    var icon: String { "macwindow" }
+    var subtitle: String { L("When an app opens, quits, or comes to the front") }
+    var friendlyTitle: String { L("When an app opens") }
+    var friendlyExample: String { L("Run something when you open Xcode, or quit Final Cut Pro.") }
+    var listTitle: String { L("Mac apps") }
+    var listSubtitle: String { L("Run when an app opens, quits, or comes to or leaves the front.") }
+    var payloadRoot: String { "mac_app" }
+    var sessionSource: SessionSource { .automation }
+    var requestSource: RequestSource { .automation }
+    /// Switching apps back and forth must not pile up runs: a busy
+    /// automation skips the event.
+    var defaultDelivery: EventDeliveryPolicy {
+        EventDeliveryPolicy(mode: .serial, maxQueued: 0, dedupe: EventDedupePolicy.none)
+    }
+    var defaultFreshSession: Bool { true }
+    var dedupeMode: EventDedupeMode { .none }
+    var filterClauses: Set<EventFilterClause> { [] }
+    var textLabel: String { L("Main text (what the app did)") }
+
+    func triggerValues(sample: JSONValue?) -> [EventTriggerValue] {
+        [
+            .init(path: "mac_app.event", label: L("What the app did")),
+            .init(path: "mac_app.name", label: L("App name")),
+            .init(path: "mac_app.bundle_id", label: L("Bundle ID")),
+            .init(path: "mac_app.pid", label: L("Process ID")),
+        ]
+    }
+
+    func knownBinding(field: String) -> String? {
+        if ["app", "app_name", "application"].contains(field) { return "{{mac_app.name}}" }
+        if ["bundle_id", "bundle"].contains(field) { return "{{mac_app.bundle_id}}" }
+        if ["event", "action", "what"].contains(field) { return "{{mac_app.event}}" }
         return nil
     }
 }

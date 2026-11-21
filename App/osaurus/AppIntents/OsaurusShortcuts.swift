@@ -30,5 +30,14 @@ struct OsaurusShortcuts: AppShortcutsProvider {
             shortTitle: "Run Agent",
             systemImageName: "play.circle"
         )
+        AppShortcut(
+            intent: RunWorkflowIntent(),
+            phrases: [
+                "Run \(\.$workflow) with \(.applicationName)",
+                "Run an \(.applicationName) workflow",
+            ],
+            shortTitle: "Run Workflow",
+            systemImageName: "point.3.connected.trianglepath.dotted"
+        )
     }
 }

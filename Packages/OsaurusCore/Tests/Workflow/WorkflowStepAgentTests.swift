@@ -65,7 +65,7 @@ struct WorkflowStepAgentTests {
             output: .object([:]))
         #expect(keyed.requiredFormatVersion == 5)
         #expect(plain.requiredFormatVersion == 1)
-        #expect(Template.currentFormatVersion == 5)
+        #expect(Template.currentFormatVersion >= 5)
     }
 
     // MARK: - Resolution

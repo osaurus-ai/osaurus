@@ -191,6 +191,17 @@ without real runs.
   turned on, and `automation_updated` when it is saved with a change other
   than run bookkeeping (`AppEventsSource.isEdit`), so a config re-apply that
   writes it back unchanged fires nothing. No dedupe.
+- **Mac App** (`MacAppEventSource`): another app on this Mac opening,
+  quitting, or coming to or leaving the front, from `NSWorkspace`'s
+  launch / terminate / activate / deactivate notifications (no permission;
+  see [APP_EVENTS.md](APP_EVENTS.md) for what else macOS exposes and why
+  it did not ship). One set of observers serves every automation and is
+  registered only while an enabled one has an app and events. Matches by
+  bundle id, case-insensitively. An app that is not installed gets a
+  source note and waits. Delivery is serial with `maxQueued: 0`, so
+  switching back and forth while a run is going skips the extra events;
+  nothing is caught up after Osaurus was closed. Payload root `mac_app`:
+  `event`, `name`, `bundle_id`, `pid`. No dedupe.
 - **Email** (`Services/Event/Email/`): retired; mail is a channel. See
   "Email (retired trigger; now a channel)" below.
 - **Channel message** (`ChannelMessageEventSource`): each platform service
@@ -373,7 +384,8 @@ pipeline code: a descriptor, an adapter (or profile) and a config struct.
 | Polling | Email (IMAP), RSS, Google Sheets, Calendar, Airtable, Notion | `poll` scope + cursor + `durable` dedupe | RSS Feed kind shipped; Email shipped as a channel (IMAP and Mail app, over the same supervisor); others substrate |
 | Streams | Kafka, MQTT, RabbitMQ, Redis, Postgres LISTEN, SSE, IMAP IDLE | `stream` scope with reconnect and heartbeat | Event Stream (SSE) kind shipped; others substrate, each needs a client |
 | Internal | Error Trigger, n8n Trigger (activated / updated), Workflow Trigger, Activation Trigger | `RunFailedEventSource` over `.workflowRunFinished` and `finalize`; `AppEventsSource` over launch and `eventDidChange` | Shipped as Run Failed and App Event. A workflow calling another is a workflow step, not a trigger |
-| Manual / chat | Manual Trigger, Chat Trigger | Run Now; Chat itself | Shipped |
+| Local apps | (none in n8n) | Mac App kind over `NSWorkspace` app notifications | Shipped (open, quit, front, leave front) |
+| Manual / chat | Manual Trigger, Chat Trigger | Run Now; Chat itself | Shipped; Shortcuts runs a workflow through `RunWorkflowIntent` (`POST /workflows/{id}/run`) |
 
 ### Adding a source kind
 

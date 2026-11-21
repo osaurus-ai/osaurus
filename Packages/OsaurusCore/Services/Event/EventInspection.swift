@@ -116,6 +116,11 @@ enum EventInspection {
             detail["include_automation_runs"] = f.includeAutomationRuns
         case .app(let a):
             detail["reasons"] = a.reasons.map(\.rawValue)
+        case .macApp(let m):
+            detail["bundle_id"] = m.bundleID
+            detail["app_name"] = m.displayName
+            detail["app_events"] = m.events.map(\.rawValue)
+            detail["app_installed"] = !m.bundleID.isEmpty && MacAppLocator.isInstalled(bundleID: m.bundleID)
         case .email(let e):
             detail["mailboxes"] = e.effectiveMailboxes
             detail["unread_only"] = e.unreadOnly

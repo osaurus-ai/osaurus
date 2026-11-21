@@ -208,6 +208,7 @@
       "apple_script.scripted-verbatim-single"
     ],
     "Architect": [
+      "architect.chrome-tabs-declares-app",
       "architect.client-intake",
       "architect.csv-reconcile-approval",
       "architect.edit-saved-workflow",

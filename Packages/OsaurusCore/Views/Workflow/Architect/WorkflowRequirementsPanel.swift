@@ -45,7 +45,8 @@ struct WorkflowRequirementsPanel: View {
         let template = DraftRevisionCache.template(draft)
         let reqs = template.requirements
         return !(reqs.secrets.isEmpty && reqs.mcpServers.isEmpty && reqs.plugins.isEmpty && reqs.network.isEmpty
-            && reqs.dependencies.isEmpty && reqs.folders.isEmpty && (template.workflow?.calledTools.isEmpty ?? true))
+            && reqs.dependencies.isEmpty && reqs.folders.isEmpty && reqs.apps.isEmpty
+            && (template.workflow?.calledTools.isEmpty ?? true))
     }
 
     /// "2 secrets · 3 tools · 1 host", for the section while it is closed.
@@ -62,6 +63,7 @@ struct WorkflowRequirementsPanel: View {
             count(reqs.network.count, L("1 host"), L("\(reqs.network.count) hosts")),
             count(reqs.dependencies.count, L("1 package"), L("\(reqs.dependencies.count) packages")),
             count(reqs.folders.count, L("1 folder"), L("\(reqs.folders.count) folders")),
+            count(reqs.apps.count, L("1 app"), L("\(reqs.apps.count) apps")),
         ].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -86,6 +88,11 @@ struct WorkflowRequirementsPanel: View {
             }
             ForEach(reqs.folders) { folder in
                 line(folder.label, icon: "folder", detail: draft.bindings.folders[folder.key] ?? folder.help)
+            }
+            ForEach(reqs.apps) { app in
+                line(
+                    app.optional ? L("\(app.name) (optional)") : app.name, icon: "macwindow", detail: app.help,
+                    help: app.bundleID)
             }
             if !reqs.network.isEmpty {
                 line(L("Reaches \(WorkflowSummary.list(reqs.network))"), icon: "network")
