@@ -31,7 +31,7 @@ struct WorkflowDraftTrigger: Equatable, Sendable {
 
     /// Kinds a workflow trigger may use. Channel messages are routing rules
     /// set up in Channels; email is a channel.
-    static let allowedKinds: [EventSourceKind] = [.schedule, .folder, .webhook, .rss, .sse, .runFailed, .app]
+    static let allowedKinds: [EventSourceKind] = [.schedule, .folder, .webhook, .rss, .sse, .runFailed, .app, .macApp]
 
     /// Parse and check `value` (the tool's `trigger` argument) against
     /// `draft`. The failure is a message for the Architect.
@@ -55,7 +55,7 @@ struct WorkflowDraftTrigger: Equatable, Sendable {
             return .failure(
                 .init(
                     "`trigger` does not match an automation entry: \(error.localizedDescription) Shape: {name, "
-                        + "source: {kind: schedule | folder | webhook | rss | sse | run_failed | app, ...}, "
+                        + "source: {kind: schedule | folder | webhook | rss | sse | run_failed | app | mac_app, ...}, "
                         + "input: {field: \"{{schedule.scheduled_for}}\"}}."))
         }
         guard let rawKind = entry.source?.kind?.lowercased(), let kind = EventSourceKind(rawValue: rawKind),

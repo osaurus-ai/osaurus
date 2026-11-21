@@ -25,8 +25,8 @@ import Foundation
 // MARK: - Document entries
 
 public struct EventSourceEntry: Codable, Equatable, Sendable {
-    /// One of: schedule, folder, webhook, rss, sse, run_failed, app, email,
-    /// channel_message.
+    /// One of: schedule, folder, webhook, rss, sse, run_failed, app, mac_app,
+    /// email, channel_message.
     public var kind: String?
     // schedule
     public var frequency: String?
@@ -75,6 +75,13 @@ public struct EventSourceEntry: Codable, Equatable, Sendable {
     // app
     /// app_launched | automation_enabled | automation_updated
     public var reasons: [String]?
+    // mac_app
+    /// The watched app's bundle id, e.g. `com.apple.dt.Xcode`.
+    public var bundleID: String?
+    /// Its name; defaults to the installed app's name.
+    public var appName: String?
+    /// launched | quit | activated | deactivated
+    public var appEvents: [String]?
     // channel_message
     public var platform: String?
     /// channel_message: n8n / custom HTTP connection; email: the mail
@@ -113,6 +120,9 @@ public struct EventSourceEntry: Codable, Equatable, Sendable {
         case workflows
         case includeAutomationRuns = "include_automation_runs"
         case reasons
+        case bundleID = "bundle_id"
+        case appName = "app_name"
+        case appEvents = "app_events"
         case platform, connection, rooms, aliases
         case requireMention = "require_mention"
         case continueThreads = "continue_threads"
@@ -295,6 +305,10 @@ enum ConfigEvents {
             source.includeAutomationRuns = f.includeAutomationRuns
         case .app(let a):
             source.reasons = a.reasons.map(\.rawValue)
+        case .macApp(let m):
+            source.bundleID = m.bundleID
+            source.appName = m.name.isEmpty ? nil : m.name
+            source.appEvents = m.events.map(\.rawValue)
         case .channelMessage(let m):
             source.platform = m.kind.rawValue
             if let native = ChannelMessageSourceConfig.nativeConnectionId(for: m.kind) {
@@ -628,6 +642,44 @@ enum ConfigEvents {
                 config = AppEventsSourceConfig(reasons: reasons)
             }
             source = .app(config)
+        case .macApp:
+            var config = base?.macApp ?? MacAppSourceConfig()
+            if let raw = sourceEntry.bundleID?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                guard AppRequirement.isValidBundleID(raw) else {
+                    return .failure(
+                        .init("\(label).source.bundle_id: `\(raw)` is not a bundle id, like `com.apple.dt.Xcode`."))
+                }
+                if raw.caseInsensitiveCompare(config.bundleID) != .orderedSame {
+                    config.name = MacAppLocator.locate(bundleID: raw)?.name ?? ""
+                }
+                config.bundleID = raw
+            }
+            guard !config.bundleID.isEmpty else {
+                return .failure(.init("\(label).source: `bundle_id` is required for a mac_app automation."))
+            }
+            if let name = sourceEntry.appName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                config.name = name
+            }
+            if let raws = sourceEntry.appEvents {
+                var events: [MacAppEvent] = []
+                for raw in raws {
+                    guard let event = MacAppEvent(rawValue: raw.lowercased()) else {
+                        return .failure(
+                            .init(
+                                "\(label).source.app_events: `\(raw)` is not one of: "
+                                    + MacAppEvent.allCases.map(\.rawValue).joined(separator: ", ") + "."))
+                    }
+                    events.append(event)
+                }
+                guard !events.isEmpty else {
+                    return .failure(.init("\(label).source.app_events: pick at least one."))
+                }
+                config.events = MacAppSourceConfig(events: events).events
+            }
+            if MacAppLocator.locate(bundleID: config.bundleID) == nil {
+                notes.append("`\(config.displayName)` is not installed on this Mac; the automation waits until it is.")
+            }
+            source = .macApp(config)
         case .email:
             return .failure(.init("\(label).source: \(retiredEmailNote(names: [entry.name]))"))
         case .channelMessage:

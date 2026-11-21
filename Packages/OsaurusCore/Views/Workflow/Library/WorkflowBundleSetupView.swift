@@ -198,6 +198,7 @@ struct WorkflowBundleSetupView: View {
         if reqs.contains(where: { !$0.models.isEmpty }) { out.append(.models) }
         if !bundle.secrets.isEmpty { out.append(.secrets) }
         if reqs.contains(where: { !$0.folders.isEmpty }) { out.append(.folders) }
+        if reqs.contains(where: { !$0.apps.isEmpty }) { out.append(.apps) }
         if reqs.contains(where: { !$0.agents.isEmpty }) { out.append(.agents) }
         if reqs.contains(where: { !$0.mcpServers.isEmpty || !$0.plugins.isEmpty })
             || shared.contains(where: { $0.kind == .network || $0.kind == .tool })
@@ -284,6 +285,12 @@ struct WorkflowBundleSetupView: View {
                             })
                     }
                 }
+            case .apps:
+                WorkflowAppsStep(
+                    apps: bundle.subjects.map(\.template.requirements).reduce(TemplateRequirements()) {
+                        $0.merged(with: $1)
+                    }.apps,
+                    items: items(.apps), onCheckAgain: { refresh(rebuildSteps: false) })
             case .agents:
                 ForEach(Array(bundle.subjects.enumerated()), id: \.element.id) { index, subject in
                     if !subject.template.requirements.agents.isEmpty {

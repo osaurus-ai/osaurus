@@ -4844,6 +4844,30 @@ public enum SettingsSearchIndex {
             declarativeSection: "automations"
         ),
         .init(
+            id: "automations.macApp",
+            tab: .automations,
+            title: "App",
+            keywords: [
+                "mac app", "mac app trigger", "when an app opens", "when an app quits", "app opens",
+                "app launch trigger", "watch an app", "bundle id", "Other App…",
+            ],
+            disambiguation:
+                "In the Add/Edit Automation sheet for a Mac App automation: the Mac app to watch, picked from installed apps or with Other App…. Not the App Event kind, which is about Osaurus itself starting.",
+            declarativeSection: "automations"
+        ),
+        .init(
+            id: "automations.macAppEvents",
+            tab: .automations,
+            title: "Run when it",
+            keywords: [
+                "app quits", "app comes to the front", "app leaves the front", "frontmost app", "app switch trigger",
+                "app activated",
+            ],
+            disambiguation:
+                "In the Add/Edit Automation sheet for a Mac App automation: Opens, Quits, Comes to the front, Leaves the front. Fires only while Osaurus runs; events while a run is going are skipped.",
+            declarativeSection: "automations"
+        ),
+        .init(
             id: "workflows.overview",
             tab: .workflows,
             title: "Workflows",

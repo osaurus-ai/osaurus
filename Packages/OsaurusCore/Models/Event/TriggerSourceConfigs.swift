@@ -151,6 +151,111 @@ public struct AppEventsSourceConfig: Codable, Equatable, Sendable {
     public func fires(on reason: AppEventReason) -> Bool { reasons.contains(reason) }
 }
 
+/// Something another Mac app did, as `NSWorkspace` reports it.
+public enum MacAppEvent: String, Codable, CaseIterable, Sendable, Identifiable {
+    case launched
+    case quit
+    /// Came to the front.
+    case activated
+    /// Stopped being the front app.
+    case deactivated
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .launched: L("Opens")
+        case .quit: L("Quits")
+        case .activated: L("Comes to the front")
+        case .deactivated: L("Leaves the front")
+        }
+    }
+
+    /// What the app does, after its name: "opens".
+    public var verb: String {
+        switch self {
+        case .launched: L("opens")
+        case .quit: L("quits")
+        case .activated: L("comes to the front")
+        case .deactivated: L("leaves the front")
+        }
+    }
+
+    /// What the app did, after its name: "opened".
+    public var pastVerb: String {
+        switch self {
+        case .launched: L("opened")
+        case .quit: L("quit")
+        case .activated: L("came to the front")
+        case .deactivated: L("left the front")
+        }
+    }
+
+    /// The event as the middle of a sentence: "Xcode opens".
+    public func sentence(_ app: String) -> String {
+        switch self {
+        case .launched: L("\(app) opens")
+        case .quit: L("\(app) quits")
+        case .activated: L("\(app) comes to the front")
+        case .deactivated: L("\(app) leaves the front")
+        }
+    }
+}
+
+/// The "Mac App" automation: fires when the chosen app opens, quits, or
+/// comes to or leaves the front. Only while Osaurus runs; what happened
+/// while it was closed is not caught up.
+public struct MacAppSourceConfig: Codable, Equatable, Sendable {
+    /// The app's bundle identifier; empty until one is chosen.
+    public var bundleID: String
+    /// The app's name as chosen, for summaries when it is not installed.
+    public var name: String
+    /// In `MacAppEvent.allCases` order, no repeats.
+    public var events: [MacAppEvent]
+
+    public init(bundleID: String = "", name: String = "", events: [MacAppEvent] = [.launched]) {
+        self.bundleID = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wanted = Set(events)
+        self.events = MacAppEvent.allCases.filter(wanted.contains)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            bundleID: try c.decodeIfPresent(String.self, forKey: .bundleID) ?? "",
+            name: try c.decodeIfPresent(String.self, forKey: .name) ?? "",
+            events: try c.decodeIfPresent([MacAppEvent].self, forKey: .events) ?? [.launched])
+    }
+
+    public func fires(on event: MacAppEvent, bundleID other: String?) -> Bool {
+        guard let other, !bundleID.isEmpty, events.contains(event) else { return false }
+        return bundleID.caseInsensitiveCompare(other) == .orderedSame
+    }
+
+    /// The name to show: as chosen, else the bundle id.
+    public var displayName: String { name.isEmpty ? bundleID : name }
+
+    /// "Xcode opens or quits"; "Xcode opens, quits, or comes to the front".
+    public var phrase: String {
+        let app = bundleID.isEmpty ? L("an app") : displayName
+        guard events.count > 1 else { return (events.first ?? .launched).sentence(app) }
+        return "\(app) \(Self.orList(events.map(\.verb)))"
+    }
+
+    /// Why a run started: "Xcode opened"; "Xcode opened or quit".
+    public var pastPhrase: String {
+        let app = bundleID.isEmpty ? L("An app") : displayName
+        return "\(app) \(Self.orList((events.isEmpty ? [.launched] : events).map(\.pastVerb)))"
+    }
+
+    private static func orList(_ items: [String]) -> String {
+        guard let last = items.last, items.count > 1 else { return items.first ?? "" }
+        let head = items.dropLast()
+        return head.count == 1 ? L("\(head.joined()) or \(last)") : L("\(head.joined(separator: ", ")), or \(last)")
+    }
+}
+
 enum TriggerSourceURL {
     /// An http(s) URL with a host; nil otherwise.
     static func parse(_ text: String) -> URL? {

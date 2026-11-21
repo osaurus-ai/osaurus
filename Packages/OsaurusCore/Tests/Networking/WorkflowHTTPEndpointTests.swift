@@ -82,6 +82,37 @@ struct WorkflowHTTPEndpointTests {
         #expect((malformedResponse as? HTTPURLResponse)?.statusCode == 400)
     }
 
+    // MARK: POST /workflows/{id}/run (Shortcuts)
+
+    @Test func localRunRouteAnswersOnlyTheAppToken() async throws {
+        let server = try await startWorkflowTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+
+        func post(_ body: String, token: String?, authenticate: Bool = false) async throws -> (Int?, String) {
+            var request = URLRequest(
+                url: URL(string: "http://\(server.host):\(server.port)/workflows/\(UUID().uuidString)/run")!)
+            request.httpMethod = "POST"
+            request.httpBody = Data(body.utf8)
+            if authenticate { request.authenticate() }
+            if let token { request.setValue(token, forHTTPHeaderField: LocalAPIKeyPolicy.appTokenHeaderName) }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            return ((response as? HTTPURLResponse)?.statusCode, String(decoding: data, as: UTF8.self))
+        }
+
+        let keyOnly = try await post("{}", token: nil, authenticate: true)
+        #expect(keyOnly.0 == 403, "an access key is not the app")
+        #expect(keyOnly.1.contains("app_only"))
+        let wrong = try await post("{}", token: "nope")
+        #expect(wrong.0 == 403)
+
+        let token = LocalAPIKeyPolicy.appSessionToken
+        let missing = try await post(#"{"text":"hi"}"#, token: token)
+        #expect(missing.0 == 404)
+        #expect(missing.1.contains("workflow_not_found"))
+        let malformed = try await post("[1]", token: token)
+        #expect(malformed.0 == 400)
+    }
+
     // MARK: /mcp hides agent-bound tools (review #22)
 
     @Test func mcpHidesWorkflowToolsFromCallersWithoutAnAgent() async throws {

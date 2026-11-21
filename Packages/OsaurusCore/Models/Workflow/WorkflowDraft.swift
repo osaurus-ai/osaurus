@@ -268,6 +268,9 @@ public enum WorkflowDraftOp: Equatable, Sendable {
     /// Upsert by key.
     case declareFolder(FolderRequirement)
     case removeFolder(key: String)
+    /// Upsert by bundle id.
+    case declareApp(AppRequirement)
+    case removeApp(bundleID: String)
     /// Upsert by name.
     case addExample(WorkflowExample)
     case removeExample(name: String)
@@ -281,7 +284,7 @@ public enum WorkflowDraftOp: Equatable, Sendable {
     public static let names = [
         "plan_placeholder", "update_node", "remove_node", "add_edge", "remove_edge",
         "set_schemas", "set_output", "set_info", "declare_slot", "declare_secret", "declare_connection",
-        "declare_dependency", "declare_folder", "add_example", "declare_server", "detach",
+        "declare_dependency", "declare_folder", "declare_app", "add_example", "declare_server", "detach",
     ]
 
     public struct ParseError: Error, Equatable {
@@ -473,6 +476,21 @@ public enum WorkflowDraftOp: Equatable, Sendable {
                 throw ParseError(message: "`declare_folder` \(issue)")
             }
             return .declareFolder(folder)
+        case "declare_app":
+            let bundleID = try string("bundle_id").trimmingCharacters(in: .whitespacesAndNewlines)
+            if o["remove"] == .bool(true) { return .removeApp(bundleID: bundleID) }
+            func text(_ key: String) -> String? {
+                guard let raw = o[key]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty
+                else { return nil }
+                return raw
+            }
+            let app = AppRequirement(
+                bundleID: bundleID, name: text("name") ?? "", help: text("help"), url: text("url"),
+                optional: o["optional"]?.boolValue ?? false)
+            if let issue = app.issues.first {
+                throw ParseError(message: "`declare_app` \(issue)")
+            }
+            return .declareApp(app)
         case "add_example":
             if o["remove"]?.boolValue == true { return .removeExample(name: try string("name")) }
             guard let input = o["input"], case .object = input else {
@@ -636,6 +654,12 @@ public enum WorkflowDraftPatcher {
             case .removeFolder(let key):
                 guard def.folders.contains(where: { $0.key == key }) else { throw fail("No folder `\(key)`.") }
                 def.folders.removeAll { $0.key == key }
+            case .declareApp(let app):
+                def.apps = AppRequirement.upserting(app, in: def.apps)
+            case .removeApp(let bundleID):
+                let id = bundleID.lowercased()
+                guard def.apps.contains(where: { $0.id == id }) else { throw fail("No app `\(bundleID)`.") }
+                def.apps.removeAll { $0.id == id }
             case .addExample(let example):
                 def.examples.removeAll { $0.name == example.name }
                 def.examples.append(example)
@@ -864,6 +888,7 @@ public enum WorkflowDiff {
         compare(old.examples, new.examples, "examples")
         compare(old.dependencies, new.dependencies, "dependencies")
         compare(old.folders, new.folders, "folders")
+        compare(old.apps, new.apps, "apps")
         compare(old.requirementNotes, new.requirementNotes, "requirement notes")
         return out
     }

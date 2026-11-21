@@ -115,6 +115,11 @@ public enum EventTriggerValues {
             return EventPayload.app(
                 event: event, firedAt: now, reason: app.reasons.first ?? .appLaunched,
                 appVersion: EventPayload.appVersion)
+        case .macApp(let mac):
+            return EventPayload.macApp(
+                event: event, firedAt: now, what: mac.events.first ?? .launched,
+                name: mac.bundleID.isEmpty ? L("Xcode") : mac.displayName,
+                bundleID: mac.bundleID.isEmpty ? "com.apple.dt.Xcode" : mac.bundleID, pid: 4242)
         case .email(let email):
             return EventPayload.email(
                 event: event, firedAt: now, message: .example(mailbox: email.effectiveMailboxes[0]),

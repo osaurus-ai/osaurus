@@ -64,6 +64,7 @@ public final class EventManager {
     @ObservationIgnored private(set) lazy var sseSource = SSEEventSource(manager: self)
     @ObservationIgnored private(set) lazy var runFailedSource = RunFailedEventSource(manager: self)
     @ObservationIgnored private(set) lazy var appSource = AppEventsSource(manager: self)
+    @ObservationIgnored private(set) lazy var macAppSource = MacAppEventSource(manager: self)
     /// Poll / stream / maintenance loops for adapters that pull.
     @ObservationIgnored private(set) lazy var runtime = SourceRuntimeSupervisor(host: .manager(self))
     /// One adapter per source kind, in launch order. Tests swap entries.
@@ -124,6 +125,7 @@ public final class EventManager {
         case .sse: sseSource
         case .runFailed: runFailedSource
         case .app: appSource
+        case .macApp: macAppSource
         case .email: emailSource
         case .channelMessage: channelSource
         }

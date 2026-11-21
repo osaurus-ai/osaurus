@@ -49,7 +49,7 @@ enum ConfigManifestEventKeys {
             moreComments: ["Run as (whose keys it uses) is set in the app"]),
         inputKey(
             example: "\"{{schedule.scheduled_for}}\"",
-            kinds: [.schedule, .folder, .webhook, .rss, .sse, .runFailed, .app, .email]),
+            kinds: [.schedule, .folder, .webhook, .rss, .sse, .runFailed, .app, .macApp, .email]),
         ConfigKeySpec("delivery", .mapping(deliveryKeys), comment: "queueing; defaults depend on the source"),
         ConfigKeySpec("reply", .mapping(replyKeys), comment: "legacy channel_message only"),
     ]
@@ -76,9 +76,12 @@ enum ConfigManifestEventKeys {
             "kind",
             .scalar(
                 .string, example: "schedule",
-                allowed: ["schedule", "folder", "webhook", "rss", "sse", "run_failed", "app", "email", "channel_message"]),
+                allowed: [
+                    "schedule", "folder", "webhook", "rss", "sse", "run_failed", "app", "mac_app", "email",
+                    "channel_message",
+                ]),
             comment: "schedule | folder | webhook | rss | sse | run_failed |",
-            moreComments: ["app | channel_message; email is retired (ignored) —", "use channels.email"]),
+            moreComments: ["app | mac_app | channel_message; email is retired", "(ignored) — use channels.email"]),
         ConfigKeySpec(
             "frequency",
             .scalar(
@@ -172,6 +175,15 @@ enum ConfigManifestEventKeys {
             "reasons", .scalarList(.string, example: ["app_launched"]),
             comment: "app: app_launched | automation_enabled |",
             moreComments: ["automation_updated"]),
+        ConfigKeySpec(
+            "bundle_id", .scalar(.string, example: "com.apple.dt.Xcode"),
+            comment: "mac_app: the watched app's bundle id"),
+        ConfigKeySpec(
+            "app_name", .scalar(.string, example: "Xcode"),
+            comment: "mac_app: its name; defaults to the installed app's"),
+        ConfigKeySpec(
+            "app_events", .scalarList(.string, example: ["launched"]),
+            comment: "mac_app: launched | quit | activated | deactivated"),
         ConfigKeySpec(
             "platform",
             .scalar(

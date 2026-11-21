@@ -134,6 +134,7 @@ enum WorkflowRunWords {
         case .rss(let rss): return L("\(AutomationSentence.siteName(rss)) posted something new")
         case .runFailed: return L("Another workflow failed")
         case .app: return L("Osaurus opened")
+        case .macApp(let mac): return mac.pastPhrase
         case .webhook(let webhook):
             guard let provider = AutomationSentence.providerName(webhook.provider) else { return L("Ran on its own") }
             return L("\(provider) had news")

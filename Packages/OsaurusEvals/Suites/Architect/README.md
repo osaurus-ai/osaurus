@@ -10,7 +10,7 @@ prompt and draft tools are composed) and scores the draft it leaves behind:
 - the draft has the node kinds, inputs and outputs the brief calls for, plus
   any structural checks the case names (`structure`: paging, secrets read
   through `auth`, retries, error handling, conditional edges, examples and
-  whether each was tested, file outputs, declared folders, labeled inputs, no
+  whether each was tested, file outputs, declared folders and apps, labeled inputs, no
   machine paths, and for a seeded workflow which steps survive);
 - a `workflow_test` run completed, and a completed test's output has what the
   case expects (`testOutputKeys`, `testOutputValues`, `testOutputContains`,
@@ -71,6 +71,7 @@ steps run on the eval model.
 | `architect.repair-failed-run` | Read the failed run, fix the step, re-test from the run. |
 | `architect.media-pipeline` | Generate then upscale per item; blocked without image models. |
 | `architect.scheduled-briefing-trigger` | The save proposal carries the weekday schedule the brief names as a `trigger`. |
+| `architect.chrome-tabs-declares-app` | An AppleScript step that drives Chrome declares it (`declare_app`, bundle id `com.google.Chrome`) for setup to check. |
 | `architect.svg-folder-to-png` | One question on how the folder is picked, a folder input tested through the picker, files copied into the sandbox, converted with a Linux program, and copied back to `png/`. |
 
 ## Run

@@ -95,8 +95,9 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
     /// `WorkflowDefinition.usesPostV1Features`; format 3 added the `media`
     /// step and bypassed steps (`WorkflowDefinition.usesFormat3Features`);
     /// format 4 added the `agent` step; format 5 added tool steps that run
-    /// as a named agent (`tool.agent`).
-    public static let currentFormatVersion = 5
+    /// as a named agent (`tool.agent`); format 6 added declared Mac apps
+    /// (`apps`).
+    public static let currentFormatVersion = 6
     /// The format every build understands.
     public static let baselineFormatVersion = 1
 

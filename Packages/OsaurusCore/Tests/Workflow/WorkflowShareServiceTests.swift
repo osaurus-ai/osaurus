@@ -1873,7 +1873,7 @@ extension WorkflowShareServiceHTTPTests {
             Issue.record("a real template problem stays a template problem: \(other)")
             return
         }
-        #expect(tooNew.errorDescription?.contains("agent steps") == true)
+        #expect(tooNew.errorDescription?.contains("newer steps") == true)
     }
 
     @Test

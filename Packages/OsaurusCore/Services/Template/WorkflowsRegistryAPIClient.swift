@@ -519,7 +519,7 @@ public enum WorkflowsRegistryAPIError: LocalizedError, Sendable, Equatable {
         case .watchTokenRejected:
             return L("Osaurus stopped hearing about reviews. Open a published workflow to resume.")
         case .storeOutdated(.newerFormat):
-            return L("The store doesn't accept agent steps yet. Try again after the store updates.")
+            return L("The store doesn't accept this workflow's newer steps yet. Try again after the store updates.")
         case .storeOutdated(.workspaces):
             return L("The store doesn't support workspace sharing yet. Try again after the store updates.")
         case .addressBanned:

@@ -234,6 +234,35 @@ struct AppEventsSourceDraft: Equatable {
     var sample: EventSource { .app(AppEventsSourceConfig(reasons: Array(reasons))) }
 }
 
+struct MacAppSourceDraft: Equatable {
+    var bundleID = ""
+    var name = ""
+    var events: Set<MacAppEvent> = [.launched]
+
+    mutating func load(_ config: MacAppSourceConfig) {
+        bundleID = config.bundleID
+        name = config.name
+        events = Set(config.events)
+    }
+
+    mutating func choose(_ app: InstalledMacApp) {
+        bundleID = app.bundleID
+        name = app.name
+    }
+
+    func build() -> Result<EventSource, EventSourceDraftError> {
+        guard !bundleID.isEmpty else {
+            return .failure(EventSourceDraftError(message: L("Choose the app to watch.")))
+        }
+        guard !events.isEmpty else {
+            return .failure(EventSourceDraftError(message: L("Pick at least one thing the app does.")))
+        }
+        return .success(sample)
+    }
+
+    var sample: EventSource { .macApp(MacAppSourceConfig(bundleID: bundleID, name: name, events: Array(events))) }
+}
+
 struct EmailSourceDraft: Equatable {
     var connectionId = ""
     var mailboxes: [String] = []
@@ -320,6 +349,7 @@ struct EventSourceDrafts: Equatable {
     var sse = SSESourceDraft()
     var runFailed = RunFailedSourceDraft()
     var app = AppEventsSourceDraft()
+    var macApp = MacAppSourceDraft()
     var email = EmailSourceDraft()
     var channel = ChannelSourceDraft()
 
@@ -332,6 +362,7 @@ struct EventSourceDrafts: Equatable {
         case .sse(let config): sse.load(config)
         case .runFailed(let config): runFailed.load(config)
         case .app(let config): app.load(config)
+        case .macApp(let config): macApp.load(config)
         case .email(let config): email.load(config)
         case .channelMessage(let config): channel.load(config)
         }
@@ -346,6 +377,7 @@ struct EventSourceDrafts: Equatable {
         case .source(.sse): sse.build()
         case .source(.runFailed): runFailed.build()
         case .source(.app): app.build()
+        case .source(.macApp): macApp.build()
         case .source(.email): email.build()
         case .channel(let kind): channel.build(kind)
         case .source(.channelMessage):
@@ -363,6 +395,7 @@ struct EventSourceDrafts: Equatable {
         case .source(.sse): sse.sample
         case .source(.runFailed): runFailed.sample
         case .source(.app): app.sample
+        case .source(.macApp): macApp.sample
         case .source(.email): email.sample
         case .channel(let kind): channel.sample(kind)
         case .source(.channelMessage): channel.sample(.slack)
@@ -401,6 +434,8 @@ struct EventSourceEditor: View {
             RunFailedSourceEditor(draft: $drafts.runFailed)
         case .source(.app):
             AppEventsSourceEditor(draft: $drafts.app)
+        case .source(.macApp):
+            MacAppSourceEditor(draft: $drafts.macApp)
         case .source(.email):
             EmailSourceRetiredNotice()
         case .channel(let kind):
@@ -854,6 +889,99 @@ struct RunFailedSourceEditor: View {
             set: { on in
                 draft.workflowIDs.removeAll { $0 == id }
                 if on { draft.workflowIDs.append(id) }
+            })
+    }
+}
+
+struct MacAppSourceEditor: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+    @Binding var draft: MacAppSourceDraft
+    @State private var installed: [InstalledMacApp] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            EventEditorLabeled(L("App")) {
+                HStack(spacing: theme.space.s8) {
+                    let chosen = draft.bundleID.isEmpty ? nil : MacAppLocator.locate(bundleID: draft.bundleID)
+                    if !draft.bundleID.isEmpty {
+                        AppRequirementIcon(url: chosen?.url, size: 18)
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
+                            Text(verbatim: draft.name.isEmpty ? draft.bundleID : draft.name)
+                                .font(SettingsFont.compactLabel)
+                                .foregroundColor(theme.text.primary)
+                            Text(verbatim: chosen == nil ? L("\(draft.bundleID) · Not installed") : draft.bundleID)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(chosen == nil ? theme.status.warning.foreground : theme.text.tertiary)
+                        }
+                    } else {
+                        Text("No app chosen", bundle: .module)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
+                    }
+                    Spacer(minLength: theme.space.s8)
+                    picker
+                }
+            }
+            .settingsLandingAnchor("automations.macApp")
+            EventEditorLabeled(L("Run when it")) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
+                    ForEach(MacAppEvent.allCases) { event in
+                        Toggle(isOn: binding(event)) { Text(verbatim: event.displayName) }
+                            .settingsCheckbox()
+                    }
+                }
+            }
+            .settingsLandingAnchor("automations.macAppEvents")
+            Text(
+                "Fires only while Osaurus is running; an app opened or quit while Osaurus was closed does not run it. Switching back and forth while a run is going skips the extra events.",
+                bundle: .module
+            )
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .task { if installed.isEmpty { installed = MacAppLocator.installedApps() } }
+    }
+
+    private var picker: some View {
+        Menu {
+            ForEach(installed) { app in
+                Button(app.name) { draft.choose(app) }
+            }
+            if !installed.isEmpty { Divider() }
+            Button(L("Other App…")) {
+                if let app = Self.chooseApp() { draft.choose(app) }
+            }
+        } label: {
+            Text(draft.bundleID.isEmpty ? L("Choose App") : L("Change App"))
+        }
+        .menuStyle(.button)
+        .assignedSettingsButtonStyle(.secondary, size: .compact)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    @MainActor
+    static func chooseApp() -> InstalledMacApp? {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        panel.message = L("Choose the app to watch.")
+        panel.prompt = L("Choose")
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return MacAppLocator.info(at: url)
+    }
+
+    private func binding(_ event: MacAppEvent) -> Binding<Bool> {
+        Binding(
+            get: { draft.events.contains(event) },
+            set: { on in
+                if on { draft.events.insert(event) } else { draft.events.remove(event) }
             })
     }
 }

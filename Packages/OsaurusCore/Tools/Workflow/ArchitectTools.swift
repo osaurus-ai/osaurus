@@ -163,7 +163,9 @@ final class WorkflowDraftTool: OsaurusTool, PermissionedTool, @unchecked Sendabl
                         + "{provider? | service?, key?, label?, help?, scopes?, sign_in?, oauth2?} (providers: "
                         + "\(ConnectionProviders.summary)); declare_server {name, directory_id? | url? | command?, "
                         + "args?, transport?, auth?, remove?}; declare_dependency {manager, packages, binaries?}; "
-                        + "declare_folder {key, label, help?, access?, hint?, remove?}; add_example {name, input} (or {name, remove: true}); "
+                        + "declare_folder {key, label, help?, access?, hint?, remove?}; "
+                        + "declare_app {bundle_id, name, help?, url?, optional?, remove?} (a Mac app a step drives; "
+                        + "find its bundle id with `workflow_discover` action `apps`); add_example {name, input} (or {name, remove: true}); "
                         + "detach {}. The node format is in your instructions."),
                 // Every op field is declared: providers that follow the
                 // schema strictly emit only declared properties.
@@ -177,7 +179,7 @@ final class WorkflowDraftTool: OsaurusTool, PermissionedTool, @unchecked Sendabl
                         ]),
                         "id": WorkflowDraftTool.stringField("Node id (slug)."),
                         "name": WorkflowDraftTool.stringField(
-                            "Placeholder, workflow, example, or MCP server name (a node's new name goes inside `node`)."),
+                            "Placeholder, workflow, example, MCP server, or app name (a node's new name goes inside `node`)."),
                         "intent": WorkflowDraftTool.stringField("One line: what the placeholder step does."),
                         "summary": WorkflowDraftTool.stringField("One-line workflow summary."),
                         "node": .object([
@@ -259,7 +261,14 @@ final class WorkflowDraftTool: OsaurusTool, PermissionedTool, @unchecked Sendabl
                             "description": .string("For `declare_connection`: false takes a personal token instead of the browser sign-in."),
                         ]),
                         "directory_id": WorkflowDraftTool.stringField("For `declare_server`: an Osaurus MCP Directory id."),
-                        "url": WorkflowDraftTool.stringField("For `declare_server`: the server's https URL."),
+                        "url": WorkflowDraftTool.stringField(
+                            "For `declare_server`: the server's https URL. For `declare_app`: where to get the app (https or macappstore)."),
+                        "bundle_id": WorkflowDraftTool.stringField(
+                            "For `declare_app`: the app's bundle id from `workflow_discover` `apps`, e.g. com.apple.shortcuts."),
+                        "optional": .object([
+                            "type": .string("boolean"),
+                            "description": .string("For `declare_app`: true when the workflow still runs without the app; setup only mentions it."),
+                        ]),
                         "command": WorkflowDraftTool.stringField("For `declare_server` with transport stdio."),
                         "args": .object(["type": .string("array"), "items": .object(["type": .string("string")])]),
                         "transport": .object([
@@ -1098,7 +1107,8 @@ final class WorkflowProposeSaveTool: OsaurusTool, @unchecked Sendable {
                         + "fixed text}}. Source by kind: schedule {frequency: once | every_n_minutes | hourly | "
                         + "daily | weekly | monthly | yearly | cron, frequency_value (cron: 5 fields `min hour dom "
                         + "month dow`, dow 0-6 with Sun = 0; weekly: MON..SUN), frequency_time_of_day \"HH:mm\"}; "
-                        + "folder {path, recursive?}; webhook {provider?}; rss {url}; sse {url}; run_failed; app. "
+                        + "folder {path, recursive?}; webhook {provider?}; rss {url}; sse {url}; run_failed; app; "
+                        + "mac_app {bundle_id, app_events?: launched | quit | activated | deactivated}. "
                         + "Weekdays at 7: {kind: schedule, frequency: cron, frequency_value: \"0 7 * * 1-5\"}."),
             ]),
         ]),

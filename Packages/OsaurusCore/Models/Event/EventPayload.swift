@@ -25,6 +25,7 @@
 //      failure:  { kind, run_id, workflow: { id, name }, error, failed_step,
 //                  automation: { id, name }, caller, started_at, finished_at }
 //      app:      { reason, app_version, automation: { id, name } }
+//      mac_app:  { event, name, bundle_id, pid }
 //
 
 import Foundation
@@ -255,6 +256,20 @@ public enum EventPayload {
         return .object(payload)
     }
 
+    static func macApp(
+        event: OsaurusEvent, firedAt: Date, what: MacAppEvent, name: String, bundleID: String, pid: Int?
+    ) -> JSONValue {
+        var payload = base(event: event, firedAt: firedAt)
+        payload["text"] = .string(what.sentence(name))
+        payload["mac_app"] = .object([
+            "event": .string(what.rawValue),
+            "name": .string(name),
+            "bundle_id": .string(bundleID),
+            "pid": pid.map { .number(Double($0)) } ?? .null,
+        ])
+        return .object(payload)
+    }
+
     /// `CFBundleShortVersionString`, or "dev" outside an app bundle.
     static var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -436,8 +451,9 @@ public enum WorkflowInputMapper {
     /// A starting mapping for a workflow: every required (or, with none
     /// required, every) input field bound to the source's natural value —
     /// a field named like the source's main value gets it, the first other
-    /// string field gets `{{text}}`.
-    public static func suggestedMapping(schema: JSONValue, sourceKind: EventSourceKind) -> [String: String] {
+    /// string field gets `{{text}}`. A nil source (text from outside an
+    /// automation) knows no natural values, only `{{text}}`.
+    public static func suggestedMapping(schema: JSONValue, sourceKind: EventSourceKind?) -> [String: String] {
         let properties = schema.value(atPath: "properties")?.objectValue ?? [:]
         guard !properties.isEmpty else { return [:] }
         let required = (schema.value(atPath: "required")?.arrayValue ?? []).compactMap(\.stringValue)
@@ -459,7 +475,7 @@ public enum WorkflowInputMapper {
         return mapping
     }
 
-    private static func knownBinding(for field: String, sourceKind: EventSourceKind) -> String? {
-        sourceKind.descriptor.knownBinding(field: field)
+    private static func knownBinding(for field: String, sourceKind: EventSourceKind?) -> String? {
+        sourceKind?.descriptor.knownBinding(field: field)
     }
 }

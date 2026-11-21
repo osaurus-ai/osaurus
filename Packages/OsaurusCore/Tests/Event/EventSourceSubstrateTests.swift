@@ -45,8 +45,8 @@ struct EventSourceRegistryTests {
         #expect(EventDeliveryPolicy.defaults(for: .channelMessage).mode == .perConversation)
         #expect(EventDeliveryPolicy.defaults(for: .email).dedupe == .durable)
         #expect(EventDeliveryPolicy.defaults(for: .email).mode == .serial)
-        #expect(EventSourceRegistry.pickerKinds == [.schedule, .folder, .webhook, .rss, .sse, .runFailed, .app])
-        #expect(EventSourceRegistry.listKinds == [.schedule, .folder, .webhook, .rss, .sse, .runFailed, .app, .email])
+        #expect(EventSourceRegistry.pickerKinds == [.schedule, .folder, .webhook, .rss, .sse, .runFailed, .app, .macApp])
+        #expect(EventSourceRegistry.listKinds == [.schedule, .folder, .webhook, .rss, .sse, .runFailed, .app, .macApp, .email])
         #expect(EventSourceTemplate.triggers == EventSourceRegistry.pickerKinds.map { .source($0) })
         #expect(EventSourceTemplate.providerWebhooks.count == WebhookProvider.allCases.count - 1)
         #expect(EventDeliveryPolicy.defaults(for: .rss).dedupe == .durable)
@@ -66,7 +66,10 @@ struct EventSourceRegistryTests {
     @Test func historyChipsComeFromTheRegistry() {
         #expect(
             AutomationHistoryFilter.Source.allCases.map(\.id)
-                == ["all", "schedule", "folder", "webhook", "rss", "sse", "run_failed", "app", "channel_message"])
+                == [
+                    "all", "schedule", "folder", "webhook", "rss", "sse", "run_failed", "app", "mac_app",
+                    "channel_message",
+                ])
         #expect(AutomationHistoryFilter.Source.messages.displayName == L("Messages"))
     }
 }

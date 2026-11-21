@@ -827,7 +827,7 @@ public enum ConfigManifest {
 
         ConfigSectionSpec(
             .automations,
-            comment: "automations: a trigger (schedule, folder, webhook, rss, sse, run_failed, app) that runs an installed workflow, one tool-less model answer (instructions alone), or a CUSTOM agent for tool work; channel messages are channels.<platform>.routing",
+            comment: "automations: a trigger (schedule, folder, webhook, rss, sse, run_failed, app, mac_app) that runs an installed workflow, one tool-less model answer (instructions alone), or a CUSTOM agent for tool work; channel messages are channels.<platform>.routing",
             value: .entityList(ConfigManifestEventKeys.itemKeys, requiredKey: "name")),
     ]
 

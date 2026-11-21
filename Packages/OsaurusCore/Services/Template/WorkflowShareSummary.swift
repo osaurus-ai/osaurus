@@ -51,6 +51,11 @@ struct WorkflowShareSummary: Equatable {
         }
         for secret in requirements.secrets { add(secret.label) }
         for folder in requirements.folders { add(folder.label) }
+        for app in requirements.apps { add(app.name) }
+        if let definition = template.workflow {
+            let apple = Set(definition.calledTools.compactMap { AppleApp.app(forTool: $0.name) })
+            for app in AppleApp.sorted(apple) { add(app.displayName) }
+        }
         for server in requirements.mcpServers { add(server) }
         for host in requirements.network { add(host) }
         if let definition = template.workflow {
