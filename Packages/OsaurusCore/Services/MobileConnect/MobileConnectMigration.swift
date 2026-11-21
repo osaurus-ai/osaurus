@@ -17,8 +17,8 @@
 //  - carries the keep-awake preference over to Devices and clears every
 //    `mobileConnect*` default.
 //
-//  From then on the pairing routes answer `410 update_required`
-//  (`isRetired`) and the Mobile page says the iPhone uses Sync.
+//  The 6-digit pairing itself stays open after it, so another iPhone still
+//  on Classic can pair (`isRetired` only says the migration ran).
 //
 
 import Combine
@@ -63,10 +63,8 @@ enum MobileConnectMigration {
                 disableTunnel: { RelayTunnelManager.shared.setTunnelEnabled(false, for: $0) },
                 accessKeys: { APIKeyManager.shared.listKeys() },
                 revokeKey: { APIKeyManager.shared.revoke(id: $0) },
-                endPairing: {
-                    MobilePairingService.shared.retire()
-                    MobileConnectAdvertiser.shared.stopAdvertising()
-                }
+                // The old phone is forgotten, but pairing stays open for another iPhone still on Classic.
+                endPairing: { MobilePairingService.shared.retire() }
             )
         }
     }

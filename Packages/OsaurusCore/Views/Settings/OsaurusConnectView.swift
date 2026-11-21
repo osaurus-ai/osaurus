@@ -20,7 +20,6 @@ struct OsaurusConnectView: View {
 
     @AppStorage(MobilePairingService.keepAwakeDefaultsKey) private var keepMacAwake: Bool = true
     @AppStorage(MobilePairingService.reachAnywhereDefaultsKey) private var reachFromAnywhere: Bool = true
-    @AppStorage(MobileConnectMigration.doneKey) private var retired: Bool = false
     @State private var showRevokeConfirm = false
 
     var body: some View {
@@ -30,13 +29,10 @@ struct OsaurusConnectView: View {
                 subtitle: "Pair the Osaurus iPhone app with a 6-digit code"
             )
         } content: {
-            if retired {
-                retiredSection
-            } else {
-                pairingSection
-                pairedDeviceSection
-                powerSection
-            }
+            // Also once an iPhone uses Sync: another still on Classic pairs here.
+            pairingSection
+            pairedDeviceSection
+            powerSection
         }
         .onChange(of: keepMacAwake) { _, _ in pairing.refreshKeepAwake() }
         .onChange(of: reachFromAnywhere) { _, _ in pairing.syncRelay() }
@@ -48,21 +44,6 @@ struct OsaurusConnectView: View {
         }
     }
 
-    // MARK: Retired
-
-    private var retiredSection: some View {
-        SettingsSection {
-            SettingsCallout(
-                icon: "checkmark.circle.fill",
-                title: "Your iPhone Uses Sync Now",
-                message:
-                    "An iPhone joined this Mac's devices, so the 6-digit pairing is off. Manage your iPhone in Devices.",
-                tone: .success
-            )
-        }
-        .settingsLandingAnchor("settings.connect.pairing")
-    }
-
     // MARK: Pairing
 
     /// The pairing intro, "Osaurus" linking to the iPhone app's TestFlight
@@ -70,7 +51,7 @@ struct OsaurusConnectView: View {
     private var pairingIntro: AttributedString {
         var text = AttributedString(
             localized:
-                "For an [Osaurus](https://testflight.apple.com/join/yTF86bVb) iPhone app that doesn't offer Sync yet. Generate a code here and type it in on your iPhone, on the same network as this Mac. Once you add an iPhone in Devices, this pairing turns off.",
+                "For an [Osaurus](https://testflight.apple.com/join/yTF86bVb) iPhone app that doesn't offer Sync yet. Generate a code here and type it in on your iPhone, on the same network as this Mac.",
             bundle: .module
         )
         for run in text.runs where run.link != nil {

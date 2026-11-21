@@ -337,8 +337,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// switch (`LocalAPIKeyPolicy`), injectable for the same reason.
     private let localKeyRequiredProvider: @Sendable () -> Bool
 
-    /// Live read of whether the 6-digit pairing retired on this Mac
-    /// (`MobileConnectMigration.isRetired`), injectable for the same reason.
+    /// Whether the 6-digit pairing routes are closed, injectable for the same reason. Open by default: kept beside
+    /// Sync, also once an iPhone has joined it, so an iPhone still on Classic can pair.
     private let pairingRetiredProvider: @Sendable () -> Bool
 
     private func localKeyRequired(for normalizedPath: String) -> Bool {
@@ -355,7 +355,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         responseEncryptor: SecureChannelResponseEncryptor? = nil,
         peerInferenceSharingProvider: @escaping @Sendable () -> Bool = { PeerInferenceSharing.isEnabled() },
         localKeyRequiredProvider: @escaping @Sendable () -> Bool = { LocalAPIKeyPolicy.isEnabled() },
-        pairingRetiredProvider: @escaping @Sendable () -> Bool = { MobileConnectMigration.isRetired() }
+        pairingRetiredProvider: @escaping @Sendable () -> Bool = { false }
     ) {
         self.configuration = configuration
         self.apiKeyValidatorProvider = apiKeyValidatorProvider ?? { apiKeyValidator }

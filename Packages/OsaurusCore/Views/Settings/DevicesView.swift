@@ -45,8 +45,6 @@ struct DevicesView: View {
     @State private var phoneMethod: PhoneMethod = .ask
     /// When the 6-digit way was chosen: a phone paired since then was added by this sheet.
     @State private var codeChosenAt: Date?
-    /// The 6-digit pairing is retired once an iPhone joined Sync (`MobileConnectMigration`): only the QR code then.
-    @AppStorage(MobileConnectMigration.doneKey) private var legacyPairingRetired = false
 
     private enum PhoneMethod {
         /// Not said yet: the sheet asks what the phone's pairing screen shows.
@@ -359,23 +357,18 @@ struct DevicesView: View {
             ForEach(model.devices, id: \.id) { device in
                 deviceRow(device)
             }
-            // The Mobile page: an iPhone paired with a 6-digit code, until that pairing retires.
-            if !legacyPairingRetired {
-                ManagementChildLinkRows(parent: .devices)
-            }
+            // The Mobile page: an iPhone paired with a 6-digit code.
+            ManagementChildLinkRows(parent: .devices)
         }
     }
 
     /// Shows the code an iPhone or iPad scans, from the header's Add Device menu.
     private func addPhone() {
         isJoining = false
-        if legacyPairingRetired {
-            showScanCode()
-        } else {
-            model.dismissPairingResult()
-            phoneMethod = .ask
-            pairSheet = .addPhone
-        }
+        // Asked always: an iPhone still on Classic pairs with a 6-digit code, also once another uses Sync.
+        model.dismissPairingResult()
+        phoneMethod = .ask
+        pairSheet = .addPhone
     }
 
     /// The QR code an iPhone or iPad with Sync scans.

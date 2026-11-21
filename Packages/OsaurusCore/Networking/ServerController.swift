@@ -249,11 +249,11 @@ final class ServerController: ObservableObject {
                     + "idleResidency=\(idleResidency)"
             )
 
-            // The 6-digit pairing, kept for one release beside Sync.
-            if configuration.exposeToNetwork, !MobileConnectMigration.isRetired() {
+            // The 6-digit pairing, kept beside Sync (also once an iPhone uses it) for iPhones still on Classic.
+            if configuration.exposeToNetwork {
                 MobileConnectAdvertiser.shared.startAdvertising(port: configuration.port)
             } else {
-                MobileConnectLog.write("server: not exposed to the network or pairing retired, nothing advertised")
+                MobileConnectLog.write("server: not exposed to the network, nothing advertised")
                 MobileConnectAdvertiser.shared.stopAdvertising()
             }
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
