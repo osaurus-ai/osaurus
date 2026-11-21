@@ -64,7 +64,7 @@ struct DevicesView: View {
 
     /// "Upgrading from Classic?" (`ClassicUpgradeSheet`).
     @State private var showsClassicUpgrade = false
-    /// Set once the sheet has been closed: from then on a chip by the title opens it again.
+    /// Set once the sheet has been closed: it opens by itself only before that; the chip by the title opens it any time.
     @AppStorage("devices.classicUpgradeSeen") private var classicUpgradeSeen = false
     /// Its Connect iPhone Now: Add iPhone or iPad opens once it has closed, as one sheet can't open over another.
     @State private var connectsAfterClassicUpgrade = false
@@ -74,7 +74,7 @@ struct DevicesView: View {
             SettingsPageHeader(
                 title: "Devices",
                 subtitle: "Your Macs and iPhones in one end-to-end encrypted account, with no account to create",
-                titleAccessory: classicUpgradeSeen ? AnyView(classicUpgradeChip) : nil,
+                titleAccessory: AnyView(classicUpgradeChip),
                 primary: {
                     SettingsMenuButton(.primary, "Add Device", icon: "plus") {
                         Button(action: addPhone) {
@@ -101,8 +101,8 @@ struct DevicesView: View {
         .onAppear {
             model.start()
             model.beginWatching()
-            // TEMPORARY: on every visit while the explainer is being finalized; then once, on the first visit.
-            showsClassicUpgrade = true
+            // Once, on the first visit; the chip by the title opens it after that.
+            if !classicUpgradeSeen { showsClassicUpgrade = true }
         }
         .onDisappear {
             model.endWatching()
@@ -130,7 +130,7 @@ struct DevicesView: View {
         }
     }
 
-    /// "Upgrading from Classic?" again, by the title, once the sheet has been seen.
+    /// "Upgrading from Classic?" by the title, to open the sheet any time.
     private var classicUpgradeChip: some View {
         Button {
             showsClassicUpgrade = true
