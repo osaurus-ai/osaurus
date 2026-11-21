@@ -199,7 +199,7 @@ struct WorkflowInstallerRenderTests {
     @Test
     func everyQuestionHasAPlainTitle() {
         let asked: [WorkflowSetupWizardView.Step] = [
-            .models, .secrets, .folders, .agents, .tools, .dependencies, .permissions,
+            .models, .secrets, .folders, .apps, .agents, .tools, .dependencies, .permissions,
         ]
         let titles = asked.map(WorkflowInstallerView.questionTitle)
         #expect(Set(titles).count == asked.count)

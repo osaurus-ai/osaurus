@@ -91,7 +91,7 @@ struct WorkflowInstallPlan: Equatable, Sendable {
     func questionSteps() -> [WorkflowSetupWizardView.Step] {
         let report = SetupReport(subjectId: UUID(), items: questions)
         let order: [WorkflowSetupWizardView.Step] = [
-            .models, .secrets, .folders, .agents, .tools, .dependencies, .permissions,
+            .models, .secrets, .folders, .apps, .agents, .tools, .dependencies, .permissions,
         ]
         return order.filter { !$0.items(in: report).isEmpty }
     }

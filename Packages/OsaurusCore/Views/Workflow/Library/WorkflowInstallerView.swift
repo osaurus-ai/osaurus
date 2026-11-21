@@ -267,6 +267,9 @@ struct WorkflowInstallerView: View {
                 WorkflowFoldersStep(
                     folders: working.template.requirements.folders, bindings: working.bindings, items: items,
                     onChoose: { key, path in setBindings { $0.folders[key] = path } })
+            case .apps:
+                WorkflowAppsStep(
+                    apps: working.template.requirements.apps, items: items, onCheckAgain: { refresh() })
             case .agents:
                 WorkflowAgentsStep(
                     agents: working.template.requirements.agents, bindings: working.bindings, items: items,
@@ -549,7 +552,7 @@ struct WorkflowInstallerView: View {
     /// answered along the way stays, so the count does not jump.
     private var questionSteps: [Step] {
         guard let report else { return [] }
-        let order: [Step] = [.models, .secrets, .folders, .agents, .tools, .dependencies, .permissions]
+        let order: [Step] = [.models, .secrets, .folders, .apps, .agents, .tools, .dependencies, .permissions]
         let planned = Set(plan?.questionSteps() ?? [])
         return order.filter { planned.contains($0) || !askedItems($0, in: report).isEmpty }
     }
@@ -565,6 +568,7 @@ struct WorkflowInstallerView: View {
         case .models: return L("Choose a model")
         case .secrets: return L("Add a key")
         case .folders: return L("Choose a folder")
+        case .apps: return L("Install an app")
         case .agents: return L("Choose who it asks")
         case .tools: return L("Connect its tools")
         case .dependencies: return L("Let it reach the internet")
