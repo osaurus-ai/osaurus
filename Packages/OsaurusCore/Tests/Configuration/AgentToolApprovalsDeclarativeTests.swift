@@ -211,12 +211,14 @@ struct AgentToolApprovalsDeclarativeTests {
             var agent = probeAgent()
             agent.settings.toolApprovalMode = .neverAsk
             agent.settings.toolPolicies = ["approvals_probe_tool": .auto]
+            agent.sharedToolApproval = SharedToolApprovalPolicy(mode: .askOwner)
             AgentManager.shared.update(agent)
             let stored = try #require(AgentManager.shared.agent(for: agent.id))
 
             let template = Template.make(from: stored)
             #expect(template.agent.toolApprovals == nil)
             #expect(template.agent.tools?.policies == nil)
+            #expect(template.agent.sharedToolApproval == nil)
 
             var handEdited = template
             var edited = handEdited.agent
@@ -224,10 +226,12 @@ struct AgentToolApprovalsDeclarativeTests {
             var tools = edited.tools ?? AgentToolsEntry()
             tools.policies = ["approvals_probe_tool": "auto"]
             edited.tools = tools
+            edited.sharedToolApproval = SharedToolApprovalPolicy(mode: .askOwner)
             handEdited.agent = edited
             let installed = try #require(handEdited.document().agents?.first)
             #expect(installed.toolApprovals == nil)
             #expect(installed.tools?.policies == nil)
+            #expect(installed.sharedToolApproval == nil)
 
             var overrides = AgentEntry(name: "Renamed")
             overrides.tools = tools

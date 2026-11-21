@@ -316,6 +316,7 @@ extension Template {
     static func strippingApprovals(_ entry: inout AgentEntry) {
         entry.toolApprovals = nil
         entry.tools?.policies = nil
+        entry.sharedToolApproval = nil
     }
 
     static func abbreviateHome(_ path: String) -> String {
