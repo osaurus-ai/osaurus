@@ -1,0 +1,188 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-09-13T12:26:05.143Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.95,
+      "agentLoopDiagnostics" : {
+        "exitCounts" : {
+          "cancelled" : 5,
+          "clarifyRequested" : 2,
+          "finalResponse" : 112,
+          "overBudget" : 1
+        },
+        "exitOriginCounts" : {
+          "ordinaryModelFinal" : 109,
+          "unrecorded" : 11
+        },
+        "measuredRows" : 120,
+        "recoveryRetriesTotal" : 0,
+        "rowsWithExitTelemetry" : 120
+      },
+      "cacheTotals" : {
+        "diskL2Evictions" : 183,
+        "diskL2Hits" : 758,
+        "diskL2Misses" : 16062,
+        "diskL2Stores" : 2487,
+        "kvPrefixHits" : 0,
+        "kvPrefixMisses" : 0,
+        "pagedEvictions" : 0,
+        "ssmCompanionHits" : 0,
+        "ssmCompanionMisses" : 0,
+        "ssmCompanionReDerives" : 0
+      },
+      "chatModelPassed" : 261,
+      "chatModelScored" : 309,
+      "correctFileDeliveryRate" : 0.7678571428571429,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "8fcd0615",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "anthropic/claude-sonnet-4-5",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/MiniMax-M2.7-Small-JANGTQ",
+        "thermalState" : "fair",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 1,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.9583333333333334,
+      "meanAgentLoopWallTimeMs" : 80081.33674661319,
+      "meanCpuPercent" : 82.24700099715437,
+      "meanDecodeTokensPerSecond" : 32.24635501275727,
+      "meanFirstActionMs" : 25511.91595876426,
+      "meanFirstStepContextTokens" : 4015.781512605042,
+      "meanFrictionCalls" : 0.2676056338028169,
+      "meanPromptTokensPerTask" : 20608.04469273743,
+      "meanTotalTokensPerTask" : 19450.415384615386,
+      "meanTtftMs" : 479.2397270202637,
+      "medianModelSteps" : 3,
+      "modelId" : "OsaurusAI/MiniMax-M2.7-Small-JANGTQ",
+      "peakCpuPercent" : 634.3988978661166,
+      "peakPhysFootprintMb" : 85757.36232757568,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 91,
+          "scored" : 120,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3,
+            "vmnetContention: sandbox unavailable (vmnetOwnedByOtherProcess): Sandbox VM is already owned by PID 21065 (osaurus) at /Applications/osaurus.app/Contents/MacOS/osaurus. Stop that Osaurus app or eval process before starting another vmnet sandbox." : 19
+          },
+          "skipped" : 22
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 24,
+          "scored" : 32,
+          "skipReasons" : {
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 3
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 14,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 23,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errorCategories" : {
+            "model_unavailable" : 1
+          },
+          "errored" : 1,
+          "passed" : 45,
+          "scored" : 48,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 15,
+          "skipReasons" : {
+            "other: scenario: multimodal_image · port 61065" : 1,
+            "other: scenario: multimodal_video · port 61065" : 1
+          },
+          "skipped" : 2
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 1,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 6,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 13,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errorCategories" : {
+            "runtime_other" : 1
+          },
+          "errored" : 1,
+          "passed" : 35,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-09-13T08:52:18Z",
+      "subsystemPassed" : 10,
+      "subsystemScored" : 16,
+      "topContextContributors" : [
+        "§pluginCreator=717",
+        "tool:redact_file=491",
+        "§enabledManifest=438",
+        "tool:search_and_extract=371",
+        "tool:detect_pii=353",
+        "tool:spawn_batch=291"
+      ],
+      "totalPassed" : 271,
+      "totalScored" : 325
+    }
+  ]
+}
