@@ -4424,6 +4424,17 @@ public enum SettingsSearchIndex {
                 "Inbox → Waiting on Others: your chats with someone else's shared agent that are paused while its owner decides whether to allow a tool. Open Chat goes to the conversation; the row clears when the owner answers or the chat stops."
         ),
         .init(
+            id: "approvals.arrangedCalls",
+            tab: .approvals,
+            title: "Arranged Calls",
+            keywords: [
+                "callback", "call me back", "arranged call", "agent call", "cancel call", "scheduled call",
+                "missed call", "was the call made", "arrange_callback",
+            ],
+            disambiguation:
+                "Inbox → Arranged Calls: each call you asked an agent to make to your iPhone (\"call me when the build finishes\"), while it waits and for a week after: whether it rang, you answered, missed or declined it, or the agent never called in time. Cancel Call calls off one that is no longer needed, ringing or not; your iPhone's Inbox lists the same calls. Whether an agent may call on its own is Call You in the agent's settings."
+        ),
+        .init(
             id: "approvals.liveNow",
             tab: .approvals,
             title: "Live Now",

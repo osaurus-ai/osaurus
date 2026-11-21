@@ -875,6 +875,12 @@
     "%@ is now paired with this Mac." : {
 
     },
+    "%@ will call you %@" : {
+
+    },
+    "%@ won't call you about this." : {
+
+    },
     "%@, its memory and its %lld chats are removed from this Mac. This cannot be undone." : {
 
     },
@@ -911,6 +917,9 @@
     "%lld of %lld connected" : {
 
     },
+    "%lld tries didn't reach you" : {
+
+    },
     "1 chat archived" : {
 
     },
@@ -926,10 +935,16 @@
     "1 chat with %@, newest first." : {
 
     },
+    "1 try didn't reach you" : {
+
+    },
     "A 6-Digit Code to Enter" : {
 
     },
     "A QR Code to Scan" : {
+
+    },
+    "A newer call was arranged in the chat %@" : {
 
     },
     "Add Device" : {
@@ -1058,6 +1073,12 @@
     "Archive instead" : {
 
     },
+    "Arranged %@" : {
+
+    },
+    "Arranged Calls" : {
+
+    },
     "Available offline" : {
 
     },
@@ -1068,6 +1089,12 @@
 
     },
     "Can't read it" : {
+
+    },
+    "Cancel Call" : {
+
+    },
+    "Cancel this call?" : {
 
     },
     "Change the step's input or settings; the provider names what it can't take." : {
@@ -1172,6 +1199,9 @@
 
     },
     "Data synced and offline" : {
+
+    },
+    "Declined" : {
 
     },
     "Delete %@?" : {
@@ -1302,6 +1332,9 @@
     "It's end-to-end encrypted. Osaurus servers only pass along data they can't read." : {
 
     },
+    "Keep Call" : {
+
+    },
     "Live Activities" : {
 
     },
@@ -1309,6 +1342,9 @@
 
     },
     "Message %@..." : {
+
+    },
+    "Missed" : {
 
     },
     "Move to Sync" : {
@@ -1330,6 +1366,9 @@
 
     },
     "No access" : {
+
+    },
+    "No calls arranged." : {
 
     },
     "No devices" : {
@@ -1371,6 +1410,9 @@
           }
         }
       }
+    },
+    "Not Called" : {
+
     },
     "On the same network your devices talk directly, and through Osaurus servers anywhere else." : {
 
@@ -1488,6 +1530,9 @@
     "Previous 7 days" : {
 
     },
+    "Rang %@, nobody answered" : {
+
+    },
     "Reconnect to the remote agent, then retry." : {
       "localizations" : {
         "de" : {
@@ -1531,6 +1576,9 @@
     "Relay offline: still connected peer-to-peer" : {
 
     },
+    "Replaced" : {
+
+    },
     "Retry once %@ shows as connected in Settings → Providers." : {
       "localizations" : {
         "de" : {
@@ -1564,6 +1612,12 @@
           }
         }
       }
+    },
+    "Ringing" : {
+
+    },
+    "Ringing your iPhone now" : {
+
     },
     "Same network: direct" : {
 
@@ -1616,6 +1670,12 @@
           }
         }
       }
+    },
+    "Show All" : {
+
+    },
+    "Show Fewer" : {
+
     },
     "Sign in to %@ again in Settings → Providers." : {
       "localizations" : {
@@ -1690,6 +1750,12 @@
           }
         }
       }
+    },
+    "The agent didn't call in time. Expired %@" : {
+
+    },
+    "The agent stopped while it rang, %@" : {
+
     },
     "The answer hit the output limit. Ask for less, or raise the step's output limit." : {
       "localizations" : {
@@ -2031,13 +2097,28 @@
     "What does the Pairing Screen in the Osaurus app on your iPhone or iPad show?" : {
 
     },
+    "When you ask an agent to call you back on your iPhone, the call shows here until it's made." : {
+
+    },
     "With 1.0, every device keeps its own copy of your chats, so they open even when the Mac sleeps." : {
 
     },
     "With Classic, your iPhone borrows the Mac's chats over a live link. When it drops, there's nothing." : {
 
     },
+    "Work still running" : {
+
+    },
     "Workflows, Live Activities and agent calls work only on 1.0. Classic pairing is going away." : {
+
+    },
+    "You answered %@" : {
+
+    },
+    "You cancelled it %@" : {
+
+    },
+    "You declined %@" : {
 
     },
     "Your Osaurus billing account is on hold; resolve it in Osaurus Credits." : {

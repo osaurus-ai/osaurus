@@ -583,6 +583,7 @@ struct SettingsSearchSelfFindProbe {
             ("Inbox", "approvals.overview"),
             ("Needs You", "approvals.overview"),
             ("Waiting on Others", "approvals.waitingOnOthers"),
+            ("Arranged Calls", "approvals.arrangedCalls"),
             ("Live Now", "approvals.liveNow"),
             ("Past Requests", "approvals.history"),
             ("History", "tasks.history"),

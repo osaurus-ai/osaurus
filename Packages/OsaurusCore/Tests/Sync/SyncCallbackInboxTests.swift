@@ -70,6 +70,33 @@ struct SyncCallbackInboxTests {
         for (end, name) in names { #expect(end.rawValue == name) }
     }
 
+    // MARK: The Mac's Inbox rows
+
+    @Test("a waiting call says when it was arranged, when it expires, the work, and tries that didn't ring")
+    @MainActor
+    func waitingSubtitle() {
+        let grant = Self.grant(attempts: [
+            .init(atMs: Self.now, outcome: "busy"), .init(atMs: Self.now, outcome: "notSent"),
+        ])
+        let now = Date(timeIntervalSince1970: TimeInterval(Self.now) / 1000)
+        let subtitle = ArrangedCallPresentation.subtitle(grant, status: .waiting(working: true), now: now)
+        #expect(subtitle.contains("Arranged"))
+        #expect(subtitle.contains("Expires"))
+        #expect(subtitle.contains("Work still running"))
+        #expect(subtitle.contains("2 tries didn't reach you"))
+    }
+
+    @Test("a call the agent never made reads as not called")
+    @MainActor
+    func expiredRow() {
+        let chip = ArrangedCallPresentation.chip(.ended(.expired))
+        #expect(chip.text == "Not Called")
+        let now = Date(timeIntervalSince1970: TimeInterval(Self.now) / 1000)
+        #expect(
+            ArrangedCallPresentation.subtitle(Self.grant(end: .expired), status: .ended(.expired), now: now)
+                .hasPrefix("The agent didn't call in time"))
+    }
+
     @Test("cancelCallback decodes with its callbackId")
     func decodesCancel() throws {
         let json = #"{"id":"r1","op":"cancelCallback","callbackId":"abc","requestedMs":1}"#
