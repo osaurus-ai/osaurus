@@ -742,13 +742,22 @@ final class SyncManageFeed {
             case .failure: return failed("file_not_found", "That file isn't on this Mac any more.")
             }
             let sent = await Task.detached(priority: .userInitiated) { () -> Result<Void, SyncWorkflowFile.Failure>? in
-                try? SyncConversationStore.shared.performWrite { core in try SyncWorkflowFile.send(source, core: core) }
+                // Copied first, outside the core's queue; only the write goes on it.
+                let file: URL
+                switch SyncWorkflowFile.stage(source) {
+                case .success(let staged): file = staged
+                case .failure(let failure): return .failure(failure)
+                }
+                defer { try? FileManager.default.removeItem(at: file) }
+                return try? SyncConversationStore.shared.performWrite { core in
+                    try SyncWorkflowFile.send(source, file: file, core: core)
+                }
             }.value
             switch sent {
             case .success?: return answered(["runId": source.runId, "fileId": source.fileId])
             case .failure(.notFound)?: return failed("file_not_found", "That file isn't on this Mac any more.")
             case .failure(.tooLarge)?: return failed("too_large", "That file is too large to send.")
-            case nil: return failed("failed", "The file couldn't be sent.")
+            case .failure(.notReady)?, nil: return failed("failed", "The file couldn't be sent. Try again.")
             }
         case .runWorkflow:
             // Checked before any attached file is fetched and saved: a start that would fail costs nothing.

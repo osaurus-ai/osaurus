@@ -30,6 +30,8 @@ enum SyncWorkflowFile {
     enum Failure: Error, Equatable {
         case notFound
         case tooLarge
+        /// This Mac's manage conversation isn't there yet (Sync just opened): worth asking again.
+        case notReady
     }
 
     struct Source: Sendable, Equatable {
@@ -57,21 +59,28 @@ enum SyncWorkflowFile {
                 filename: artifact.filename, mimeType: artifact.mimeType))
     }
 
-    /// Copies the file (a plain file, no link, at most `fetchLimit`) and writes its message. Off the main thread.
-    nonisolated static func send(_ source: Source, core: SyncCore) throws -> Result<Void, Failure> {
+    /// Copies the file (a plain file, no link, at most `fetchLimit`) to a staged file the caller removes. Off the
+    /// main thread, and outside the core's queue: a copy this size would hold up every other Sync read and write.
+    nonisolated static func stage(_ source: Source) -> Result<URL, Failure> {
         let staged = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(stagedPrefix)\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: staged) }
-        let file: URL
         switch SyncWorkflowOutput.copyRegularFile(source.path, to: staged, limit: fetchLimit) {
-        case .missing: return .failure(.notFound)
-        case .tooLarge: return .failure(.tooLarge)
-        case .copied(let copy, _): file = copy
+        case .missing:
+            try? FileManager.default.removeItem(at: staged)
+            return .failure(.notFound)
+        case .tooLarge:
+            try? FileManager.default.removeItem(at: staged)
+            return .failure(.tooLarge)
+        case .copied(let copy, _): return .success(copy)
         }
+    }
+
+    /// Writes the message carrying `file` (from `stage`), on the core's queue.
+    nonisolated static func send(_ source: Source, file: URL, core: SyncCore) throws -> Result<Void, Failure> {
         guard
             let conversation = try SyncDeviceFeedContract.conversation(
                 kind: SyncDeviceFeedContract.manageKind, device: core.deviceKey(), core: core)
-        else { return .failure(.notFound) }
+        else { return .failure(.notReady) }
         let scope = conversation.scope
 
         // Newest first.
