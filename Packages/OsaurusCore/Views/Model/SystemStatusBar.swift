@@ -9,7 +9,7 @@ import SwiftUI
 
 // MARK: - System Status Bar
 
-/// Compact bar showing available memory and storage with mini gauges.
+/// Compact bar showing free memory and storage with mini gauges.
 struct SystemStatusBar: View {
     @Environment(\.theme) private var theme
     let totalMemoryGB: Double
@@ -28,11 +28,11 @@ struct SystemStatusBar: View {
     var body: some View {
         HStack(spacing: theme.space.s20) {
             ResourceGauge(
-                label: LCached("RAM"),
+                label: LCached("Memory"),
                 icon: "memorychip",
                 usedFraction: totalMemoryGB > 0 ? usedMemoryGB / totalMemoryGB : 0,
                 detail: String(
-                    format: LCached("%@ free / %@"),
+                    format: LCached("%@ free of %@"),
                     formatCapacity(max(0, totalMemoryGB - usedMemoryGB)),
                     formatCapacity(totalMemoryGB)
                 )
@@ -44,7 +44,7 @@ struct SystemStatusBar: View {
                 usedFraction: totalStorageGB > 0
                     ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,
                 detail: String(
-                    format: LCached("%@ free / %@"),
+                    format: LCached("%@ free of %@"),
                     formatCapacity(availableStorageGB),
                     formatCapacity(totalStorageGB)
                 )

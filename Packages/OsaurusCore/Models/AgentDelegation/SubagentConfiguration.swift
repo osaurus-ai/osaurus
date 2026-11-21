@@ -30,9 +30,9 @@ enum SubagentImageLoadPolicy: String, Codable, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .agentSingleResidency: return L("Unload After Agent Job")
-        case .unloadImageAfterAgentJob: return L("Unload After Agent Job")
-        case .manualPanelKeepsImageLoaded: return L("Manual Panel Keeps Loaded")
+        case .agentSingleResidency: return L("Free Memory After Each Job")
+        case .unloadImageAfterAgentJob: return L("Free Memory After Each Job")
+        case .manualPanelKeepsImageLoaded: return L("Stay Ready for the Next Job")
         }
     }
 
@@ -62,18 +62,18 @@ public enum AppleScriptLoadPolicy: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .singleResidency: return L("Single Residency")
-        case .keepWarmAfterJob: return L("Keep Warm After Job")
+        case .singleResidency: return L("Free Memory After Each Run")
+        case .keepWarmAfterJob: return L("Stay Ready Briefly")
         }
     }
 
     public var caption: String {
         switch self {
         case .singleResidency:
-            return L("With local model swapping on, the chat model reloads right after each AppleScript run.")
+            return L("With Swap Local Models for Subagents on, your chat model comes back right after each AppleScript run.")
         case .keepWarmAfterJob:
             return L(
-                "With local model swapping on, the AppleScript model stays loaded briefly for same-session follow-up calls. Turning swapping off disables this warm hold."
+                "With Swap Local Models for Subagents on, the AppleScript model stays ready for a short while so follow-up requests in the same chat start faster."
             )
         }
     }

@@ -36,7 +36,7 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
     override func refresh() { fetchOsaurusAI() }
 
     override var footnote: String? {
-        "A new embedding model takes effect after Osaurus restarts. Search indexes are rebuilt with it in the background."
+        "A new search & memory model takes effect after Osaurus restarts. Search indexes rebuild in the background."
     }
 
     override func banner(scope: LocalModelCatalogScope) -> AnyView? {
@@ -142,12 +142,9 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
 
         var subtitle: [String] = []
         if let entry {
-            subtitle.append(entry.family)
-            subtitle.append(L("\(entry.dimension) dimensions"))
             subtitle.append(entry.languages == "English" ? L("English") : L("Multilingual"))
-        } else {
-            subtitle.append(id)
-            if let source = model.externalSource { subtitle.append(source) }
+        } else if let source = model.externalSource {
+            subtitle.append(source)
         }
 
         var badges: [LocalModelCatalogItem.Badge] = []
@@ -166,6 +163,7 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
             facts.append(.init(label: "Languages", value: entry.languages == "English" ? L("English") : L("Multilingual")))
         }
         facts.append(.init(label: "Engine", value: Self.engineName(support: support, family: entry?.family)))
+        if entry == nil { facts.append(.init(label: "Source", value: id)) }
         if let directory {
             facts.append(.init(label: "Location", value: directory.path))
         }
@@ -256,7 +254,7 @@ struct EmbeddingRestartBanner: View {
             {
                 SettingsCallout(
                     icon: "exclamationmark.triangle.fill",
-                    title: "Embedding model unavailable",
+                    title: "Search & memory model unavailable",
                     message: error.localizedDescription,
                     tone: .warning
                 ) {
@@ -269,7 +267,7 @@ struct EmbeddingRestartBanner: View {
             {
                 SettingsCallout(
                     icon: "arrow.clockwise.circle.fill",
-                    title: "Restart to use the new embedding model",
+                    title: "Restart to use the new search & memory model",
                     message: restartMessage,
                     tone: .info
                 ) {

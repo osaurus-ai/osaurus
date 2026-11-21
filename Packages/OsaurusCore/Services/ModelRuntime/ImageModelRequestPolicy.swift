@@ -141,6 +141,11 @@ struct ImageModelRequestPolicy: Sendable {
         }
     }
 
+    /// Chip-sized form of `licenseLabel`; the full label is its tooltip.
+    static func shortLicenseLabel(canonical: String?) -> String? {
+        licenseLabel(canonical: canonical) == nil ? nil : L("Non-commercial")
+    }
+
     /// Display-only catalog identity; actual load routing stays in the engine.
     static func catalogCanonical(_ name: String) -> String? {
         let name = name.lowercased().replacingOccurrences(of: ".", with: "-")

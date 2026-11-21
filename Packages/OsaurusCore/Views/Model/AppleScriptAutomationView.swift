@@ -192,7 +192,7 @@ struct AppleScriptDefaultModelGroup: View {
                     }
                 }
                 SettingsRow(
-                    title: "AppleScript Model Residency",
+                    title: "Keep AppleScript Model Loaded",
                     description: editor.configuration.appleScriptLoadPolicy.caption,
                     anchorId: "modelDefaults.appleScriptResidency"
                 ) {
@@ -201,7 +201,7 @@ struct AppleScriptDefaultModelGroup: View {
                         options: AppleScriptLoadPolicy.allCases.map { .init($0, $0.displayName, verbatim: true) }
                     )
                     .fixedSize()
-                    .accessibilityLabel(Text("AppleScript Model Residency", bundle: .module))
+                    .accessibilityLabel(Text("Keep AppleScript Model Loaded", bundle: .module))
                 }
             }
         }

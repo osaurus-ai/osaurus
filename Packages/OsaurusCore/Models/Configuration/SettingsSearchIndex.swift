@@ -2486,8 +2486,11 @@ public enum SettingsSearchIndex {
             id: "imageGeneration.loadPolicy",
             tab: .modelDefaults,
             section: "Images & Video",
-            title: "Image Model Load Policy",
-            keywords: ["load policy", "image jobs", "unload", "residency", "gpu"]
+            title: "Keep Image Model Loaded",
+            keywords: [
+                "image model load policy", "load policy", "image jobs", "unload", "residency", "gpu",
+                "free memory after each job", "stay ready",
+            ]
         ),
         .init(
             id: "imageGeneration.previews", tab: .models, section: "Image",
@@ -3145,6 +3148,7 @@ public enum SettingsSearchIndex {
             keywords: [
                 "hugging face", "hf cache", "lm studio", "external", "import models", "external models",
                 "models on this mac", "other apps", "model sources", "rescan",
+                "hugging face downloads and model folders", "model folders",
             ]
         ),
         .init(
@@ -4156,21 +4160,22 @@ public enum SettingsSearchIndex {
             tab: .models,
             title: "Model kind",
             keywords: [
-                "language models", "image models", "speech models", "embedding models", "privacy detection models",
-                "applescript models", "on device", "catalog", "whisper", "parakeet", "ideogram",
+                "chat models", "language models", "image models", "speech models", "search and memory models",
+                "embedding models", "privacy detection models", "applescript models", "on device", "catalog",
+                "whisper", "parakeet", "ideogram",
             ],
-            disambiguation: "Switches Local Models between Language, Image, Speech, Embedding, Privacy Detection and AppleScript models."
+            disambiguation: "Switches Local Models between Chat, Image, Speech, Search & Memory, Privacy Detection and AppleScript models. Chat was called Language and Search & Memory was called Embedding."
         ),
         .init(
             id: "models.embedding",
             tab: .models,
-            title: "Embedding",
+            title: "Search & Memory",
             keywords: [
-                "embedding models", "download embedding model", "embedder", "vector model", "qwen3 embedding",
+                "embedding", "embedding models", "search and memory models", "download embedding model", "embedder", "vector model", "qwen3 embedding",
                 "bge", "mxbai", "modernbert", "e5", "minilm", "potion", "model2vec", "sentence transformers",
             ],
             subTab: "embedding",
-            disambiguation: "Downloads embedding models. The one in use is chosen in Model Defaults → Embedding Model."
+            disambiguation: "Downloads the models behind memory and knowledge search (embedding models). The one in use is chosen in Model Defaults → Search & Memory Model."
         ),
 
         // MARK: Model Defaults (which model Osaurus uses for each kind of job)
@@ -4222,13 +4227,13 @@ public enum SettingsSearchIndex {
         .init(
             id: "modelDefaults.embedding",
             tab: .modelDefaults,
-            section: "Embedding",
-            title: "Embedding Model",
+            section: "Search & Memory",
+            title: "Search & Memory Model",
             keywords: [
-                "embedding model", "embeddings", "embedder", "vector search", "semantic search", "memory search",
+                "embedding model", "search and memory model", "embeddings", "embedder", "vector search", "semantic search", "memory search",
                 "knowledge search", "rag", "qwen3 embedding", "potion", "model2vec", "/v1/embeddings",
             ],
-            disambiguation: "Chooses the model behind memory, knowledge, skill, method and tool search and the embeddings API. Applies after Osaurus restarts; indexes rebuild in the background. Download more in Local Models → Embedding."
+            disambiguation: "Chooses the model behind memory, knowledge, skill, method and tool search and the embeddings API. Applies after Osaurus restarts; indexes rebuild in the background. Download more in Local Models → Search & Memory."
         ),
         .init(
             id: "modelDefaults.detection",
@@ -4248,8 +4253,11 @@ public enum SettingsSearchIndex {
             id: "modelDefaults.appleScriptResidency",
             tab: .modelDefaults,
             section: "AppleScript",
-            title: "AppleScript Model Residency",
-            keywords: ["applescript load policy", "keep loaded", "unload applescript", "residency"]
+            title: "Keep AppleScript Model Loaded",
+            keywords: [
+                "applescript model residency", "applescript load policy", "keep loaded", "unload applescript",
+                "residency", "stay ready briefly",
+            ]
         ),
         .init(
             id: "providers.overview",

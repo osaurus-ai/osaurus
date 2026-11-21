@@ -10,8 +10,8 @@ Osaurus can create and edit images entirely on your Mac using local image models
 
 ## Setup
 
-- Settings… (⌘,) → Local Models → **Image**: browse and download on-device image model bundles (including native Wan 2.1 video bundles), or import one from Hugging Face.
-- Settings… (⌘,) → Models → Model Defaults → **Images & Video**: the default generation model, the default edit model, the text-to-video and image-to-video models (local Wan or a cloud provider), and the **Image Model Load Policy**.
+- Settings… (⌘,) → Local Models → **Image**: browse and download on-device image models (including native Wan 2.1 video models), or import one from Hugging Face. Each model is one row; pick a smaller or higher-quality download under **Versions** in its details.
+- Settings… (⌘,) → Models → Model Defaults → **Images & Video**: the default generation model, the default edit model, the text-to-video and image-to-video models (local Wan or a cloud provider), and **Keep Image Model Loaded**.
 - Settings… (⌘,) → Images & Video: the permission for image jobs and local and cloud video jobs, and recent video jobs.
 - Image models are large; they load on demand and can temporarily displace the resident chat model while a job runs.
 

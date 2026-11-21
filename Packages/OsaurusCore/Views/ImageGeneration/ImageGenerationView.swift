@@ -269,7 +269,7 @@ struct ImageVideoDefaultModelsGroup: View {
                 SettingsRow(
                     title: "Edit Model",
                     description: pickerItems.imageEditDelegateCandidates.isEmpty
-                        ? "No image-edit models installed, so editing is unavailable. Download an edit-capable model (e.g. Qwen-Image-Edit) from Local Models → Image."
+                        ? "No model that edits images is on this Mac yet. Download one (such as Qwen Image Edit) from Local Models → Image."
                         : "Used when an agent edits an image.",
                     anchorId: "modelDefaults.imageEdit"
                 ) {
@@ -308,9 +308,9 @@ struct ImageVideoDefaultModelsGroup: View {
                     )
                 }
                 SettingsRow(
-                    title: "Image Model Load Policy",
+                    title: "Keep Image Model Loaded",
                     description:
-                        "Controls image-model cleanup after a job. Swap Local Models for Subagents (Orchestrator) controls whether the invoking chat model unloads; restoring it always unloads the image model first.",
+                        "Choose whether the image model frees memory after each job or stays ready for the next one. Swap Local Models for Subagents separately decides whether your chat model unloads.",
                     anchorId: "imageGeneration.loadPolicy"
                 ) {
                     menuPicker(
@@ -329,8 +329,8 @@ struct ImageVideoDefaultModelsGroup: View {
 
     private var videoHint: String {
         pickerItems.videoGenerationDelegateCandidates.isEmpty
-            ? "Add a native Wan bundle to your image models folder, connect a Venice API-key provider, or enable Osaurus Cloud when its media catalog is available."
-            : "Video runs on this Mac for free, or on connected cloud providers quoted before queueing."
+            ? "Put a Wan video model in your models folder, connect Venice as a provider, or turn on Osaurus Cloud once it offers video."
+            : "Video runs on this Mac for free, or on a connected cloud provider that shows its price before the job starts."
     }
 
     private func videoCandidates(_ kind: MediaGenerationKind) -> [ModelPickerItem] {
@@ -367,7 +367,7 @@ struct ImageVideoDefaultModelsGroup: View {
                 } ?? ""
             return .init(
                 tag: Optional(target),
-                label: Text(verbatim: "\(item.displayName) · \(item.source.displayName)\(price)")
+                label: Text(verbatim: "\(Self.pickerName(item)) · \(item.source.displayName)\(price)")
             )
         }
         return options
@@ -385,8 +385,15 @@ struct ImageVideoDefaultModelsGroup: View {
         if let currentId, !currentId.isEmpty, !candidates.contains(where: { $0.id == currentId }) {
             options.append(.init(tag: currentId, label: Text("\(currentId) (unavailable)", bundle: .module)))
         }
-        options += candidates.map { .init(tag: $0.id, label: Text(verbatim: $0.displayName)) }
+        options += candidates.map { .init(tag: $0.id, label: Text(verbatim: Self.pickerName($0))) }
         return options
+    }
+
+    /// Installed image bundles read as "Qwen Image 2.1 (8-bit)" rather than
+    /// their folder name; the stored id is unchanged.
+    private static func pickerName(_ item: ModelPickerItem) -> String {
+        guard item.source == .imageGeneration, item.mediaModel == nil else { return item.displayName }
+        return ImageModelCatalogNaming.pickerName(item.id)
     }
 }
 
