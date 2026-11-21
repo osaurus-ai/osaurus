@@ -284,6 +284,7 @@ private struct ClassicUpgradeCanvas: View {
         static let dataY: CGFloat = 196
         static let noteY: CGFloat = 230
         static let comparedY: CGFloat = 150
+        static let statusY: CGFloat = 18
     }
 
     private var isClassic: Bool { stage.isClassic }
@@ -292,6 +293,7 @@ private struct ClassicUpgradeCanvas: View {
     private var classicTint: Color { theme.status.warning.foreground }
     private var syncTint: Color { theme.status.success.foreground }
     private var offTint: Color { theme.text.tertiary }
+    private var errorTint: Color { theme.status.error.foreground }
     private var tint: Color { isClassic ? classicTint : syncTint }
     /// The relay offline: in the pairing stages once it's dropped, and in Sync Data, where the devices are offline.
     private var relayOff: Bool { relayDown || stage == .syncData }
@@ -316,6 +318,7 @@ private struct ClassicUpgradeCanvas: View {
                 phoneData
                 macData
                 notes
+                status
             }
             .opacity(isCompared ? 0 : 1)
             compared
@@ -329,12 +332,69 @@ private struct ClassicUpgradeCanvas: View {
 
     /// After a beat, the relay (pairing stages) or the Mac (Classic Data) goes offline: Classic loses access, Sync
     /// keeps its own link.
+    /// Over and over for as long as the stage shows, so it reads whenever it's joined: connected, then the drop.
     private func drop() async {
         dropped = false
         guard !reduceMotion, stage != .syncData, stage != .compared else { return }
-        try? await Task.sleep(for: .seconds(2.4))
-        guard !Task.isCancelled else { return }
-        dropped = true
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            dropped = true
+            try? await Task.sleep(for: .seconds(2.2))
+            guard !Task.isCancelled else { return }
+            dropped = false
+        }
+    }
+
+    // MARK: Status
+
+    /// What's happening, in words, over the diagram: connected, then what dropped and what that costs.
+    private var status: some View {
+        let failed = (relayDown && stage == .classicPairing) || macDown
+        let color = failed ? errorTint : tint
+        let label: LocalizedStringKey
+        let glyph: String
+        switch stage {
+        case .classicPairing where relayDown:
+            label = "Relay offline: no access to your Mac"
+            glyph = "xmark.circle.fill"
+        case .classicData where macDown:
+            label = "Mac offline: no access to its chats or agents"
+            glyph = "xmark.circle.fill"
+        case .syncPairing where relayDown:
+            label = "Relay offline: still connected peer-to-peer"
+            glyph = "checkmark.circle.fill"
+        default:
+            label = "Connected through the encrypted relay"
+            glyph = "lock.fill"
+        }
+        return HStack(spacing: theme.space.s6) {
+            Image(systemName: glyph)
+                .glyphSize(.caption, weight: .semibold)
+                .foregroundStyle(color)
+                .contentTransition(.symbolEffect(.replace))
+            Text(label, bundle: .module)
+                .font(SettingsFont.smallLabel)
+                .foregroundStyle(theme.text.primary)
+                .lineLimit(1)
+                .contentTransition(.opacity)
+        }
+        .padding(.horizontal, theme.space.s10)
+        .frame(height: 26)
+        .background(Capsule().fill(theme.wash(behind: color)))
+        .overlay(Capsule().stroke(theme.rule(around: color), lineWidth: theme.stroke.default))
+        .position(x: Layout.relayX, y: Layout.statusY)
+        .opacity(stage == .classicPairing || stage == .classicData || stage == .syncPairing ? 1 : 0)
+    }
+
+    /// The part that failed, marked where it is.
+    private var failBadge: some View {
+        ZStack {
+            Circle().fill(theme.surface.raised).frame(width: 22, height: 22)
+            Image(systemName: "xmark.circle.fill")
+                .glyphSize(.body, weight: .bold)
+                .foregroundStyle(errorTint)
+        }
     }
 
     // MARK: Wires
@@ -390,6 +450,10 @@ private struct ClassicUpgradeCanvas: View {
                 Image(systemName: glyph)
                     .glyphSize(.large, weight: .semibold)
                     .foregroundStyle(dimmed ? theme.text.tertiary : theme.text.primary)
+                failBadge
+                    .offset(x: 24, y: -24)
+                    .scaleEffect(isMac && macDown ? 1 : 0.4)
+                    .opacity(isMac && macDown ? 1 : 0)
             }
             Text(label, bundle: .module)
                 .font(SettingsFont.chip)
@@ -421,6 +485,13 @@ private struct ClassicUpgradeCanvas: View {
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                 .stroke(theme.rule(around: color), lineWidth: theme.stroke.default)
         )
+        .overlay(alignment: .topTrailing) {
+            // Classic: the relay was the only way across.
+            failBadge
+                .offset(x: 9, y: -9)
+                .scaleEffect(relayDown && stage == .classicPairing ? 1 : 0.4)
+                .opacity(relayDown && stage == .classicPairing ? 1 : 0)
+        }
         .position(x: Layout.relayX, y: relayY)
     }
 
@@ -463,7 +534,7 @@ private struct ClassicUpgradeCanvas: View {
         switch stage {
         case .classicPairing where relayDown, .classicData where macDown:
             label = "No access"
-            color = offTint
+            color = errorTint
             dashed = true
         case .classicPairing, .classicData:
             label = "Only while connected"

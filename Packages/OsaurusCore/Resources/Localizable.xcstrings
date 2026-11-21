@@ -300,6 +300,9 @@
     "Connect iPhone Now" : {
 
     },
+    "Connected through the encrypted relay" : {
+
+    },
     "Data synced and offline" : {
 
     },
@@ -432,6 +435,9 @@
 
     },
     "Live Activities" : {
+
+    },
+    "Mac offline: no access to its chats or agents" : {
 
     },
     "Message %@..." : {
@@ -637,6 +643,12 @@
       }
     },
     "Relay offline" : {
+
+    },
+    "Relay offline: no access to your Mac" : {
+
+    },
+    "Relay offline: still connected peer-to-peer" : {
 
     },
     "Retry once %@ shows as connected in Settings → Providers." : {
