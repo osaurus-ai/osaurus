@@ -160,9 +160,10 @@ enum SyncWorkflowLibrary {
                 let fields = WorkflowFormFields.fields(fromInputSchema: workflow.definition.inputSchema)
                 let report = setupReport(workflow)
                 let lastRun = recent.first { $0.workflowID == workflow.id }
-                // A file or folder's path stays on this Mac: the phone gets its name only (`lastUsed`).
+                // Only what the phone fills in: a file or folder's path stays on this Mac (the phone gets its name,
+                // `lastUsed`), and a secret's value is never written into synced data.
                 let prefill = lastRun?.input.objectValue?.filter { key, _ in
-                    fields.contains { $0.key == key && $0.type != .file && $0.type != .folder }
+                    fields.contains { $0.key == key && phoneTypes.contains($0.type) }
                 }
                 return SyncDeviceFeedContract.ManagedWorkflow(
                     id: workflow.id.uuidString.lowercased(),
