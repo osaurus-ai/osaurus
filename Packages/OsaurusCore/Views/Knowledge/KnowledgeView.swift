@@ -363,12 +363,8 @@ struct KnowledgeView: View {
         // create sheet directly instead of landing the user on the tab to
         // click the same button again. One-shot; also handled in `.onAppear`
         // for the case where the request is set before this view mounts.
-        .onReceive(ManagementStateManager.shared.$pendingKnowledgeCreate) { pending in
-            if pending != nil { applyPendingCreateRequest() }
-        }
-        .onReceive(ManagementStateManager.shared.$pendingKnowledgeDetailId) { pending in
-            if pending != nil { applyPendingDetailRequest() }
-        }
+        .onPendingRequest(ManagementStateManager.shared.$pendingKnowledgeCreate) { applyPendingCreateRequest() }
+        .onPendingRequest(ManagementStateManager.shared.$pendingKnowledgeDetailId) { applyPendingDetailRequest() }
         // The deep link can land before the lazily loaded registry has the
         // collection; retry when collections settle.
         .onReceive(knowledgeManager.$collections) { _ in

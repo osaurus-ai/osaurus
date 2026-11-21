@@ -236,8 +236,8 @@ struct AgentsView: View {
             )
             .environment(\.theme, theme)
         }
-        .onReceive(managementState.$pendingAgentSetupId) { pending in
-            guard let pending else { return }
+        .onPendingRequest(managementState.$pendingAgentSetupId) {
+            guard let pending = managementState.pendingAgentSetupId else { return }
             managementState.pendingAgentSetupId = nil
             withAnimation(Self.navTransition) {
                 selectedAgent = nil
@@ -245,7 +245,7 @@ struct AgentsView: View {
             }
             setupSubject = .saved(pending)
         }
-        .onReceive(managementState.$pendingSetupSubject) { _ in
+        .onPendingRequest(managementState.$pendingSetupSubject) {
             resumeParkedSetupIfNeeded()
         }
         .sheet(isPresented: $isReordering) {
@@ -266,7 +266,7 @@ struct AgentsView: View {
             consumePendingTemplateImport()
             routeSettingsLanding(highlightCoordinator.pending)
         }
-        .onReceive(managementState.$pendingTemplateImport) { _ in consumePendingTemplateImport() }
+        .onPendingRequest(managementState.$pendingTemplateImport) { consumePendingTemplateImport() }
         .onReceive(managementState.$pendingTemplateShare) { pending in
             // Templates mounts and opens Share for it.
             guard pending != nil else { return }
@@ -285,10 +285,10 @@ struct AgentsView: View {
             // pending deep-link once the target record is known.
             applyPendingRemoteAgentDetail()
         }
-        .onReceive(managementState.$pendingRemoteAgentDetailId) { _ in
+        .onPendingRequest(managementState.$pendingRemoteAgentDetailId) {
             applyPendingRemoteAgentDetail()
         }
-        .onReceive(managementState.$pendingAgentDetailId) { _ in
+        .onPendingRequest(managementState.$pendingAgentDetailId) {
             applyPendingAgentDetail()
         }
         .onChange(of: highlightCoordinator.pending) { _, pending in

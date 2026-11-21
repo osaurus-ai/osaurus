@@ -136,20 +136,16 @@ struct LocalModelsCatalogPage: View {
         }
         // Replays on subscribe, so a link that arrived before this view
         // existed (cold launch) is applied on first render too.
-        .onReceive(managementState.$pendingModelDeepLink) { request in
-            guard let request, source.kind == .language else { return }
+        .onPendingRequest(managementState.$pendingModelDeepLink) {
+            guard let request = managementState.pendingModelDeepLink, source.kind == .language else { return }
             managementState.pendingModelDeepLink = nil
             applyModelDeepLink(request.modelId)
         }
-        .onReceive(managementState.$pendingModelDetailId) { _ in
-            DispatchQueue.main.async { applyPendingModelDetail() }
-        }
-        .onReceive(managementState.$pendingHuggingFaceTokenPrompt) { requested in
-            guard requested, source.kind == .language else { return }
+        .onPendingRequest(managementState.$pendingModelDetailId) { applyPendingModelDetail() }
+        .onPendingRequest(managementState.$pendingHuggingFaceTokenPrompt) {
+            guard managementState.pendingHuggingFaceTokenPrompt, source.kind == .language else { return }
             managementState.pendingHuggingFaceTokenPrompt = false
-            // Presenting from inside the publisher callback is dropped
-            // (replay lands mid-render), so hop a turn.
-            DispatchQueue.main.async { showTokenPromptForDeepLink = true }
+            showTokenPromptForDeepLink = true
         }
         .sheet(isPresented: $showTokenPromptForDeepLink) {
             HuggingFaceTokenPromptSheet { retryDeepLinkAfterTokenSaved() }

@@ -4893,6 +4893,19 @@ public enum SettingsSearchIndex {
             disambiguation: "On Workflows Home, under the title, while any workflow is running: each run with the step it is on (Step 4 of 6) and how long it has been going, Stop, and Answer when it waits on you. A run that just ended stays a few seconds, then leaves. The same live state shows in the sidebar row (a spinner and Running · Step 4 of 6) and at the top of the workflow's page."
         ),
         .init(
+            id: "workflows.installing",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Installing",
+            keywords: [
+                "installing workflow", "adding workflow", "download model for workflow", "workflow download",
+                "background install", "install progress", "installer", "minimise install", "cancel install",
+                "workflow needs a model", "set up workflow automatically",
+            ],
+            subTab: "workflows",
+            disambiguation: "On Workflows Home, above Running Now, while a workflow is being added in the background: each one with how far along it is, what Osaurus is doing (Downloading the image model) and the time left, Cancel, Answer when it needs one more answer, and Try Again when it stopped. Click a row (or Show in its toast) to reopen its installer. A finished one leaves for Your Workflows with a toast offering Try It. Adding a workflow opens the installer, which downloads its models, sets up the sandbox and installs packages by itself; Continue in Background minimises it."
+        ),
+        .init(
             id: "workflows.getStarted",
             tab: .workflows,
             section: "Workflows",

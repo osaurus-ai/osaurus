@@ -52,6 +52,8 @@ struct WorkflowsView: View {
     var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State var setupSubject: WorkflowSetupSubject?
+    /// A workflow is being added in the background; Home shows it.
+    @State private var hasInstalls = !WorkflowInstallCoordinator.shared.jobs.isEmpty
     @State var importText: String?
     /// Set with `importText` when the file came from a deep link.
     @State var importSourceHost: String?
@@ -87,16 +89,17 @@ struct WorkflowsView: View {
         var prefill: [String: JSONValue]? = nil
     }
 
-    /// Nothing installed, nothing in progress, no teammate's workflow added
-    /// and no workspace to browse: the New Workflow page stands in for the
-    /// home.
+    /// Nothing installed, nothing in progress, nothing being added, no
+    /// teammate's workflow added and no workspace to browse: the New
+    /// Workflow page stands in for the home.
     @MainActor
     static func isFirstRun(
         installed: InstalledWorkflowStore, drafts: WorkflowDraftStore,
-        hostedLinks: HostedWorkflowLinkStore = .shared, workspaces: WorkspacesService = .shared
+        hostedLinks: HostedWorkflowLinkStore = .shared, workspaces: WorkspacesService = .shared,
+        installing: Bool = !WorkflowInstallCoordinator.shared.jobs.isEmpty
     ) -> Bool {
         installed.workflows.isEmpty && drafts.libraryDrafts.isEmpty && hostedLinks.links.isEmpty
-            && workspaces.workspaces.isEmpty
+            && workspaces.workspaces.isEmpty && !installing
     }
 
     /// Templates with no workflow installed from them.
@@ -107,7 +110,9 @@ struct WorkflowsView: View {
     /// The sidebar on screen: none on the first-run page.
     private var shownSidebar: WorkflowsSidebarColumn? {
         guard let sidebar, sidebar.mode != .hidden,
-            !Self.isFirstRun(installed: installed, drafts: drafts, hostedLinks: hostedLinks, workspaces: workspaces)
+            !Self.isFirstRun(
+                installed: installed, drafts: drafts, hostedLinks: hostedLinks, workspaces: workspaces,
+                installing: hasInstalls)
         else { return nil }
         return sidebar
     }
@@ -152,18 +157,27 @@ struct WorkflowsView: View {
             consumePendingImport()
             consumePendingShare()
             consumePendingDetail()
+            consumePendingInstall()
             // The numbers the rows show: the public read, never signed, so
             // opening Workflows never asks to authenticate.
             Task { await WorkflowShareService.shared.refreshAllStats() }
         }
         .task { await runs.loadRecentRunsIfNeeded() }
-        .onReceive(managementState.$pendingSetupSubject) { _ in resumeParkedSetupIfNeeded() }
-        .onReceive(managementState.$pendingTemplateImport) { _ in consumePendingImport() }
-        .onReceive(managementState.$pendingWorkflowShare) { _ in consumePendingShare() }
-        .onReceive(managementState.$pendingWorkflowDetailId) { _ in consumePendingDetail() }
+        .onPendingRequest(managementState.$pendingSetupSubject) { resumeParkedSetupIfNeeded() }
+        .onPendingRequest(managementState.$pendingTemplateImport) { consumePendingImport() }
+        .onPendingRequest(managementState.$pendingWorkflowShare) { consumePendingShare() }
+        .onPendingRequest(managementState.$pendingWorkflowDetailId) { consumePendingDetail() }
+        .onPendingRequest(managementState.$pendingWorkflowInstall) { consumePendingInstall() }
+        .onReceive(WorkflowInstallCoordinator.shared.$jobs.map { !$0.isEmpty }.removeDuplicates()) { hasInstalls = $0 }
         .sheet(item: $setupSubject) { subject in
-            WorkflowSetupWizardView(subject: subject, onClose: { setupSubject = nil }) { _ in }
-                .environment(\.theme, theme)
+            Group {
+                if subject.mode == .install {
+                    WorkflowInstallerView(subject: subject, onClose: { setupSubject = nil })
+                } else {
+                    WorkflowSetupWizardView(subject: subject, onClose: { setupSubject = nil }) { _ in }
+                }
+            }
+            .environment(\.theme, theme)
         }
         .sheet(isPresented: $showingConnections) {
             WorkflowConnectionsSheet(
@@ -430,7 +444,9 @@ struct WorkflowsView: View {
 
     @ViewBuilder
     private var home: some View {
-        if Self.isFirstRun(installed: installed, drafts: drafts, hostedLinks: hostedLinks, workspaces: workspaces) {
+        if Self.isFirstRun(
+                installed: installed, drafts: drafts, hostedLinks: hostedLinks, workspaces: workspaces,
+                installing: hasInstalls) {
             newWorkflowPage(onBack: nil)
                 .transition(.opacity)
         } else {
@@ -753,6 +769,20 @@ struct WorkflowsView: View {
         } catch {
             _ = ToastManager.shared.error(L("Template"), message: WorkflowErrorText.text(error))
         }
+    }
+
+    /// Reopens a background install's installer (its toast's Show, its row
+    /// on Home).
+    private func consumePendingInstall() {
+        guard let templateID = managementState.pendingWorkflowInstall else { return }
+        managementState.pendingWorkflowInstall = nil
+        guard let job = WorkflowInstallCoordinator.shared.job(forTemplate: templateID) else { return }
+        guard isSheetOpen else {
+            setupSubject = job.subject
+            return
+        }
+        closeSheets()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { setupSubject = job.subject }
     }
 
     private func resumeParkedSetupIfNeeded() {

@@ -28,77 +28,6 @@
 import AppKit
 import SwiftUI
 
-struct WorkflowSetupSubject: Identifiable {
-    enum Mode: Equatable {
-        case install
-        case setup(UUID)
-        case update(UUID)
-        case draft(UUID)
-    }
-
-    let id = UUID()
-    var mode: Mode
-    var template: Template
-    var bindings: InstallBindings
-    var name: String
-    /// `InstalledWorkflow.agentStepsAllowed`, saved with the bindings.
-    var agentStepsAllowed = false
-    /// The registry listing an install or update came from.
-    var source: InstalledWorkflow.Source?
-
-    /// Adding a template. A template already installed here opens as setup on
-    /// that install: one installed workflow per template per Mac.
-    @MainActor
-    static func install(_ template: Template) -> WorkflowSetupSubject {
-        if let existing = InstalledWorkflowStore.shared.workflow(templateID: template.id) {
-            if existing.templateVersion < template.version { return update(existing, to: template) }
-            return setup(existing)
-        }
-        return WorkflowSetupSubject(mode: .install, template: template, bindings: InstallBindings(), name: template.name)
-    }
-
-    static func setup(_ workflow: InstalledWorkflow) -> WorkflowSetupSubject {
-        WorkflowSetupSubject(
-            mode: .setup(workflow.id), template: workflow.template, bindings: workflow.bindings, name: workflow.name,
-            agentStepsAllowed: workflow.agentStepsAllowed)
-    }
-
-    /// A version that asks a new agent is asked about again.
-    static func update(_ workflow: InstalledWorkflow, to template: Template) -> WorkflowSetupSubject {
-        let newAgents = TemplateDiff.newRequirements(from: workflow.template.requirements, to: template.requirements).agents
-        return WorkflowSetupSubject(
-            mode: .update(workflow.id), template: template, bindings: workflow.bindings, name: workflow.name,
-            agentStepsAllowed: newAgents.isEmpty && workflow.agentStepsAllowed)
-    }
-
-    @MainActor
-    static func draft(_ draft: WorkflowDraft) -> WorkflowSetupSubject {
-        WorkflowSetupSubject(
-            mode: .draft(draft.id), template: draft.template(),
-            bindings: WorkflowDraftStore.shared.testBindings(draft.id), name: draft.name)
-    }
-
-    var installedID: UUID? {
-        switch mode {
-        case .install, .draft: return nil
-        case .setup(let id), .update(let id): return id
-        }
-    }
-
-    var isDraft: Bool {
-        if case .draft = mode { return true }
-        return false
-    }
-
-    /// The id setup checks and parked state key on.
-    var subjectID: UUID {
-        switch mode {
-        case .draft(let id): return id
-        default: return installedID ?? template.id
-        }
-    }
-}
-
 struct WorkflowSetupWizardView: View {
     @Environment(\.theme) private var theme
 
@@ -142,14 +71,15 @@ struct WorkflowSetupWizardView: View {
         func items(in report: SetupReport) -> [SetupItem] {
             report.items.filter { item in
                 switch self {
-                case .models: return item.kind == .model
+                case .models: return item.kind == .model || item.kind == .mediaModel || item.needsMediaModel
                 case .secrets: return item.kind == .secret
                 case .folders: return item.kind == .folder
                 case .apps: return item.kind == .app
                 case .agents: return item.kind == .agent
                 case .tools:
-                    return item.kind == .mcpServer || item.kind == .plugin || item.kind == .network
-                        || item.kind == .tool
+                    return !item.needsMediaModel
+                        && (item.kind == .mcpServer || item.kind == .plugin || item.kind == .network
+                            || item.kind == .tool)
                 case .dependencies: return item.kind == .dependency
                 case .permissions: return item.kind == .systemPermission
                 case .answers, .review: return false
@@ -373,11 +303,13 @@ struct WorkflowSetupWizardView: View {
         }
     }
 
-    static func steps(
+    nonisolated static func steps(
         for subject: WorkflowSetupSubject, report: SetupReport, newRequirements: TemplateDiff.NewRequirements?
     ) -> [Step] {
         let reqs = subject.template.requirements
-        let blocking = Set(report.blocking.map(\.kind))
+        // A missing image or video model is fixed on Models, not Tools.
+        let mediaBlocking = report.blocking.contains(where: \.needsMediaModel)
+        let blocking = Set(report.blocking.filter { !$0.needsMediaModel }.map(\.kind))
         func wanted(_ present: Bool, _ isNew: Bool, _ kinds: [TemplateRequirement.Kind]) -> Bool {
             guard present else { return false }
             guard newRequirements != nil else { return true }
@@ -385,7 +317,12 @@ struct WorkflowSetupWizardView: View {
         }
         let new = newRequirements ?? TemplateDiff.NewRequirements()
         var out: [Step] = []
-        if wanted(!reqs.models.isEmpty, !new.slots.isEmpty, [.model]) { out.append(.models) }
+        if wanted(
+            !reqs.models.isEmpty || !reqs.mediaModels.isEmpty || mediaBlocking, !new.slots.isEmpty || mediaBlocking,
+            [.model])
+        {
+            out.append(.models)
+        }
         // An update that reaches new hosts or tools re-asks every secret,
         // not only new keys: the old value would travel somewhere new.
         if wanted(!reqs.secrets.isEmpty, !new.secrets.isEmpty || new.widensAccess, [.secret]) { out.append(.secrets) }
@@ -434,7 +371,7 @@ struct WorkflowSetupWizardView: View {
             return
         }
         do {
-            guard let result = try Self.commit(working) else { return }
+            guard let result = try working.commit() else { return }
             switch working.mode {
             case .install: _ = ToastManager.shared.success(L("Installed \(result.name)"))
             case .setup: _ = ToastManager.shared.success(L("\(result.name) is ready"))
@@ -449,50 +386,6 @@ struct WorkflowSetupWizardView: View {
             }
         } catch {
             warn(WorkflowErrorText.text(error), glowing: .review)
-        }
-    }
-
-    /// Installs, saves, or updates the subject. Nil for a draft (nothing
-    /// installs) or an install that disappeared meanwhile.
-    static func commit(_ working: WorkflowSetupSubject) throws -> InstalledWorkflow? {
-        let store = InstalledWorkflowStore.shared
-        switch working.mode {
-        case .draft:
-            return nil
-        case .install:
-            var installed = try store.install(working.template, bindings: working.bindings, name: working.name)
-            // Secrets entered before the install existed sat under the
-            // template id; move them to the install they now belong to.
-            installed.bindings.secrets = WorkflowCredentials.rekey(
-                working.template.requirements.secrets.map(\.key), from: working.subjectID, to: installed.id,
-                keeping: working.bindings.secrets)
-            installed.agentStepsAllowed = working.agentStepsAllowed
-            if let source = working.source { installed.source = source }
-            try store.save(installed)
-            return store.workflow(id: installed.id) ?? installed
-        case .setup(let id):
-            guard var installed = store.workflow(id: id) else { return nil }
-            installed.bindings = working.bindings
-            installed.agentStepsAllowed = working.agentStepsAllowed
-            installed.needsSetup = false
-            try store.save(installed, reviewed: true)
-            return store.workflow(id: id) ?? installed
-        case .update(let id):
-            guard let current = store.workflow(id: id) else { return nil }
-            let name = working.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            var installed = try store.install(
-                working.template, bindings: working.bindings, name: name == current.name ? nil : name)
-            if installed.agentStepsAllowed != working.agentStepsAllowed
-                || (working.source != nil && installed.source != working.source)
-            {
-                installed.agentStepsAllowed = working.agentStepsAllowed
-                if let source = working.source { installed.source = source }
-                try store.save(installed)
-            }
-            if let def = working.template.workflow {
-                SavedAnswersStore.shared.migrate(workflowID: installed.id, to: def)
-            }
-            return installed
         }
     }
 
@@ -590,12 +483,46 @@ struct WorkflowModelsStep: View {
 
     var body: some View {
         let slots = template.requirements.models.filter { onlySlots?.contains($0.slot) ?? true }
+        let media = Self.mediaNeeds(template, items: items, onlyBlocked: onlySlots != nil)
+        let mediaNotes = items.filter { $0.kind == .mediaModel && !$0.needsMediaModel }
         VStack(alignment: .leading, spacing: theme.space.s16) {
-            if onLeave != nil { Self.explainer.textStyle(.caption).foregroundColor(theme.text.secondary) }
+            if onLeave != nil, !slots.isEmpty { Self.explainer.textStyle(.caption).foregroundColor(theme.text.secondary) }
             ForEach(slots) { slot in slotCard(slot) }
+            ForEach(media) { need in
+                WorkflowMediaModelCard(
+                    requirement: need.requirement,
+                    steps: template.workflow?.stepNames(for: need.requirement, tool: need.tool) ?? [],
+                    issue: need.issue, onLeave: onLeave)
+            }
+            if !mediaNotes.isEmpty { StepIssueList(items: mediaNotes) }
             if let onLeave { Self.actions(onLeave) }
         }
         .onAppear { if !pickerCache.isLoaded { pickerCache.prewarm() } }
+    }
+
+    struct MediaNeed: Identifiable {
+        let requirement: MediaModelRequirement
+        /// The `image` or `video` tool it stands for; nil for a media step.
+        let tool: String?
+        /// What blocks it; nil when a model is ready.
+        let issue: SetupItem?
+        var id: String { tool.map { "tool:\($0)" } ?? requirement.id }
+    }
+
+    /// Each media step's model, and each `image` or `video` tool step with
+    /// no model here. `onlyBlocked` drops the ready ones.
+    nonisolated static func mediaNeeds(_ template: Template, items: [SetupItem], onlyBlocked: Bool = false) -> [MediaNeed] {
+        var out = template.requirements.mediaModels.map { req in
+            MediaNeed(
+                requirement: req, tool: nil,
+                issue: items.first { $0.kind == .mediaModel && $0.needsMediaModel && $0.value == req.id })
+        }
+        for item in items where item.kind == .tool && item.needsMediaModel {
+            if let req = MediaModelSourceResolver.requirement(forTool: item.value) {
+                out.append(MediaNeed(requirement: req, tool: item.value, issue: item))
+            }
+        }
+        return onlyBlocked ? out.filter { $0.issue != nil } : out
     }
 
     static var explainer: some View {

@@ -160,7 +160,7 @@ struct AgentTemplatesView: View {
             Task { await WorkflowShareService.shared.refreshAllStats() }
             consumePendingShare()
         }
-        .onReceive(ManagementStateManager.shared.$pendingTemplateShare) { _ in consumePendingShare() }
+        .onPendingRequest(ManagementStateManager.shared.$pendingTemplateShare) { consumePendingShare() }
         .sheet(item: $sharing) { request in
             ShareWorkflowSheet(
                 template: request.template, entry: request.entry, publishable: request.publishable,

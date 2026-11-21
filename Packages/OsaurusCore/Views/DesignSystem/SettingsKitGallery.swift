@@ -1497,6 +1497,23 @@ HStack(spacing: theme.space.s8) {
                     }
                     .frame(width: 420)
                 }
+                SettingsRow(title: "Progress checklist", verbatimTitle: true) {
+                    EmptyView()
+                } trailing: {
+                    SettingsProgressChecklist(items: [
+                        SettingsChecklistItem(id: "a", title: "Image model", detail: "12 GB", state: .done),
+                        SettingsChecklistItem(id: "b", title: "Text model", detail: "4.2 GB", state: .working),
+                        SettingsChecklistItem(id: "c", title: "A safe place to run its steps", state: .waiting),
+                        SettingsChecklistItem(
+                            id: "d", title: "Tools its steps use", detail: "The sandbox has no network.", state: .failed),
+                    ])
+                    .frame(width: 320)
+                }
+                SettingsRow(title: "Completion mark", verbatimTitle: true) {
+                    EmptyView()
+                } trailing: {
+                    SettingsCompletionMark()
+                }
                 SettingsRow(title: "Icon tiles", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
