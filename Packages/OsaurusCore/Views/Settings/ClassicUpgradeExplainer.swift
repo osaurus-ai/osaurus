@@ -107,6 +107,8 @@ struct ClassicUpgradeExplainer: View {
     static let canvasDesignSize = CGSize(width: 656, height: 300)
     static let chipRowHeight: CGFloat = 26
     static let rowSpacing: CGFloat = 16
+    /// Two lines of the caption, whichever step.
+    static let captionHeight: CGFloat = 44
 
     private var scale: CGFloat { max(0.5, min(1, availableWidth / Self.canvasDesignSize.width)) }
 
@@ -143,12 +145,16 @@ struct ClassicUpgradeExplainer: View {
                     .font(SettingsFont.cardTitle)
                     .foregroundStyle(theme.text.primary)
                     .multilineTextAlignment(.center)
-                    .lineLimit(2, reservesSpace: true)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.9)
                     .frame(maxWidth: .infinity)
                     .id(stage)
                     .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity))
             }
+            // A fixed height: with only `reservesSpace` a one-line caption came out 36pt and a two-line one 42pt, so the
+            // sheet grew and shrank 6pt between steps, re-centring the window and flashing a scroll bar as it did.
             .frame(maxWidth: .infinity)
+            .frame(height: Self.captionHeight)
             .cupgFrame("caption")
         }
         .frame(maxWidth: .infinity)
