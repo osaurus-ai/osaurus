@@ -327,6 +327,9 @@
     "Devices aware of each other" : {
 
     },
+    "Direct via peer-to-peer network" : {
+
+    },
     "Encrypted" : {
 
     },

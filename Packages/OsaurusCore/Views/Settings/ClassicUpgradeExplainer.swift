@@ -445,8 +445,7 @@ private struct ClassicUpgradeCanvas: View {
     }
 
     private var directLabel: some View {
-        let label: LocalizedStringKey = relayDown ? "Still connected" : "Aware of each other"
-        return Text(label, bundle: .module)
+        return Text("Direct via peer-to-peer network", bundle: .module)
             .font(SettingsFont.chip)
             .foregroundStyle(relayDown ? syncTint : theme.text.secondary)
             .padding(.horizontal, theme.space.s6)
@@ -471,7 +470,7 @@ private struct ClassicUpgradeCanvas: View {
             color = classicTint
             dashed = true
         case .syncData:
-            label = "Synced data"
+            label = "Own copy"
             color = syncTint
         default:
             label = "Chats & agents"
@@ -479,13 +478,16 @@ private struct ClassicUpgradeCanvas: View {
         }
         return dataPill(label: label, color: color, dashed: dashed)
             .position(x: Layout.phoneX, y: Layout.dataY)
+            // Sync Pairing is about the connection only; the data comes in Sync Data.
+            .opacity(stage == .syncPairing ? 0 : 1)
     }
 
     private var macData: some View {
-        let label: LocalizedStringKey = stage == .syncData ? "Synced data" : "Chats & agents"
+        let label: LocalizedStringKey = stage == .syncData ? "Own copy" : "Chats & agents"
         let color = (stage == .classicPairing && relayDown) || macDown ? offTint : tint
         return dataPill(label: label, color: color, dashed: false)
             .position(x: Layout.macX, y: Layout.dataY)
+            .opacity(stage == .syncPairing ? 0 : 1)
     }
 
     private func dataPill(label: LocalizedStringKey, color: Color, dashed: Bool) -> some View {
