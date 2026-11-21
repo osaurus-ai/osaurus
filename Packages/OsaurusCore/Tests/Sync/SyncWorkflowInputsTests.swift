@@ -89,10 +89,11 @@ struct SyncWorkflowInputsTests {
 
     // MARK: Last used
 
-    private static func run(_ input: [String: JSONValue], workflowId: UUID = UUID(), fromPhone: Bool = false)
-        -> WorkflowRun
-    {
-        var caller = WorkflowCaller(kind: .user, background: fromPhone)
+    private static func run(
+        _ input: [String: JSONValue], workflowId: UUID = UUID(), fromPhone: Bool = false,
+        kind: WorkflowCaller.Kind = .user
+    ) -> WorkflowRun {
+        var caller = WorkflowCaller(kind: kind, background: fromPhone)
         caller.fromPhone = fromPhone
         return WorkflowRun(
             workflowID: workflowId,
@@ -147,5 +148,15 @@ struct SyncWorkflowInputsTests {
             fromPhone: true
         )
         #expect(SyncWorkflowInputs.lastPath(photo, lastRun: escaping) == nil)
+    }
+
+    @Test("a path an agent, the Orchestrator, an event or another workflow gave is never reused")
+    func onlyAPersonsChoiceOnThisMacIsReused() {
+        let photo = DialogField(key: "photo", label: "Photo", type: .file)
+        let input: [String: JSONValue] = ["photo": .string("/Users/me/.ssh/id_ed25519")]
+        for kind: WorkflowCaller.Kind in [.agent, .orchestrator, .event, .workflow, .test] {
+            #expect(SyncWorkflowInputs.lastPath(photo, lastRun: Self.run(input, kind: kind)) == nil, "\(kind)")
+        }
+        #expect(SyncWorkflowInputs.lastPath(photo, lastRun: Self.run(input)) == "/Users/me/.ssh/id_ed25519")
     }
 }

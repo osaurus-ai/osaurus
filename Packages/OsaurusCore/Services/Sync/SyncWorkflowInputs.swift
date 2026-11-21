@@ -38,8 +38,10 @@ enum SyncWorkflowInputs {
 
     /// The path the workflow's last run gave required file or folder `field`, which a phone start that sends
     /// nothing for it reuses. Only the last run's, so the phone shows the same one the run gets (`lastUsedName`);
-    /// optional fields are left empty, as the phone left them. From a run the phone started, only a file this
-    /// Mac saved for it: anything else there was the phone's value. Not checked to exist (`paths` does).
+    /// optional fields are left empty, as the phone left them. Only a path a person chose on this Mac (a run started
+    /// from a workflow tab or the Workflows screen), or, from a run the phone started, a file this Mac saved for it:
+    /// a path an agent, the Orchestrator, an event's payload or an outside caller gave is never granted again.
+    /// Not checked to exist (`paths` does).
     nonisolated static func lastPath(_ field: DialogField, lastRun: WorkflowRun?) -> String? {
         guard field.required, field.type == .file || field.type == .folder, let lastRun,
             let path = lastRun.input.objectValue?[field.key]?.stringValue, path.hasPrefix("/")
@@ -47,7 +49,9 @@ enum SyncWorkflowInputs {
         if lastRun.caller.fromPhone {
             let root = phoneInputs(lastRun.workflowID).standardizedFileURL.path + "/"
             guard URL(fileURLWithPath: path).standardizedFileURL.path.hasPrefix(root) else { return nil }
+            return path
         }
+        guard lastRun.caller.kind == .user, !lastRun.caller.isExternalSurface else { return nil }
         return path
     }
 
