@@ -202,10 +202,6 @@ final class MobilePairingService: ObservableObject {
         guard !isGeneratingCode else { return }
         cancelCode()
         lastError = nil
-        guard !MobileConnectMigration.isRetired(defaults: defaults) else {
-            lastError = L("Your iPhone uses Sync now. Add it in Sharing → Devices.")
-            return
-        }
         guard OsaurusIdentity.exists() else {
             lastError = L("Set up your Osaurus identity first (Settings → Identity).")
             return

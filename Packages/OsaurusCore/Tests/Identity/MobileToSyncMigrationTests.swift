@@ -156,6 +156,59 @@ struct MobileToSyncMigrationTests {
         #expect(MobileConnectMigration.isRetired(defaults: fresh))
     }
 
+    // MARK: A phone paired with a code after the first iPhone joined Sync
+
+    @Test func theFirstSyncIPhoneRetiresAndIsRecorded() throws {
+        let fresh = defaults()
+        let recorder = Recorder(enabled: [], keys: [])
+        _ = try #require(
+            MobileConnectMigration.phonesChanged(["A"], defaults: fresh, environment: recorder.environment))
+        #expect(MobileConnectMigration.isRetired(defaults: fresh))
+        #expect(fresh.stringArray(forKey: MobileConnectMigration.seenSyncPhonesKey) == ["A"])
+    }
+
+    @Test func aCodePairedPhoneJoiningSyncIsUndone() throws {
+        let mac = defaults()
+        let first = Recorder(enabled: [], keys: [])
+        _ = MobileConnectMigration.phonesChanged(["A"], defaults: mac, environment: first.environment)
+        // Phone B pairs with a 6-digit code, the pairing staying open.
+        let agent = UUID()
+        let phoneKey = key("Mobile")
+        mac.set(Data("{}".utf8), forKey: MobileConnectMigration.pairedDeviceKey)
+        mac.set([agent.uuidString], forKey: MobileConnectMigration.relayManagedAgentsKey)
+        let second = Recorder(enabled: [agent], keys: [phoneKey])
+        // Nothing while only A is in Sync: B keeps working.
+        #expect(MobileConnectMigration.phonesChanged(["A"], defaults: mac, environment: second.environment) == nil)
+        #expect(second.revoked.isEmpty)
+        // B joins Sync.
+        let outcome = try #require(
+            MobileConnectMigration.phonesChanged(["A", "B"], defaults: mac, environment: second.environment))
+        #expect(outcome.keysRevoked == [phoneKey.id])
+        #expect(outcome.tunnelsDisabled == [agent])
+        #expect(second.pairingEnded == 1)
+        #expect(mac.object(forKey: MobileConnectMigration.pairedDeviceKey) == nil)
+    }
+
+    @Test func aNewSyncIPhoneWithNoCodePairingUndoesNothing() {
+        let mac = defaults()
+        let recorder = Recorder(enabled: [], keys: [key("Mobile")])
+        _ = MobileConnectMigration.phonesChanged(["A"], defaults: mac, environment: recorder.environment)
+        let before = recorder.revoked.count
+        #expect(
+            MobileConnectMigration.phonesChanged(["A", "B"], defaults: mac, environment: recorder.environment) == nil)
+        #expect(recorder.revoked.count == before)
+    }
+
+    @Test func aMacRetiredBeforeRecordingTakesItsIPhonesAsKnown() {
+        let mac = defaults()
+        mac.set(true, forKey: MobileConnectMigration.doneKey)
+        mac.set(Data("{}".utf8), forKey: MobileConnectMigration.pairedDeviceKey)
+        let recorder = Recorder(enabled: [], keys: [key("Mobile")])
+        #expect(MobileConnectMigration.phonesChanged(["A"], defaults: mac, environment: recorder.environment) == nil)
+        #expect(recorder.revoked.isEmpty)
+        #expect(mac.stringArray(forKey: MobileConnectMigration.seenSyncPhonesKey) == ["A"])
+    }
+
     @Test func ignoresTheV1DoneKey() {
         let earlierBuild = defaults()
         earlierBuild.set(true, forKey: "mobileConnectRetiredToSync.v1")

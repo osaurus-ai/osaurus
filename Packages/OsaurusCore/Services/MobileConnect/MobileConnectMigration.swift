@@ -77,19 +77,48 @@ enum MobileConnectMigration {
     @MainActor private static var phoneWatch: AnyCancellable?
 
     /// Runs the migration the first time an iPhone shows up in Sync.
+    /// The Sync iPhones this Mac has seen, so one joining for the first time stands out.
+    static let seenSyncPhonesKey = "mobileConnectSeenSyncPhones"
+
+    /// Watches the account's iPhones for as long as the app runs: the first to join retires the old pairing, and
+    /// since the 6-digit pairing stays open, a later one joining while a phone is paired with it (that phone moving
+    /// to Sync) undoes that pairing too.
     @MainActor
     static func start() {
-        guard phoneWatch == nil, !isRetired() else { return }
-        phoneWatch = SyncPhoneDevices.shared.$hasPhone
+        guard phoneWatch == nil else { return }
+        phoneWatch = SyncPhoneDevices.shared.$phoneKeys
             .removeDuplicates()
-            .filter { $0 }
             .receive(on: DispatchQueue.main)
-            .sink { _ in
-                MainActor.assumeIsolated {
-                    runIfNeeded(iPhoneInSync: true)
-                    phoneWatch = nil
-                }
+            .sink { keys in
+                MainActor.assumeIsolated { phonesChanged(keys) }
             }
+    }
+
+    /// `keys`: the account's iPhones now. Returns what was undone, if anything.
+    @MainActor
+    @discardableResult
+    static func phonesChanged(
+        _ keys: Set<String>,
+        defaults: UserDefaults = .standard,
+        environment: Environment? = nil
+    ) -> Outcome? {
+        guard !keys.isEmpty else { return nil }
+        let recorded = defaults.stringArray(forKey: seenSyncPhonesKey)
+        defaults.set(Array(keys.union(recorded ?? [])).sorted(), forKey: seenSyncPhonesKey)
+        // The first iPhone in Sync: the one-time retirement.
+        guard isRetired(defaults: defaults) else {
+            return runIfNeeded(iPhoneInSync: true, defaults: defaults, environment: environment)
+        }
+        // Retired before this Mac recorded its iPhones: they're taken as the ones already there.
+        guard let recorded else { return nil }
+        let joined = keys.subtracting(recorded)
+        guard !joined.isEmpty, defaults.object(forKey: pairedDeviceKey) != nil else { return nil }
+        let outcome = undoLegacyPairing(defaults: defaults, environment: environment ?? .live)
+        MobileConnectLog.write(
+            "mobile: an iPhone paired with a code joined Sync; "
+                + "\(outcome.tunnelsDisabled.count) tunnel(s) off, \(outcome.keysRevoked.count) key(s) revoked"
+        )
+        return outcome
     }
 
     /// Nil when it already ran, or when no iPhone has joined Sync yet. Once an
@@ -104,8 +133,17 @@ enum MobileConnectMigration {
     ) -> Outcome? {
         guard iPhoneInSync, !isRetired(defaults: defaults) else { return nil }
         defaults.set(true, forKey: doneKey)
-        let env = environment ?? .live
+        let outcome = undoLegacyPairing(defaults: defaults, environment: environment ?? .live)
+        MobileConnectLog.write(
+            "mobile: an iPhone joined Sync, retired the 6-digit pairing; "
+                + "\(outcome.tunnelsDisabled.count) tunnel(s) off, \(outcome.keysRevoked.count) key(s) revoked"
+        )
+        return outcome
+    }
 
+    /// What the 6-digit pairing left: the tunnels it turned on, its phone's key, its defaults, the paired phone.
+    @MainActor
+    private static func undoLegacyPairing(defaults: UserDefaults, environment env: Environment) -> Outcome {
         var outcome = Outcome()
         let managed = (defaults.stringArray(forKey: relayManagedAgentsKey) ?? []).compactMap(UUID.init(uuidString:))
         for agentId in managed.sorted(by: { $0.uuidString < $1.uuidString }) where env.isTunnelEnabled(agentId) {
@@ -121,10 +159,6 @@ enum MobileConnectMigration {
         }
         for key in legacyDefaultsKeys { defaults.removeObject(forKey: key) }
         env.endPairing()
-        MobileConnectLog.write(
-            "mobile: an iPhone joined Sync, retired the 6-digit pairing; "
-                + "\(outcome.tunnelsDisabled.count) tunnel(s) off, \(outcome.keysRevoked.count) key(s) revoked"
-        )
         return outcome
     }
 }
