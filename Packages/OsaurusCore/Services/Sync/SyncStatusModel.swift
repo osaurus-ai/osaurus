@@ -23,6 +23,8 @@ final class SyncStatusModel: ObservableObject {
         case confirming(PairingConfirmation)
         case paired(deviceName: String)
         case failed(String)
+        /// The code shown ran out of time with no device using it: a new one is a fresh ask (it needs the owner).
+        case expired
     }
 
     /// Both devices show the same number before the account is handed over.
@@ -330,7 +332,8 @@ final class SyncStatusModel: ObservableObject {
             pairingExpiry = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(Int(Self.pairingTTL)))
                 guard !Task.isCancelled, let self, case .offering = self.pairing else { return }
-                self.pairing = .idle
+                // Not `.idle`: that reads as a code still being made, and the sheet span on it for good.
+                self.pairing = .expired
             }
         } catch {
             pairing = .failed(error.syncUserMessage)

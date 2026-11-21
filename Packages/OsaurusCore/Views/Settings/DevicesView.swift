@@ -399,7 +399,7 @@ struct DevicesView: View {
         case .offering: model.cancelPairing()
         case .confirming: model.rejectPairing()
         case .joining: break
-        case .idle, .paired, .failed: model.dismissPairingResult()
+        case .idle, .paired, .failed, .expired: model.dismissPairingResult()
         }
         // A 6-digit code still showing stops working with its sheet, as the QR code does.
         if phoneMethod == .code, MobilePairingService.shared.activeCode != nil {
@@ -442,6 +442,15 @@ struct DevicesView: View {
                     case .scan:
                         if case let .offering(offer) = model.pairing {
                             pairingPanel(offer)
+                        } else if model.pairing == .expired {
+                            SettingsCallout(
+                                icon: "clock.badge.exclamationmark",
+                                title: "This Code Expired",
+                                message: L("Codes work for 5 minutes. Show a new one to add your device."),
+                                tone: .info
+                            ) {
+                                SettingsButton(.secondary, "Show New Code") { showScanCode() }
+                            }
                         } else if model.pairing == .idle {
                             SettingsSpinner()
                         }

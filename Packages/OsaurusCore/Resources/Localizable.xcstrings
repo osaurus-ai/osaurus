@@ -263,6 +263,9 @@
     "Classic vs. Sync" : {
 
     },
+    "Codes work for 5 minutes. Show a new one to add your device." : {
+
+    },
     "Connect %@ in Settings → Providers, or pick a model that is here." : {
       "localizations" : {
         "de" : {
@@ -746,6 +749,9 @@
         }
       }
     },
+    "Show New Code" : {
+
+    },
     "Sign in to %@ again in Settings → Providers." : {
       "localizations" : {
         "de" : {
@@ -1134,6 +1140,9 @@
       }
     },
     "These chats and their messages are removed from this Mac. This cannot be undone." : {
+
+    },
+    "This Code Expired" : {
 
     },
     "This Mac makes a code for you to type in on the app." : {
