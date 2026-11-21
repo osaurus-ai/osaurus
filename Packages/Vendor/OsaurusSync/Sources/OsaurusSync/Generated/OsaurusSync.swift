@@ -573,6 +573,452 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 /**
+ * One file being downloaded.
+ */
+public protocol FileTransferProtocol: AnyObject, Sendable {
+    
+    func cancel() 
+    
+    /**
+     * The file's size once it has all arrived. `Cancelled` after `cancel`.
+     */
+    func wait() async throws  -> UInt64
+    
+}
+/**
+ * One file being downloaded.
+ */
+open class FileTransfer: FileTransferProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_osaurus_sync_ffi_fn_clone_filetransfer(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_osaurus_sync_ffi_fn_free_filetransfer(handle, $0) }
+    }
+
+    
+
+    
+open func cancel()  {try! rustCall() {
+    uniffi_osaurus_sync_ffi_fn_method_filetransfer_cancel(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
+    /**
+     * The file's size once it has all arrived. `Cancelled` after `cancel`.
+     */
+open func wait()async throws  -> UInt64  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_osaurus_sync_ffi_fn_method_filetransfer_wait(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_osaurus_sync_ffi_rust_future_poll_u64,
+            completeFunc: ffi_osaurus_sync_ffi_rust_future_complete_u64,
+            freeFunc: ffi_osaurus_sync_ffi_rust_future_free_u64,
+            liftFunc: FfiConverterUInt64.lift,
+            errorHandler: FfiConverterTypeModelShareError_lift
+        )
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFileTransfer: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FileTransfer
+
+    public static func lift(_ handle: UInt64) throws -> FileTransfer {
+        return FileTransfer(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FileTransfer) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FileTransfer {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FileTransfer, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFileTransfer_lift(_ handle: UInt64) throws -> FileTransfer {
+    return try FfiConverterTypeFileTransfer.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFileTransfer_lower(_ value: FileTransfer) -> UInt64 {
+    return FfiConverterTypeFileTransfer.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Shares this machine's chosen models with Osaurus on the same network, and fetches theirs.
+ */
+public protocol ModelShareNodeProtocol: AnyObject, Sendable {
+    
+    /**
+     * Adds a host by its `local_address` and fetches what it shares.
+     */
+    func addHostAddress(address: String) async throws 
+    
+    /**
+     * Hosts that answered, by name, with what they share. Empty while not browsing.
+     */
+    func hosts()  -> [NearbyHost]
+    
+    func isRunning()  -> Bool
+    
+    /**
+     * This machine's direct addresses, for tests and setups without mDNS.
+     */
+    func localAddress()  -> String?
+    
+    /**
+     * Asks every known host what it shares now, instead of at the next poll.
+     */
+    func refresh() 
+    
+    /**
+     * Replaces what this machine serves. Fails with `InvalidInput` for a bad path or digest,
+     * or a model id or file path listed twice.
+     */
+    func setSharedModels(models: [SharedModel]) throws 
+    
+    /**
+     * Starts sharing and browsing as configured, stopping a running node first. Each start
+     * is a new endpoint with a new id, and shares nothing until `set_shared_models`.
+     */
+    func start(config: ModelShareConfig, listener: ModelShareListener) async throws 
+    
+    /**
+     * Starts downloading one file of `model` from `host` into `destination`, keeping its
+     * first `offset` bytes if it has that many. Await `wait` for the file's size; `cancel`
+     * (or dropping the transfer) stops it and leaves what arrived for a later resume. The
+     * caller checks the file against its digest before using it.
+     */
+    func startDownload(host: String, model: String, path: String, destination: String, offset: UInt64, progress: TransferProgress) throws  -> FileTransfer
+    
+    /**
+     * Closes the endpoint. Transfers in progress fail.
+     */
+    func stop() async 
+    
+}
+/**
+ * Shares this machine's chosen models with Osaurus on the same network, and fetches theirs.
+ */
+open class ModelShareNode: ModelShareNodeProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_osaurus_sync_ffi_fn_clone_modelsharenode(self.handle, $0) }
+    }
+public convenience init()throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeModelShareError_lift) {
+    uniffi_osaurus_sync_ffi_fn_constructor_modelsharenode_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_osaurus_sync_ffi_fn_free_modelsharenode(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Adds a host by its `local_address` and fetches what it shares.
+     */
+open func addHostAddress(address: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_osaurus_sync_ffi_fn_method_modelsharenode_add_host_address(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(address)
+                )
+            },
+            pollFunc: ffi_osaurus_sync_ffi_rust_future_poll_void,
+            completeFunc: ffi_osaurus_sync_ffi_rust_future_complete_void,
+            freeFunc: ffi_osaurus_sync_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeModelShareError_lift
+        )
+}
+    
+    /**
+     * Hosts that answered, by name, with what they share. Empty while not browsing.
+     */
+open func hosts() -> [NearbyHost]  {
+    return try!  FfiConverterSequenceTypeNearbyHost.lift(try! rustCall() {
+    uniffi_osaurus_sync_ffi_fn_method_modelsharenode_hosts(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func isRunning() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_osaurus_sync_ffi_fn_method_modelsharenode_is_running(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * This machine's direct addresses, for tests and setups without mDNS.
+     */
+open func localAddress() -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_osaurus_sync_ffi_fn_method_modelsharenode_local_address(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Asks every known host what it shares now, instead of at the next poll.
+     */
+open func refresh()  {try! rustCall() {
+    uniffi_osaurus_sync_ffi_fn_method_modelsharenode_refresh(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
+    /**
+     * Replaces what this machine serves. Fails with `InvalidInput` for a bad path or digest,
+     * or a model id or file path listed twice.
+     */
+open func setSharedModels(models: [SharedModel])throws   {try rustCallWithError(FfiConverterTypeModelShareError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_modelsharenode_set_shared_models(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeSharedModel.lower(models),$0
+    )
+}
+}
+    
+    /**
+     * Starts sharing and browsing as configured, stopping a running node first. Each start
+     * is a new endpoint with a new id, and shares nothing until `set_shared_models`.
+     */
+open func start(config: ModelShareConfig, listener: ModelShareListener)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_osaurus_sync_ffi_fn_method_modelsharenode_start(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeModelShareConfig_lower(config),FfiConverterCallbackInterfaceModelShareListener_lower(listener)
+                )
+            },
+            pollFunc: ffi_osaurus_sync_ffi_rust_future_poll_void,
+            completeFunc: ffi_osaurus_sync_ffi_rust_future_complete_void,
+            freeFunc: ffi_osaurus_sync_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeModelShareError_lift
+        )
+}
+    
+    /**
+     * Starts downloading one file of `model` from `host` into `destination`, keeping its
+     * first `offset` bytes if it has that many. Await `wait` for the file's size; `cancel`
+     * (or dropping the transfer) stops it and leaves what arrived for a later resume. The
+     * caller checks the file against its digest before using it.
+     */
+open func startDownload(host: String, model: String, path: String, destination: String, offset: UInt64, progress: TransferProgress)throws  -> FileTransfer  {
+    return try  FfiConverterTypeFileTransfer_lift(try rustCallWithError(FfiConverterTypeModelShareError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_modelsharenode_start_download(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(host),
+        FfiConverterString.lower(model),
+        FfiConverterString.lower(path),
+        FfiConverterString.lower(destination),
+        FfiConverterUInt64.lower(offset),
+        FfiConverterCallbackInterfaceTransferProgress_lower(progress),$0
+    )
+})
+}
+    
+    /**
+     * Closes the endpoint. Transfers in progress fail.
+     */
+open func stop()async   {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_osaurus_sync_ffi_fn_method_modelsharenode_stop(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_osaurus_sync_ffi_rust_future_poll_void,
+            completeFunc: ffi_osaurus_sync_ffi_rust_future_complete_void,
+            freeFunc: ffi_osaurus_sync_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+            
+        )
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeModelShareNode: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ModelShareNode
+
+    public static func lift(_ handle: UInt64) throws -> ModelShareNode {
+        return ModelShareNode(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ModelShareNode) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelShareNode {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ModelShareNode, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelShareNode_lift(_ handle: UInt64) throws -> ModelShareNode {
+    return try FfiConverterTypeModelShareNode.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelShareNode_lower(_ value: ModelShareNode) -> UInt64 {
+    return FfiConverterTypeModelShareNode.lower(value)
+}
+
+
+
+
+
+
+/**
  * A response being streamed. Dropping it without `finish` aborts.
  */
 public protocol OutgoingStreamProtocol: AnyObject, Sendable {
@@ -4280,6 +4726,304 @@ public func FfiConverterTypeMessagePage_lower(_ value: MessagePage) -> RustBuffe
 }
 
 
+public struct ModelShareConfig: Equatable, Hashable {
+    /**
+     * Shown to other machines as this host's name.
+     */
+    public var deviceName: String
+    /**
+     * Serve the shared models and advertise this machine.
+     */
+    public var share: Bool
+    /**
+     * Find hosts and fetch what they share.
+     */
+    public var browse: Bool
+    /**
+     * Off only in tests, which add hosts with `add_host_address`.
+     */
+    public var mdns: Bool
+    /**
+     * 0 picks any port.
+     */
+    public var bindPort: UInt16
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Shown to other machines as this host's name.
+         */deviceName: String, 
+        /**
+         * Serve the shared models and advertise this machine.
+         */share: Bool, 
+        /**
+         * Find hosts and fetch what they share.
+         */browse: Bool, 
+        /**
+         * Off only in tests, which add hosts with `add_host_address`.
+         */mdns: Bool, 
+        /**
+         * 0 picks any port.
+         */bindPort: UInt16) {
+        self.deviceName = deviceName
+        self.share = share
+        self.browse = browse
+        self.mdns = mdns
+        self.bindPort = bindPort
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ModelShareConfig: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeModelShareConfig: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelShareConfig {
+        return
+            try ModelShareConfig(
+                deviceName: FfiConverterString.read(from: &buf), 
+                share: FfiConverterBool.read(from: &buf), 
+                browse: FfiConverterBool.read(from: &buf), 
+                mdns: FfiConverterBool.read(from: &buf), 
+                bindPort: FfiConverterUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ModelShareConfig, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.deviceName, into: &buf)
+        FfiConverterBool.write(value.share, into: &buf)
+        FfiConverterBool.write(value.browse, into: &buf)
+        FfiConverterBool.write(value.mdns, into: &buf)
+        FfiConverterUInt16.write(value.bindPort, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelShareConfig_lift(_ buf: RustBuffer) throws -> ModelShareConfig {
+    return try FfiConverterTypeModelShareConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelShareConfig_lower(_ value: ModelShareConfig) -> RustBuffer {
+    return FfiConverterTypeModelShareConfig.lower(value)
+}
+
+
+public struct NearbyHost: Equatable, Hashable {
+    /**
+     * Changes each time the host starts sharing.
+     */
+    public var id: String
+    public var name: String
+    public var models: [NearbyModel]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Changes each time the host starts sharing.
+         */id: String, name: String, models: [NearbyModel]) {
+        self.id = id
+        self.name = name
+        self.models = models
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension NearbyHost: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNearbyHost: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NearbyHost {
+        return
+            try NearbyHost(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                models: FfiConverterSequenceTypeNearbyModel.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NearbyHost, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceTypeNearbyModel.write(value.models, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNearbyHost_lift(_ buf: RustBuffer) throws -> NearbyHost {
+    return try FfiConverterTypeNearbyHost.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNearbyHost_lower(_ value: NearbyHost) -> RustBuffer {
+    return FfiConverterTypeNearbyHost.lower(value)
+}
+
+
+public struct NearbyModel: Equatable, Hashable {
+    public var id: String
+    public var kind: String
+    public var format: String
+    public var name: String
+    public var repoId: String?
+    public var revision: String?
+    public var files: [NearbyModelFile]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: String, format: String, name: String, repoId: String?, revision: String?, files: [NearbyModelFile]) {
+        self.id = id
+        self.kind = kind
+        self.format = format
+        self.name = name
+        self.repoId = repoId
+        self.revision = revision
+        self.files = files
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension NearbyModel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNearbyModel: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NearbyModel {
+        return
+            try NearbyModel(
+                id: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterString.read(from: &buf), 
+                format: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                repoId: FfiConverterOptionString.read(from: &buf), 
+                revision: FfiConverterOptionString.read(from: &buf), 
+                files: FfiConverterSequenceTypeNearbyModelFile.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NearbyModel, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.format, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.repoId, into: &buf)
+        FfiConverterOptionString.write(value.revision, into: &buf)
+        FfiConverterSequenceTypeNearbyModelFile.write(value.files, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNearbyModel_lift(_ buf: RustBuffer) throws -> NearbyModel {
+    return try FfiConverterTypeNearbyModel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNearbyModel_lower(_ value: NearbyModel) -> RustBuffer {
+    return FfiConverterTypeNearbyModel.lower(value)
+}
+
+
+public struct NearbyModelFile: Equatable, Hashable {
+    /**
+     * Relative and checked: no absolute paths, `.` or `..` components.
+     */
+    public var path: String
+    public var size: UInt64
+    public var sha256: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Relative and checked: no absolute paths, `.` or `..` components.
+         */path: String, size: UInt64, sha256: String) {
+        self.path = path
+        self.size = size
+        self.sha256 = sha256
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension NearbyModelFile: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNearbyModelFile: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NearbyModelFile {
+        return
+            try NearbyModelFile(
+                path: FfiConverterString.read(from: &buf), 
+                size: FfiConverterUInt64.read(from: &buf), 
+                sha256: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NearbyModelFile, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterUInt64.write(value.size, into: &buf)
+        FfiConverterString.write(value.sha256, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNearbyModelFile_lift(_ buf: RustBuffer) throws -> NearbyModelFile {
+    return try FfiConverterTypeNearbyModelFile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNearbyModelFile_lower(_ value: NearbyModelFile) -> RustBuffer {
+    return FfiConverterTypeNearbyModelFile.lower(value)
+}
+
+
 public struct NetworkConfig: Equatable, Hashable {
     /**
      * Bring the endpoint up at open. When false, call `resume` to go online.
@@ -5084,6 +5828,163 @@ public func FfiConverterTypeSearchResult_lift(_ buf: RustBuffer) throws -> Searc
 #endif
 public func FfiConverterTypeSearchResult_lower(_ value: SearchResult) -> RustBuffer {
     return FfiConverterTypeSearchResult.lower(value)
+}
+
+
+/**
+ * A model this machine shares. `kind` and `format` are from docs/model-sharing.md.
+ */
+public struct SharedModel: Equatable, Hashable {
+    public var id: String
+    public var kind: String
+    public var format: String
+    public var name: String
+    public var repoId: String?
+    public var revision: String?
+    public var files: [SharedModelFile]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: String, format: String, name: String, repoId: String?, revision: String?, files: [SharedModelFile]) {
+        self.id = id
+        self.kind = kind
+        self.format = format
+        self.name = name
+        self.repoId = repoId
+        self.revision = revision
+        self.files = files
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SharedModel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSharedModel: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SharedModel {
+        return
+            try SharedModel(
+                id: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterString.read(from: &buf), 
+                format: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                repoId: FfiConverterOptionString.read(from: &buf), 
+                revision: FfiConverterOptionString.read(from: &buf), 
+                files: FfiConverterSequenceTypeSharedModelFile.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SharedModel, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.format, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.repoId, into: &buf)
+        FfiConverterOptionString.write(value.revision, into: &buf)
+        FfiConverterSequenceTypeSharedModelFile.write(value.files, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSharedModel_lift(_ buf: RustBuffer) throws -> SharedModel {
+    return try FfiConverterTypeSharedModel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSharedModel_lower(_ value: SharedModel) -> RustBuffer {
+    return FfiConverterTypeSharedModel.lower(value)
+}
+
+
+public struct SharedModelFile: Equatable, Hashable {
+    /**
+     * Relative, `/`-separated; what clients ask for.
+     */
+    public var path: String
+    public var size: UInt64
+    /**
+     * Lowercase hex SHA-256 of the file.
+     */
+    public var sha256: String
+    /**
+     * The file on this machine that is served for `path`.
+     */
+    public var sourcePath: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Relative, `/`-separated; what clients ask for.
+         */path: String, size: UInt64, 
+        /**
+         * Lowercase hex SHA-256 of the file.
+         */sha256: String, 
+        /**
+         * The file on this machine that is served for `path`.
+         */sourcePath: String) {
+        self.path = path
+        self.size = size
+        self.sha256 = sha256
+        self.sourcePath = sourcePath
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SharedModelFile: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSharedModelFile: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SharedModelFile {
+        return
+            try SharedModelFile(
+                path: FfiConverterString.read(from: &buf), 
+                size: FfiConverterUInt64.read(from: &buf), 
+                sha256: FfiConverterString.read(from: &buf), 
+                sourcePath: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SharedModelFile, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterUInt64.write(value.size, into: &buf)
+        FfiConverterString.write(value.sha256, into: &buf)
+        FfiConverterString.write(value.sourcePath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSharedModelFile_lift(_ buf: RustBuffer) throws -> SharedModelFile {
+    return try FfiConverterTypeSharedModelFile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSharedModelFile_lower(_ value: SharedModelFile) -> RustBuffer {
+    return FfiConverterTypeSharedModelFile.lower(value)
 }
 
 
@@ -6404,6 +7305,140 @@ public func FfiConverterTypeMessageRole_lower(_ value: MessageRole) -> RustBuffe
     return FfiConverterTypeMessageRole.lower(value)
 }
 
+
+
+public enum ModelShareError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+    
+    
+    case NotFound(detail: String
+    )
+    case Busy(detail: String
+    )
+    case Unreachable(detail: String
+    )
+    case Io(detail: String
+    )
+    case InvalidInput(detail: String
+    )
+    case Cancelled(detail: String
+    )
+    case NotRunning(detail: String
+    )
+
+    
+
+    
+
+    
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+    
+}
+
+#if compiler(>=6)
+extension ModelShareError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeModelShareError: FfiConverterRustBuffer {
+    typealias SwiftType = ModelShareError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelShareError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .NotFound(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 2: return .Busy(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 3: return .Unreachable(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 4: return .Io(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 5: return .InvalidInput(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 6: return .Cancelled(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 7: return .NotRunning(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ModelShareError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case let .NotFound(detail):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .Busy(detail):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .Unreachable(detail):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .Io(detail):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .InvalidInput(detail):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .Cancelled(detail):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .NotRunning(detail):
+            writeInt(&buf, Int32(7))
+            FfiConverterString.write(detail, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelShareError_lift(_ buf: RustBuffer) throws -> ModelShareError {
+    return try FfiConverterTypeModelShareError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelShareError_lower(_ value: ModelShareError) -> RustBuffer {
+    return FfiConverterTypeModelShareError.lower(value)
+}
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
@@ -7774,6 +8809,132 @@ public func FfiConverterCallbackInterfaceLogListener_lower(_ v: LogListener) -> 
 
 
 
+/**
+ * Told when the hosts on the network, or what one shares, change. Called from a network
+ * thread; read `hosts()` from there or after hopping to the app's own queue.
+ */
+public protocol ModelShareListener: AnyObject, Sendable {
+    
+    func hostsChanged() 
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceModelShareListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceModelShareListener] = [UniffiVTableCallbackInterfaceModelShareListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterCallbackInterfaceModelShareListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface ModelShareListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterCallbackInterfaceModelShareListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface ModelShareListener: handle missing in uniffiClone")
+            }
+        },
+        hostsChanged: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceModelShareListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.hostsChanged(
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitModelShareListener() {
+    uniffi_osaurus_sync_ffi_fn_init_callback_vtable_modelsharelistener(UniffiCallbackInterfaceModelShareListener.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceModelShareListener {
+    fileprivate static let handleMap = UniffiHandleMap<ModelShareListener>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceModelShareListener : FfiConverter {
+    typealias SwiftType = ModelShareListener
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceModelShareListener_lift(_ handle: UInt64) throws -> ModelShareListener {
+    return try FfiConverterCallbackInterfaceModelShareListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceModelShareListener_lower(_ v: ModelShareListener) -> UInt64 {
+    return FfiConverterCallbackInterfaceModelShareListener.lower(v)
+}
+
+
+
+
 public protocol ScopeListener: AnyObject, Sendable {
     
     func onChanges(changes: [ScopeChange]) 
@@ -7893,6 +9054,135 @@ public func FfiConverterCallbackInterfaceScopeListener_lift(_ handle: UInt64) th
 #endif
 public func FfiConverterCallbackInterfaceScopeListener_lower(_ v: ScopeListener) -> UInt64 {
     return FfiConverterCallbackInterfaceScopeListener.lower(v)
+}
+
+
+
+
+/**
+ * Bytes of the file held so far, and its size. At most five times a second.
+ */
+public protocol TransferProgress: AnyObject, Sendable {
+    
+    func onProgress(received: UInt64, total: UInt64) 
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceTransferProgress {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceTransferProgress] = [UniffiVTableCallbackInterfaceTransferProgress(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterCallbackInterfaceTransferProgress.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface TransferProgress: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterCallbackInterfaceTransferProgress.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface TransferProgress: handle missing in uniffiClone")
+            }
+        },
+        onProgress: { (
+            uniffiHandle: UInt64,
+            received: UInt64,
+            total: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceTransferProgress.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onProgress(
+                     received: try FfiConverterUInt64.lift(received),
+                     total: try FfiConverterUInt64.lift(total)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitTransferProgress() {
+    uniffi_osaurus_sync_ffi_fn_init_callback_vtable_transferprogress(UniffiCallbackInterfaceTransferProgress.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceTransferProgress {
+    fileprivate static let handleMap = UniffiHandleMap<TransferProgress>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceTransferProgress : FfiConverter {
+    typealias SwiftType = TransferProgress
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceTransferProgress_lift(_ handle: UInt64) throws -> TransferProgress {
+    return try FfiConverterCallbackInterfaceTransferProgress.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceTransferProgress_lower(_ v: TransferProgress) -> UInt64 {
+    return FfiConverterCallbackInterfaceTransferProgress.lower(v)
 }
 
 #if swift(>=5.8)
@@ -8583,6 +9873,81 @@ fileprivate struct FfiConverterSequenceTypeMessage: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeNearbyHost: FfiConverterRustBuffer {
+    typealias SwiftType = [NearbyHost]
+
+    public static func write(_ value: [NearbyHost], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNearbyHost.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NearbyHost] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NearbyHost]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNearbyHost.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNearbyModel: FfiConverterRustBuffer {
+    typealias SwiftType = [NearbyModel]
+
+    public static func write(_ value: [NearbyModel], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNearbyModel.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NearbyModel] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NearbyModel]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNearbyModel.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNearbyModelFile: FfiConverterRustBuffer {
+    typealias SwiftType = [NearbyModelFile]
+
+    public static func write(_ value: [NearbyModelFile], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNearbyModelFile.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NearbyModelFile] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NearbyModelFile]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNearbyModelFile.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypePeerConnection: FfiConverterRustBuffer {
     typealias SwiftType = [PeerConnection]
 
@@ -8700,6 +10065,56 @@ fileprivate struct FfiConverterSequenceTypeSearchResult: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeSearchResult.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSharedModel: FfiConverterRustBuffer {
+    typealias SwiftType = [SharedModel]
+
+    public static func write(_ value: [SharedModel], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSharedModel.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SharedModel] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SharedModel]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSharedModel.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSharedModelFile: FfiConverterRustBuffer {
+    typealias SwiftType = [SharedModelFile]
+
+    public static func write(_ value: [SharedModelFile], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSharedModelFile.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SharedModelFile] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SharedModelFile]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSharedModelFile.read(from: &buf))
         }
         return seq
     }
@@ -9303,7 +10718,43 @@ private let initializationResult: InitializationResult = {
     if (uniffi_osaurus_sync_ffi_checksum_method_subscription_cancel() != 21222) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_osaurus_sync_ffi_checksum_method_filetransfer_cancel() != 1762) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_filetransfer_wait() != 1938) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_modelsharenode_add_host_address() != 57943) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_modelsharenode_hosts() != 54153) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_modelsharenode_is_running() != 11362) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_modelsharenode_local_address() != 4482) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_modelsharenode_refresh() != 64459) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_modelsharenode_set_shared_models() != 51223) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_modelsharenode_start() != 41084) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_modelsharenode_start_download() != 4222) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_modelsharenode_stop() != 26150) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_osaurus_sync_ffi_checksum_constructor_synccore_open() != 26905) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_constructor_modelsharenode_new() != 50762) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_conversationlistener_on_changes() != 52756) {
@@ -9327,12 +10778,20 @@ private let initializationResult: InitializationResult = {
     if (uniffi_osaurus_sync_ffi_checksum_method_loglistener_on_log() != 53378) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_osaurus_sync_ffi_checksum_method_modelsharelistener_hosts_changed() != 7195) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_transferprogress_on_progress() != 48425) {
+        return InitializationResult.apiChecksumMismatch
+    }
 
     uniffiCallbackInitConversationListener()
     uniffiCallbackInitCoreListener()
     uniffiCallbackInitKeyStore()
     uniffiCallbackInitLogListener()
+    uniffiCallbackInitModelShareListener()
     uniffiCallbackInitScopeListener()
+    uniffiCallbackInitTransferProgress()
     return InitializationResult.ok
 }()
 

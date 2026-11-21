@@ -378,6 +378,10 @@ final class LanguageCatalogSource: LocalModelCatalogSource {
             .throttle(for: .milliseconds(200), scheduler: DispatchQueue.main, latest: true)
             .sink { [weak self] _ in self?.scheduleRefresh() }
             .store(in: &subscriptions)
+        observeNearby { [weak self] in
+            guard let self else { return }
+            self.apply(self.lists)
+        }
         refreshNow()
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
@@ -459,7 +463,32 @@ final class LanguageCatalogSource: LocalModelCatalogSource {
             rows.append(item(for: model, variants: lists.variantsByFamily[
                 ModelMetadataParser.familyKey(from: model.id)] ?? [], isFamilyRow: true, mem: mem))
         }
-        items = rows
+        let manager = modelManager
+        items = mergingNearby(
+            rows,
+            localIds: { row in ([row.model?.id].compactMap { $0 }) + row.variants.map(\.id) },
+            download: { offer, row in
+                let builds = ([row?.model].compactMap { $0 }) + (row?.variants ?? [])
+                let model =
+                    builds.first { offer.matches(kind: .language, localId: $0.id, repoId: $0.id) }
+                    ?? MLXModel(
+                        id: offer.model.repoId ?? offer.localId,
+                        name: offer.model.name,
+                        description: L("Shared by \(offer.hostName) on this network."),
+                        downloadURL: "https://huggingface.co/\(offer.model.repoId ?? offer.localId)"
+                    )
+                manager.downloadModel(model, fromNearbyHost: offer.source)
+            },
+            decorate: { row, offer in
+                let id = offer.model.repoId ?? offer.localId
+                guard let status = LocalModelCatalogItem.Status.nearbyProgress(manager.downloadStates[id]) else { return }
+                row.status = status
+                if status.isActive {
+                    row.primaryAction = nil
+                    row.onCancel = { manager.cancelDownload(id) }
+                }
+            }
+        )
         isLoading = modelManager.isLoadingModels && rows.isEmpty
         if imageSearchRepoId != modelManager.imageSearchRepoId {
             imageSearchRepoId = modelManager.imageSearchRepoId

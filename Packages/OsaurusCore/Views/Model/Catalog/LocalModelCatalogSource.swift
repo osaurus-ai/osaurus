@@ -25,6 +25,8 @@ class LocalModelCatalogSource: ObservableObject {
     /// True while the first batch of rows is still loading.
     @Published var isLoading = false
     @Published var sheetRequest: SheetRequest?
+    /// Rebuilds rows when nearby Macs or sharing choices change (`observeNearby`).
+    var nearbySubscription: AnyCancellable?
 
     init(kind: LocalModelKind) {
         self.kind = kind

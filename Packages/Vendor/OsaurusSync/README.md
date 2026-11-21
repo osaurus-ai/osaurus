@@ -161,8 +161,13 @@ permission, so add to the app's Info.plist:
 <key>NSBonjourServices</key>
 <array>
     <string>_osaurus-sync._udp</string>
+    <string>_osaurus-models._udp</string>
 </array>
 ```
+
+`_osaurus-models._udp` is for `ModelShareNode` ([model sharing](../../docs/model-sharing.md));
+leave it out if the app doesn't share or look for model files, and mention model sharing in the
+usage description if it does.
 
 Without these keys, or if the user declines, set `network.mdns = false`; devices still connect
 through discovery and relays, if the app configured them. On cellular, connections are usually relayed rather than direct;

@@ -51,14 +51,14 @@ struct LocalModelsCatalogPage: View {
     /// models are discovered asynchronously, so this is evaluated live.
     private var scope: LocalModelCatalogScope {
         if let scopeOverride { return scopeOverride }
-        if let savedScope { return savedScope }
+        if let savedScope, LocalModelCatalogScope.chips(for: source.items).contains(savedScope) { return savedScope }
         let hasModelsOnThisMac = source.isLoading || source.items.contains { $0.status.isOnThisMac }
         return hasModelsOnThisMac ? .onThisMac : .available
     }
 
     var body: some View {
         let searched = searchedItems
-        let rows = LocalModelCatalogOrdering.sorted(searched.filter { scope.includes($0.status) }, by: sort)
+        let rows = LocalModelCatalogOrdering.sorted(searched.filter { scope.includes($0) }, by: sort)
         let selectedItem = selection.flatMap { id in source.items.first { $0.id == id } }
         let inspectorCovers = regionWidth > 0 && regionWidth - Self.inspectorWidth < Self.minTableWidth
 
@@ -235,7 +235,7 @@ struct LocalModelsCatalogPage: View {
     private func toolbar(searched: [LocalModelCatalogItem]) -> some View {
         SettingsHeaderToolbar(searchText: $searchText, searchPlaceholder: "Search models") {
             FilterChipRow(
-                LocalModelCatalogScope.allCases,
+                LocalModelCatalogScope.chips(for: source.items),
                 selection: Binding(
                     get: { scope },
                     set: {
@@ -247,7 +247,7 @@ struct LocalModelsCatalogPage: View {
                 allTitle: nil,
                 allowsDeselect: false,
                 title: \.title,
-                count: { scope in searched.filter { scope.includes($0.status) }.count }
+                count: { scope in searched.filter { scope.includes($0) }.count }
             )
         } trailing: {
             if let language = source as? LanguageCatalogSource {
@@ -305,6 +305,7 @@ struct LocalModelsCatalogPage: View {
         case .all: return L("No models available")
         case .onThisMac: return L("No models on this Mac yet")
         case .available: return L("Every model is already on this Mac")
+        case .nearby: return L("Nearby Macs share nothing new for this kind")
         }
     }
 
@@ -359,7 +360,7 @@ struct LocalModelsCatalogPage: View {
             return
         }
         pendingSelectionId = nil
-        if !scope.includes(item.status) { scopeOverride = .all }
+        if !scope.includes(item) { scopeOverride = .all }
         selection = item.id
         if item.id.lowercased() != lowered {
             inspectedModel = item.variants.first { $0.id.lowercased() == lowered }

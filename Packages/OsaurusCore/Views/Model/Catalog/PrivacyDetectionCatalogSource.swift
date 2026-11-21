@@ -47,11 +47,19 @@ final class PrivacyDetectionCatalogSource: LocalModelCatalogSource {
                 self?.rebuild()
             }
             .store(in: &subscriptions)
+        observeNearby { [weak self] in self?.rebuild() }
         rebuild()
     }
 
     private func rebuild() {
-        items = backends.map(item(for:))
+        let downloader = downloader
+        items = mergingNearby(
+            backends.map(item(for:)),
+            localIds: { $0.id == PrivacyAIBackend.openai.rawValue ? [PrivacyFilterModelBundle.version] : [] },
+            repoId: { _ in nil },
+            addsUnlisted: false,
+            download: { offer, _ in downloader.startDownload(fromNearby: offer) }
+        )
     }
 
     private func isInstalled(_ backend: PrivacyAIBackend) -> Bool {
