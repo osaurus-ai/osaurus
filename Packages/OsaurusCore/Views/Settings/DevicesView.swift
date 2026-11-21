@@ -64,6 +64,9 @@ struct DevicesView: View {
 
     private static let qrSide: CGFloat = 136
 
+    /// "Upgrading from Classic?" (`ClassicUpgradeSheet`).
+    @State private var showsClassicUpgrade = false
+
     var body: some View {
         SettingsPage {
             SettingsPageHeader(
@@ -95,6 +98,8 @@ struct DevicesView: View {
         .onAppear {
             model.start()
             model.beginWatching()
+            // TEMPORARY: on every visit while the explainer is being finalized; then once, on the first visit.
+            showsClassicUpgrade = true
         }
         .onDisappear {
             model.endWatching()
@@ -103,6 +108,9 @@ struct DevicesView: View {
         }
         .onChange(of: keepMacAwake) { _, _ in phones.refreshKeepAwake() }
         .sheet(item: $pairSheet, onDismiss: endPairing) { kind in pairingSheet(kind) }
+        .sheet(isPresented: $showsClassicUpgrade) {
+            ClassicUpgradeSheet { showsClassicUpgrade = false }
+        }
     }
 
     // MARK: - Notices

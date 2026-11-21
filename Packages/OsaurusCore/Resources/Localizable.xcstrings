@@ -16,6 +16,30 @@
     "Add iPhone or iPad" : {
 
     },
+    "Agent calls" : {
+
+    },
+    "All chats" : {
+
+    },
+    "Anywhere" : {
+
+    },
+    "Borrowed live" : {
+
+    },
+    "Can't read it" : {
+
+    },
+    "Classic" : {
+
+    },
+    "Classic and Osaurus 1.0 compared" : {
+
+    },
+    "Classic relay" : {
+
+    },
     "Claude Code can use Osaurus tools and delegate, but can't change Osaurus settings. Turn on Allow Osaurus configuration changes below to let it." : {
       "localizations" : {
         "de" : {
@@ -84,6 +108,15 @@
         }
       }
     },
+    "Encrypted" : {
+
+    },
+    "Every device" : {
+
+    },
+    "Every device, one account" : {
+
+    },
     "Generate a code here and type it in on your iPhone, on the same network as this Mac." : {
 
     },
@@ -91,6 +124,15 @@
 
     },
     "Get the iPhone and iPad app from TestFlight" : {
+
+    },
+    "Got It" : {
+
+    },
+    "It's end-to-end encrypted. Osaurus servers only pass along data they can't read." : {
+
+    },
+    "Live Activities" : {
 
     },
     "Model and context set by Claude Code" : {
@@ -167,6 +209,21 @@
     "No devices yet" : {
 
     },
+    "On the same network your devices talk directly, and through Osaurus servers anywhere else." : {
+
+    },
+    "Only on 1.0" : {
+
+    },
+    "Osaurus 1.0 connects your devices in a new way. Here's what changes." : {
+
+    },
+    "Osaurus servers" : {
+
+    },
+    "Own copy" : {
+
+    },
     "Pairing link" : {
 
     },
@@ -203,6 +260,9 @@
           }
         }
       }
+    },
+    "Same network: direct" : {
+
     },
     "Scan the code with the Osaurus app on your iPhone or iPad, or paste the link there with Paste Link from Mac. On another Mac, paste it into Join Another Device. It works for 5 minutes." : {
 
@@ -1630,10 +1690,22 @@
         }
       }
     },
+    "Upgrading from Classic?" : {
+
+    },
     "Waiting for devices" : {
 
     },
     "What does the Pairing Screen in the Osaurus app on your iPhone or iPad show?" : {
+
+    },
+    "With 1.0, every device keeps its own copy of your chats, so they open even when the Mac sleeps." : {
+
+    },
+    "With Classic, your iPhone borrows the Mac's chats over a live link. When it drops, there's nothing." : {
+
+    },
+    "Workflows, Live Activities and agent calls work only on 1.0. Classic pairing is going away." : {
 
     },
     "female" : {
