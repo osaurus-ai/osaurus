@@ -43,7 +43,7 @@ enum ClassicUpgradeStage: Int, CaseIterable, Identifiable {
         }
     }
 
-    var holdDuration: Duration { self == .classic ? .seconds(5) : .seconds(5.5) }
+    var holdDuration: Duration { self == .classic ? .seconds(3.5) : .seconds(3) }
 
     var caption: LocalizedStringKey {
         switch self {
@@ -120,14 +120,19 @@ struct ClassicUpgradeExplainer: View {
                         .accessibilityAddTraits(.isButton)
                         .accessibilityHint(Text(localized: "Shows the next step"))
                 }
-            Text(stage.caption, bundle: .module)
-                .font(SettingsFont.cardTitle)
-                .foregroundStyle(theme.text.primary)
-                .multilineTextAlignment(.center)
-                .lineLimit(2, reservesSpace: true)
-                .frame(maxWidth: .infinity)
-                .id(stage)
-                .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity))
+            // Stacked, not in the column: the old caption leaving and the new one arriving overlap for a moment, and
+            // in the column the two would stack and push the sheet taller, then back.
+            ZStack {
+                Text(stage.caption, bundle: .module)
+                    .font(SettingsFont.cardTitle)
+                    .foregroundStyle(theme.text.primary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2, reservesSpace: true)
+                    .frame(maxWidth: .infinity)
+                    .id(stage)
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity))
+            }
+            .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity)
         .task(id: stage) { await autoAdvance() }
