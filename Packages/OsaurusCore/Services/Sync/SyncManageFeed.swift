@@ -906,7 +906,7 @@ final class SyncManageFeed {
                     return failed("load_failed", "The model couldn't be loaded on this Mac.")
                 }
             case .setFavorite, .getModelOptions, .setModelOption, .contextUsage, .runWorkflow, .workflowOutput,
-                .workflowFile, .unsupported:
+                .workflowFile, .cancelCallback, .unsupported:
                 return done()
             }
             return done(agentId: agentId)
