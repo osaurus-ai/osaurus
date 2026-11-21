@@ -66,7 +66,7 @@ struct DevicesView: View {
     @State private var showsClassicUpgrade = false
     /// Set once the sheet has been closed: it opens by itself only before that; the chip by the title opens it any time.
     @AppStorage("devices.classicUpgradeSeen") private var classicUpgradeSeen = false
-    /// Its Connect iPhone Now: Add iPhone or iPad opens once it has closed, as one sheet can't open over another.
+    /// Its Move to Sync: the QR code opens once it has closed, as one sheet can't open over another.
     @State private var connectsAfterClassicUpgrade = false
 
     var body: some View {
@@ -117,11 +117,13 @@ struct DevicesView: View {
                 classicUpgradeSeen = true
                 guard connectsAfterClassicUpgrade else { return }
                 connectsAfterClassicUpgrade = false
-                addPhone()
+                isJoining = false
+                showScanCode()
             }
         ) {
             ClassicUpgradeSheet(
-                onConnect: {
+                onMove: {
+                    await MobileConnectMigration.unpairForSync()
                     connectsAfterClassicUpgrade = true
                     showsClassicUpgrade = false
                 },

@@ -443,6 +443,15 @@
     "Message %@..." : {
 
     },
+    "Move to Sync" : {
+
+    },
+    "Move to Sync Now" : {
+
+    },
+    "Move to Sync?" : {
+
+    },
     "Must stay on" : {
 
     },
@@ -1134,6 +1143,9 @@
 
     },
     "This chat and its messages are removed from this Mac. This cannot be undone." : {
+
+    },
+    "This will unpair all of your existing devices and no data will be lost." : {
 
     },
     "Tick chats to select" : {

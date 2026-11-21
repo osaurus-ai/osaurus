@@ -82,22 +82,47 @@ enum ClassicUpgradeStage: Int, CaseIterable, Identifiable {
 // MARK: - Sheet
 
 struct ClassicUpgradeSheet: View {
-    /// Connect iPhone Now: closes this, and Devices opens Add iPhone or iPad.
-    let onConnect: () -> Void
+    /// Move to Sync, once confirmed: unpairs the devices paired through the relay. Devices then closes this and
+    /// shows the QR code.
+    let onMove: () async -> Void
     let onClose: () -> Void
 
+    /// Move to Sync Now pressed: the sheet asks first.
+    @State private var confirming = false
+    @State private var moving = false
+
     var body: some View {
-        SettingsSheet(
-            icon: "arrow.triangle.2.circlepath",
-            title: "Upgrading from Classic?",
-            subtitle: "Osaurus 1.0 connects your devices in a new way. Here's what changes.",
-            width: SettingsSheetWidth.wide,
-            primary: .init(label: "Connect iPhone Now", handler: onConnect),
-            secondary: .init(label: "I'll Do It Later", handler: onClose),
-            onClose: onClose
-        ) {
-            ClassicUpgradeExplainer()
+        if confirming {
+            SettingsSheet(
+                icon: "arrow.triangle.2.circlepath",
+                title: "Move to Sync?",
+                primary: .init(label: "Move to Sync", isEnabled: !moving, isLoading: moving) { move() },
+                secondary: .init(label: "Cancel", isEnabled: !moving) { confirming = false },
+                onClose: onClose
+            ) {
+                Text("This will unpair all of your existing devices and no data will be lost.", bundle: .module)
+                    .font(SettingsFont.body)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            SettingsSheet(
+                icon: "arrow.triangle.2.circlepath",
+                title: "Upgrading from Classic?",
+                subtitle: "Osaurus 1.0 connects your devices in a new way. Here's what changes.",
+                width: SettingsSheetWidth.wide,
+                primary: .init(label: "Move to Sync Now") { confirming = true },
+                secondary: .init(label: "I'll Do It Later", handler: onClose),
+                onClose: onClose
+            ) {
+                ClassicUpgradeExplainer()
+            }
         }
+    }
+
+    private func move() {
+        guard !moving else { return }
+        moving = true
+        Task { await onMove() }
     }
 }
 
@@ -753,6 +778,6 @@ private struct Pulse: View {
 
 #if DEBUG
     #Preview("Upgrading from Classic") {
-        ClassicUpgradeSheet(onConnect: {}, onClose: {})
+        ClassicUpgradeSheet(onMove: {}, onClose: {})
     }
 #endif

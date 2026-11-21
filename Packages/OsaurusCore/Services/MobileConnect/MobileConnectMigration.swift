@@ -141,6 +141,19 @@ enum MobileConnectMigration {
         return outcome
     }
 
+    /// Move to Sync (Devices → Upgrading from Classic?): unpairs every device paired through the relay, as an iPhone
+    /// joining Sync would. Chats stay on this Mac; the 6-digit pairing stays open.
+    @MainActor
+    static func unpairForSync(defaults: UserDefaults = .standard, environment: Environment? = nil) async {
+        // A turn first, so the button's spinner shows before the work.
+        await Task.yield()
+        let outcome = undoLegacyPairing(defaults: defaults, environment: environment ?? .live)
+        MobileConnectLog.write(
+            "mobile: moved to Sync from Devices; "
+                + "\(outcome.tunnelsDisabled.count) tunnel(s) off, \(outcome.keysRevoked.count) key(s) revoked"
+        )
+    }
+
     /// What the 6-digit pairing left: the tunnels it turned on, its phone's key, its defaults, the paired phone.
     @MainActor
     private static func undoLegacyPairing(defaults: UserDefaults, environment env: Environment) -> Outcome {

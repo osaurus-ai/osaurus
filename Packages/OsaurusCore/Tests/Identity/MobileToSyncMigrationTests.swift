@@ -209,6 +209,20 @@ struct MobileToSyncMigrationTests {
         #expect(mac.stringArray(forKey: MobileConnectMigration.seenSyncPhonesKey) == ["A"])
     }
 
+    @Test func moveToSyncUnpairsTheRelayDevicesAndKeepsPairingOpen() async {
+        let mac = defaults()
+        let agent = UUID()
+        let phoneKey = key("Mobile")
+        mac.set(Data("{}".utf8), forKey: MobileConnectMigration.pairedDeviceKey)
+        mac.set([agent.uuidString], forKey: MobileConnectMigration.relayManagedAgentsKey)
+        let recorder = Recorder(enabled: [agent], keys: [phoneKey])
+        await MobileConnectMigration.unpairForSync(defaults: mac, environment: recorder.environment)
+        #expect(recorder.revoked == [phoneKey.id])
+        #expect(recorder.disabled == [agent])
+        #expect(recorder.pairingEnded == 1)
+        #expect(mac.object(forKey: MobileConnectMigration.pairedDeviceKey) == nil)
+    }
+
     @Test func ignoresTheV1DoneKey() {
         let earlierBuild = defaults()
         earlierBuild.set(true, forKey: "mobileConnectRetiredToSync.v1")
