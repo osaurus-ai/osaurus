@@ -16,7 +16,22 @@
 //  - Only on 1.0: workflows, their Live Activities, and agents calling the iPhone.
 //
 
+import AppKit
 import SwiftUI
+import os
+
+/// DEBUG [CUPG]: the sheet's jitter between steps; remove once found.
+private let cupgLog = Logger(subsystem: "ai.osaurus", category: "classic-upgrade")
+
+private extension View {
+    /// DEBUG [CUPG]: logs `name`'s frame in the window each time it changes.
+    func cupgFrame(_ name: String) -> some View {
+        onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame in
+            cupgLog.notice(
+                "[CUPG] \(name, privacy: .public) x=\(frame.minX) y=\(frame.minY) w=\(frame.width) h=\(frame.height)")
+        }
+    }
+}
 
 // MARK: - Stages
 
@@ -97,13 +112,14 @@ struct ClassicUpgradeExplainer: View {
 
     var body: some View {
         VStack(spacing: Self.rowSpacing) {
-            chips
+            chips.cupgFrame("chips")
             Color.clear
                 .frame(maxWidth: .infinity)
                 .frame(height: Self.canvasDesignSize.height * scale)
                 .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
                     if width > 0 { availableWidth = width }
                 }
+                .cupgFrame("canvasRow")
                 .overlay {
                     ClassicUpgradeCanvas(stage: stage, reduceMotion: reduceMotion)
                         .scaleEffect(scale)
@@ -133,9 +149,24 @@ struct ClassicUpgradeExplainer: View {
                     .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity))
             }
             .frame(maxWidth: .infinity)
+            .cupgFrame("caption")
         }
         .frame(maxWidth: .infinity)
+        .cupgFrame("explainer")
         .task(id: stage) { await autoAdvance() }
+        .onChange(of: stage) { old, new in
+            cupgLog.notice("[CUPG] stage \(old.rawValue + 1) -> \(new.rawValue + 1)")
+            // The sheet window itself, as the change lands and as its animation runs.
+            for delay in [0.0, 0.1, 0.25, 0.5, 0.9] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    for window in NSApp.windows where window.isSheet {
+                        let f = window.frame
+                        cupgLog.notice(
+                            "[CUPG] +\(delay)s sheet window x=\(f.minX) y=\(f.minY) w=\(f.width) h=\(f.height)")
+                    }
+                }
+            }
+        }
     }
 
     private var chips: some View {
@@ -265,8 +296,8 @@ private struct ClassicUpgradeCanvas: View {
             if !reduceMotion { pulses.id(stage) }
             device(glyph: "iphone", label: "iPhone", x: Layout.phoneX)
             device(glyph: "laptopcomputer", label: "Mac", x: Layout.macX)
-            server
-            locks
+            server.cupgFrame("server")
+            locks.cupgFrame("locks")
             directLabel
             phoneChats
             macChats
