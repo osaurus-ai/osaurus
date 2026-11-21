@@ -537,6 +537,7 @@ struct CoexistenceHandoff: SubagentHandoff {
             detail: "keeping the chat model loaded; waiting for local generation to go idle"
         )
         let wentIdle = await waitForIdle(waitMs)
+        try Task.checkCancellation()
         guard wentIdle else {
             throw SubagentError.unavailable(
                 "Local chat generation did not become idle before the coexistence run."
