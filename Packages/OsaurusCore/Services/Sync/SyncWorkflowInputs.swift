@@ -279,13 +279,19 @@ enum SyncWorkflowInputs {
                 }
                 if first { continuation.resume(with: result) }
             }
+            let timer = Task {
+                // Cancelled once the work is done: not left sleeping out the limit.
+                guard (try? await Task.sleep(for: limit)) != nil else { return }
+                finish(.failure(CancellationError()))
+            }
             let work = Task {
                 do { finish(.success(try await body())) } catch { finish(.failure(error)) }
+                timer.cancel()
             }
             Task {
-                try? await Task.sleep(for: limit)
+                // The timer ended: past the limit, the work is told to stop (done already, this does nothing).
+                _ = await timer.result
                 work.cancel()
-                finish(.failure(CancellationError()))
             }
         }
     }
