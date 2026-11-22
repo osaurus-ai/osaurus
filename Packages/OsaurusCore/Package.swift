@@ -373,9 +373,13 @@ let package = Package(
         // #774 (Qwen-VL resizes an image smaller than the patch factor). The Inkling decode
         // speedups follow: fused loop message gates, relative bias spread over key slices,
         // cached kernel constants, batch-1 NVFP4 expert kernels, and VMLX_DECODE_CPU_TRACE.
+        // vmlx-swift#781 runs Inkling-2-Mini JANGH bundles (OsaurusAI/Inkling-2-Mini-JANGH2): codebook routed
+        // experts with Inkling's softcapped activation, affine 8-bit projections in the fused decode and verify
+        // steps, dSpark with an affine output head, and fewer graph nodes per token (slice assignment no longer
+        // reshapes a same-shape update, which every model's KV append benefits from).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "230a39c904b1da6fad291c487ef57f5e6ee033e1"
+            revision: "19e5fe968bfe64745fc13409d4d8a6e298333879"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the
