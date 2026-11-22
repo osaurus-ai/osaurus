@@ -82,18 +82,20 @@ final class ConfiguratorHandoffTool: OsaurusTool, @unchecked Sendable {
     /// tests (verbatim overwrite, fresh context).
     func makeKind(argumentsJSON: String) async -> HiddenAgentHandoffKind? {
         let caller = CallerContext.current()
-        let seed: String? = await MainActor.run {
+        // Only the session state needs the main actor; the catalog and guide
+        // searches in `seedContent` are CPU-bound and must not block the UI.
+        let handoff: Handoff? = await MainActor.run {
             let state = SessionStateRegistry.shared.state(for: caller.sessionId)
-            guard
-                let handoff = Handoff.fromToolArguments(
-                    argumentsJSON,
-                    turnUserText: ChatExecutionContext.currentUserRequest,
-                    state: state,
-                    caller: caller)
-            else { return nil }
-            return Self.seedContent(for: handoff)
+            return Handoff.fromToolArguments(
+                argumentsJSON,
+                turnUserText: ChatExecutionContext.currentUserRequest,
+                state: state,
+                caller: caller)
         }
-        guard let seed else { return nil }
+        guard let handoff else { return nil }
+        let seed = await Task.detached(priority: .userInitiated) {
+            Self.seedContent(for: handoff)
+        }.value
         return HiddenAgentHandoffKind(
             target: Self.target,
             seedUserContent: seed,
@@ -127,7 +129,8 @@ final class ConfiguratorHandoffTool: OsaurusTool, @unchecked Sendable {
 
     /// The handoff's one user message: the request, the session state, and
     /// the catalog rows and guide sections retrieved for the message.
-    @MainActor
+    /// Nonisolated: it reads only the Sendable `handoff` and static indexes,
+    /// and the searches are too heavy to run on the main actor.
     static func seedContent(for handoff: Handoff) -> String {
         var parts: [String] = []
         var request = "[Request]\nuser_message: \(handoff.userMessage)"

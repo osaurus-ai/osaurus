@@ -349,4 +349,21 @@ struct SettingsSearchIndexTests {
         }
         #expect(missing.isEmpty, "landing ids missing from SettingsSearchIndex: \(missing)")
     }
+
+    /// A long, repetitive message (APPLE-MACOS-42Y) must rank like its
+    /// distinct words: repeats are dropped instead of re-scanning the catalog.
+    @Test func relevantIgnoresRepeatedWords() {
+        let short = "transcription hotkey"
+        let long = Array(repeating: short, count: 500).joined(separator: " ")
+        #expect(
+            SettingsSearchIndex.relevant(toMessage: long).map(\.id)
+                == SettingsSearchIndex.relevant(toMessage: short).map(\.id))
+    }
+
+    /// Only the first `maxMessageWords` distinct content words are searched,
+    /// so words past the cap can't change the result.
+    @Test func relevantCapsDistinctWords() {
+        let filler = (0 ..< SettingsSearchIndex.maxMessageWords).map { "zqxfiller\($0)" }.joined(separator: " ")
+        #expect(SettingsSearchIndex.relevant(toMessage: filler + " transcription").isEmpty)
+    }
 }
