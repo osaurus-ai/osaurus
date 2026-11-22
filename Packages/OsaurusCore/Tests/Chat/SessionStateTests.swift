@@ -118,16 +118,50 @@ struct SessionStateTests {
         #expect(text.contains("goal: ship it"))
     }
 
-    /// State is never frozen with a turn: an older user message replays only
-    /// its frozen prefix, so the prompt never holds a stale snapshot.
+    /// The injected prefix alone carries no state; `userMessage` without a
+    /// state block is the prefix plus the text.
     @Test
-    func olderUserMessagesCarryNoState() throws {
+    func injectedPrefixAloneCarriesNoState() throws {
         let frozen = SystemPromptComposer.composeInjectedUserPrefix(memorySection: "remembered", screenContext: nil)
         #expect(frozen?.contains("[Session state]") == false)
         let older = ChatSession.userMessage(
             ChatMessage(role: "user", content: "earlier"), frozenPrefix: frozen, sessionState: nil)
         #expect(older.content?.contains("[Session state]") == false)
         #expect(older.content == (frozen ?? "") + "earlier")
+    }
+
+    /// The state block is frozen with the turn it was sent on. Freezing it
+    /// leaves the sending request's bytes unchanged, and every later request
+    /// replays those same bytes for that turn, so the conversation prefix
+    /// through it stays reusable by the prefix cache. Before, a follow-up's
+    /// copy of the previous user message lost its state block and the prompt
+    /// diverged right after the system prompt on every follow-up.
+    @Test
+    func stateIsFrozenWithTheTurnItWasSentOn() throws {
+        let injected = SystemPromptComposer.composeInjectedUserPrefix(memorySection: "remembered", screenContext: nil)
+        let block = SessionState(goal: "ship it").rendered()
+        let base = ChatMessage(role: "user", content: "next step")
+
+        // What the latest turn used to be sent as: prefix + live state + text.
+        let sentBefore = ChatSession.userMessage(base, frozenPrefix: injected, sessionState: block)
+        // What it is sent as now: the frozen prefix already holds the state.
+        let frozen = try #require(ChatSession.frozenUserPrefix(injected: injected, sessionState: block))
+        let sentNow = ChatSession.userMessage(base, frozenPrefix: frozen, sessionState: nil)
+        #expect(sentNow.content == sentBefore.content)
+
+        // A later request replays the turn with no live state: same bytes.
+        let replayed = ChatSession.userMessage(base, frozenPrefix: frozen, sessionState: nil)
+        #expect(replayed.content == sentBefore.content)
+        #expect(replayed.content?.contains("goal: ship it") == true)
+    }
+
+    @Test
+    func frozenUserPrefixComposition() {
+        #expect(ChatSession.frozenUserPrefix(injected: "P\n\n", sessionState: nil) == "P\n\n")
+        #expect(ChatSession.frozenUserPrefix(injected: "P\n\n", sessionState: "  \n") == "P\n\n")
+        #expect(ChatSession.frozenUserPrefix(injected: nil, sessionState: nil) == nil)
+        #expect(ChatSession.frozenUserPrefix(injected: nil, sessionState: "S") == "S\n\n")
+        #expect(ChatSession.frozenUserPrefix(injected: "P\n\n", sessionState: "S\n") == "P\n\nS\n\n")
     }
 
     // MARK: Extraction after each settled turn

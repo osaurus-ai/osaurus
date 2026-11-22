@@ -2974,9 +2974,10 @@ final class ChatSession: ObservableObject {
         )
     }
 
-    /// A user turn as sent: its frozen prefix, then (on the latest user
-    /// message only) the Orchestrator's session state, then the text. State
-    /// is never frozen with a turn, so the prompt holds exactly one copy.
+    /// A user turn as sent: its frozen prefix, then an optional session-state
+    /// block, then the text. The send path freezes the state block into the
+    /// prefix (`frozenUserPrefix`), so this only adds `sessionState` for a
+    /// latest turn that has no frozen prefix.
     static func userMessage(
         _ base: ChatMessage,
         frozenPrefix: String?,
@@ -7508,7 +7509,8 @@ final class ChatSession: ObservableObject {
     private func freezeInjectedContextOntoLatestUserTurn(
         memorySection: String?,
         screenContext: String?,
-        automationContext: String?
+        automationContext: String?,
+        sessionState: String? = nil
     ) {
         guard let turn = turns.last(where: { $0.role == .user }) else { return }
         // Regeneration re-runs an already-sent turn: keep the original
@@ -7529,15 +7531,36 @@ final class ChatSession: ObservableObject {
             if rendered.contentParts != nil { return }
         }
         guard
-            let prefix = SystemPromptComposer.composeInjectedUserPrefix(
-                memorySection: memorySection,
-                screenContext: screenContext,
-                automationContext: automationContext,
-                timeContext: SystemPromptTemplates.timeContext(now: Date(), timeZone: .current)
+            let prefix = Self.frozenUserPrefix(
+                injected: SystemPromptComposer.composeInjectedUserPrefix(
+                    memorySection: memorySection,
+                    screenContext: screenContext,
+                    automationContext: automationContext,
+                    timeContext: SystemPromptTemplates.timeContext(now: Date(), timeZone: .current)
+                ),
+                sessionState: sessionState
             )
         else { return }
         turn.injectedContextPrefix = prefix
         isDirty = true
+    }
+
+    /// The bytes frozen onto a user turn at send time: the injected memory /
+    /// screen / time prefix, then the Orchestrator's session-state block the
+    /// turn was sent with. Byte-identical to `userMessage(_:frozenPrefix:
+    /// sessionState:)` for the latest turn, so freezing changes nothing on
+    /// the wire for that request. What it changes is every LATER request:
+    /// the turn replays the same bytes instead of dropping its state block,
+    /// so the conversation prefix through it stays reusable. Without this,
+    /// each follow-up diverged inside the previous user message and
+    /// re-prefilled everything after the system prompt (live: a 5.3k-token
+    /// follow-up restored 2,074 tokens and prefilled 3,271). The latest
+    /// turn's block is the current state; older turns keep the snapshot they
+    /// were sent with, the same way they keep their `[Current Time]`.
+    static func frozenUserPrefix(injected: String?, sessionState: String?) -> String? {
+        let state = sessionState?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if state.isEmpty { return injected }
+        return (injected ?? "") + state + "\n\n"
     }
 
     func send(
@@ -8434,18 +8457,19 @@ final class ChatSession: ObservableObject {
                     // The last handoff result this turn got: a parked
                     // `awaiting_user` leaves nothing settled to extract.
                     var lastHandoffResult: HandoffResult?
-                    if !isRemoteAgentTarget {
-                        freezeInjectedContextOntoLatestUserTurn(
-                            memorySection: context.memorySection,
-                            screenContext: screenContextEnabled ? frozenScreenContext : nil,
-                            automationContext: appleScriptWorkingContext
-                        )
-                    }
                     let orchestratorStateBlock: String? =
                         effectiveAgentId == Agent.defaultId && !isRemoteAgentTarget
                         ? OrchestratorTurnBlock.injectedBlock(
                             state: (sessionState ?? .empty).rendered(), dispatchedTool: dispatchedToolName)
                         : nil
+                    if !isRemoteAgentTarget {
+                        freezeInjectedContextOntoLatestUserTurn(
+                            memorySection: context.memorySection,
+                            screenContext: screenContextEnabled ? frozenScreenContext : nil,
+                            automationContext: appleScriptWorkingContext,
+                            sessionState: orchestratorStateBlock
+                        )
+                    }
 
                     var effectiveMaxTokensForAgent = turnGenerationControls.agentDefaultsCaptured == true
                         ? turnGenerationControls.maxOutputTokens
@@ -8555,10 +8579,15 @@ final class ChatSession: ObservableObject {
                             // turns). Mode 2 requests stay bare — the local
                             // agent's memory must not ride to a remote agent.
                             if isRemoteAgentTarget { return base }
+                            // The state block is frozen into the prefix at
+                            // send time (`frozenUserPrefix`); a turn without a
+                            // frozen prefix (legacy, regenerated before this
+                            // existed) still gets the live block when latest.
                             return Self.userMessage(
                                 base,
                                 frozenPrefix: t.injectedContextPrefix,
-                                sessionState: isLatestUserTurn ? orchestratorStateBlock : nil
+                                sessionState: isLatestUserTurn && t.injectedContextPrefix == nil
+                                    ? orchestratorStateBlock : nil
                             )
                         default:
                             return ChatMessage(role: t.role.rawValue, content: t.content)
