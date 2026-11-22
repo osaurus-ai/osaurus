@@ -551,24 +551,25 @@ struct AgentDraftPanel: View {
         return SettingsSheet(
             icon: "slider.horizontal.3", title: "Generation Overrides",
             width: SettingsSheetWidth.wide, maxBodyHeight: 540,
-            onClose: { editingGeneration = false }
-        ) {
-            AgentGenerationSettingsEditor(
-                modelID: modelID, modelIsLocal: model?.source == .local,
-                catalogCapabilities: model?.reasoningCapabilities,
-                savedTemperature: draft.agent.temperature, savedMaxTokens: draft.agent.maxTokens,
-                savedSettings: draft.agent.generationSettings,
-                onSave: { values in
-                    store.applyPanelSetting(draft.id) {
-                        $0.temperature = values.temperature
-                        $0.maxTokens = values.maxTokens
-                        $0.generationSettings = values.settings
-                    }
-                    editingGeneration = false
-                },
-                saveButtonTitle: L("Apply to Draft")
-            )
-        }
+            onClose: { editingGeneration = false },
+            content: {
+                AgentGenerationSettingsEditor(
+                    modelID: modelID, modelIsLocal: model?.source == .local,
+                    catalogCapabilities: model?.reasoningCapabilities,
+                    savedTemperature: draft.agent.temperature, savedMaxTokens: draft.agent.maxTokens,
+                    savedSettings: draft.agent.generationSettings,
+                    onSave: { values in
+                        store.applyPanelSetting(draft.id) {
+                            $0.temperature = values.temperature
+                            $0.maxTokens = values.maxTokens
+                            $0.generationSettings = values.settings
+                        }
+                        editingGeneration = false
+                    },
+                    saveButtonTitle: L("Apply to Draft")
+                )
+            }
+        )
     }
 
     private func toolsSummary(_ draft: AgentDraft) -> some View {
