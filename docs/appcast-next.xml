@@ -3,6 +3,29 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>1.0.11</title>
+            <pubDate>Sun, 22 Nov 2026 23:37:35 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.11</sparkle:version>
+            <sparkle:shortVersionString>1.0.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.11/Osaurus-1.0.11.dmg" length="125971692" type="application/octet-stream" sparkle:edSignature="b+ta+M8nkTAjkaTmufY/eRT7yGMVFjuJ3aupfgIHNUWVaawSezY/iF3IG/oqZqYP+gDwtlUXhf81TbG2zvkhDw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Chat: freeze the session-state block with the turn it was sent on (prefix-cache reuse for follow-ups) by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3500
+* Chat: a tool named with an ordinary word forces a call only when invoked by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3501
+* Inkling-2-Mini JANGH2: pin vmlx-swift at the #781 merge by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3499
+* Inkling-2: image input; repin vmlx-swift for the MLX fork upgrade by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3502
+* Repin vMLX for Inkling sliding-window KV by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3504
+* Expose generation overrides when creating an agent by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3505
+* Repin the Osaurus runtime for 1.0.11 by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3506
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.10...1.0.11
+]]></description>
+        </item>
+        <item>
             <title>1.0.10</title>
             <pubDate>Sat, 21 Nov 2026 20:39:58 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
