@@ -133,8 +133,16 @@ struct AgentDraftStoreTests {
         let draft = freshDraft()
         defer { AgentDraftStore.shared.delete(draft.id) }
         let store = AgentDraftStore.shared
-        store.applyPanelSetting(draft.id) { $0.settings.showResponseMetrics = true }
+        let overrides = AgentGenerationSettings(topK: 24, speculativeDecoding: false)
+        store.applyPanelSetting(draft.id) {
+            $0.settings.showResponseMetrics = true
+            $0.temperature = 0.6
+            $0.generationSettings = overrides
+        }
         #expect(store.draft(id: draft.id)?.agent.settings.showResponseMetrics == true)
+        #expect(store.draft(id: draft.id)?.agent.temperature == 0.6)
+        #expect(store.draft(id: draft.id)?.agent.generationSettings == overrides)
+        #expect(store.draft(id: draft.id)?.userEdited.isEmpty == true)
         #expect(store.takeTurnContext(sessionID: draft.sessionID) == nil)
 
         store.markCreated(draft.id, agentId: draft.agent.id)
@@ -142,7 +150,9 @@ struct AgentDraftStoreTests {
             try store.applyConfiguratorPatch(draft.id, entry: try entry(#"{"name": "Later"}"#))
         }
         store.applyUserEdit(draft.id, .name) { $0.name = "Later" }
+        store.applyPanelSetting(draft.id) { $0.generationSettings = nil }
         #expect(store.draft(id: draft.id)?.agent.name == "")
+        #expect(store.draft(id: draft.id)?.agent.generationSettings == overrides)
     }
 
     @Test

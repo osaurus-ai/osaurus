@@ -89,7 +89,7 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 
 ## Generation overrides for each custom agent
 
-Open a custom agent → General → Configure → Advanced Settings → Generation Overrides (a new agent gets them after **Create Agent**, on its page). Each field can inherit existing defaults or use a custom value. Temperature and Max Tokens keep their existing saved fields; Top P, Top K, Min P, repetition/frequency/presence penalties, seed, stop sequences and template parameters are saved with the same agent.
+In a new agent draft, open **Model → Generation Overrides** and click **Apply to Draft** before creating the agent. For an existing custom agent, open **General → Configure → Advanced Settings → Generation Overrides**. Each field can inherit existing defaults or use a custom value. Temperature and Max Tokens keep their existing saved fields; Top P, Top K, Min P, repetition/frequency/presence penalties, seed, stop sequences and template parameters are saved with the same agent.
 
 The selected model is inspected for its supported Thinking switch and exact Reasoning effort choices. An effort from a different model cannot be saved until it is changed to a supported choice or Inherit. No effort ladder or independent thinking-token budget is invented when the model has no such contract. The model's shared settings are never changed by this editor.
 

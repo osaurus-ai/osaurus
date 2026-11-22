@@ -13,6 +13,7 @@ struct AgentGenerationSettingsEditor: View {
     let savedSettings: AgentGenerationSettings?
     let onSave: (AgentGenerationDraft.Values) -> Void
     var showsSaveButton = true
+    var saveButtonTitle: String? = nil
     var onDraftChange: ((AgentGenerationDraft) -> Void)? = nil
     var onReasoningChoicesChange: ((AgentGenerationReasoningChoices?) -> Void)? = nil
     var initialDraft: AgentGenerationDraft? = nil
@@ -134,7 +135,10 @@ struct AgentGenerationSettingsEditor: View {
                 }
                 if showsSaveButton {
                     Spacer()
-                    SettingsButton(.primary, "Save generation defaults", size: .compact, action: save)
+                    SettingsButton(
+                        .primary, saveButtonTitle ?? L("Save generation defaults"), size: .compact,
+                        verbatim: true, action: save
+                    )
                         .disabled(
                             (choices == nil || choices?.modelID != modelID)
                                 && (draft.reasoningEffort != "" || draft.thinking != "inherit" || draft.speculation != "inherit")
