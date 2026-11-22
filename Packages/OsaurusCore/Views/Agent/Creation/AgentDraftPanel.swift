@@ -72,6 +72,7 @@ struct AgentDraftPanel: View {
     @State private var highlighted: Section?
     @State private var signatures: [Section: Int] = [:]
     @State private var customizingTools = false
+    @State private var editingGeneration = false
     /// Create is installing queued imports.
     @State private var creating = false
     @State private var createError: String?
@@ -108,6 +109,9 @@ struct AgentDraftPanel: View {
         }
         .sheet(isPresented: $customizingTools) {
             if let draft { toolsSheet(draft) }
+        }
+        .sheet(isPresented: $editingGeneration) {
+            if let draft { generationSheet(draft) }
         }
     }
 
@@ -529,9 +533,43 @@ struct AgentDraftPanel: View {
                         }
                     ]
                 )
+                if (draft.agent.runtime ?? .builtIn) == .builtIn {
+                    SettingsButton(
+                        .secondary, "Generation Overrides", icon: "slider.horizontal.3", size: .compact
+                    ) {
+                        editingGeneration = true
+                    }
+                }
                 reason(AgentDraft.Field.model.rawValue, in: draft)
             }
         }
+    }
+
+    private func generationSheet(_ draft: AgentDraft) -> some View {
+        let modelID = agentManager.effectiveModel(for: draft.agent)
+        let model = pickerItems.first { $0.id == modelID }
+        return SettingsSheet(
+            icon: "slider.horizontal.3", title: "Generation Overrides",
+            width: SettingsSheetWidth.wide, maxBodyHeight: 540,
+            onClose: { editingGeneration = false },
+            content: {
+                AgentGenerationSettingsEditor(
+                    modelID: modelID, modelIsLocal: model?.source == .local,
+                    catalogCapabilities: model?.reasoningCapabilities,
+                    savedTemperature: draft.agent.temperature, savedMaxTokens: draft.agent.maxTokens,
+                    savedSettings: draft.agent.generationSettings,
+                    onSave: { values in
+                        store.applyPanelSetting(draft.id) {
+                            $0.temperature = values.temperature
+                            $0.maxTokens = values.maxTokens
+                            $0.generationSettings = values.settings
+                        }
+                        editingGeneration = false
+                    },
+                    saveButtonTitle: L("Apply to Draft")
+                )
+            }
+        )
     }
 
     private func toolsSummary(_ draft: AgentDraft) -> some View {
