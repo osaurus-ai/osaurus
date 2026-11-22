@@ -379,6 +379,9 @@ let package = Package(
         // reshapes a same-shape update, which every model's KV append benefits from). The merge also carries
         // vmlx-swift#782 (community MLX Inkling bundles load and keep their quantized projections) and Inkling image
         // input (the in-bundle vision tower, built only for a vision request).
+        // vmlx-swift#783 moves MLX to osaurus-ai/mlx#55 (rcfa's CPU kernels, IO and upstream Metal fixes: column-reduction
+        // offsets, fp8 NaN handling, single-rounding biased GEMV, temp-file + rename saves) and sweeps the save temps
+        // a killed cache store leaves behind.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
             revision: "a03fa5e398ff7973b2554ebaeff53d5198a1ed4c"
