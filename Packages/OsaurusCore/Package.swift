@@ -376,10 +376,12 @@ let package = Package(
         // vmlx-swift#781 runs Inkling-2-Mini JANGH bundles (OsaurusAI/Inkling-2-Mini-JANGH2): codebook routed
         // experts with Inkling's softcapped activation, affine 8-bit projections in the fused decode and verify
         // steps, dSpark with an affine output head, and fewer graph nodes per token (slice assignment no longer
-        // reshapes a same-shape update, which every model's KV append benefits from).
+        // reshapes a same-shape update, which every model's KV append benefits from). The merge also carries
+        // vmlx-swift#782 (community MLX Inkling bundles load and keep their quantized projections) and Inkling image
+        // input (the in-bundle vision tower, built only for a vision request).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "19e5fe968bfe64745fc13409d4d8a6e298333879"
+            revision: "310c583898e60e0fc09ac29b1e1d71bbb90c2e0d"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the
