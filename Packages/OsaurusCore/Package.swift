@@ -381,7 +381,7 @@ let package = Package(
         // input (the in-bundle vision tower, built only for a vision request).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "310c583898e60e0fc09ac29b1e1d71bbb90c2e0d"
+            revision: "a03fa5e398ff7973b2554ebaeff53d5198a1ed4c"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the
