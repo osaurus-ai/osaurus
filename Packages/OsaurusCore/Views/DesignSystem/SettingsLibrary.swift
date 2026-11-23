@@ -50,17 +50,8 @@ struct LibraryCard<Hero: View, Leading: View, Badges: View, Accessory: View, Con
     @ViewBuilder let content: Content
     @ViewBuilder let footer: Footer
     @ViewBuilder let menu: MenuItems
-    /// Title-to-subtitle gap in place of the catalog's, set with `subtitleGap(_:)`.
-    private var subtitleGapOverride: CGFloat?
 
     @State private var isHovered = false
-
-    /// A tighter (or looser) title-to-subtitle gap for this row than the catalog's.
-    func subtitleGap(_ gap: CGFloat) -> Self {
-        var row = self
-        row.subtitleGapOverride = gap
-        return row
-    }
 
     init(
         title: String,
@@ -334,8 +325,17 @@ struct LibraryRow<Leading: View, Badges: View, Trailing: View, MenuItems: View, 
     @ViewBuilder let badges: Badges
     @ViewBuilder let trailing: Trailing
     @ViewBuilder let menu: MenuItems
+    /// Title-to-subtitle gap in place of the catalog's, set with `subtitleGap(_:)`.
+    private var subtitleGapOverride: CGFloat?
 
     @State private var isHovered = false
+
+    /// A tighter (or looser) title-to-subtitle gap for this row than the catalog's.
+    func subtitleGap(_ gap: CGFloat) -> Self {
+        var row = self
+        row.subtitleGapOverride = gap
+        return row
+    }
 
     init(
         title: String,
