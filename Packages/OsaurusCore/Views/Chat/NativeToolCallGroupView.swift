@@ -1732,7 +1732,7 @@ final class NativeToolCallRowView: NSView {
         if let existing = subagentFeedHostingView {
             host = existing
         } else {
-            let hosting = NSHostingView(rootView: HostedSubagentFeedView(feed: feed))
+            let hosting = NSHostingView.embedded(rootView: HostedSubagentFeedView(feed: feed))
             hosting.translatesAutoresizingMaskIntoConstraints = false
             contentContainer.addSubview(hosting)
             let av = ensureArgsView()

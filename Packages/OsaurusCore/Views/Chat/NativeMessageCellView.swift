@@ -341,7 +341,7 @@ final class NativeHeaderView: NSView {
         nameLabel.textColor = NSColor(role == .user ? theme.text.primary : theme.text.secondary)
         nameLabel.attributedStringValue = MessageHeaderInspectionStyle.text(nameLabel.stringValue, property: "label", color: NSColor(theme.text.primary), theme: theme)
         // Reuse the actual shared avatar component, including saved shape/color.
-        let avatarHost = sharedAvatarHost ?? NSHostingView(rootView: AnyView(EmptyView()))
+        let avatarHost = sharedAvatarHost ?? NSHostingView.embedded(rootView: AnyView(EmptyView()))
         sharedAvatarHost = avatarHost
         avatarHost.frame = avatarImageView.bounds
         avatarHost.autoresizingMask = [.width, .height]
@@ -691,7 +691,7 @@ final class HeaderCircleActionControl: NSView {
         let host: NSHostingView<AnyView>
         if let existing = sharedButtonHost { host = existing }
         else {
-            host = NSHostingView(rootView: AnyView(EmptyView()))
+            host = NSHostingView.embedded(rootView: AnyView(EmptyView()))
             host.translatesAutoresizingMaskIntoConstraints = false
             addSubview(host)
             NSLayoutConstraint.activate([host.leadingAnchor.constraint(equalTo: leadingAnchor), host.trailingAnchor.constraint(equalTo: trailingAnchor), host.topAnchor.constraint(equalTo: topAnchor), host.bottomAnchor.constraint(equalTo: bottomAnchor)])
@@ -1414,7 +1414,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private let hintLabel = NSTextField(labelWithString: "")
     private var cancelButton: PaddedInlineButton!
     private var confirmButton: PaddedInlineButton!
-    private let inspectorActions = NSHostingView(rootView: AnyView(EmptyView()))
+    private let inspectorActions = NSHostingView.embedded(rootView: AnyView(EmptyView()))
 
     private var getText: () -> String = { "" }
     private var setText: (String) -> Void = { _ in }
@@ -1992,7 +1992,7 @@ final class NativeEmptyResponseNoticeView: NSView {
 
         addSubview(iconView)
         addSubview(textStack)
-        let host = NSHostingView(rootView: AnyView(EmptyView()))
+        let host = NSHostingView.embedded(rootView: AnyView(EmptyView()))
         host.translatesAutoresizingMaskIntoConstraints = false
         retryHost = host
         let actionView: NSView = host
@@ -2456,7 +2456,7 @@ final class NativeMessageCellView: NSTableCellView {
         if !sameKind || nativeOnboardingView == nil {
             removeAllContentViews()
             onboardingContentHeight = nil
-            let hv = NSHostingView(rootView: themed)
+            let hv = NSHostingView.embedded(rootView: themed)
             hv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(hv)
             NSLayoutConstraint.activate([
@@ -2506,7 +2506,7 @@ final class NativeMessageCellView: NSTableCellView {
         )
         if !sameKind || nativeConversationEventView == nil {
             removeAllContentViews()
-            let hv = NSHostingView(rootView: rootView)
+            let hv = NSHostingView.embedded(rootView: rootView)
             hv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(hv)
             NSLayoutConstraint.activate([
@@ -3619,7 +3619,7 @@ final class NativeMessageCellView: NSTableCellView {
         )
         if !sameKind || nativeFollowUpsView == nil {
             removeAllContentViews()
-            let hv = NSHostingView(rootView: rootView)
+            let hv = NSHostingView.embedded(rootView: rootView)
             hv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(hv)
             NSLayoutConstraint.activate([
