@@ -189,11 +189,11 @@ private struct ArrangedCallRow: View {
             leading: {
                 SettingsIconTile(icon: isComing ? "phone.arrow.down.left" : "phone", size: 28)
             },
-            badges: {
-                StatusChip(chip.text, tone: chip.tone, showsDot: status == .ringing, pulses: status == .ringing)
-            },
+            // The chip sits with the buttons, not beside the title: taller than the title's line, it pushed the
+            // subtitle further from the title than one row is from the next.
             trailing: {
                 HStack(spacing: theme.space.s8) {
+                    StatusChip(chip.text, tone: chip.tone, showsDot: status == .ringing, pulses: status == .ringing)
                     SettingsButton(.secondary, "Open Chat", size: .compact) {
                         TaskControl.openChat(grant.sessionId, agentId: grant.agentId)
                     }
