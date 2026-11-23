@@ -93,7 +93,7 @@ struct ManagementTabTests {
         #expect(ManagementTab.workspaces.section == .sharing)
         #expect(ManagementTab.privacy.children == [.permissions])
         #expect(ManagementTab.computerUse.children == [.browser])
-        #expect(ManagementTab.devices.children == [.connect])
+        #expect(ManagementTab.devices.children.isEmpty)
         #expect(ManagementTab.connect.section == .sharing)
         #expect(ManagementTab.connect.label == "Mobile")
         #expect(ManagementTab.chat.children == [.commands])

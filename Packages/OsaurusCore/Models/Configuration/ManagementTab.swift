@@ -148,7 +148,8 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .identity: [.credits]
         case .privacy: [.permissions]
         case .computerUse: [.browser]
-        case .devices: [.connect]
+        // Mobile (`.connect`) is no longer listed: the 6-digit code is in Add iPhone or iPad, and its page
+        // stays reachable from settings search only.
         default: []
         }
     }
