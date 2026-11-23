@@ -435,6 +435,7 @@ final class ChatSession: ObservableObject {
     let warmupController = ChatWarmupController()
     @Published var pickerItems: [ModelPickerItem] = []
     @Published var activeModelOptions: [String: ModelOptionValue] = [:]
+    @Published var modelControls: [String: ChatModelControls] = [:]
     @Published var nextTurnOverrides = ChatTurnOverrides()
     @Published var turnParametersError: String?
 
@@ -442,12 +443,22 @@ final class ChatSession: ObservableObject {
         var controls = ChatTurnGenerationControls.capture(activeModelOptions: activeModelOptions)
         controls.temperature = AgentManager.shared.effectiveTemperature(for: agentId ?? Agent.defaultId)
         controls.topP = ChatConfigurationStore.load().topPOverride
-        controls.agentSettings = AgentManager.shared.effectiveGenerationSettings(for: agentId ?? Agent.defaultId)
+        let saved = AgentManager.shared.effectiveGenerationSettings(for: agentId ?? Agent.defaultId)
+        let chat = selectedModel.flatMap { modelControls[ChatModelControls.key(for: $0)] }
+        controls.agentSettings = chat?.applying(to: saved) ?? saved
         controls.maxOutputTokens = AgentManager.shared.effectiveMaxTokens(for: agentId ?? Agent.defaultId)
         controls.agentDefaultsCaptured = true
         controls.overrides = overrides ?? nextTurnOverrides
         controls.storedExplicitOptions = selectedModel.flatMap { ModelOptionsStore.shared.storedExplicitOptions(for: $0) }
         return controls
+    }
+
+    /// Persist only this conversation's choices. A fresh empty chat stays unsaved until its first turn.
+    func updateModelControls(_ values: [String: ChatModelControls]) {
+        guard modelControls != values else { return }
+        modelControls = values
+        isDirty = true
+        save()
     }
 
     @Published var imageComposerSettings = ImageComposerSettings()
@@ -3677,6 +3688,7 @@ final class ChatSession: ObservableObject {
         savedTurnOverridesOnCancel = nil
         stashDraft()
         stop()
+        modelControls = [:]
         lastManualModelSelection = nil
         restoredWindowModelSelection = nil
         turns.removeAll()
@@ -4274,7 +4286,8 @@ final class ChatSession: ObservableObject {
             workspace: workspaceContext,
             parkedWorkflowRuns: parkedWorkflowCalls,
             sessionState: sessionState,
-            hostDevice: hostDevice
+            hostDevice: hostDevice,
+            modelControls: modelControls.isEmpty ? nil : modelControls
         )
         data.servedBy = servedBy
         return data
@@ -4377,6 +4390,7 @@ final class ChatSession: ObservableObject {
         pinned = data.pinned
         projectId = data.projectId
         workspaceContext = data.workspace
+        modelControls = data.modelControls ?? [:]
         hostDevice = data.hostDevice
         servedBy = data.servedBy
         hostRunState = nil
@@ -12109,6 +12123,10 @@ struct ChatView: View {
                                     showVoiceOverlay: $observedSession.showVoiceOverlay,
                                     pickerItems: filteredPickerItems,
                                     activeModelOptions: $observedSession.activeModelOptions,
+                                    modelControls: Binding(
+                                        get: { observedSession.modelControls },
+                                        set: { observedSession.updateModelControls($0) }
+                                    ),
                                     turnOverrides: $observedSession.nextTurnOverrides,
                                     isStreaming: observedSession.isSendActiveForComposer
                                         || observedSession.isWaitingOnHost,

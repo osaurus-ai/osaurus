@@ -71,7 +71,7 @@ enum SyncConversationMapper {
     static let sessionOwnedKeys: Set<String> = [
         "v", "id", "source", "automationKind", "sourcePluginId", "externalSessionKey", "dispatchTaskId",
         "agentId", "projectId", "selectedModel", "capabilities", "folderPath", "conversationSummary",
-        "workspace", "parkedWorkflowRuns", "sessionState", "hostDevice", "updatedAt", "truncated",
+        "workspace", "parkedWorkflowRuns", "sessionState", "hostDevice", "modelControls", "updatedAt", "truncated",
     ]
     /// Turn app data fields this version writes.
     static let turnOwnedKeys: Set<String> = [

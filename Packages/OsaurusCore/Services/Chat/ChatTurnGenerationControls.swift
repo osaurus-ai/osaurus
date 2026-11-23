@@ -19,7 +19,7 @@ struct ChatTurnGenerationControls: Sendable, Equatable, Codable {
     var temperature: Float? = nil
     var topP: Float? = nil
     var topK: Int? = nil
-    /// Agent defaults are frozen with the turn, including an intentionally absent cap.
+    /// Effective agent/chat settings are frozen with the turn, including an intentionally absent cap.
     var agentSettings: AgentGenerationSettings? = nil
     var maxOutputTokens: Int? = nil
     var agentDefaultsCaptured: Bool? = nil
