@@ -37,6 +37,17 @@ public enum SubagentAdmissionEvaluator {
         public let reclaimSucceeds: Bool
     }
 
+    /// A resident child whose window may be fitted to the memory left, as
+    /// `SubagentSession` does before planning. KV is priced linearly here
+    /// (`fixedBytes + positions × bytesPerPosition`), standing in for the
+    /// model topology estimator.
+    public struct ContextFit: Sendable, Codable {
+        public let requestedPositions: Int
+        public let minimumPositions: Int
+        public let bytesPerPosition: UInt64
+        public let fixedBytes: UInt64
+    }
+
     public struct Scenario: Sendable, Codable {
         public let localJobs: Int
         public let remoteJobs: Int
@@ -45,6 +56,7 @@ public enum SubagentAdmissionEvaluator {
         public let engineSubmissionLimit: Int?
         public let batching: Bool
         public let ramSafety: Bool
+        public let contextFit: ContextFit?
         public let steps: [Step]
     }
 
@@ -58,6 +70,8 @@ public enum SubagentAdmissionEvaluator {
         public let subwaves: [Int]
         public let remainingReservations: Int
         public let reservationError: Bool
+        /// The window the child was fitted to, when fitting applied.
+        public let fittedPositions: Int?
     }
 
     public static func run(_ scenario: Scenario) async -> [Observation] {
@@ -68,7 +82,7 @@ public enum SubagentAdmissionEvaluator {
         for step in scenario.steps {
             var samples = 0
             var reclaims = 0
-            let facts = await SubagentBatchAdmissionPlanner.memoryFactsAfterReclaimingIfNeeded(
+            var facts = await SubagentBatchAdmissionPlanner.memoryFactsAfterReclaimingIfNeeded(
                 ramSafetyEnabled: scenario.ramSafety,
                 sample: {
                     samples += 1
@@ -76,7 +90,23 @@ public enum SubagentAdmissionEvaluator {
                 },
                 reclaim: { reclaims += 1; return step.reclaimSucceeds }
             )
-            let plan = SubagentBatchAdmissionPlanner.plan(.init(
+            var fittedPositions: Int?
+            if scenario.ramSafety, let fit = scenario.contextFit, let memory = facts {
+                func price(_ positions: Int) -> UInt64? {
+                    guard positions > 0 else { return nil }
+                    let (variable, overflow) = UInt64(positions).multipliedReportingOverflow(by: fit.bytesPerPosition)
+                    let (bytes, addOverflow) = variable.addingReportingOverflow(fit.fixedBytes)
+                    return overflow || addOverflow ? nil : bytes
+                }
+                if let positions = SubagentBatchAdmissionPlanner.affordablePositionCeiling(
+                    requested: fit.requestedPositions, minimum: fit.minimumPositions, memory: memory,
+                    headroomForPositions: price), let bytes = price(positions)
+                {
+                    fittedPositions = positions
+                    facts = memory.pricingChildHeadroom(bytes)
+                }
+            }
+            var plan = SubagentBatchAdmissionPlanner.plan(.init(
                 localJobCount: scenario.localJobs, remoteJobCount: scenario.remoteJobs,
                 agentParallelLimit: scenario.agentLimit,
                 engineParallelLimit: scenario.engineLimit,
@@ -85,6 +115,9 @@ public enum SubagentAdmissionEvaluator {
                 ramSafetyEnabled: scenario.ramSafety,
                 failClosedWhenEstimateUnknown: true, memory: facts
             ))
+            if let fittedPositions {
+                plan.serializeMemoryFittedContext(jobCount: scenario.localJobs, positions: fittedPositions)
+            }
             var subwaves: [Int] = []
             var reservationError = false
             if case .admitted = plan.verdict, scenario.localJobs > 0 {
@@ -112,7 +145,8 @@ public enum SubagentAdmissionEvaluator {
                 limitingFactors: plan.limitingFactors.map(\.rawValue).sorted(),
                 samples: samples, reclaims: reclaims, subwaves: subwaves,
                 remainingReservations: snapshot.inPlace + snapshot.exclusive + snapshot.remote,
-                reservationError: reservationError
+                reservationError: reservationError,
+                fittedPositions: fittedPositions
             ))
         }
         return observations

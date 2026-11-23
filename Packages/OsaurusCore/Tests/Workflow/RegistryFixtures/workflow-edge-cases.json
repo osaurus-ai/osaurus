@@ -1,0 +1,148 @@
+{
+  "format": "osaurus.template",
+  "format_version": 1,
+  "id": "6f1c2b9e-1a2b-4c3d-8e9f-0a1b2c3d4e5f",
+  "kind": "workflow",
+  "version": 3,
+  "changelog": "Adds a review dialog.\nEscapes: \"quotes\", back\\slash, tab\t, url https://example.com/a/b",
+  "name": "Fetch, review & post — édition 😀",
+  "summary": "Fetches a page, asks you to review it, then posts it with a tool.",
+  "author": { "name": "Edge Case Tester" },
+  "created_at": "2026-10-01T12:00:00Z",
+  "available_to_orchestrator": false,
+  "requirements": {
+    "models": [
+      {
+        "slot": "writer",
+        "preferred": "foundation",
+        "strictness": "preferred",
+        "locality": "local_only",
+        "needs_tool_use": false
+      }
+    ],
+    "secrets": [{ "key": "API_TOKEN", "label": "API token", "help": "From your dashboard." }],
+    "mcp_servers": ["Linear"],
+    "plugins": [],
+    "permissions": [],
+    "network": ["api.example.com"],
+    "tools": ["save_note"],
+    "knowledge": [],
+    "notes": {}
+  },
+  "workflow": {
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "title": "Page URL", "format": "uri" },
+        "maxLength": {
+          "type": "number",
+          "title": "Max length",
+          "default": 20000,
+          "minimum": 1e-05
+        },
+        "max_steps": { "type": "integer", "default": 8 },
+        "Zeta": { "type": "boolean", "default": false },
+        "émoji": { "type": "string", "enum": ["a/b", "c\u0001d", "e\u2028f"] }
+      },
+      "required": ["url"],
+      "x-order": ["url", "maxLength", "max_steps", "Zeta", "émoji"]
+    },
+    "output_schema": { "type": "object", "properties": { "posted": { "type": "boolean" } } },
+    "nodes": [
+      {
+        "id": "fetch",
+        "name": "Fetch the page",
+        "kind": "code",
+        "code": {
+          "source": "async function run(input, ctx) {\n  const res = await ctx.fetch(input.url);\n  return { text: (await res.text()).slice(0, input.maxLength) };\n}",
+          "network": ["api.example.com"],
+          "secrets": ["API_TOKEN"],
+          "timeout": 30,
+          "memory_limit_mb": 256
+        },
+        "input": { "url": "{{input.url}}", "maxLength": "{{input.maxLength}}" },
+        "output_schema": { "type": "object" },
+        "timeout": 120,
+        "retry": { "max_attempts": 2, "backoff_seconds": 1.5 }
+      },
+      {
+        "id": "review",
+        "name": "Review",
+        "intent": "Let a person approve the text.",
+        "kind": "dialog",
+        "dialog": {
+          "title": "Review the text",
+          "message": "{{nodes.fetch.output.text}}",
+          "fields": [
+            {
+              "key": "approved",
+              "label": "Post it?",
+              "type": "bool",
+              "required": true,
+              "persistence": "always_ask"
+            }
+          ]
+        },
+        "input": {},
+        "output_schema": { "type": "object" },
+        "timeout": 86400,
+        "retry": { "max_attempts": 1, "backoff_seconds": 1 }
+      },
+      {
+        "id": "summarize",
+        "name": "Summarize",
+        "kind": "inference",
+        "inference": {
+          "model_slot": "writer",
+          "instructions": "Summarize:\n{{nodes.fetch.output.text}}",
+          "mode": "agentic",
+          "tools": [{ "name": "search_issues", "server": "Linear" }],
+          "max_steps": 4,
+          "temperature": 0.7
+        },
+        "input": "{{nodes.fetch.output.text}}",
+        "output_schema": { "type": "object", "properties": { "summary": { "type": "string" } } },
+        "timeout": 120,
+        "retry": { "max_attempts": 1, "backoff_seconds": 1 }
+      },
+      {
+        "id": "post",
+        "name": "Post",
+        "kind": "tool",
+        "tool": { "name": "save_note" },
+        "input": { "text": "{{nodes.summarize.output.summary}}" },
+        "output_schema": {},
+        "timeout": 1e+16,
+        "retry": { "max_attempts": 1, "backoff_seconds": -0 }
+      }
+    ],
+    "edges": [
+      { "from": "fetch", "to": "review" },
+      {
+        "from": "review",
+        "to": "summarize",
+        "when": { "path": "approved", "op": "equals", "value": true }
+      },
+      { "from": "summarize", "to": "post" }
+    ],
+    "output": { "posted": "{{nodes.post.output}}" },
+    "model_slots": [],
+    "secrets": [{ "key": "API_TOKEN", "label": "API token" }],
+    "requirement_notes": { "network:api.example.com": "Reads the page you give it." },
+    "examples": [
+      { "name": "Example", "input": { "url": "https://example.com/post/1", "maxLength": 0.0001 } }
+    ]
+  },
+  "mcp_server_hints": [
+    {
+      "name": "Linear",
+      "transport": "http",
+      "url": "https://mcp.linear.app/mcp",
+      "auth": "oauth",
+      "args": [],
+      "env_keys": [],
+      "header_keys": []
+    }
+  ],
+  "content_hash": ""
+}

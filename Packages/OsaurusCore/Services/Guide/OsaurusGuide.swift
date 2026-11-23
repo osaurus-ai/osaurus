@@ -38,15 +38,106 @@ public enum OsaurusGuide {
     /// first and fall back to prefix-filtered root enumeration.
     static let resourcePrefix = "guide-"
 
-    /// All topics sorted by (`order`, `id`). Parsed once per process.
+    /// All available topics sorted by (`order`, `id`). Parsed once per
+    /// process.
     public static var topics: [OsaurusGuideTopic] { cached }
 
     /// Look up one topic by id (case-insensitive, tolerant of a stray
     /// `guide-` prefix so `guide-local-models` also resolves).
     public static func topic(id: String) -> OsaurusGuideTopic? {
         let normalized = normalizeTopicId(id)
-        return cached.first { $0.id == normalized }
+        let resolved = topicAliases[normalized] ?? normalized
+        return topics.first { $0.id == resolved }
     }
+
+    /// One `##`-level section of a topic body.
+    public struct Section: Sendable, Equatable {
+        public let topicId: String
+        public let heading: String
+        public let body: String
+    }
+
+    /// The guide sections that share the most content words with `message`,
+    /// best first. A section needs at least two distinct shared words, so a
+    /// lone common word never pulls one in. Bodies are clipped to
+    /// `maxCharacters`.
+    public static func relevantSections(
+        toMessage message: String,
+        limit: Int = 2,
+        maxCharacters: Int = 1500
+    ) -> [Section] {
+        let words = Set(
+            SearchService.tokenize(message).filter {
+                $0.count > 2 && !SettingsSearchIndex.messageStopWords.contains($0)
+            })
+        guard !words.isEmpty else { return [] }
+        var scored: [(section: Section, score: Int, order: Int)] = []
+        var order = 0
+        for topic in topics {
+            for section in sections(of: topic) {
+                let text = Set(SearchService.tokenize(section.heading + " " + section.body))
+                let shared = words.intersection(text).count
+                if shared >= 2 { scored.append((section, shared, order)) }
+                order += 1
+            }
+        }
+        return scored
+            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.order < $1.order }
+            .prefix(limit)
+            .map { item in
+                let body = item.section.body
+                guard body.count > maxCharacters else { return item.section }
+                return Section(
+                    topicId: item.section.topicId,
+                    heading: item.section.heading,
+                    body: String(body.prefix(maxCharacters)) + "…")
+            }
+    }
+
+    /// Split a topic body on `## ` headings. Text before the first heading
+    /// is a section under the topic title.
+    static func sections(of topic: OsaurusGuideTopic) -> [Section] {
+        var result: [Section] = []
+        var heading = topic.title
+        var lines: [String] = []
+        func flush() {
+            let body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !body.isEmpty { result.append(Section(topicId: topic.id, heading: heading, body: body)) }
+            lines = []
+        }
+        for line in topic.body.components(separatedBy: "\n") {
+            if line.hasPrefix("## ") {
+                flush()
+                heading = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+            } else {
+                lines.append(line)
+            }
+        }
+        flush()
+        return result
+    }
+
+    /// Retired topic ids (and their singular forms) and the topic that now
+    /// covers them.
+    static let topicAliases: [String: String] = [
+        "event": "automations",
+        "events": "automations",
+        "schedule": "automations",
+        "schedules": "automations",
+        "watcher": "automations",
+        "watchers": "automations",
+        "history": "automations",
+        "automation-history": "automations",
+        "automation": "automations",
+        "trigger": "automations",
+        "triggers": "automations",
+        "computer": "computer-use",
+        "browser-use": "computer-use",
+        "sandbox": "computer-use",
+        "theme": "settings",
+        "themes": "settings",
+        "appearance": "settings",
+    ]
 
     /// Lowercase, trim, and strip an optional `guide-` prefix.
     static func normalizeTopicId(_ raw: String) -> String {

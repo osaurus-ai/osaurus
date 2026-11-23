@@ -160,11 +160,11 @@ enum WebSearchResultFormatter {
         if hasConfiguredAPIProvider {
             return
                 "Tried the configured providers and built-in fallbacks. Try a broader query, "
-                + "or check in Settings → Search that the API keys are still valid."
+                + "or check in Settings → Web Search that the API keys are still valid."
         }
         return
             "Try a broader query or drop site:/filetype:/time_range. For better results, "
-            + "add a search provider in Settings → Search."
+            + "add a search provider in Settings → Web Search."
     }
 
     static func noResultsFailure(

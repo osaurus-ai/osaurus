@@ -48,15 +48,32 @@ final class RemoteSecretPromptQueue {
                 }
                 continuations[request.id] = continuation
                 pending.append(request)
+                let id = request.id
+                AttentionProducers.beginWaiting(itemId: id, step: L("Waiting for a secret"))
+                AttentionCenter.shared.raise(
+                    AttentionProducers.item(
+                        id: id,
+                        kind: .secretRequest,
+                        title: L("An agent needs \(key)"),
+                        body: description,
+                        hasInlineCard: false
+                    )
+                ) { [weak self] resolution in
+                    self?.settle(id: id, value: nil, attention: resolution)
+                }
                 timeouts[request.id] = Task { [weak self] in
                     try? await Task.sleep(for: timeout)
                     guard !Task.isCancelled else { return }
-                    self?.resolve(id: request.id, value: nil)
+                    self?.settle(
+                        id: request.id,
+                        value: nil,
+                        attention: AttentionResolution(outcome: .timedOut, surface: .system)
+                    )
                 }
             }
         } onCancel: {
             Task { @MainActor in
-                RemoteSecretPromptQueue.shared.resolve(id: request.id, value: nil)
+                RemoteSecretPromptQueue.shared.settle(id: request.id, value: nil, attention: AttentionProducers.abandoned)
             }
         }
     }
@@ -65,9 +82,23 @@ final class RemoteSecretPromptQueue {
     /// the id is no longer pending.
     @discardableResult
     func resolve(id: UUID, value: String?) -> Bool {
+        settle(
+            id: id,
+            value: value,
+            attention: value == nil
+                ? AttentionResolution(outcome: .dismissed, surface: .phone, decidedBy: .ownerDevice(L("iPhone")))
+                // The value is a secret: the resolution records only that it was sent.
+                : AttentionResolution(outcome: .replied, surface: .phone, decidedBy: .ownerDevice(L("iPhone")))
+        )
+    }
+
+    @discardableResult
+    fileprivate func settle(id: UUID, value: String?, attention: AttentionResolution) -> Bool {
         guard let continuation = continuations.removeValue(forKey: id) else { return false }
         pending.removeAll { $0.id == id }
         timeouts.removeValue(forKey: id)?.cancel()
+        AttentionCenter.shared.settleFromProducer(id: id, with: attention)
+        AttentionProducers.endWaiting(itemId: id)
         continuation.resume(returning: value)
         return true
     }

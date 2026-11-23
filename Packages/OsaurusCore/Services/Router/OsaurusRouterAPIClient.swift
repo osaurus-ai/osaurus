@@ -177,13 +177,30 @@ actor OsaurusRouterAPIClient {
         _ = try await idData(method: "DELETE", path: "/id/sessions/\(try routerPathComponent(id))")
     }
 
+    /// `POST /id/lookup` — claimed Osaurus IDs for 1–25 wallets, keyed by
+    /// lowercased wallet. Wallets without a claimed ID are absent.
+    func osaurusIDLookup(wallets: [String], timeout: TimeInterval = 3) async throws -> [String: String] {
+        struct Body: Encodable { let wallets: [String] }
+        struct Person: Decodable {
+            let wallet: String
+            let osaurus_id: String
+        }
+        struct Response: Decodable { let people: [Person] }
+        let body = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(Body(wallets: wallets))
+        let response: Response = try await idRequest(
+            method: "POST", path: "/id/lookup", bodyData: body, timeout: timeout)
+        return Dictionary(response.people.map { ($0.wallet.lowercased(), $0.osaurus_id) }, uniquingKeysWith: { a, _ in a })
+    }
+
     private func idRequest<T: Decodable>(
         method: String,
         path: String,
         queryItems: [URLQueryItem] = [],
-        bodyData: Data? = nil
+        bodyData: Data? = nil,
+        timeout: TimeInterval? = nil
     ) async throws -> T {
-        let data = try await idData(method: method, path: path, queryItems: queryItems, bodyData: bodyData)
+        let data = try await idData(
+            method: method, path: path, queryItems: queryItems, bodyData: bodyData, timeout: timeout)
         return try decoder.decode(T.self, from: data)
     }
 
@@ -193,12 +210,14 @@ actor OsaurusRouterAPIClient {
         method: String,
         path: String,
         queryItems: [URLQueryItem] = [],
-        bodyData: Data? = nil
+        bodyData: Data? = nil,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         let url = try url(path: path, queryItems: queryItems)
         func makeRequest() -> URLRequest {
             var request = URLRequest(url: url)
             request.httpMethod = method
+            if let timeout { request.timeoutInterval = timeout }
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             if bodyData != nil {
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -649,6 +668,66 @@ actor OsaurusRouterAPIClient {
         return try await get("/credits/web-usage", queryItems: queryItems)
     }
 
+    // MARK: - Help (`/support/*`)
+    //
+    // Bug reports and the two-way thread behind each one. Wallet-signed like
+    // `/credits/*`; the router deliberately does not count these as the
+    // wallet's first signed action, so they are also allowed while the
+    // welcome-credit choice is pending (see
+    // `RouterCreditAcquisitionCoordinator.allowsSignedRequest`).
+
+    /// `GET /support/threads` — the user's reports, newest first, plus the
+    /// unread count for the Help badge.
+    func supportThreads() async throws -> OsaurusRouterSupportThreadsResponse {
+        try await get("/support/threads", timeout: 15)
+    }
+
+    /// `POST /support/threads` — send a new report. `body.consent` must be
+    /// true; the router refuses anything else.
+    func createSupportThread(_ body: OsaurusRouterSupportReportBody) async throws -> OsaurusRouterSupportThread {
+        try await post("/support/threads", body: body)
+    }
+
+    /// `GET /support/threads/:id` — one report with its messages.
+    func supportThread(id: String) async throws -> OsaurusRouterSupportThread {
+        try await get("/support/threads/\(try routerPathComponent(id))", timeout: 15)
+    }
+
+    /// `POST /support/threads/:id/messages` — the user answers, optionally
+    /// with images. Moves the thread back to `open`, including from `closed`.
+    func replyToSupportThread(
+        id: String,
+        body: String,
+        attachments: [OsaurusRouterSupportAttachmentUpload] = []
+    ) async throws -> OsaurusRouterSupportThread {
+        try await post(
+            "/support/threads/\(try routerPathComponent(id))/messages",
+            body: OsaurusRouterSupportReplyBody(body: body, attachments: attachments))
+    }
+
+    /// `POST /support/threads/:id/read` — clear the unread flag. Reading the
+    /// detail does not do this on its own.
+    func markSupportThreadRead(id: String) async throws -> OsaurusRouterSupportThread {
+        try await postEmpty("/support/threads/\(try routerPathComponent(id))/read")
+    }
+
+    /// `POST /support/threads/:id/close` — the user marks the report
+    /// resolved, which frees one of their open-report slots. Writing again
+    /// reopens it.
+    func closeSupportThread(id: String) async throws -> OsaurusRouterSupportThread {
+        try await postEmpty("/support/threads/\(try routerPathComponent(id))/close")
+    }
+
+    /// `GET /support/threads/:id/attachments/:attachmentId` — one attached
+    /// image as base64 JSON.
+    func supportAttachment(threadId: String, attachmentId: String) async throws
+        -> OsaurusRouterSupportAttachmentData
+    {
+        try await get(
+            "/support/threads/\(try routerPathComponent(threadId))/attachments/\(try routerPathComponent(attachmentId))",
+            timeout: 30)
+    }
+
     func signedJSONRequest(method: String, path: String, body: Data? = nil) async throws -> URLRequest {
         let url = try url(path: path)
         return try await signedJSONRequest(method: method, url: url, body: body)
@@ -781,6 +860,7 @@ actor OsaurusRouterAPIClient {
     /// "Credits balance" rather than a bare URL.
     nonisolated static func controlPlanePurpose(path: String) -> String {
         let p = path.lowercased()
+        if p.hasPrefix("/support") { return L("Help & feedback") }
         if p.contains("/workspace") { return L("Workspaces") }
         if p.contains("/credit") || p.contains("/balance") || p.contains("/billing") { return L("Credits") }
         if p.contains("/media") { return L("Media generation") }

@@ -65,6 +65,35 @@ enum VisionBundleFixture {
         return root
     }
 
+    /// An Inkling-2 bundle: `vision_config` in config.json and the tower under one of the
+    /// published layouts (`official`: `model.visual.backbone.*` + `model.visual.proj_*`;
+    /// `mlxlm`: `model.vision_tower.*` + `merger.linear_*`).
+    static func makeInkling2(layout: String = "official", omit: String? = nil, depth: Int = 2) throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let config: [String: Any] = [
+            "model_type": "inkling2_loop",
+            "text_config": ["model_type": "inkling2_loop_text", "hidden_size": 64],
+            "vision_config": ["model_type": "inkling2_vision", "num_hidden_layers": depth, "hidden_size": 32,
+                "num_attention_heads": 2, "native_patch_size": 20, "adapter_merge_size": 2],
+        ]
+        try writeJSON(config, to: root.appendingPathComponent("config.json"))
+        var names = ["model.llm.embed.weight"]
+        let official = layout == "official"
+        let tower = official ? "model.visual.backbone." : "model.vision_tower."
+        names += [tower + "embeddings.patch_embedding.weight"]
+        names += official
+            ? ["model.visual.proj_in.weight", "model.visual.proj_out.weight"]
+            : ["model.vision_tower.merger.linear_1.weight", "model.vision_tower.merger.linear_2.weight"]
+        for i in 0..<depth {
+            names += [tower + "layers.\(i).self_attn.q_proj.weight",
+                tower + "layers.\(i).mlp.\(official ? "c_fc" : "fc1").weight"]
+        }
+        if let omit { names.removeAll { $0.contains(omit) } }
+        try writeWeights(names, to: root.appendingPathComponent("model.safetensors"))
+        return root
+    }
+
     /// A MiniMax-M3.1 bundle: `vision_config` + `image_token_index` in config.json, the bundle's
     /// `preprocessor_config.json`, the tower / projector / patch-merge tensors next to the text weights.
     static func makeMiniMaxM3(

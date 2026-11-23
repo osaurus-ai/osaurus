@@ -178,6 +178,7 @@ final class ChunkedFileDownloader: @unchecked Sendable {
         from url: URL,
         to destination: URL,
         metadata: HuggingFaceFileMetadata,
+        seed: URL? = nil,
         onProgress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
         let fm = FileManager.default
@@ -199,6 +200,12 @@ final class ChunkedFileDownloader: @unchecked Sendable {
             completed: []
         )
         var manifest = Self.loadManifest(at: manifestURL, matching: fresh) ?? fresh
+        if manifest.completed.isEmpty,
+            let adopted = Self.adoptSeed(seed, as: partURL, size: total, verifiable: metadata.sha256 != nil)
+        {
+            manifest.completed = adopted
+            Self.saveManifest(manifest, at: manifestURL)
+        }
         if manifest.completed.isEmpty { try await Self.preallocate(partURL, size: total) }
 
         var done = Set(manifest.completed)
@@ -464,6 +471,28 @@ final class ChunkedFileDownloader: @unchecked Sendable {
             let start = Int64(index) * chunkSize
             return sum + (min(start + chunkSize, total) - start)
         }
+    }
+
+    /// Turns the leading bytes of an interrupted copy of this same file (from
+    /// a nearby Mac) into finished chunks, so only the rest comes from the
+    /// network. Only whole chunks count, and only when the final SHA-256 check
+    /// can reject a bad seed. Returns the adopted chunk indices.
+    static func adoptSeed(_ seed: URL?, as partURL: URL, size total: Int64, verifiable: Bool) -> [Int]? {
+        let fm = FileManager.default
+        guard let seed, verifiable,
+            let size = (try? fm.attributesOfItem(atPath: seed.path)[.size] as? NSNumber)?.int64Value,
+            size >= chunkSize, size <= total
+        else { return nil }
+        do {
+            try? fm.removeItem(at: partURL)
+            try fm.moveItem(at: seed, to: partURL)
+            let handle = try FileHandle(forWritingTo: partURL)
+            defer { try? handle.close() }
+            try handle.truncate(atOffset: UInt64(total))
+        } catch {
+            return nil
+        }
+        return Array(0 ..< Int(size / chunkSize))
     }
 
     private static func loadManifest(at url: URL, matching expected: PartManifest) -> PartManifest? {

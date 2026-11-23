@@ -150,6 +150,7 @@ struct ModelPickerItem: Identifiable, Hashable {
     let imageCapabilities: ImageModelCapabilities?
     let imageDefaultSteps: Int?
     let imageDefaultGuidance: Float?
+    /// The engine's request limits, when the bundle's family publishes them.
     let imageRequestLimits: ImageRequestLimits?
     let imageReady: Bool
     /// Provider-neutral media metadata for remote image/video rows. Local
@@ -1092,10 +1093,10 @@ extension Array where Element == ModelPickerItem {
             // remote models (OpenAI-like provider)
             let openAIProviderId = UUID()
             let openAIModels = [
-                ("gpt-4o", "Most advanced GPT-4 model with vision capabilities", true),
-                ("gpt-4-turbo", "High performance GPT-4 variant", false),
-                ("gpt-4", "Original GPT-4 model", false),
-                ("gpt-3.5-turbo", "Fast and efficient for most tasks", false),
+                ("gpt-6-astra", "Most capable GPT-6 model", true),
+                ("gpt-6.1-sol", "Near-Astra performance at lower cost", true),
+                ("gpt-6.1-terra", "Fast visual reasoning and writing", true),
+                ("gpt-6-luna", "Efficient for focused, high-volume tasks", true),
             ]
 
             for (modelId, desc, isVLM) in openAIModels {
@@ -1113,7 +1114,8 @@ extension Array where Element == ModelPickerItem {
             // remote models (Anthropic-like provider)
             let anthropicProviderId = UUID()
             let anthropicModels = [
-                ("claude-opus-5-5", "Most capable Claude model", false),
+                ("claude-fable-5-2", "Demanding reasoning and long-horizon agentic work", false),
+                ("claude-opus-5-5", "Long-running agentic coding and knowledge work", false),
                 ("claude-sonnet-5-5", "Balanced performance and speed", false),
                 ("claude-haiku-5-5", "Fast and efficient", false),
             ]
@@ -1136,13 +1138,13 @@ extension Array where Element == ModelPickerItem {
                 "meta-llama/llama-3.2-90b-vision-instruct",
                 "meta-llama/llama-3.1-405b-instruct",
                 "meta-llama/llama-3.1-70b-instruct",
-                "google/gemini-pro-1.5",
-                "google/gemini-flash-1.5",
+                "google/gemini-4-argon",
+                "google/gemini-3.8-flash",
                 "mistralai/mistral-large-2",
                 "mistralai/pixtral-12b",
                 "cohere/command-r-plus",
                 "perplexity/llama-3.1-sonar-large",
-                "x-ai/grok-beta",
+                "x-ai/grok-4.7",
             ]
 
             // generate many variants

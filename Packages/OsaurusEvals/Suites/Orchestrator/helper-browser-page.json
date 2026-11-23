@@ -1,0 +1,28 @@
+{
+  "id": "orchestrator.helper-browser-page",
+  "domain": "orchestrator",
+  "label": "orchestrator • driving a web page goes to the Browser helper",
+  "query": "Open https://example.com in the browser, click the link on the page, and tell me where it took you.",
+  "notes": "No teammates: the built-in helpers (Research, Files, Browser, Code) are the only `run_workflow` targets. Opening a page and clicking through it needs a real browser, so the Orchestrator calls `run_workflow` with \"Browser\". Scores the route only; Browser Use may be unavailable in the harness.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Browser"
+          }
+        }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

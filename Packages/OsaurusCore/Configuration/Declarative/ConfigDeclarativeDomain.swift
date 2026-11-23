@@ -17,14 +17,17 @@ enum ConfigDeclarativeDomain {
         displayName: "Configuration",
         summary:
             "Configure Osaurus with one declarative YAML document: memory, agents, "
-            + "models, plugins, MCP, providers, search, schedules, watchers, tools, "
-            + "delegation, commands, knowledge, channels.",
+            + "model defaults (core and compaction model), chat switches, app basics (hotkey, "
+            + "start at login, notifications), "
+            + "models, plugins, MCP, providers, search, automations (schedules, folder watchers, "
+            + "webhooks that run an agent or workflow), tools, delegation, commands, knowledge, "
+            + "channels (who answers messages per room, who may post).",
         menuHint:
             "apply a small declarative YAML config change (schema documents the format; plan previews big or destructive changes)",
         // Hand-written user-language phrases, plus every section/key name
         // from the manifest (humanized) so new declarative keys rank
-        // discovery without editing this list. Server/chat/app phrases were
-        // dropped with those sections (Settings UI only).
+        // discovery without editing this list. Server phrases were dropped
+        // with that section (Settings UI only).
         searchKeywords: [
             "config", "configuration", "configure", "settings", "setup", "yaml", "json",
             "template",
@@ -38,7 +41,11 @@ enum ConfigDeclarativeDomain {
             "search provider", "tavily", "brave search", "search ranking",
             "schedule", "cron", "daily", "every morning",
             "watcher", "watch folder", "when files change",
+            "event", "trigger", "webhook", "when a message arrives", "run workflow when",
+            "imessage rule", "slack trigger", "discord trigger", "routing rule", "who answers",
+            "route channel to agent", "agent posts to slack", "workflow inputs",
             "enable tool", "disable tool", "tool permission", "tool policy",
+            "import", "install skill", "skill.md", "set up from link", "install from github",
         ] + ConfigManifest.derivedSearchKeywords(),
         exampleQueries: [
             "set up osaurus for research work",
@@ -51,13 +58,19 @@ enum ConfigDeclarativeDomain {
             "add tavily as a search provider",
             "summarize news every morning at 8",
             "watch my downloads folder",
+            "run my triage workflow when a slack message arrives",
+            "route #support on slack to the triage agent",
+            "add a webhook that runs an agent",
             "apply this yaml config",
+            "read https://example.com/SKILL.md and set it up",
         ],
         tools: [
-            OsaurusConfigTool()
+            OsaurusConfigTool(),
+            OsaurusImportTool(),
         ],
         writeToolNames: [
-            "osaurus_config"
+            "osaurus_config",
+            OsaurusImportTool.toolName,
         ]
     )
 }

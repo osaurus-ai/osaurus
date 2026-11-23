@@ -8,7 +8,7 @@
 //  burst of events costs one debounced incremental scan per touched
 //  collection.
 //
-//  Deliberately separate from `WatcherManager`: that engine drives
+//  Deliberately separate from folder events (`FolderEventSource`): those drive
 //  user-configured agent runs with fingerprint convergence; this is
 //  internal index maintenance with no LLM in the loop.
 //

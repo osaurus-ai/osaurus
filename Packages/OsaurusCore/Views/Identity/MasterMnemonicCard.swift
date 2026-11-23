@@ -19,87 +19,27 @@ struct MasterMnemonicCard: View {
     @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Text("YOUR RECOVERY CODE", bundle: .module)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(1)
-
-                Text(localized: "(24 words)")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-
-                Spacer(minLength: 0)
-            }
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            SettingsSectionHeader(title: "Your Recovery Code", caption: L("(24 words)"))
 
             wordGrid
 
-            HStack(spacing: 8) {
-                Button(action: copyPhrase) {
-                    HStack(spacing: 4) {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 11, weight: .medium))
-                        Text(copied ? "Copied" : "Copy phrase")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(copied ? theme.successColor : theme.primaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button(action: saveAsTextFile) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("Save as .txt", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button(action: printPhrase) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "printer")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("Print", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-
+            HStack(spacing: theme.space.s8) {
+                SettingsButton(
+                    .secondary,
+                    copied ? "Copied" : "Copy phrase",
+                    icon: copied ? "checkmark" : "doc.on.doc",
+                    size: .compact,
+                    action: copyPhrase
+                )
+                SettingsButton(.secondary, "Save as .txt", icon: "square.and.arrow.down", size: .compact, action: saveAsTextFile)
+                SettingsButton(.secondary, "Print", icon: "printer", size: .compact, action: printPhrase)
                 Spacer(minLength: 0)
             }
         }
-        .padding(14)
+        .padding(theme.space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.inset)
     }
 
     private var wordGrid: some View {
@@ -108,8 +48,8 @@ struct MasterMnemonicCard: View {
         // 6x4 (wide container). Words use `.fixedSize(horizontal: true)`
         // and no `lineLimit` — silently truncating a recovery phrase
         // would be data loss.
-        let columns = [GridItem(.adaptive(minimum: 110), spacing: 10)]
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+        let columns = [GridItem(.adaptive(minimum: 110), spacing: theme.space.s10)]
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: theme.space.s8) {
             ForEach(Array(words.enumerated()), id: \.offset) { index, word in
                 wordCell(index: index + 1, word: word)
             }
@@ -117,26 +57,23 @@ struct MasterMnemonicCard: View {
     }
 
     private func wordCell(index: Int, word: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Text("\(index).")
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 22, alignment: .trailing)
                 .monospacedDigit()
             Text(word)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.mono)
+                .foregroundColor(theme.text.primary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: true, vertical: false)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.cardBackground.opacity(0.6))
-        )
+        .settingsChrome(.surface)
     }
 
     // MARK: - Actions
@@ -167,7 +104,7 @@ struct MasterMnemonicCard: View {
     private func printPhrase() {
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 468, height: 600))
         textView.string = renderPlainText()
-        textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.font = theme.nsFont(.code)
 
         let printOp = NSPrintOperation(view: textView)
         printOp.printInfo.isHorizontallyCentered = true

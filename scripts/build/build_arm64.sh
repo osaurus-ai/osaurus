@@ -40,6 +40,24 @@ xcodebuild -workspace osaurus.xcworkspace \
   CODE_SIGN_STYLE=Manual \
   clean build
 
+# 1b. Build the workflow code-node helper (JavaScriptCore runner).
+echo "Building code-node helper (osaurus-js-host)..."
+xcodebuild -workspace osaurus.xcworkspace \
+  -scheme osaurus-js-host \
+  -configuration Release \
+  -derivedDataPath build \
+  -clonedSourcePackagesDirPath build/SourcePackages \
+  -disableAutomaticPackageResolution \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
+  ARCHS=arm64 \
+  VALID_ARCHS=arm64 \
+  ONLY_ACTIVE_ARCH=NO \
+  CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY_VALUE}" \
+  DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
+  CODE_SIGN_STYLE=Manual \
+  build
+
 # 2. Archive the App (which doesn't have the CLI embedded yet via Xcode).
 #
 # osaurus.entitlements carries no profile-managed entitlements (the only one,
@@ -95,12 +113,23 @@ mkdir -p "$ARCHIVE_APP/Contents/Helpers"
 cp "$CLI_SRC" "$ARCHIVE_APP/Contents/Helpers/osaurus"
 chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus"
 
+JS_HOST_SRC="build/Build/Products/Release/osaurus-js-host"
+if [[ ! -f "$JS_HOST_SRC" ]]; then
+  echo "Error: code-node helper not found at $JS_HOST_SRC"
+  exit 1
+fi
+cp "$JS_HOST_SRC" "$ARCHIVE_APP/Contents/Helpers/osaurus-js-host"
+chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus-js-host"
+
 # 3b. Bundle the sandbox guest kernel (digest-verified, with provenance
 # sidecar) so first-run sandbox setup installs it from the signed app
 # instead of downloading the 277 MiB Kata distribution. Runs before the
 # re-sign below so the resource is sealed into the bundle signature.
 echo "Bundling sandbox kernel into Resources/SandboxRuntime..."
 ./scripts/build/fetch_sandbox_kernel.sh "$ARCHIVE_APP/Contents/Resources/SandboxRuntime"
+
+echo "Stripping unused GPL LuxTTS G2P data..."
+./scripts/build/strip_luxtts_g2p.sh "$ARCHIVE_APP"
 
 # Re-sign the archived app (now carrying the embedded CLI) with the same
 # entitlements used for the archive. `--deep` also signs the nested CLI binary

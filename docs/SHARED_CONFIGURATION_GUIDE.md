@@ -21,7 +21,7 @@ Osaurus may have multiple instances (e.g., after crashes or parallel runs). Each
 
 ## JSON schema
 
-When the server is starting (minimal metadata):
+When the server is starting or restarting (minimal metadata; `health` is `starting` or `restarting`):
 
 ```json
 {
@@ -47,7 +47,7 @@ When the server is running:
 
 - **instanceId (string)**: Unique per Osaurus app run.
 - **updatedAt (ISO‑8601 string)**: Last time Osaurus refreshed the file.
-- **health (string)**: One of `starting` or `running`.
+- **health (string)**: One of `starting`, `restarting`, or `running`. Only `running` carries `port`, `address`, `url` and `exposeToNetwork`.
 - **port (int)**: HTTP port when `health == "running"`.
 - **address (string)**: Bind address (e.g., `127.0.0.1` or LAN IP) when running.
 - **url (string)**: Convenience URL when running.

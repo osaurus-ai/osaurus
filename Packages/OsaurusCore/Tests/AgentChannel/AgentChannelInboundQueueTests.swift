@@ -12,7 +12,11 @@ import Testing
 @testable import OsaurusCore
 
 struct AgentChannelInboundQueueTests {
-    private func request(_ eventId: String, _ content: String) -> AgentChannelInboundRelayRequest {
+    private func request(
+        _ eventId: String,
+        _ content: String,
+        onOutcome: AgentChannelTurnOutcomeHandler? = nil
+    ) -> AgentChannelInboundRelayRequest {
         AgentChannelInboundRelayRequest(
             identity: ChannelIdentity(
                 kind: .telegram,
@@ -26,8 +30,9 @@ struct AgentChannelInboundQueueTests {
             providerEventId: eventId,
             providerRoute: AgentChannelProviderRoute(conversationId: "telegram-chat-1"),
             content: content,
-            settings: AgentChannelInboundDispatchConfiguration(enabled: true, targetAgentId: UUID()),
-            sourceLabel: "Telegram"
+            target: .local(UUID()),
+            sourceLabel: "Telegram",
+            onOutcome: onOutcome
         )
     }
 
@@ -49,9 +54,62 @@ struct AgentChannelInboundQueueTests {
         #expect(merged.content == "first\n\nthird")
     }
 
+    /// Every queued message owns a ledger row, so the folded turn reports
+    /// its outcome to each of them, not only the last.
+    @MainActor
+    @Test func mergedRequestReportsOutcomeToEveryQueuedMessage() {
+        final class Seen { var ids: [String] = [] }
+        let seen = Seen()
+        let merged = AgentChannelInboundRelay.mergedRequest(
+            [
+                request("1", "a", onOutcome: { _ in seen.ids.append("1") }),
+                request("2", "b"),
+                request("3", "c", onOutcome: { _ in seen.ids.append("3") }),
+            ],
+            contents: ["a", "b", "c"]
+        )
+        merged.request.onOutcome?(.finished(status: .succeeded, sessionId: nil, error: nil, reason: nil))
+        #expect(seen.ids == ["1", "3"])
+    }
+
     @Test func queueFullHasRecoveryGuidance() {
         #expect(
             AgentChannelInboundActivityPresentation.guidance(stage: .rejected, reason: "conversation_queue_full") != nil
+        )
+    }
+
+    @Test func defaultsMatchTheHistoricRelayBehavior() {
+        let plain = request("1", "a")
+        #expect(plain.maxQueued == AgentChannelInboundRelay.maxQueuedMessagesPerConversation)
+        #expect(plain.steerRunningTurn)
+        #expect(AgentChannelInboundRelay.shouldTrySteer(queued: 0, request: plain))
+        #expect(!AgentChannelInboundRelay.shouldTrySteer(queued: 1, request: plain))
+        #expect(AgentChannelInboundRelay.queueRejection(queued: 19, request: plain) == nil)
+        #expect(AgentChannelInboundRelay.queueRejection(queued: 20, request: plain) == "conversation_queue_full")
+    }
+
+    @Test func eventQueueingSettingsShapeTheBusyConversation() {
+        var capped = request("1", "a")
+        capped.maxQueued = 5
+        #expect(AgentChannelInboundRelay.queueRejection(queued: 4, request: capped) == nil)
+        #expect(AgentChannelInboundRelay.queueRejection(queued: 5, request: capped) == "conversation_queue_full")
+
+        var skipWhileBusy = request("2", "b")
+        skipWhileBusy.maxQueued = 0
+        #expect(AgentChannelInboundRelay.queueRejection(queued: 0, request: skipWhileBusy) == "conversation_busy")
+        #expect(
+            AgentChannelInboundActivityPresentation.guidance(stage: .rejected, reason: "conversation_busy") != nil)
+
+        var noSteer = request("3", "c")
+        noSteer.steerRunningTurn = false
+        #expect(!AgentChannelInboundRelay.shouldTrySteer(queued: 0, request: noSteer))
+        #expect(AgentChannelInboundRelay.queueRejection(queued: 0, request: noSteer) == nil)
+    }
+
+    @Test func blockedReplyHasRecoveryGuidance() {
+        #expect(
+            AgentChannelInboundActivityPresentation.guidance(
+                stage: .agentReplied, reason: AgentChannelInboundRelay.globalWritesDisabledReason) != nil
         )
     }
 }

@@ -46,6 +46,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Appearance mode (system, light, or dark)
     public var appearanceMode: AppearanceMode
 
+    /// The active custom theme; nil is the built-in Osaurus theme.
+    public var activeThemeId: UUID?
+
     /// Global UI font scale applied on top of the active theme's font sizes.
     /// 1.0 is the theme's own sizing; clamped to `fontSizeMultiplierRange`.
     public var fontSizeMultiplier: Double
@@ -88,8 +91,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Default: 32 MiB (generous for multimodal chat completions).
     public var maxRequestBodyBytes: Int
 
-    /// Tighter ceiling for `POST /pair`, which is unauthenticated and
-    /// only ever carries a small JSON envelope. A 64 KiB cap is several
+    /// Tighter ceiling for the pairing routes (`/pair-invite`,
+    /// `/secure/session`), which are unauthenticated and
+    /// only ever carry a small JSON envelope. A 64 KiB cap is several
     /// orders of magnitude more than a real pairing request needs.
     public var maxPairingBodyBytes: Int
 
@@ -99,6 +103,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case startAtLogin
         case hideDockIcon
         case appearanceMode
+        case activeThemeId
         case fontSizeMultiplier
         case numberOfThreads
         case backlog
@@ -125,6 +130,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Bool.self, forKey: .hideDockIcon) ?? defaults.hideDockIcon
         self.appearanceMode =
             try container.decodeIfPresent(AppearanceMode.self, forKey: .appearanceMode) ?? defaults.appearanceMode
+        self.activeThemeId = try? container.decodeIfPresent(UUID.self, forKey: .activeThemeId)
         self.fontSizeMultiplier = Self.clampedFontSizeMultiplier(
             try container.decodeIfPresent(Double.self, forKey: .fontSizeMultiplier)
                 ?? defaults.fontSizeMultiplier
@@ -177,6 +183,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         try container.encode(startAtLogin, forKey: .startAtLogin)
         try container.encode(hideDockIcon, forKey: .hideDockIcon)
         try container.encode(appearanceMode, forKey: .appearanceMode)
+        try container.encodeIfPresent(activeThemeId, forKey: .activeThemeId)
         try container.encode(fontSizeMultiplier, forKey: .fontSizeMultiplier)
         try container.encode(numberOfThreads, forKey: .numberOfThreads)
         try container.encode(backlog, forKey: .backlog)
@@ -197,6 +204,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         startAtLogin: Bool,
         hideDockIcon: Bool = false,
         appearanceMode: AppearanceMode = .system,
+        activeThemeId: UUID? = nil,
         fontSizeMultiplier: Double = 1.0,
         numberOfThreads: Int,
         backlog: Int32,
@@ -215,6 +223,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.startAtLogin = startAtLogin
         self.hideDockIcon = hideDockIcon
         self.appearanceMode = appearanceMode
+        self.activeThemeId = activeThemeId
         self.fontSizeMultiplier = Self.clampedFontSizeMultiplier(fontSizeMultiplier)
         self.numberOfThreads = numberOfThreads
         self.backlog = backlog
@@ -367,18 +376,19 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
     }
 
     public var description: String {
+        let reloadCost = L("The next message reloads the model first, which can take a while for large models.")
         switch self {
         case .immediately:
-            return L("Unloads model memory when the last generation finishes.")
+            return L("Unloads model memory when the last generation finishes.") + " " + reloadCost
         case .afterSeconds(30):
             return L(
                 "Unloads after 30 seconds without a request, or when the last chat window using the model closes. Active requests finish first."
-            )
+            ) + " " + reloadCost
         case .afterSeconds(let seconds):
             return String(
                 format: L("Unloads after %d minutes without a request, or when the last chat window using the model closes. Active requests finish first."),
                 max(1, seconds / 60)
-            )
+            ) + " " + reloadCost
         case .never:
             return L("Keeps model memory resident until manual unload, model switch, memory cleanup, or quit.")
         }

@@ -1,0 +1,47 @@
+{
+  "id": "architect.vague-brief",
+  "domain": "architect",
+  "label": "architect \u2022 a vague brief: one round of questions, then a full workflow",
+  "query": "Every morning check our support queue and tell me what's urgent.",
+  "notes": "Hard case. The brief leaves out where the queue is and what urgent means, so the Architect has to ask; the scripted reply answers everything in one go. Pins at most one `clarify` (three questions or fewer), the token read through `auth`, labeled inputs, and a test whose result names the urgent tickets (T-1 outage, T-3 failed payment, T-4 enterprise customer).",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 30,
+      "replies": [
+        "It's our helpdesk API at {{fixture.base_url}}. GET /v1/tickets returns {\"tickets\": [{\"id\", \"subject\", \"body\", \"customer_tier\"}]} and needs an Authorization: Bearer token, which I have. Urgent means anything about an outage or failing payments, or any ticket from an enterprise customer. A short list of the urgent ones with the reason is enough, as the workflow's result. Weekdays at 8am."
+      ],
+      "secrets": { "*": "hd_eval_51tq0z" },
+      "fixtureAPI": {
+        "routes": [
+          {
+            "path": "/v1/tickets",
+            "bearer": "hd_eval_51tq0z",
+            "body": {
+              "tickets": [
+                { "id": "T-1", "subject": "Nothing loads", "body": "The dashboard has been down for our whole team since this morning.", "customer_tier": "standard" },
+                { "id": "T-2", "subject": "Change avatar", "body": "How do I change my profile picture?", "customer_tier": "standard" },
+                { "id": "T-3", "subject": "Renewal failed", "body": "My card was declined twice when renewing, and I was charged anyway.", "customer_tier": "standard" },
+                { "id": "T-4", "subject": "CSV export question", "body": "Where can I find the export settings?", "customer_tier": "enterprise" },
+                { "id": "T-5", "subject": "Love the new update", "body": "Just wanted to say thanks!", "customer_tier": "standard" }
+              ]
+            }
+          }
+        ]
+      },
+      "fixtureRequests": { "/v1/tickets": 1 },
+      "nodeKinds": ["http", "inference"],
+      "structure": {
+        "secretAuth": true,
+        "describedInputs": true
+      },
+      "maxClarifications": 1,
+      "maxQuestions": 3,
+      "testOutputContains": { "*": ["T-1", "T-3", "T-4"] },
+      "requireTestRun": true,
+      "requireProposeSave": true,
+      "maxToolCalls": 20,
+      "maxPromptTokens": 400000
+    }
+  }
+}

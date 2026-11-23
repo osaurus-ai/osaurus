@@ -267,7 +267,7 @@ struct HarnessGrantStoreTests {
         let json = try #require(
             ClaudeCodeConfiguration.mcpConfigJSON(
                 cliPath: "/usr/local/bin/osaurus",
-                allowConfigWrites: false,
+                patterns: ["osaurus_inspect"],
                 bridgeGrant: "osh_abc123"
             )
         )
@@ -278,10 +278,23 @@ struct HarnessGrantStoreTests {
         #expect(!args.contains { $0.contains("osh_abc123") })
 
         let withoutToken = try #require(
-            ClaudeCodeConfiguration.mcpConfigJSON(cliPath: "/usr/local/bin/osaurus", allowConfigWrites: false, bridgeGrant: nil)
+            ClaudeCodeConfiguration.mcpConfigJSON(
+                cliPath: "/usr/local/bin/osaurus", patterns: ["osaurus_inspect"], bridgeGrant: nil)
         )
         let bare = HarnessFixtures.json(Data(withoutToken.utf8))
         #expect(((bare["mcpServers"] as? [String: Any])?["osaurus"] as? [String: Any])?["env"] == nil)
+    }
+
+    @Test func mcpConfigPointsTheProxyAtTheLaunchPort() throws {
+        let json = try #require(
+            ClaudeCodeConfiguration.mcpConfigJSON(
+                cliPath: "/usr/local/bin/osaurus", patterns: ["osaurus_inspect"], bridgeGrant: "osh_abc", port: 51234)
+        )
+        let root = HarnessFixtures.json(Data(json.utf8))
+        let env = try #require(
+            ((root["mcpServers"] as? [String: Any])?["osaurus"] as? [String: Any])?["env"] as? [String: String])
+        #expect(env[ClaudeCodeConfiguration.osaurusCLIPortKey] == "51234")
+        #expect(env[HarnessGrantStore.environmentKey] == "osh_abc")
     }
 }
 
@@ -349,5 +362,23 @@ struct HarnessRuntimeProbeTests {
         )
         #expect(result.status == .needsSetup)
         #expect(result.resolvedExecutable == script.path)
+    }
+}
+
+@Suite("Harness chat text")
+struct HarnessChatTextTests {
+
+    /// Seen live: "…(plain code, no model).The code step crashed…" once the
+    /// tool calls between the two sentences moved into their own group.
+    @Test func textAfterAToolStartsANewParagraph() {
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: true, content: "Plan: count it.") == "\n\n")
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: true, content: "A list:\n") == "\n")
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: true, content: "Done.\n\n") == "")
+    }
+
+    @Test func streamedTextAndAnOpeningToolAddNothing() {
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: false, content: "Plan: count") == "")
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: true, content: "") == "")
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: true, content: " \n") == "")
     }
 }

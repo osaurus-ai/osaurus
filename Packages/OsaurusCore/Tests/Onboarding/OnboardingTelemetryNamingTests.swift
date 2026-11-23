@@ -18,8 +18,8 @@ struct OnboardingTelemetryNamingTests {
 
     @Test func step_names_match_the_documented_contract() {
         #expect(OnboardingStep.welcome.telemetryName == "welcome")
-        #expect(OnboardingStep.createAgent.telemetryName == "create_agent")
         #expect(OnboardingStep.configureAI.telemetryName == "configure_ai")
+        #expect(OnboardingStep.classicUpgrade.telemetryName == "classic_upgrade")
     }
 
     /// `telemetryName` is intentionally decoupled from `rawValue` so the
@@ -34,7 +34,10 @@ struct OnboardingTelemetryNamingTests {
 
     @Test func completion_raw_values_match_the_documented_contract() {
         #expect(OnboardingTelemetry.Completion.finishButton.rawValue == "finish_button")
-        #expect(OnboardingTelemetry.Completion.closeButton.rawValue == "close_button")
+        #expect(OnboardingTelemetry.Completion.skipButton.rawValue == "skip_button")
+        #expect(OnboardingTelemetry.Completion.bundleSkip.rawValue == "bundle_skip")
+        #expect(OnboardingTelemetry.Completion.classicInstall.rawValue == "classic_install")
+        #expect(OnboardingTelemetry.Completion.classicKeep.rawValue == "classic_keep")
     }
 
     /// `brain_source_selected`'s `source` dimension is a dashboard contract:

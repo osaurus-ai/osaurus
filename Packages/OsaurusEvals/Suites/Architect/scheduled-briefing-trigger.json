@@ -1,0 +1,24 @@
+{
+  "id": "architect.scheduled-briefing-trigger",
+  "domain": "architect",
+  "label": "architect \u2022 save proposal carries the schedule the brief names",
+  "query": "Build a workflow that takes a topic and writes a three-sentence briefing about it with a model step. It should run every weekday at 7am on the topic \"local AI news\". Test it once, then offer to save it.",
+  "notes": "The brief names when the workflow runs, so `workflow_propose_save` passes a `trigger` (a schedule, cron `0 7 * * 1-5`, with `input` mapping `topic`) that the save card creates in the same tap. A trigger the draft rejects shows up as a malformed call.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 16,
+      "nodeKinds": [
+        "inference"
+      ],
+      "inputKeys": [
+        "topic"
+      ],
+      "requireTestRun": true,
+      "requireProposeSave": true,
+      "requiredCalls": [
+        "workflow_propose_save.trigger"
+      ]
+    }
+  }
+}

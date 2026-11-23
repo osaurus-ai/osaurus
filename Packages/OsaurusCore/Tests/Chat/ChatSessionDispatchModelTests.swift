@@ -7,7 +7,8 @@
 //  default model, overriding the model persisted on a reattached
 //  conversation session. The persisted model is only a fallback when the
 //  agent's default isn't available in the picker, and window chats
-//  (`source == .chat`) are never overridden — a manual pick must survive.
+//  (`source == .chat`) are not overridden — a manual pick must survive —
+//  except for a run another device asked this Mac for.
 //
 
 import Foundation
@@ -113,6 +114,24 @@ struct ChatSessionDispatchModelTests {
         session.applyAgentDefaultModelForDispatch()
 
         #expect(session.selectedModel == "mlx-test/manual-pick")
+        await cleanup()
+    }
+
+    /// A chat another device asked this Mac to run is a window chat there,
+    /// and the model it saved is that device's pick. The run here uses the
+    /// agent's model.
+    @Test func hostedRunUsesTheAgentsModelInAWindowChat() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/new-default")
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .chat,
+            persistedModel: "foundation",
+            items: [localItem("foundation"), localItem("mlx-test/new-default")]
+        )
+
+        session.applyAgentDefaultModelForDispatch(inWindowChat: true)
+
+        #expect(session.selectedModel == "mlx-test/new-default")
         await cleanup()
     }
 
@@ -271,6 +290,94 @@ struct ChatSessionDispatchModelTests {
             localItem("mlx-test/default"), localItem("mlx-test/saved"), localItem("mlx-test/other"),
         ])
         #expect(session.selectedModel == "mlx-test/default")
+        await cleanup()
+    }
+
+    // MARK: - Model lock
+
+    private func makeLockedAgent(defaultModel: String) -> (agent: Agent, cleanup: () async -> Void) {
+        let made = makeAgent(defaultModel: defaultModel)
+        AgentManager.shared.updateModelLocked(for: made.agent.id, locked: true)
+        return made
+    }
+
+    /// A locked agent's window chat ignores the model the conversation saved.
+    @Test func lockedWindowChatIgnoresSavedModel() async {
+        let (agent, cleanup) = makeLockedAgent(defaultModel: "mlx-test/locked")
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .chat,
+            persistedModel: "mlx-test/manual-pick",
+            items: [localItem("mlx-test/manual-pick"), localItem("mlx-test/locked")]
+        )
+        #expect(session.selectedModel == "mlx-test/locked")
+        session.applyPickerItems([
+            localItem("mlx-test/manual-pick"), localItem("mlx-test/locked"), localItem("mlx-test/other"),
+        ])
+        #expect(session.selectedModel == "mlx-test/locked")
+        await cleanup()
+    }
+
+    /// A missing locked model stays selected instead of falling back to the
+    /// saved model or the first chat-capable one.
+    @Test func lockedModelMissingFromPickerNeverFallsBack() async {
+        let (agent, cleanup) = makeLockedAgent(defaultModel: "mlx-test/gone")
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .channel,
+            persistedModel: "mlx-test/old-model",
+            items: [localItem("mlx-test/old-model"), localItem("mlx-test/other")]
+        )
+        #expect(session.selectedModel == "mlx-test/gone")
+        session.applyAgentDefaultModelForDispatch()
+        #expect(session.selectedModel == "mlx-test/gone")
+        #expect(session.pinModelForRun("mlx-test/other") == false)
+        #expect(session.selectedModel == "mlx-test/gone")
+        await cleanup()
+    }
+
+    /// Window chats normally keep a manual pick on dispatch; a locked agent's
+    /// do not.
+    @Test func lockedWindowChatDispatchUsesLockedModel() async {
+        let (agent, cleanup) = makeLockedAgent(defaultModel: "mlx-test/locked")
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .chat,
+            persistedModel: "mlx-test/manual-pick",
+            items: [localItem("mlx-test/manual-pick"), localItem("mlx-test/locked")]
+        )
+        session.selectedModel = "mlx-test/manual-pick"
+        session.applyAgentDefaultModelForDispatch()
+        #expect(session.selectedModel == "mlx-test/locked")
+        await cleanup()
+    }
+
+    /// A pick on a locked agent never rewrites its saved model.
+    @Test func selectionOnLockedAgentDoesNotPersist() async {
+        let (agent, cleanup) = makeLockedAgent(defaultModel: "mlx-test/locked")
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .chat,
+            persistedModel: "mlx-test/locked",
+            items: [localItem("mlx-test/other"), localItem("mlx-test/locked")]
+        )
+        session.selectedModel = "mlx-test/other"
+        for _ in 0 ..< 3 { await Task.yield() }
+        #expect(AgentManager.shared.agent(for: agent.id)?.defaultModel == "mlx-test/locked")
+        await cleanup()
+    }
+
+    /// Unlocking restores the usual window-chat behavior.
+    @Test func unlockedAgentKeepsWindowChatPick() async {
+        let (agent, cleanup) = makeLockedAgent(defaultModel: "mlx-test/locked")
+        AgentManager.shared.updateModelLocked(for: agent.id, locked: false)
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .chat,
+            persistedModel: "mlx-test/manual-pick",
+            items: [localItem("mlx-test/manual-pick"), localItem("mlx-test/locked")]
+        )
+        #expect(session.selectedModel == "mlx-test/manual-pick")
         await cleanup()
     }
 

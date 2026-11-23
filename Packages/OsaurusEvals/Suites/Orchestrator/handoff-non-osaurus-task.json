@@ -1,0 +1,18 @@
+{
+  "id": "orchestrator.handoff-non-osaurus-task",
+  "domain": "orchestrator",
+  "label": "orchestrator • delegate a non-Osaurus task instead of doing it inline",
+  "query": "Write me a Python script that scrapes the top headlines from a news site.",
+  "notes": "Inline-vs-delegate policy row: coding is sustained work, so the Orchestrator never writes the script in chat. The correct move is to delegate — `spawn_agent` to a fitting agent, or create one (an `agents:` entry via osaurus_config; it inherits the Orchestrator's model) and spawn it in the same turn. On an eval host with no spawnable agent and no created agent the loop may end with the delegation attempt rather than a worker result; that still passes as long as no code is produced inline and the reply does not push the user to switch agents or re-send the request. No mustCallTools: a tool-free expectation keeps this case runnable on tiny-window models where the tool schema is stripped.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Does NOT write or attempt the scraping script itself (no Python code for the task in the answer, not even as an example).",
+        "Routes the work instead of refusing it: hands it to a worker or workflow (spawn_agent, architect_handoff, or run_workflow), or says plainly that a worker is needed, and does NOT tell the user to switch agents or send the request elsewhere."
+      ],
+      "maxIterations": 6,
+      "mustNotCallTools": []
+    }
+  }
+}

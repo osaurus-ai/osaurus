@@ -63,6 +63,18 @@ public struct ScreenContextDistiller: Sendable {
         return min(max(0, w), side) * min(max(0, h), side)
     }
 
+    /// Largest magnitude treated as a real screen coordinate / dimension.
+    /// `safeInt` saturates absurd AX frames to `Int.max` / `Int.min`; any value
+    /// beyond this bound is garbage, and doing geometry on it (`y + h / 2`)
+    /// would overflow `Int` and trap.
+    private static let maxSaneCoordinate = 1_000_000
+
+    /// True when `value` lies within `±maxSaneCoordinate` (no `abs`, which
+    /// itself traps on `Int.min`).
+    private static func isSaneCoordinate(_ value: Int) -> Bool {
+        value >= -maxSaneCoordinate && value <= maxSaneCoordinate
+    }
+
     /// Osaurus's own identity, used to exclude it from the "what you're doing"
     /// signal (it's usually frontmost when the user hits send).
     private struct SelfIdentity {
@@ -748,7 +760,9 @@ public struct ScreenContextDistiller: Sendable {
         elements: [CUElement],
         focusedWindow: CUWindowSummary?
     ) -> [String] {
-        guard let window = focusedWindow, window.h > 0 else { return [] }
+        guard let window = focusedWindow, window.h > 0,
+            Self.isSaneCoordinate(window.y), Self.isSaneCoordinate(window.h)
+        else { return [] }
         let windowBottom = window.y + window.h
         let bandHeight = max(28, window.h * 6 / 100)
         let bandTop = windowBottom - bandHeight
@@ -759,6 +773,8 @@ public struct ScreenContextDistiller: Sendable {
             guard Self.statusRoles.contains(element.role.lowercased()) else { continue }
             // A status item is short, thin, and hugs the bottom edge.
             guard element.h > 0, element.h <= 44 else { continue }
+            // Skip garbage / saturated AX frames before doing any arithmetic.
+            guard Self.isSaneCoordinate(element.y) else { continue }
             let centerY = element.y + element.h / 2
             guard centerY >= bandTop, centerY <= windowBottom + 4 else { continue }
             guard let token = statusToken(for: element) else { continue }

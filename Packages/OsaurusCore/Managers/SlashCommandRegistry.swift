@@ -21,6 +21,10 @@ public final class SlashCommandRegistry {
     /// Used by the global key monitor in ChatView to suppress window-close on Escape.
     public var isPopupVisible: Bool = false
 
+    /// Bumped by every synchronous reload, so the cold load can tell its
+    /// snapshot is older than a create or delete that landed first.
+    private var refreshCount = 0
+
     private init() {
         // `SlashCommandStore.loadAll()` reads and JSON-decodes every custom
         // command file from disk. This type is `@MainActor`, so loading
@@ -33,7 +37,8 @@ public final class SlashCommandRegistry {
             let loaded = await Task.detached(priority: .utility) {
                 SlashCommandStore.loadAll()
             }.value
-            self?.customCommands = loaded
+            guard let self, self.refreshCount == 0 else { return }
+            self.customCommands = loaded
         }
     }
 
@@ -43,6 +48,7 @@ public final class SlashCommandRegistry {
     /// small list, so the main-thread cost is negligible (unlike the cold
     /// first load, which `init` performs off the main actor).
     public func refresh() {
+        refreshCount += 1
         customCommands = SlashCommandStore.loadAll()
     }
 
@@ -107,7 +113,8 @@ public final class SlashCommandRegistry {
 
     /// Returns commands matching `query`, sorted by relevance then alphabetically.
     /// An empty query returns all commands in default order. With `agentId`,
-    /// skills outside that agent's skill allow-list are left out.
+    /// skills outside that agent's skill allow-list are left out and the
+    /// agent's enabled workflows are listed after skills.
     public func filtered(query: String, agentId: UUID? = nil) -> [SlashCommand] {
         let all = commands(for: agentId)
         guard !query.isEmpty else { return all }
@@ -127,7 +134,8 @@ public final class SlashCommandRegistry {
 
     // MARK: - Private
 
-    /// Full command list: built-ins → custom → skills (deduplicated by name).
+    /// Full command list: built-ins → custom → skills → workflows
+    /// (deduplicated by name).
     func commands(for agentId: UUID?) -> [SlashCommand] {
         let owner = agentId.flatMap { AgentManager.shared.agent(for: $0) }
         var seen = Set<String>()
@@ -181,7 +189,31 @@ public final class SlashCommandRegistry {
             )
         }
 
+        workflowCommands(agentId: agentId).forEach(append)
         return result
+    }
+
+    /// The agent's enabled workflows, in the order the agent lists them.
+    func workflowCommands(agentId: UUID?) -> [SlashCommand] {
+        guard let agentId, let agent = AgentManager.shared.agent(for: agentId) else { return [] }
+        return agent.settings.enabledWorkflowIDs.compactMap { id in
+            guard let workflow = InstalledWorkflowStore.shared.workflow(id: id) else { return nil }
+            let slug = Self.slug(workflow.name)
+            guard !slug.isEmpty else { return nil }
+            return SlashCommand(
+                id: workflow.id,
+                name: slug,
+                description: L("Run the \(workflow.name) workflow"),
+                icon: "flowchart",
+                kind: .workflow
+            )
+        }
+    }
+
+    static func slug(_ name: String) -> String {
+        name.lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
     }
 
     /// Score: 3 = exact match, 2 = prefix match, 1 = substring match, 0 = no match.

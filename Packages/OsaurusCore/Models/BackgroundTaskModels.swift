@@ -175,7 +175,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Origin clause for the Activity row / toast: "via workspace · Alice's
     /// Researcher" for a workspace run, else the source's plain label.
     public func originLabel(pluginDisplayName: String? = nil) -> String? {
-        let base = source.originLabel(pluginDisplayName: pluginDisplayName)
+        let base = runtimeSource.originLabel(pluginDisplayName: pluginDisplayName)
         guard isWorkspaceRun else { return base }
         let agent = workspaceAgentName ?? target.workspaceRef.map { OsaurusRouterWorkspacePerson.shortWallet($0.agentAddress) }
         let onAgent = "on \(agent ?? "workspace agent")"
@@ -193,6 +193,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     @Published public var status: BackgroundTaskStatus {
         didSet {
             guard status != oldValue else { return }
+            onStatusChange?(oldValue, status)
             // Queued tasks haven't started streaming, so their ChatSession
             // reports nothing to the sidebar activity monitor; bridge the
             // registry-level queued state here. Running/waiting states are
@@ -229,6 +230,13 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// pre-source-tagging callers that built `BackgroundTaskState` directly.
     public var source: SessionSource = .plugin
 
+    /// Trigger kind when `source == .automation`.
+    public var automationKind: EventSourceKind?
+
+    /// The trigger-specific source the run's generations carry
+    /// (`SessionSource.runtimeSource(automationKind:)`).
+    public var runtimeSource: SessionSource { source.runtimeSource(automationKind: automationKind) }
+
     /// External grouping key (e.g. Telegram chat id). Mirrors
     /// `DispatchRequest.externalSessionKey` so the toast / Activity section can show
     /// it inline and the manager can debounce duplicate dispatches.
@@ -243,12 +251,15 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Latest draft content sent by the plugin (e.g. for live-update messages).
     public var draftText: String?
 
-    /// `agent_runs.id` row this task is bound to in
-    /// `SchedulerDatabase`. Populated only when the agent has the DB
-    /// feature enabled (spec §5.5). `markCompleted` reads this back to
-    /// stamp the terminal `recordRunEnd` row. `nil` for DB-disabled
-    /// agents and for headless callers that built `BackgroundTaskState`
-    /// without going through `dispatchChat`.
+    /// Called after every status change; `BackgroundTaskManager` drives
+    /// the run's scheduler slots and task record from it.
+    var onStatusChange: (@MainActor (_ old: BackgroundTaskStatus, _ new: BackgroundTaskStatus) -> Void)?
+
+    /// The task id this run's DB writes and run trace are attributed to.
+    /// Set only when the agent has the DB feature enabled (spec §5.5);
+    /// `markCompleted` reads it back to write the run trace. `nil` for
+    /// DB-disabled agents and for headless callers that built
+    /// `BackgroundTaskState` without going through `dispatchChat`.
     public var agentRunId: UUID?
 
     /// Running token/USD counters for the current run (Phase 4 budget

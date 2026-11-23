@@ -71,6 +71,15 @@ public final class WireTransportProbe: @unchecked Sendable {
         var acceptedEndpoint: URL? = nil
         var attempts: [Attempt] = []
         var attemptsTruncated = false
+        var completion: Completion? = nil
+    }
+
+    /// How the provider says the reply ended: its own `finish_reason`
+    /// (`stop`, `length`, `max_tokens`, ...) and reported completion tokens,
+    /// reasoning included. Either is nil when the provider omits it.
+    public struct Completion: Equatable, Sendable {
+        public let finishReason: String?
+        public let outputTokens: Int?
     }
 
     /// What the Privacy Filter did to this request before it left the
@@ -118,6 +127,18 @@ public final class WireTransportProbe: @unchecked Sendable {
     }
 
     public init() {}
+
+    /// Record the provider-reported end of the reply. Last write wins.
+    public func recordCompletion(finishReason: String?, outputTokens: Int?) {
+        guard finishReason != nil || outputTokens != nil else { return }
+        bodies.withLock { state in
+            state.completion = Completion(finishReason: finishReason, outputTokens: outputTokens)
+        }
+    }
+
+    public var completion: Completion? {
+        bodies.withLock { $0.completion }
+    }
 
     /// Record the post-scrub HTTP request body. Idempotent: only
     /// the first write wins (a request retry would otherwise stomp

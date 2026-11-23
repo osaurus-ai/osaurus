@@ -103,6 +103,10 @@ actor PluginProcessHostClient {
     static let defaultInvokeDeadlineSeconds: Double = 150
     /// Budget for load (dlopen + init + manifest) — generous but bounded.
     static let loadDeadlineSeconds: Double = 30
+    /// Ceiling on helper stdout buffered without a newline. A single frame
+    /// can be a large tool result (inline images), so this only catches a
+    /// helper that has stopped framing, not a big answer.
+    static let maxReadBufferBytes = 64 << 20
 
     init(pluginId: String, dylibPath: String, helperURL: URL) {
         self.pluginId = pluginId
@@ -305,6 +309,15 @@ actor PluginProcessHostClient {
                 let chunk = handle.availableData
                 if chunk.isEmpty { break }  // EOF — helper exited or was killed
                 buffer.append(chunk)
+                if buffer.count > Self.maxReadBufferBytes, buffer.firstIndex(of: 0x0A) == nil {
+                    NSLog(
+                        "[PluginProcessHost] plugin=%@ helper sent %d bytes without a frame boundary; killing it",
+                        pluginId, buffer.count
+                    )
+                    buffer = Data()
+                    Task { await client.killAfterFramingOverflow(generation: generation) }
+                    break
+                }
                 while let newlineIndex = buffer.firstIndex(of: 0x0A) {
                     let lineData = buffer.subdata(in: buffer.startIndex..<newlineIndex)
                     buffer.removeSubrange(buffer.startIndex...newlineIndex)
@@ -371,6 +384,11 @@ actor PluginProcessHostClient {
         guard generation == processGeneration else { return }
         loaded = false
         failAllPending(message: "plugin helper exited")
+    }
+
+    private func killAfterFramingOverflow(generation: Int) async {
+        guard generation == processGeneration else { return }
+        await killProcess()
     }
 }
 

@@ -188,7 +188,7 @@ struct ContentBlockDisplayTests {
         )
 
         let userText = blocks.compactMap { block -> String? in
-            guard case let .userMessage(text, _, _, _, _) = block.kind else { return nil }
+            guard case let .userMessage(text, _, _, _, _, _) = block.kind else { return nil }
             return text
         }.first
 
@@ -424,7 +424,7 @@ struct ContentBlockDisplayTests {
 
     private func userMessageBlock(_ blocks: [ContentBlock]) -> (text: String, envelope: DispatchEnvelope?, block: ContentBlock)? {
         for block in blocks {
-            if case let .userMessage(text, _, _, _, envelope) = block.kind {
+            if case let .userMessage(text, _, _, _, envelope, _) = block.kind {
                 return (text, envelope, block)
             }
         }

@@ -1,0 +1,53 @@
+{
+  "id": "workflow.retry-recovers-flaky-step",
+  "domain": "workflow",
+  "label": "workflow • a step that fails once is retried and the run completes",
+  "query": "a step that fails once is retried and the run completes",
+  "notes": "No model. A JavaScript code step throws on its first attempt (it leaves a marker file in the run workspace) and succeeds on the second; `retry.max_attempts: 2` makes the step end `done` and the run complete. Skips with a typed reason when osaurus-js-host is not reachable (set OSAURUS_JS_HOST_PATH).",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [],
+        "examples": [],
+        "input_schema": { "properties": {}, "type": "object" },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "flaky",
+            "kind": "code",
+            "name": "Flaky Step",
+            "timeout": 60,
+            "retry": { "max_attempts": 2, "backoff_seconds": 0.2 },
+            "code": {
+              "network": [],
+              "secrets": [],
+              "timeout": 10,
+              "source": "async function run(input, ctx) {\n  const files = await ctx.files.list();\n  if (!files.includes('flaky.marker')) {\n    await ctx.files.write('flaky.marker', 'first attempt');\n    throw new Error('transient failure on the first attempt');\n  }\n  return { recovered: true, marker: await ctx.files.read('flaky.marker') };\n}"
+            },
+            "output_schema": {
+              "type": "object",
+              "properties": { "recovered": { "type": "boolean" }, "marker": { "type": "string" } },
+              "required": ["recovered", "marker"]
+            }
+          }
+        ],
+        "output": "{{nodes.flaky.output}}",
+        "output_schema": {
+          "properties": { "recovered": { "type": "boolean" }, "marker": { "type": "string" } },
+          "required": ["recovered", "marker"],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {},
+      "status": "completed",
+      "nodeStatuses": { "flaky": "done" },
+      "outputValues": {
+        "recovered": [true],
+        "marker": ["first attempt"]
+      }
+    }
+  }
+}

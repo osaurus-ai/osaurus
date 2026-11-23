@@ -170,6 +170,25 @@ struct FavoriteModelsStoreStarterSeedTests {
         #expect(FavoriteModelsStore.slug(of: "gpt-6-astra") == "gpt-6-astra")
     }
 
+    /// The first-run slot follows the newest DeepSeek Flash the Router
+    /// offers, and a Flash already seeded fills it, so a newer version never
+    /// adds a second Flash favourite.
+    @Test func firstRunSlotSeedsTheNewestFlash_once() {
+        let (store, _) = makeStore()
+        let newer = Self.fullCatalog + ["osaurus/deepseek-v4-2-flash"]
+        store.seedStarterFavoritesIfNeeded(routerModelIds: newer, routerSourceKey: Self.routerSourceKey)
+        #expect(store.favoriteKeys.first == key("osaurus/deepseek-v4-2-flash"))
+        #expect(!store.isFavorite(key("osaurus/deepseek-v4-1-flash")))
+        #expect(store.seededStarterSlugs.first == "deepseek-v4-2-flash")
+
+        let (seeded, _) = makeStore()
+        seeded.seedStarterFavoritesIfNeeded(routerModelIds: Self.fullCatalog, routerSourceKey: Self.routerSourceKey)
+        seeded.seedStarterFavoritesIfNeeded(
+            routerModelIds: Self.fullCatalog + ["osaurus/deepseek-v5-flash"], routerSourceKey: Self.routerSourceKey)
+        #expect(seeded.favoriteKeys.count == 3)
+        #expect(!seeded.isFavorite(key("osaurus/deepseek-v5-flash")))
+    }
+
     /// The ledger survives a store re-init on the same defaults, so a relaunch
     /// does not seed again.
     @Test func ledgerPersistsAcrossStoreInstances() {

@@ -15,7 +15,8 @@ struct PastedContentSheet: View {
     var onDismiss: () -> Void
     var onSave: ((String) -> Void)? = nil
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(24) }
     @State private var draft: String = ""
     @State private var didInit: Bool = false
     /// Cached extracted text for spillover (`documentRef`) attachments, whose
@@ -46,18 +47,19 @@ struct PastedContentSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             Divider()
             contentBody
-                .background(theme.primaryBackground.opacity(0.6))
+                .background(theme.surface.canvas)
             if isEditable {
                 Divider()
                 footer
             }
         }
         .frame(minWidth: 520, idealWidth: 640, minHeight: 480, idealHeight: 640)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
         .task {
             // Hydrate spilled blobs off the main thread before seeding the draft.
             if case .documentRef = attachment.kind, spilledContent.isEmpty {
@@ -81,44 +83,40 @@ struct PastedContentSheet: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.footer.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(24, "gap", theme.space.s8, theme))) {
             Spacer()
             Button(localized: "Cancel", action: onDismiss)
                 .keyboardShortcut(.cancelAction)
+                .assignedSettingsButtonStyle(.secondary)
             Button(localized: "Save") {
                 onSave?(draft)
             }
             .keyboardShortcut(.defaultAction)
-            .buttonStyle(.borderedProminent)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+            .assignedSettingsButtonStyle(.primary)
+        }.catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.footer.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.footer.paddingX", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.footer.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.footer.paddingY", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.footer.paddingY")
     }
 
-    /// Same face and size as the chat composer (`FloatingInputCard.inputFontSize`
-    /// is `theme.bodySize`), so pasted text reads the way it would if it had
-    /// been typed. The fixed 12pt monospace it replaced was the "much smaller
-    /// font" reported in #3271.
-    private var contentFont: Font {
-        theme.font(size: CGFloat(theme.bodySize), weight: .regular)
-    }
-
+    /// Body style, the same one the chat composer uses, so pasted text reads
+    /// the way it would if it had been typed. The code style it replaced was
+    /// the "much smaller font" reported in #3271.
     @ViewBuilder
     private var contentBody: some View {
         if isEditable {
             TextEditor(text: $draft)
-                .font(contentFont)
-                .foregroundColor(theme.primaryText)
+                .textStyle(.body)
+                .foregroundColor(theme.text.primary)
                 .scrollContentBackground(.hidden)
-                .padding(12)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s12, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.horizontal").catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.vertical")
         } else {
             ScrollView {
                 Text(originalContent)
-                    .font(contentFont)
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.body)
+                    .foregroundColor(theme.text.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
-                    .padding(16)
+                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.horizontal", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s16, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.vertical", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.horizontal").catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.vertical")
             }
         }
     }
@@ -136,11 +134,11 @@ struct PastedContentSheet: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(24, "gap", theme.space.s12, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.verticalGap", inheriting: NativeComponentInspectionStyle.metric(24, "gap", theme.space.s4, theme))) {
                 titleText
-                    .font(theme.font(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .componentInspectionText(24, role: .heading, fallback: .body, weight: 600, theme: theme)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(
@@ -148,36 +146,18 @@ struct PastedContentSheet: View {
                         ? L("\(sizeFormatted) · 1 line")
                         : L("\(sizeFormatted) · \(lineCount) lines")
                 )
-                    .font(theme.font(size: 11, weight: .regular))
-                    .foregroundColor(theme.secondaryText)
-            }
+                .componentInspectionText(24, role: .caption, fallback: .footnote, theme: theme)
+                .foregroundColor(theme.text.secondary)
+            }.catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.header.verticalGap")
             Spacer(minLength: 8)
             if !isEditable {
-                Button(action: copyContent) {
-                    Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(didCopy ? theme.accentColor : theme.secondaryText)
-                        .padding(6)
-                        .background(
-                            Circle().fill(theme.secondaryBackground.opacity(0.6))
-                        )
-                }
-                .buttonStyle(.plain)
+                SettingsIconButton(didCopy ? "checkmark" : "doc.on.doc", help: "Copy", size: .compact, action: copyContent)
                 .localizedHelp("Copy")
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(6)
-                        .background(
-                            Circle().fill(theme.secondaryBackground.opacity(0.6))
-                        )
-                }
-                .buttonStyle(.plain)
+                SettingsIconButton("xmark", help: "Close", size: .compact, action: onDismiss)
                 .keyboardShortcut(.cancelAction)
             }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        }.catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.header.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.paddingX", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.header.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.paddingY", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.header.paddingY")
     }
 }

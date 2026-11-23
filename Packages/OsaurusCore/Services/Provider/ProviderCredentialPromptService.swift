@@ -278,7 +278,7 @@ public enum ProviderCredentialPromptService {
             request: request,
             onComplete: resolve
         )
-        .padding(24)
+        .padding(theme.space.s24)
         .environment(\.theme, theme)
 
         let hosting = NSHostingController(rootView: view)

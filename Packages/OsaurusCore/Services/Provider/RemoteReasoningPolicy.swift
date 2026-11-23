@@ -49,13 +49,15 @@ struct RemoteReasoningPolicy {
     let providerType: RemoteProviderType
     let host: String
     let model: String
+    let port: Int?
 
     // MARK: - Resolution
 
     static func resolve(
         providerType: RemoteProviderType,
         host: String,
-        model: String
+        model: String,
+        port: Int? = nil
     ) -> RemoteReasoningPolicy {
         let (inbound, outbound) = behavior(providerType: providerType, host: host, model: model)
         return RemoteReasoningPolicy(
@@ -63,8 +65,19 @@ struct RemoteReasoningPolicy {
             outbound: outbound,
             providerType: providerType,
             host: host,
-            model: model
+            model: model,
+            port: port
         )
+    }
+
+    /// Ollama's default port, used by the Ollama preset.
+    static let ollamaDefaultPort = 11434
+
+    /// Ollama, local (default port) or hosted (`ollama.com`). A server
+    /// proxied to another port and host is indistinguishable from any
+    /// other self-hosted server and keeps the generic controls.
+    var isOllama: Bool {
+        port == Self.ollamaDefaultPort || host.range(of: "ollama", options: .caseInsensitive) != nil
     }
 
     private static func behavior(
@@ -197,25 +210,29 @@ struct RemoteReasoningPolicy {
     /// Wire form of "reasoning off" for this provider. DeepSeek V4 reads a
     /// `thinking` object; self-hosted servers (vLLM, SGLang, llama.cpp,
     /// LM Studio) read `chat_template_kwargs.enable_thinking`, and silently
-    /// ignore a DeepSeek-style flag (#3036). Strict hosted schemas get
-    /// nothing: they would reject the unknown field.
+    /// ignore a DeepSeek-style flag (#3036). Ollama's `/v1` drops
+    /// `chat_template_kwargs` and reads only `reasoning_effort: "none"`
+    /// (#3435). Strict hosted schemas get nothing: they would reject the
+    /// unknown field.
     func reasoningOffControls(
         disableThinking: Bool
-    ) -> (thinking: ThinkingConfig?, templateKwargs: [String: Bool]?) {
-        guard disableThinking else { return (nil, nil) }
+    ) -> (thinking: ThinkingConfig?, templateKwargs: [String: Bool]?, effort: String?) {
+        guard disableThinking else { return (nil, nil, nil) }
         switch providerType {
         case .openaiLegacy:
             let lowered = host.lowercased()
             if lowered.contains("deepseek") {
                 return (
                     DSV4ReasoningProfile.matches(modelId: model) ? ThinkingConfig(type: "disabled") : nil,
+                    nil,
                     nil
                 )
             }
-            if Self.strictSchemaHosts.contains(where: { lowered.contains($0) }) { return (nil, nil) }
-            return (nil, ["enable_thinking": false])
+            if Self.strictSchemaHosts.contains(where: { lowered.contains($0) }) { return (nil, nil, nil) }
+            if isOllama { return (nil, nil, "none") }
+            return (nil, ["enable_thinking": false], nil)
         case .azureOpenAI, .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
-            return (nil, nil)
+            return (nil, nil, nil)
         }
     }
 

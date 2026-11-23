@@ -20,23 +20,23 @@ struct MCPElicitationView: View {
     @State private var openedURL = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
-                .padding([.top, .horizontal], 24)
+                .padding([.top, .horizontal], theme.space.s24)
 
             if !request.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ScrollView {
                     Text(request.message)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.body)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                 }
                 .frame(maxHeight: 120)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 10)
-                .padding(.horizontal, 24)
+                .padding(.top, theme.space.s8)
+                .padding(.horizontal, theme.space.s24)
             }
 
             Group {
@@ -45,55 +45,53 @@ struct MCPElicitationView: View {
                 case .url(let url, _): urlBody(url)
                 }
             }
-            .padding(.top, 14)
-            .padding(.horizontal, 24)
+            .padding(.top, theme.space.s12)
+            .padding(.horizontal, theme.space.s24)
 
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.3))
-                .frame(height: 1)
-                .padding(.top, 16)
+            ThemeHairlineDivider()
+                .padding(.top, theme.space.s16)
 
             buttons
-                .padding(16)
-                .padding(.horizontal, 8)
+                .padding(theme.space.s16)
+                .padding(.horizontal, theme.space.s8)
         }
         .frame(width: 480)
         .fixedSize(horizontal: true, vertical: true)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(theme.cardBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .settingsChrome(.card)
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(theme.glassEdgeLight.opacity(0.6), lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
+                .strokeBorder(theme.border.default, lineWidth: theme.stroke.default)
         )
-        .shadow(color: theme.shadowColor.opacity(theme.shadowOpacity * 2), radius: 12, x: 0, y: 6)
+        .themeElevation(theme.elevation.overlay)
         .onAppear(perform: seedDefaults)
     }
 
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             Circle()
-                .fill(theme.accentColor.opacity(0.15))
+                .fill(theme.status.info.background)
                 .frame(width: 40, height: 40)
                 .overlay(
                     Image(systemName: isURLMode ? "safari" : "list.bullet.rectangle")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(.large, weight: .semibold)
+                        .foregroundColor(theme.text.link)
                 )
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(
                     isURLMode
                         ? L("\(request.providerName) wants you to finish in your browser")
                         : L("\(request.providerName) needs more information")
                 )
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .textStyle(.body, weight: 600)
+                .foregroundColor(theme.text.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 if case .form(let form) = request.mode, let title = form.title, !title.isEmpty {
                     Text(title)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                 }
             }
         }
@@ -107,14 +105,14 @@ struct MCPElicitationView: View {
     // MARK: Form mode
 
     private func formBody(_ form: MCPElicitationForm) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     ForEach(form.fields) { field in
                         fieldRow(field)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, theme.space.s2)
             }
             .frame(maxHeight: 320)
             .fixedSize(horizontal: false, vertical: true)
@@ -129,61 +127,56 @@ struct MCPElicitationView: View {
             } icon: {
                 Image(systemName: "lock.trianglebadge.exclamationmark")
             }
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
+            .textStyle(.footnote)
+            .foregroundColor(theme.text.secondary)
         }
     }
 
     @ViewBuilder
     private func fieldRow(_ field: MCPElicitationField) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             if case .boolean = field.kind {
                 Toggle(isOn: flagBinding(field.key)) {
                     fieldLabel(field)
                 }
-                .toggleStyle(.switch)
-                .controlSize(.small)
+                .settingsSwitch(showsLabel: true)
             } else {
                 fieldLabel(field)
                 switch field.kind {
                 case .choice(let choices):
-                    Picker("", selection: textBinding(field.key)) {
+                    SettingsMenuPicker(selection: textBinding(field.key)) {
                         Text("Choose…", bundle: .module).tag("")
                         ForEach(choices, id: \.value) { choice in
                             Text(choice.label).tag(choice.value)
                         }
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
                 default:
-                    TextField(placeholder(for: field), text: textBinding(field.key))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
+                    SettingsTextField(placeholder: placeholder(for: field), text: textBinding(field.key))
                 }
             }
             if let description = field.description, !description.isEmpty {
                 Text(description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let error = errors[field.key] {
                 Text(error)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.errorColor)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.status.error.foreground)
             }
         }
     }
 
     private func fieldLabel(_ field: MCPElicitationField) -> some View {
-        HStack(spacing: 2) {
+        HStack(spacing: theme.space.s2) {
             Text(field.title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
             if field.required {
                 Text(verbatim: "*")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.errorColor)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.status.error.foreground)
                     .accessibilityLabel(L("Required"))
             }
         }
@@ -248,29 +241,29 @@ struct MCPElicitationView: View {
     // MARK: URL mode
 
     private func urlBody(_ url: URL) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(url.host ?? "")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.cardTitle)
+                    .foregroundColor(theme.text.primary)
                 Text(url.absoluteString)
-                    .font(theme.monoFont(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.footnote, family: .code)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(3)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
             }
-            .padding(10)
+            .padding(theme.space.s8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.codeBlockBackground))
+            .settingsChrome(.inset)
 
             Text(
                 openedURL
                     ? L("Finish the steps in your browser. This closes on its own when \(request.providerName) confirms, or click Done.")
                     : L("Only continue if you trust this site. Osaurus opens it in your browser when you click Open.")
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
+            .textStyle(.footnote)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -278,26 +271,34 @@ struct MCPElicitationView: View {
     // MARK: Buttons
 
     private var buttons: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             if openedURL {
-                ElicitationButton(title: L("Done"), isPrimary: true, color: theme.accentColor) {
+                ElicitationButton(title: L("Done"), isPrimary: true, color: theme.action.primary.default.background) {
                     onAction(.done)
                 }
             } else {
-                ElicitationButton(title: L("Cancel"), isPrimary: false, color: theme.secondaryText) {
+                ElicitationButton(title: L("Cancel"), isPrimary: false, color: theme.text.secondary) {
                     onAction(.respond(.cancel))
                 }
-                ElicitationButton(title: L("Decline"), isPrimary: false, color: theme.errorColor) {
+                ElicitationButton(title: L("Decline"), isPrimary: false, color: theme.status.error.foreground) {
                     onAction(.respond(.decline))
                 }
                 switch request.mode {
                 case .form(let form):
-                    ElicitationButton(title: L("Submit"), isPrimary: true, color: theme.accentColor) {
+                    ElicitationButton(
+                        title: L("Submit"),
+                        isPrimary: true,
+                        color: theme.action.primary.default.background
+                    ) {
                         submit(form)
                     }
                     .keyboardShortcut(.return, modifiers: .command)
                 case .url(let url, _):
-                    ElicitationButton(title: L("Open \(url.host ?? "")"), isPrimary: true, color: theme.accentColor) {
+                    ElicitationButton(
+                        title: L("Open \(url.host ?? "")"),
+                        isPrimary: true,
+                        color: theme.action.primary.default.background
+                    ) {
                         NSWorkspace.shared.open(url)
                         openedURL = true
                         onAction(.openedURL)
@@ -320,20 +321,20 @@ private struct ElicitationButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(isPrimary ? .white : color)
+                .font(SettingsFont.sectionTitle)
+                .foregroundColor(isPrimary ? theme.action.primary.default.foreground : color)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
+                .padding(.vertical, theme.space.s8)
                 .background(
                     isPrimary
                         ? color.opacity(isHovering ? 0.9 : 1)
-                        : theme.tertiaryBackground.opacity(isHovering ? 0.8 : 0.5)
+                        : (isHovering ? theme.surface.hover : theme.surface.subtle)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(isPrimary ? .clear : theme.cardBorder, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                        .stroke(isPrimary ? .clear : theme.border.default, lineWidth: theme.stroke.default)
                 )
         }
         .buttonStyle(.plain)

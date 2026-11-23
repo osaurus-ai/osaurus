@@ -17,6 +17,7 @@ public enum GlobalProxySettings {
     /// Cached one-shot session + the proxy key it was built for. Guarded so
     /// concurrent callers can't race two sessions into the box.
     private static let sharedSessionBox = OSAllocatedUnfairLock<SharedSessionState?>(initialState: nil)
+    private static let retiredSessionGrace: TimeInterval = 60
 
     /// A process-wide `URLSession` for one-shot request/response calls (model
     /// metadata probes, provider connectivity checks, Hugging Face lookups).
@@ -37,9 +38,15 @@ public enum GlobalProxySettings {
             if let state, state.proxyKey == key {
                 return state.session
             }
-            // Proxy changed (or first use): drain the old session and build a
-            // new one bound to the current endpoint.
-            state?.session.finishTasksAndInvalidate()
+            // Proxy changed (or first use): build a new session bound to the
+            // current endpoint and drain the old one later. A caller that was
+            // handed the old session moments ago has not created its task
+            // yet, and a task on an invalidated session raises an exception.
+            if let retired = state?.session {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + retiredSessionGrace) {
+                    retired.finishTasksAndInvalidate()
+                }
+            }
             let session = makeSession()
             state = SharedSessionState(proxyKey: key, session: session)
             return session

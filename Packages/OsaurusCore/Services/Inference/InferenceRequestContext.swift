@@ -36,6 +36,7 @@ struct InferenceRequestContext: Sendable {
     var runAsRemoteAgent: Bool = false
     var remoteAgentLogModel: String? = nil
     var remoteAgentProviderId: UUID? = nil
+    var remoteAgentCallerId: UUID? = nil
     var suppressProgressUI: Bool = false
     var warmupPrefill: Bool = false
     var cacheStableSystemPrefix: String? = nil

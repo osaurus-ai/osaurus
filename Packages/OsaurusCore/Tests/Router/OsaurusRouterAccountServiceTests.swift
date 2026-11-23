@@ -189,6 +189,7 @@ struct OsaurusRouterAccountServiceTests {
             h.service.noteRouterSummary(summary(costMicro: "1500"))
         }
         #expect(h.service.balanceMicroValue == 1_000_000 - 6 * 1500)
+        #expect(h.service.lastFetchedBalance?.balanceMicro == "1000000")
         #expect(h.service.usageRevision == 0)  // still debouncing
 
         try await Task.sleep(for: .milliseconds(200))

@@ -38,7 +38,7 @@ struct PrivacyReviewNonInteractiveTests {
     }
 
     /// Regex-only filter config so `applyOutbound` runs without the
-    /// on-device model. `alwaysApproveByDefault` stays OFF so fresh
+    /// on-device model. `defaultReviewPolicy` stays `.ask` so fresh
     /// detections actually reach the review gate.
     private static func regexOnlyConfig(
         requireReviewForNonInteractive: Bool
@@ -46,7 +46,7 @@ struct PrivacyReviewNonInteractiveTests {
         var config = PrivacyFilterConfiguration()
         config.enabled = true
         config.aiDetectionEnabled = false
-        config.alwaysApproveByDefault = false
+        config.defaultReviewPolicy = .ask
         config.requireReviewForNonInteractive = requireReviewForNonInteractive
         return config
     }

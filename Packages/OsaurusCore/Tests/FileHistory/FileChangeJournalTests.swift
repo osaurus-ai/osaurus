@@ -290,6 +290,84 @@ struct FileChangeJournalTests {
         #expect(!exists(home.appendingPathComponent("build")))
     }
 
+    /// Shadow manifests from earlier launches were scanned with
+    /// `FileManager` attributes; the scan must produce identical entries.
+    @Test func scanMatchesFileManagerAttributes() async throws {
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
+        let fm = FileManager.default
+        let home = env.agentHome
+        try write(home.appendingPathComponent("src/main.py"), "print(1)")
+        try write(home.appendingPathComponent(".hidden/conf"), "x")
+        try write(home.appendingPathComponent("node_modules/dep/index.js"), "dep")
+        try write(home.appendingPathComponent("pkg/.cache/blob"), "cached")
+        try write(home.appendingPathComponent("bg-123.log"), "log")
+        try write(home.appendingPathComponent("logs/bg-1.log"), "nested log")
+        try write(home.appendingPathComponent("café/naïve.txt"), "unicode")
+        // Enough files that sub-microsecond mtime rounding differences show.
+        for i in 0 ..< 200 { try write(home.appendingPathComponent("many/f\(i).txt"), "\(i)") }
+        let script = home.appendingPathComponent("run.sh")
+        try write(script, "#!/bin/sh")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        try fm.createDirectory(at: home.appendingPathComponent("empty"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: home.appendingPathComponent("latest").path, withDestinationPath: "src")
+        try fm.createSymbolicLink(atPath: home.appendingPathComponent("dangling").path, withDestinationPath: "nope")
+
+        var expected: FileChangeJournal.Manifest = [:]
+        let enumerator = try #require(fm.enumerator(atPath: home.path))
+        while let rel = enumerator.nextObject() as? String {
+            let attrs = enumerator.fileAttributes
+            let type = attrs?[.type] as? FileAttributeType
+            if FileChangeJournal.isExcluded(relativePath: rel) {
+                if type == .typeDirectory { enumerator.skipDescendants() }
+                continue
+            }
+            switch type {
+            case .typeSymbolicLink:
+                let target = (try? fm.destinationOfSymbolicLink(atPath: home.path + "/" + rel)) ?? ""
+                expected[rel] = .init(type: .symlink, size: 0, mtimeNs: 0, linkTarget: target)
+            case .typeDirectory:
+                expected[rel] = .init(type: .directory, size: 0, mtimeNs: 0, linkTarget: nil)
+            default:
+                let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+                let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                let mode = (attrs?[.posixPermissions] as? NSNumber)?.int64Value ?? 0
+                expected[rel] = .init(
+                    type: .file, size: size, mtimeNs: Int64(mtime * 1_000_000_000) &+ mode, linkTarget: nil)
+            }
+        }
+
+        let scanned = try #require(await env.journal.scanManifest(root: home))
+        #expect(scanned == expected)
+        #expect(scanned["logs/bg-1.log"] != nil)
+        #expect(scanned["bg-123.log"] == nil)
+        #expect(!scanned.keys.contains { $0.hasPrefix("node_modules") || $0.contains(".cache") })
+    }
+
+    @Test func inFlightShadowCaptureIsRecoveredAfterCrash() async throws {
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
+        let file = env.agentHome.appendingPathComponent("doc.txt")
+        try write(file, "v1")
+        try await captured(env, tool: "sandbox_exec", declared: nil) { try self.write(file, "v2") }
+        let token = await env.journal.beginCapture(
+            sessionId: Self.session, toolName: "sandbox_exec",
+            targets: [.init(kind: .agentHome, rootId: agent)])
+        try write(file, "v3")
+        try write(env.agentHome.appendingPathComponent("new.txt"), "created")
+        // The app dies here: `endCapture` never runs.
+
+        let relaunched = env.relaunched()
+        let recovered = try #require(await relaunched.changeSets(for: Self.session).first { $0.id == token.setId })
+        let byPath = Dictionary(uniqueKeysWithValues: recovered.entries.map { ($0.path, $0) })
+        #expect(byPath["doc.txt"]?.kind == .modified)
+        #expect(byPath["new.txt"]?.kind == .created)
+        let summary = await relaunched.revert(.set(token.setId), sessionId: Self.session)
+        #expect(summary.isClean, "\(summary)")
+        #expect(read(file) == "v2")
+        #expect(!exists(env.agentHome.appendingPathComponent("new.txt")))
+    }
+
     @Test func shadowPicksUpUserEditsBetweenCalls() async throws {
         let env = try FileHistoryTestEnv.make()
         defer { env.cleanup() }
@@ -686,7 +764,7 @@ struct FileChangeJournalTests {
         try write(baseline, "pre-chat version")
         let liveSig = try #require(FileObjectStore.liveSignature(at: live)?.signature)
         let baseSig = try #require(FileObjectStore.liveSignature(at: baseline)?.signature)
-        try env.db.upsertSandboxChange(
+        try env.legacyDB.seedSandboxChangeForTesting(
             SandboxWorkspaceChange(
                 sessionId: Self.session, agentName: agent, root: .agentHome,
                 relativePath: "legacy.txt", entryType: .file, kind: .modified,
@@ -694,12 +772,12 @@ struct FileChangeJournalTests {
                 firstChangedAt: Date(), lastChangedAt: Date()))
 
         let journal = FileChangeJournal(
-            database: env.db, storeRoot: env.storeRoot, hostRootProvider: env.provider,
-            legacyBaselinesRoot: baselines)
+            database: env.db, legacyDatabase: env.legacyDB, storeRoot: env.storeRoot,
+            hostRootProvider: env.provider, legacyBaselinesRoot: baselines)
         let sets = await journal.changeSets(for: Self.session)
         #expect(sets.count == 1)
         #expect(sets.first?.origin == .imported)
-        #expect(env.db.loadSandboxChanges(sessionId: Self.session).isEmpty)
+        #expect(env.legacyDB.loadSandboxChanges(sessionId: Self.session).isEmpty)
         #expect(!exists(baselines.appendingPathComponent(Self.session)))
 
         let summary = await journal.revert(.set(try #require(sets.first?.id)), sessionId: Self.session)
@@ -715,7 +793,7 @@ struct FileChangeJournalTests {
         let live = env.agentHome.appendingPathComponent("legacy.txt")
         try write(live, "agent version")
         let liveSig = try #require(FileObjectStore.liveSignature(at: live)?.signature)
-        try env.db.upsertSandboxChange(
+        try env.legacyDB.seedSandboxChangeForTesting(
             SandboxWorkspaceChange(
                 sessionId: Self.session, agentName: agent, root: .agentHome,
                 relativePath: "legacy.txt", entryType: .file, kind: .modified,
@@ -723,7 +801,8 @@ struct FileChangeJournalTests {
                 firstChangedAt: Date(), lastChangedAt: Date()))
 
         let journal = FileChangeJournal(
-            database: env.db, storeRoot: env.storeRoot, hostRootProvider: env.provider,
+            database: env.db, legacyDatabase: env.legacyDB, storeRoot: env.storeRoot,
+            hostRootProvider: env.provider,
             legacyBaselinesRoot: env.tmp.appendingPathComponent("no-baselines"))
         let sets = await journal.changeSets(for: Self.session)
         let entry = try #require(sets.first?.entries.first)
@@ -733,6 +812,84 @@ struct FileChangeJournalTests {
         let summary = await journal.revert(.set(try #require(sets.first?.id)), sessionId: Self.session)
         #expect(summary.failed == 1 && summary.restored == 0)
         #expect(read(live) == "agent version")
+    }
+
+    /// Change sets recorded in the chat-history database before file history
+    /// got its own are copied once; a purge afterwards doesn't bring them back.
+    @Test func legacyChangeSetsCopyOnceIntoFileHistoryDatabase() async throws {
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
+        let setId = UUID().uuidString
+        try env.legacyDB.executeForTesting(
+            """
+            INSERT INTO file_change_sets (id, session_id, tool_name, tool_call_id, origin, status, created_at)
+            VALUES ('\(setId)', '\(Self.session)', 'file_write', 'call-legacy', 'agent', 'applied', 1000);
+            INSERT INTO file_change_entries (id, set_id, session_id, ordinal, root_kind, root_id, path,
+                kind, state, after_type, after_sig, after_size)
+            VALUES ('\(UUID().uuidString)', '\(setId)', '\(Self.session)', 0, 'home', '\(agent)',
+                'old.txt', 'created', 'applied', 'file', 'sha256:abc', 3);
+            """
+        )
+
+        let sets = await env.journal.changeSets(for: Self.session)
+        #expect(sets.map(\.id.uuidString) == [setId])
+        #expect(sets.first?.entries.map(\.path) == ["old.txt"])
+        #expect(env.db.legacyImportDone)
+        #expect(await env.journal.changeSet(forToolCallId: "call-legacy", sessionId: Self.session)?.id.uuidString == setId)
+
+        await env.journal.purgeSession(Self.session)
+        #expect(await env.relaunched().changeSets(for: Self.session).isEmpty)
+    }
+
+    /// File history lives in its own database: closing and reopening it from
+    /// disk keeps every set, with no chat-history database anywhere.
+    @Test func fileHistorySurvivesRelaunchWithoutChatDatabase() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osu-file-history-disk-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = nil
+                StorageEncryptionPolicy.shared.invalidateCache()
+                StorageKeyManager.shared.wipeCache()
+                try? FileManager.default.removeItem(at: root)
+            }
+            try StorageEncryptionPolicy.shared.setDesiredMode(.plaintext)
+            StorageKeyManager.shared.wipeCache()
+
+            let env = try FileHistoryTestEnv.make()
+            defer { env.cleanup() }
+            let file = env.agentHome.appendingPathComponent("kept.txt")
+            try write(file, "before")
+
+            let first = FileHistoryDatabase()
+            try first.open()
+            let journal = FileChangeJournal(
+                database: first, storeRoot: env.storeRoot, hostRootProvider: env.provider)
+            let token = await journal.beginCapture(
+                sessionId: Self.session, toolName: "file_write",
+                targets: [.init(kind: .agentHome, rootId: agent, declaredPaths: ["kept.txt"])])
+            try write(file, "after")
+            let recorded = try #require(await journal.endCapture(token)).id.uuidString
+            first.close()
+
+            #expect(!FileManager.default.fileExists(atPath: OsaurusPaths.chatHistoryDatabaseFile().path))
+            #expect(FileManager.default.fileExists(atPath: OsaurusPaths.fileHistoryDatabaseFile().path))
+
+            let reopened = FileHistoryDatabase()
+            try reopened.open()
+            defer { reopened.close() }
+            let relaunched = FileChangeJournal(
+                database: reopened, storeRoot: env.storeRoot, hostRootProvider: env.provider)
+            let sets = await relaunched.changeSets(for: Self.session)
+            #expect(sets.map(\.id.uuidString) == [recorded])
+            #expect(sets.first?.entries.map(\.path) == ["kept.txt"])
+
+            let summary = await relaunched.revert(.set(try #require(sets.first?.id)), sessionId: Self.session)
+            #expect(summary.isClean, "\(summary)")
+            #expect(read(file) == "before")
+        }
     }
 
     /// A damaged blob (bytes no longer hash to the key) is refused before

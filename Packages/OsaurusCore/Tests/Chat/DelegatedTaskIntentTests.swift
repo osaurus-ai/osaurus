@@ -86,6 +86,10 @@ struct DelegatedTaskIntentTests {
             let context = ExecutionContext(agentId: worker.id, source: .delegation)
             let session = context.chatSession
             session.selectedModel = "task-intent-fixture"
+            // The fixture model is never in the picker list; without the
+            // request-scoped delegation model, the session's first picker load
+            // races this assignment and resets the selection to `foundation`.
+            session.delegationModel = "task-intent-fixture"
             session.forceChatEngineRouteForTests = true
             // The shared storage fixture disables tools for ordinary lifecycle
             // tests. This regression intentionally needs the real callable

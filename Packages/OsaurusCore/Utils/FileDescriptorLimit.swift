@@ -6,7 +6,7 @@
 //  Osaurus routinely holds far more: SwiftNIO event loops (one kqueue +
 //  wakeup pipe per loop across three groups), per-plugin SQLite databases,
 //  chat/memory/knowledge stores, model bundle files, sockets for local and
-//  remote providers, and Bonjour browsing. Under load the default limit is
+//  remote providers, and Bonjour advertising. Under load the default limit is
 //  reachable, and SwiftNIO treats `kqueue(): Too many open files` as fatal
 //  (production crash APPLE-MACOS-19T).
 //

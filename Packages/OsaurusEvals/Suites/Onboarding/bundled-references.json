@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.bundled-references",
+  "domain": "onboarding",
+  "label": "onboarding • bundled steps name teammates by UUID and survive a rename",
+  "query": "bundled_references",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "bundled_references"
+    }
+  }
+}

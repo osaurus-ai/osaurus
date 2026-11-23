@@ -51,6 +51,31 @@ struct ChatToolChoicePolicyTests {
         }
     }
 
+    /// Tools named with ordinary words (`status`, `clarify`) are prose as bare
+    /// words and calls only when written as invocations.
+    @Test
+    func plainWordToolNamesNeedAnInvocation() {
+        let tools = [Self.tool("status"), Self.tool("clarify"), Self.tool("run_workflow")]
+        for text in [
+            "What's the status of my order?",
+            "Check the status of my agents and tell me how many are configured.",
+            "Summarize the document above in three sentences. ... the job status is tracked ... please clarify ...",
+            "Can you clarify what you meant?",
+        ] {
+            #expect(
+                Self.isAuto(ChatToolChoicePolicy.resolve(tools: tools, userText: text, attempt: 1)),
+                "Unexpected required tool for: \(text)")
+        }
+        for text in [
+            "Use `status`.", "Call status.", "status()", "Run the status tool.", "invoke clarify now",
+            "Use run_workflow for the morning brief.",
+        ] {
+            #expect(
+                Self.isRequired(ChatToolChoicePolicy.resolve(tools: tools, userText: text, attempt: 1)),
+                "Explicit tool invocation was lost: \(text)")
+        }
+    }
+
     @Test
     func explicitFileToolIntentRequiresToolOnFirstAttempt() {
         let choice = ChatToolChoicePolicy.resolve(

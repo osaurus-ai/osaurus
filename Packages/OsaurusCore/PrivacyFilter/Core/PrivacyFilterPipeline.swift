@@ -312,6 +312,38 @@ enum VoiceCallPrivacy: String, Sendable {
 }
 
 enum PrivacyFilterPipeline {
+    /// What `applyOutboundDetailed` hands back to the request layer.
+    struct OutboundResult: Sendable {
+        /// The messages to send (scrubbed when the filter ran).
+        let messages: [ChatMessage]
+        /// The scope's redaction map, for unscrubbing the reply. Kept
+        /// even when this send went out as written (conversation policy
+        /// `off`), so placeholders the provider still remembers from an
+        /// earlier turn resolve.
+        let map: RedactionMap?
+        /// Whether the filter scanned and scrubbed this send.
+        let filterApplied: Bool
+    }
+
+    /// Tuple form of `applyOutboundDetailed`, kept for callers that only
+    /// need the messages and map.
+    static func applyOutbound(
+        messages: [ChatMessage],
+        sessionId: String?,
+        providerId: UUID,
+        requestSource: RequestSource = .httpAPI,
+        reviewMode: PrivacyReviewMode = .interactive
+    ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
+        let result = try await applyOutboundDetailed(
+            messages: messages,
+            sessionId: sessionId,
+            providerId: providerId,
+            requestSource: requestSource,
+            reviewMode: reviewMode
+        )
+        return (result.messages, result.map)
+    }
+
     /// Outbound scrub. Returns the original messages + `nil` map when
     /// the filter is disabled, when the model isn't loaded, or when a
     /// detection error fires; otherwise returns the substituted
@@ -330,13 +362,17 @@ enum PrivacyFilterPipeline {
     /// (when the user disabled `requireReviewForNonInteractive`).
     /// The default `.httpAPI` is the conservative, never-interactive
     /// choice for callers that don't thread a source explicitly.
-    static func applyOutbound(
+    ///
+    /// State is keyed by the privacy scope: `ChatExecutionContext.privacyScopeId`
+    /// (the root chat, shared with its subagents) when bound, else
+    /// `sessionId`.
+    static func applyOutboundDetailed(
         messages: [ChatMessage],
         sessionId: String?,
         providerId: UUID,
         requestSource: RequestSource = .httpAPI,
         reviewMode: PrivacyReviewMode = .interactive
-    ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
+    ) async throws -> OutboundResult {
         let config = PrivacyFilterStore.snapshot()
         guard config.isEnabled(forProviderId: providerId) else {
             // Distinguish master-off vs per-provider-off so users can
@@ -349,19 +385,28 @@ enum PrivacyFilterPipeline {
             print(
                 "[PrivacyFilter] Bypass: filter disabled. master=\(config.enabled) provider=\(providerId.uuidString) providerOverride=\(providerOverride.map(String.init(describing:)) ?? "nil")"
             )
-            return (messages, nil)
+            return OutboundResult(messages: messages, map: nil, filterApplied: false)
         }
         // The owner turned the filter off for their phone call.
         if ChatExecutionContext.voiceCallPrivacy == .off {
             print("[PrivacyFilter] Bypass: turned off for this voice call by the owner.")
             Logger(subsystem: "ai.osaurus", category: "privacy.filter").notice(
-                "Privacy Filter bypassed: turned off for a paired phone call"
+                "Privacy Filter bypassed: turned off for this voice call"
             )
-            return (messages, nil)
+            return OutboundResult(messages: messages, map: nil, filterApplied: false)
+        }
+        let scopeId = ChatExecutionContext.privacyScopeId ?? sessionId ?? Self.fallbackSessionId(for: messages)
+        let store = SessionRedactionStore.shared
+        // The user turned the filter off for this conversation. Checked
+        // before the model loads; re-checked under the review lock in
+        // case a pending review just switched it.
+        if await store.effectivePolicy(scopeId, config: config) == .off {
+            print("[PrivacyFilter] Bypass: turned off for this conversation (scope \(scopeId)).")
+            return OutboundResult(messages: messages, map: await store.get(scopeId), filterApplied: false)
         }
         if ChatExecutionContext.voiceCallPrivacy == .auto {
             Logger(subsystem: "ai.osaurus", category: "privacy.filter").notice(
-                "Privacy Filter review set to auto-accept for a paired phone call"
+                "Privacy Filter review set to auto-accept for this voice call"
             )
         }
         // Every detection redacted, unasked, when the call chose so.
@@ -444,21 +489,103 @@ enum PrivacyFilterPipeline {
         // with the documented behaviour in settings).
         let ruleset = RegexEntityDetector.EffectiveRuleSet.build(from: config)
 
-        let sid = sessionId ?? Self.fallbackSessionId(for: messages)
-        let map = await SessionRedactionStore.shared.getOrCreate(sid, conversationID: UUID())
+        // One detect → review pass per scope at a time: parallel
+        // subagents finding the same value open one sheet, and the
+        // waiting pass sees the first one's decisions as carry-over.
+        await store.acquireReviewLock(scopeId)
+        do {
+            try Task.checkCancellation()
+            let result = try await detectReviewAndScrub(
+                messages: messages,
+                scopeId: scopeId,
+                providerId: providerId,
+                config: config,
+                ruleset: ruleset,
+                useModel: useModel,
+                backend: backend,
+                requestSource: requestSource,
+                reviewMode: reviewMode
+            )
+            await store.releaseReviewLock(scopeId)
+            return result
+        } catch {
+            await store.releaseReviewLock(scopeId)
+            throw error
+        }
+    }
 
-        // Per-message detection scope: ONLY the latest user turn (plus
-        // any messages following it) gets classified. Earlier turns
-        // have already passed through detect → review on a prior call,
-        // and their originals live in the per-session `RedactionMap`.
-        // Re-classifying the entire history on every send was the
+    /// Whether a fresh detection goes to the review sheet, or is
+    /// redacted without asking. Order: delegated-loop auto-scrub, the
+    /// conversation's policy, a conversation-wide "always redact" for
+    /// the category, then the setting for where the text came from.
+    static func needsReview(
+        _ entity: DetectedEntity,
+        policy: ConversationPrivacyPolicy,
+        config: PrivacyFilterConfiguration,
+        categoryDecisions: [EntityCategory: PrivacyCategoryDecision],
+        reviewMode: PrivacyReviewMode
+    ) -> Bool {
+        if reviewMode == .autoScrub { return false }
+        if policy != .ask { return false }
+        if categoryDecisions[entity.category] == .alwaysRedact { return false }
+        switch entity.origin {
+        case .userInput: return true
+        case .toolResult: return config.toolResultPolicy == .ask
+        case .modelOutput: return config.modelOutputPolicy == .ask
+        }
+    }
+
+    private static func detectReviewAndScrub(
+        messages: [ChatMessage],
+        scopeId: String,
+        providerId: UUID,
+        config: PrivacyFilterConfiguration,
+        ruleset: RegexEntityDetector.EffectiveRuleSet,
+        useModel: Bool,
+        backend: PrivacyAIBackend,
+        requestSource: RequestSource,
+        reviewMode: PrivacyReviewMode
+    ) async throws -> OutboundResult {
+        let store = SessionRedactionStore.shared
+        let sid = scopeId
+        let map = await store.getOrCreate(sid, conversationID: UUID())
+        let policy = await store.effectivePolicy(sid, config: config)
+        if policy == .off {
+            print("[PrivacyFilter] Bypass: turned off for this conversation (scope \(sid)).")
+            return OutboundResult(messages: messages, map: map, filterApplied: false)
+        }
+        let categoryDecisions = await store.categoryDecisions(sid)
+        // Never Redact list + conversation-wide "never redact this
+        // category": dropped before review, exempt from the leak scan.
+        let isExempt: @Sendable (String, EntityCategory) -> Bool = { original, category in
+            categoryDecisions[category] == .neverRedact || config.isNeverRedacted(original)
+        }
+
+        // Per-message detection scope: the latest user turn (plus any
+        // messages following it), and earlier segments this map has not
+        // scanned yet. Earlier turns normally passed through detect →
+        // review on a prior call, and their originals live in the map;
+        // re-classifying the entire history on every send was the
         // dominant latency cost — at 20 turns it ran the MoE 20× per
-        // request for zero new information. The `applyingScrub` pass
-        // below still substitutes across the whole message array using
-        // the cumulative map, so prior turns continue to ship scrubbed.
-        let segments = messages.latestUserTurnSegments()
+        // request for zero new information. But a reopened chat, or one
+        // whose map was forgotten or evicted, carries history the map
+        // never saw, and the `applyingScrub` pass below can only
+        // substitute originals the map knows.
+        let turnStart = messages.latestUserTurnStart
+        let allSegments = messages.originSegments()
+        let allDigests = allSegments.map { RedactionMap.segmentDigest($0.text) }
+        let alreadyScanned = await map.scanned(among: allDigests)
+        var segments: [(text: String, origin: PrivacySegmentOrigin)] = []
+        var scannedDigests: [Data] = []
+        var detectionIndices = Set<Int>()
+        for (segment, digest) in zip(allSegments, allDigests)
+        where segment.index >= turnStart || !alreadyScanned.contains(digest) {
+            segments.append((text: segment.text, origin: segment.origin))
+            scannedDigests.append(digest)
+            detectionIndices.insert(segment.index)
+        }
         if segments.isEmpty {
-            return (messages, map)
+            return OutboundResult(messages: messages, map: map, filterApplied: true)
         }
 
         // Snapshot the map BEFORE detection. The originals set
@@ -474,7 +601,7 @@ enum PrivacyFilterPipeline {
         let sessionSkipped = await map.skippedOriginals
 
         var detections: [DetectedEntity] = []
-        for segment in segments {
+        for (segment, origin) in segments {
             if segment.isEmpty { continue }
             do {
                 let segmentDetections = try await PrivacyFilterEngine.shared.detect(
@@ -491,7 +618,7 @@ enum PrivacyFilterPipeline {
                 // `containingText == nil`; this rewrap is cheap
                 // (struct copy with one string ref) and keeps the
                 // engine API segment-agnostic.
-                let stamped = segmentDetections.map { $0.withContainingText(segment) }
+                let stamped = segmentDetections.map { $0.withContainingText(segment, origin: origin) }
                 detections.append(contentsOf: stamped)
             } catch {
                 // Fail-CLOSED on detection failure too — the user
@@ -506,10 +633,43 @@ enum PrivacyFilterPipeline {
         // Deduplicate by original string so the review sheet doesn't
         // show "Alice" twice when the user mentions it across two
         // messages — the placeholder is already idempotent in the map.
-        var seen: Set<String> = []
-        detections = detections.filter { entity in
-            seen.insert(entity.original).inserted
+        // When one original appears in several places, the row keeps the
+        // origin most worth asking about (what the user typed, then a
+        // tool result, then the model's own text).
+        func originRank(_ origin: PrivacySegmentOrigin) -> Int {
+            switch origin {
+            case .userInput: return 0
+            case .toolResult: return 1
+            case .modelOutput: return 2
+            }
         }
+        var firstIndex: [String: Int] = [:]
+        var deduped: [DetectedEntity] = []
+        for entity in detections {
+            if let idx = firstIndex[entity.original] {
+                if originRank(entity.origin) < originRank(deduped[idx].origin) {
+                    deduped[idx] = entity
+                }
+            } else {
+                firstIndex[entity.original] = deduped.count
+                deduped.append(entity)
+            }
+        }
+        detections = deduped
+
+        // Exempt originals (Never Redact list, "never redact this
+        // category here") skip review and substitution. Un-intern the
+        // fresh ones; an exempt original interned on an earlier turn
+        // keeps its placeholder so replies still resolve it.
+        let exemptFresh = Set(
+            detections
+                .filter { isExempt($0.original, $0.category) && !preExistingOriginals.contains($0.original) }
+                .map(\.original)
+        )
+        if !exemptFresh.isEmpty {
+            await map.removeOriginals(exemptFresh)
+        }
+        detections.removeAll { isExempt($0.original, $0.category) }
 
         // Originals the user already skipped this session stay skipped:
         // no second review prompt and no substitution. Detection re-
@@ -551,8 +711,9 @@ enum PrivacyFilterPipeline {
         // Materialise carry-over entries as auto-approved entities so
         // they get substituted by `applyingScrub` regardless of which
         // message in the history they appear in.
-        let carryOverApproved: [DetectedEntity] = preExistingSnapshot.map { (placeholder, original) in
-            DetectedEntity(
+        let carryOverApproved: [DetectedEntity] = preExistingSnapshot.compactMap { (placeholder, original) in
+            if isExempt(original, placeholder.category) { return nil }
+            return DetectedEntity(
                 category: placeholder.category,
                 original: original,
                 range: original.startIndex ..< original.startIndex,
@@ -567,45 +728,69 @@ enum PrivacyFilterPipeline {
             // still need to run so prior-turn PII gets scrubbed in
             // the message history we hand to the cloud.
             if carryOverApproved.isEmpty {
-                return (messages, map)
+                await map.markScanned(scannedDigests)
+                return OutboundResult(messages: messages, map: map, filterApplied: true)
             }
             let scrubbedHistory = try scrubOutboundMessages(messages, approved: carryOverApproved)
-            return (scrubbedHistory, map)
+            await map.markScanned(scannedDigests)
+            return OutboundResult(messages: scrubbedHistory, map: map, filterApplied: true)
         }
 
-        // Hand only the newly-detected entities to the review service.
-        // Interactive (chat UI) requests suspend on the sheet until
-        // the user confirms; non-interactive origins (HTTP API,
+        // Route each fresh detection: redacted without asking (the
+        // conversation's policy, a category answer, or the tool-result /
+        // model-output settings), or into the review sheet.
+        var toReview: [DetectedEntity] = []
+        var autoApproved: [DetectedEntity] = []
+        for entity in newDetections {
+            if Self.needsReview(
+                entity,
+                policy: policy,
+                config: config,
+                categoryDecisions: categoryDecisions,
+                reviewMode: reviewMode
+            ) {
+                toReview.append(entity)
+            } else {
+                var approvedEntity = entity
+                approvedEntity.approved = true
+                autoApproved.append(approvedEntity)
+            }
+        }
+        if !autoApproved.isEmpty {
+            print(
+                "[PrivacyFilter] Review: redacting \(autoApproved.count) detection(s) without asking (policy=\(policy.rawValue), mode=\(reviewMode)); \(toReview.count) to review."
+            )
+        }
+
+        // Hand only the detections that need asking to the review
+        // service. Interactive (chat UI) requests suspend on the sheet
+        // until the user confirms; non-interactive origins (HTTP API,
         // plugin, P2P) never present UI — even when a chat window has
         // a presenter registered — so a server-origin request can't
         // hang its client on a sheet the user isn't expecting. They
         // fail closed (or auto-approve per the settings opt-out).
         let outcome: PrivacyReviewOutcome
-        switch reviewMode {
-        case .interactive:
+        if toReview.isEmpty {
+            outcome = .approved([])
+        } else {
             outcome = await PrivacyReviewService.shared.review(
-                detections: newDetections,
+                detections: toReview,
                 sessionId: sid,
                 // A sub-agent of a phone run is built as a chat-UI engine
                 // (`AgentSubagentRunner`), but the person is on the phone, not
                 // at this Mac: its review goes where the parent's would.
-                allowInteractive: requestSource == .chatUI && !ChatExecutionContext.hasRemoteReviewer,
+                allowInteractive: requestSource == .chatUI && !ChatExecutionContext.reviewsElsewhere,
                 // A non-interactive caller normally fails closed; the owner's
-                // paired phone can answer instead of blocking the send.
-                allowRemote: ChatExecutionContext.hasRemoteReviewer
+                // paired phone, or the device a hosted run is for, can answer
+                // instead of blocking the send.
+                allowRemote: ChatExecutionContext.reviewsElsewhere,
+                providerId: providerId
             )
-        case .autoScrub:
-            print("[PrivacyFilter] Review: auto-scrubbing \(newDetections.count) detections for a delegated loop step.")
-            outcome = .approved(newDetections.map { entity in
-                var approved = entity
-                approved.approved = true
-                return approved
-            })
         }
         let approvedFromReview: [DetectedEntity]
         switch outcome {
         case .approved(let entities):
-            approvedFromReview = entities
+            approvedFromReview = entities + autoApproved
         case .blockedNonInteractive:
             // Fail-closed block for a non-UI caller. Same map rollback
             // as the cancel branch (the interned detections never
@@ -617,7 +802,7 @@ enum PrivacyFilterPipeline {
                 counters: preDetectionCounters
             )
             throw PrivacyFilterPipelineError.reviewRequiresInteractive(
-                detectionCount: newDetections.count
+                detectionCount: toReview.count
             )
         case .canceled:
             // User cancelled the send (Cancel button, sheet
@@ -709,24 +894,24 @@ enum PrivacyFilterPipeline {
         // the next agent-loop iteration as a "leak".
         await map.markSkipped(skippedThisTurn)
         let skippedOriginals = skippedThisTurn.union(sessionSkipped)
-        // Scope the regex re-scan to the message range detection
-        // actually classified (the latest user turn onward). Carry-
-        // over substitution can dirty EARLIER history messages (a
-        // prior-turn placeholder re-applied to an old assistant
-        // reply); those messages were never in detection scope, so
-        // regex hits there (e.g. URLs the model itself emitted last
-        // turn) were never reviewable and must not block the send.
-        // Substitution failures in those messages are still caught
-        // by the per-original assertion below, which checks every
-        // approved original against the FULL scrubbed history.
-        let detectionStart = messages.lastIndex(where: { $0.role == "user" }) ?? 0
-        let scopedDirtyIndices = diff.dirtyIndices.filter { $0 >= detectionStart }
+        // Scope the regex re-scan to the messages detection actually
+        // classified this pass. Carry-over substitution can dirty
+        // EARLIER history messages (a prior-turn placeholder re-applied
+        // to an old assistant reply); those messages were not in
+        // detection scope, so regex hits there (e.g. URLs the model
+        // itself emitted last turn) were never reviewable and must not
+        // block the send. Substitution failures in those messages are
+        // still caught by the per-original assertion below, which
+        // checks every approved original against the FULL scrubbed
+        // history.
+        let scopedDirtyIndices = diff.dirtyIndices.filter { detectionIndices.contains($0) }
         let leaks = Self.scanForLeaks(
             in: scrubbed,
             ruleset: ruleset,
             ignoreOriginals: skippedOriginals,
             dirtyIndices: scopedDirtyIndices,
-            skipCodeBlocks: config.skipCodeBlocks
+            skipCodeBlocks: config.skipCodeBlocks,
+            exempt: isExempt
         )
 
         // Per-original assertion: every APPROVED entity should be
@@ -772,6 +957,7 @@ enum PrivacyFilterPipeline {
             print("[PrivacyFilter] POST-SCRUB INVARIANT TRIPPED — blocking send. counts=[\(summary)]")
             throw PrivacyFilterPipelineError.scrubLeaked(categoryCounts: leaks)
         }
+        await map.markScanned(scannedDigests)
 
         // Tell the chat layer which (original, placeholder) pairs
         // shipped on this turn so it can fold them into its session-
@@ -806,7 +992,7 @@ enum PrivacyFilterPipeline {
             )
         }
 
-        return (scrubbed, map)
+        return OutboundResult(messages: scrubbed, map: map, filterApplied: true)
     }
 
     /// Run the active regex ruleset across every scrubbable field of
@@ -841,7 +1027,8 @@ enum PrivacyFilterPipeline {
         ruleset: RegexEntityDetector.EffectiveRuleSet,
         ignoreOriginals: Set<String> = [],
         dirtyIndices: Set<Int>? = nil,
-        skipCodeBlocks: Bool = false
+        skipCodeBlocks: Bool = false,
+        exempt: ((String, EntityCategory) -> Bool)? = nil
     ) -> [EntityCategory: Int] {
         var counts: [EntityCategory: Int] = [:]
         let scoped: [ChatMessage]
@@ -865,6 +1052,7 @@ enum PrivacyFilterPipeline {
             for match in matches {
                 if InjectedContextSpans.overlaps(match.range, injected) { continue }
                 if ignoreOriginals.contains(match.original) { continue }
+                if exempt?(match.original, match.category) == true { continue }
                 counts[match.category, default: 0] += 1
             }
         }

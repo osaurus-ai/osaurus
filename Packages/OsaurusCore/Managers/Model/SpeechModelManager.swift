@@ -8,6 +8,7 @@
 import Combine
 @preconcurrency import FluidAudio
 import Foundation
+import OsaurusSync
 import SwiftUI
 
 /// Download state for a speech model
@@ -161,7 +162,7 @@ public final class SpeechModelManager: ObservableObject {
     public var totalDownloadedSizeString: String {
         let count = downloadedModelsCount
         if count == 0 { return L("No models") }
-        return L("\(count) models ready")
+        return count == 1 ? L("1 model ready") : L("\(count) models ready")
     }
 
     // MARK: - Download Methods
@@ -189,6 +190,10 @@ public final class SpeechModelManager: ObservableObject {
                 self.downloadStates[model.id] = .completed
             } catch is CancellationError {
                 self.downloadStates[model.id] = .notStarted
+            } catch where Task.isCancelled {
+                // A cancelled URL load throws `URLError.cancelled`, not
+                // `CancellationError`; Cancel is not a failure.
+                self.downloadStates[model.id] = .notStarted
             } catch {
                 self.downloadStates[model.id] = .failed(error: error.localizedDescription)
             }
@@ -196,6 +201,54 @@ public final class SpeechModelManager: ObservableObject {
             self.activeDownloadTasks[model.id] = nil
         }
 
+        activeDownloadTasks[model.id] = task
+    }
+
+    /// Copies a model from a nearby Mac into FluidAudio's cache, then loads it
+    /// as a download would. If the copy fails, FluidAudio downloads it.
+    func downloadModel(_ model: SpeechModel, fromNearby offer: NearbyOffer) {
+        if case .downloading = downloadStates[model.id] { return }
+        activeDownloadTasks[model.id]?.cancel()
+        downloadStates[model.id] = .downloading(progress: 0.0)
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var nearbyError: Error?
+            do {
+                guard let node = ModelShareService.shared.node else { throw NearbyTransferError.notRunning }
+                try await NearbyBundleTransfer.fetch(
+                    node: node,
+                    source: offer.source,
+                    files: offer.model.files,
+                    into: SpeechModelShareProvider.cacheDirectory(for: model.version)
+                ) { [modelId = model.id] received, total in
+                    Task { @MainActor [weak self] in
+                        guard let self, case .downloading = self.downloadStates[modelId], total > 0 else { return }
+                        self.downloadStates[modelId] = .downloading(progress: Double(received) / Double(total))
+                    }
+                }
+            } catch {
+                if Task.isCancelled {
+                    self.downloadStates[model.id] = .notStarted
+                    self.activeDownloadTasks[model.id] = nil
+                    return
+                }
+                nearbyError = error
+            }
+
+            do {
+                let faVersion: AsrModelVersion = model.version == .v2 ? .v2 : .v3
+                CoreMLLoadSentinel.begin(.speech, modelId: model.id)
+                defer { CoreMLLoadSentinel.end(.speech) }
+                _ = try await AsrModels.downloadAndLoad(version: faVersion)
+                self.downloadStates[model.id] = .completed
+            } catch where Task.isCancelled {
+                self.downloadStates[model.id] = .notStarted
+            } catch {
+                self.downloadStates[model.id] = .failed(error: (nearbyError ?? error).localizedDescription)
+            }
+            self.activeDownloadTasks[model.id] = nil
+        }
         activeDownloadTasks[model.id] = task
     }
 

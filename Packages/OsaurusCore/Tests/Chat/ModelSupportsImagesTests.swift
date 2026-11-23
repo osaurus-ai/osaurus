@@ -45,4 +45,27 @@ struct ModelSupportsImagesTests {
         #expect(!ChatSession.modelSupportsImages(modelId: "custom/vendor/missing", pickerItems: [item]))
         #expect(!ChatSession.modelSupportsImages(modelId: "foundation", pickerItems: [item]))
     }
+
+    /// The composer's cache-only gate must agree with the authoritative gate
+    /// for everything that has no local bundle to read.
+    @Test func snapshotGateMatchesAuthoritativeGateWithoutLocalBundle() {
+        let remote = ModelPickerItem.fromRemoteModel(
+            modelId: "custom/vendor/vision-model",
+            providerName: "Custom",
+            providerId: providerId
+        )
+        let embedding = ModelPickerItem(
+            id: "custom/vendor/embed-model",
+            displayName: "embed-model",
+            source: .remote(providerName: "Custom", providerId: providerId),
+            isEmbedding: true
+        )
+        let items = [remote, embedding]
+        for id in [remote.id, embedding.id, "custom/vendor/missing", "foundation"] {
+            #expect(
+                ChatSession.modelSupportsImagesSnapshot(modelId: id, pickerItems: items)
+                    == ChatSession.modelSupportsImages(modelId: id, pickerItems: items)
+            )
+        }
+    }
 }

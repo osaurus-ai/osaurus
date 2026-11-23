@@ -19,14 +19,20 @@ import SwiftUI
 
     struct ProvisioningJourneyView: View {
         @ObservedObject private var sandboxState = SandboxManager.State.shared
-        @Environment(\.theme) private var theme
+        @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
         /// External error surface from `SandboxView.performProvision`.
         let provisionError: String?
         let onRetry: () -> Void
+        /// Nil once nothing is running to cancel.
+        var onCancel: (() -> Void)? = nil
+        var onCopyDetails: (() -> Void)? = nil
+        var onOpenTroubleshooting: (() -> Void)? = nil
 
         var body: some View {
-            VStack(spacing: 20) {
+            VStack(spacing: theme.settingsSectionGap) {
                 Spacer(minLength: 0)
 
                 header
@@ -42,29 +48,37 @@ import SwiftUI
                 if let provisionError {
                     retryBanner(message: provisionError)
                         .frame(maxWidth: 460)
+                } else if let onCancel {
+                    SettingsButton(
+                        .secondary,
+                        "Cancel",
+                        size: .compact,
+                        help: "Stops setup. Downloads pick up where they left off next time.",
+                        action: onCancel
+                    )
                 }
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 32)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.vertical, theme.space.s32)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+    }
 
         // MARK: - Header (title + elapsed)
 
         private var header: some View {
-            VStack(spacing: 6) {
+            VStack(spacing: theme.space.s6) {
                 Text("Setting up sandbox", bundle: .module)
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.pageTitle)
+                    .foregroundColor(theme.text.primary)
 
                 if let startedAt = sandboxState.journey?.startedAt,
                     sandboxState.journey?.finishedAt == nil
                 {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "clock")
-                            .font(.system(size: 11))
+                            .glyphSize(.footnote)
                         // Count up MM:SS from `startedAt`. The default
                         // `countsDown: true` would render time until
                         // `.distantFuture` (~17M hours).
@@ -73,9 +87,9 @@ import SwiftUI
                             countsDown: false,
                             showsHours: false
                         )
-                        .font(.system(size: 12, design: .monospaced))
+                        .componentInspectionText(49, role: .body, fallback: .code, theme: theme)
                     }
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
                 }
             }
         }
@@ -83,21 +97,16 @@ import SwiftUI
         // MARK: - Journey content
 
         private func journeyContent(journey: ProvisioningJourney) -> some View {
-            VStack(spacing: 14) {
-                VStack(spacing: 6) {
+            VStack(spacing: theme.space.s12) {
+                VStack(spacing: theme.space.s6) {
+                    // Asset steps run concurrently, so every running row
+                    // carries its own progress rather than one "current" row.
                     ForEach(journey.steps) { step in
-                        StepRow(step: step, isActive: journey.currentStepID == step.id)
+                        StepRow(step: step, isActive: step.status == .inProgress)
                     }
                 }
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.cardBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(theme.cardBorder, lineWidth: 1)
-                        )
-                )
+                .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+                .settingsChrome(.card)
 
                 activityAndETA(journey: journey)
             }
@@ -105,15 +114,15 @@ import SwiftUI
 
         @ViewBuilder
         private func activityAndETA(journey: ProvisioningJourney) -> some View {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 if let activity = sandboxState.currentActivity, !activity.isEmpty {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "waveform")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.accentColor)
+                            .glyphSize(.footnote, weight: .semibold)
+                            .foregroundColor(theme.text.link)
                         Text(activity)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(theme.secondaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
@@ -121,8 +130,8 @@ import SwiftUI
                 Spacer(minLength: 4)
                 if let remaining = journey.remainingTotalSeconds {
                     Text("≈ \(Self.formatEta(remaining)) remaining", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                         .monospacedDigit()
                 }
             }
@@ -131,21 +140,16 @@ import SwiftUI
         // MARK: - Legacy fallback
 
         private var legacyContent: some View {
-            VStack(spacing: 16) {
+            VStack(spacing: theme.space.s16) {
                 if let progress = sandboxState.provisioningProgress {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
+                    SettingsProgressBar(value: progress, tint: theme.action.primary.default.background)
                         .frame(width: 220)
-                        .tint(theme.accentColor)
-                        .animation(.easeOut(duration: 0.3), value: progress)
                 } else {
-                    ProgressView()
-                        .controlSize(.large)
-                        .tint(theme.accentColor)
+                    SettingsSpinner(size: .large, tint: theme.action.primary.default.background)
                 }
 
                 if let phase = sandboxState.provisioningPhase {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Text(phase)
                         if let progress = sandboxState.provisioningProgress {
                             Text("\(Int(progress * 100))%", bundle: .module)
@@ -153,10 +157,10 @@ import SwiftUI
                                 .contentTransition(.numericText())
                         }
                     }
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.secondaryText)
+                    .componentInspectionText(49, role: .body, fallback: .bodySmall, theme: theme)
+                    .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
-                    .animation(.easeInOut(duration: 0.2), value: phase)
+                    .animation(theme.motion.quick, value: phase)
                 }
             }
         }
@@ -164,32 +168,26 @@ import SwiftUI
         // MARK: - Retry banner
 
         private func retryBanner(message: String) -> some View {
-            VStack(spacing: 10) {
-                HStack(spacing: 4) {
+            VStack(spacing: theme.space.s8) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
+                        .glyphSize(.caption)
                     Text(message)
-                        .font(.system(size: 12))
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                         .lineLimit(3)
+                        .textSelection(.enabled)
                 }
-                .foregroundColor(theme.warningColor)
+                .foregroundColor(theme.status.warning.foreground)
 
-                Button(action: onRetry) {
-                    Label {
-                        Text("Retry", bundle: .module)
-                    } icon: {
-                        Image(systemName: "arrow.clockwise")
+                HStack(spacing: theme.space.s8) {
+                    SettingsButton(.primary, "Retry", icon: "arrow.clockwise", size: .compact, action: onRetry)
+                    if let onCopyDetails {
+                        SettingsButton(.secondary, "Copy Details", icon: "doc.on.doc", size: .compact, action: onCopyDetails)
                     }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
+                    if let onOpenTroubleshooting {
+                        SettingsButton(.tertiary, "Open Troubleshooting", size: .compact, action: onOpenTroubleshooting)
+                    }
                 }
-                .buttonStyle(.plain)
             }
         }
 
@@ -202,13 +200,7 @@ import SwiftUI
         /// post-start tasks card) can use it without an implicit
         /// MainActor hop.
         nonisolated static func formatEta(_ seconds: Double) -> String {
-            let s = max(seconds, 0)
-            if s < 1 { return "<1s" }
-            if s < 60 { return "\(Int(s.rounded()))s" }
-            let minutes = Int(s / 60)
-            let remSeconds = Int(s.truncatingRemainder(dividingBy: 60))
-            if minutes >= 5 { return "\(minutes)m" }
-            return "\(minutes)m \(remSeconds)s"
+            ProvisioningJourney.formatEta(seconds)
         }
     }
 
@@ -218,57 +210,55 @@ import SwiftUI
         let step: ProvisioningStepState
         let isActive: Bool
 
-        @Environment(\.theme) private var theme
+        @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s8) {
                     statusIcon
                         .frame(width: 16)
                     Text(step.label)
-                        .font(.system(size: 13, weight: isActive ? .semibold : .regular))
+                        .componentInspectionText(49, role: .label, fallback: .label, weight: isActive ? 600 : 400, theme: theme)
                         .foregroundColor(labelColor)
                     Spacer()
                     if isActive {
                         if let eta = step.etaSeconds, eta > 0 {
                             Text("≈ \(ProvisioningJourneyView.formatEta(eta))", bundle: .module)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
+                                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                                .foregroundColor(theme.text.tertiary)
                                 .monospacedDigit()
                         }
                     } else if step.status == .skipped {
                         Text("Cached", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                     } else if step.status == .completed,
                         let elapsed = stepElapsed
                     {
                         Text(ProvisioningJourneyView.formatEta(elapsed))
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                             .monospacedDigit()
                     }
                 }
 
                 if isActive {
                     activeProgress
-                        .padding(.leading, 26)
+                        .padding(.leading, theme.space.s24)
                 }
             }
-            .padding(.vertical, 4)
-        }
+            .padding(.vertical, theme.space.s4)
+    }
 
         @ViewBuilder
         private var activeProgress: some View {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 if let progress = step.progress {
-                    ProgressView(value: max(0, min(progress, 1)))
-                        .progressViewStyle(.linear)
-                        .tint(theme.accentColor)
+                    SettingsProgressBar(value: progress, tint: theme.action.primary.default.background)
                 } else {
-                    ProgressView()
-                        .progressViewStyle(.linear)
-                        .tint(theme.accentColor)
+                    SettingsProgressBar(value: nil, tint: theme.action.primary.default.background)
                 }
 
                 if let total = step.bytesTotal, total > 0 {
@@ -280,12 +270,12 @@ import SwiftUI
                             bytesPerSecond: step.bytesPerSecond
                         )
                     )
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .componentInspectionText(49, role: .code, fallback: .footnote, family: .code, theme: theme)
+                    .foregroundColor(theme.text.tertiary)
                 } else if let detail = step.detail, !detail.isEmpty {
                     Text(detail)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -297,33 +287,31 @@ import SwiftUI
             switch step.status {
             case .completed:
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.successColor)
+                    .glyphSize(.body)
+                    .foregroundColor(theme.status.success.foreground)
             case .skipped:
                 Image(systemName: "checkmark.circle")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(.body)
+                    .foregroundColor(theme.text.tertiary)
             case .inProgress:
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.7)
+                SettingsSpinner(size: .mini)
             case .pending:
                 Image(systemName: "circle")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.tertiaryText.opacity(0.6))
+                    .glyphSize(.body)
+                    .foregroundColor(theme.text.tertiary)
             case .failed:
                 Image(systemName: "xmark.octagon.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.errorColor)
+                    .glyphSize(.body)
+                    .foregroundColor(theme.status.error.foreground)
             }
         }
 
         private var labelColor: Color {
             switch step.status {
-            case .completed, .skipped: return theme.primaryText
-            case .inProgress: return theme.primaryText
-            case .pending: return theme.tertiaryText
-            case .failed: return theme.errorColor
+            case .completed, .skipped: return theme.text.primary
+            case .inProgress: return theme.text.primary
+            case .pending: return theme.text.tertiary
+            case .failed: return theme.status.error.foreground
             }
         }
 
@@ -334,4 +322,14 @@ import SwiftUI
         }
     }
 
+extension ProvisioningJourneyView {
+    @MainActor static func inspectionRows() -> some View {
+        let theme = ThemeManager.shared.currentTheme
+        return VStack(alignment: .leading, spacing: theme.space.s12) {
+            StepRow(step: .init(id: .downloadKernel, label: "Local download display", status: .inProgress, progress: 0.5, bytesProcessed: 32_000_000, bytesTotal: 64_000_000, bytesPerSecond: 8_000_000, etaSeconds: 4), isActive: true)
+            StepRow(step: .init(id: .downloadInitFS, label: "Cached local display", status: .skipped), isActive: false)
+            StepRow(step: .init(id: .createContainer, label: "Failed local display", status: .failed), isActive: false)
+        }
+    }
+}
 #endif

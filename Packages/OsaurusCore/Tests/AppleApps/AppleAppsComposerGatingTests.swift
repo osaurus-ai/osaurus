@@ -103,9 +103,9 @@ struct AppleAppsComposerGatingTests {
         let loaded = names(makeSnapshot(agentId: Agent.defaultId), additional: ["reminders_create"])
         #expect(loaded.isDisjoint(with: AppleApp.allToolNames), "leaked via additionalToolNames")
 
-        // The Orchestrator still keeps its configure surface so it can flip
-        // `capabilities.apple_apps` on custom agents.
-        #expect(flagged.contains("osaurus_config"))
+        // The Orchestrator still reaches `capabilities.apple_apps` on custom
+        // agents, through the Configurator.
+        #expect(flagged.contains(ConfiguratorHandoffTool.toolName))
     }
 
     @Test("the Apple guidance block renders only when an Apple tool resolved")

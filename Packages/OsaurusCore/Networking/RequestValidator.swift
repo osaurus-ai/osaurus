@@ -16,6 +16,8 @@ import MLXLMCommon
 public enum RequestValidator {
     private static let repetitionPenaltyValidationMessage =
         "Parameter 'repetition_penalty' must be a finite number greater than zero."
+    static let reasoningBudgetValidationMessage =
+        "Thinking budget ('thinking_token_budget' / 'reasoning.max_tokens') must be a positive integer."
 
     /// Expose only known, fixed validation diagnostics. Decoder descriptions
     /// for malformed JSON or unrelated fields can contain caller input.
@@ -29,7 +31,19 @@ public enum RequestValidator {
         {
             return context.debugDescription
         }
+        if let decoding = error as? DecodingError, case .dataCorrupted(let context) = decoding,
+            context.debugDescription == reasoningBudgetValidationMessage
+        {
+            return context.debugDescription
+        }
         return "Invalid request format"
+    }
+
+    /// A thinking budget counts reasoning tokens; zero or negative has no
+    /// meaning. Omission leaves reasoning length to the model.
+    static func reasoningBudgetReason(_ value: Int?) -> String? {
+        guard let value else { return nil }
+        return value > 0 ? nil : reasoningBudgetValidationMessage
     }
 
     /// Multiplicative penalties divide positive logits; zero, negatives and

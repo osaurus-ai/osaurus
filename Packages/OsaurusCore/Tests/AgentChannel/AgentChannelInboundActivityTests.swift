@@ -203,43 +203,41 @@ struct AgentChannelInboundActivityTests {
     // MARK: - Card routing summary
 
     @MainActor
-    @Test func routingSummaryDescribesDefaultRoutesAndMissingAgents() {
-        let agentA = UUID()
-        let agentB = UUID()
-        let names: [UUID: String] = [agentA: "Sales", agentB: "Support"]
-        func summary(_ dispatch: AgentChannelInboundDispatchConfiguration) -> String? {
-            AgentChannelConnectionCenterView.routingSummary(dispatch) { names[$0] }
+    @Test func routingSummaryNamesWhoAnswers() {
+        // Agent ids stand in for agent names; the live resolver looks the
+        // name up in AgentManager, which this test does not touch.
+        var names: [UUID: String] = [:]
+        func summary(_ events: [OsaurusEvent]) -> String? {
+            AgentChannelConnectionCenterView.routingSummary(
+                EventTestFixtures.listeners(events, kind: .slack, connectionId: "slack"),
+                nameFor: { listener in
+                    if listener.workflowId != nil { return "Triage" }
+                    return listener.target?.localId.flatMap { names[$0] } ?? "?"
+                })
         }
+        func event(_ agent: String, enabled: Bool = true) -> OsaurusEvent {
+            let id = UUID()
+            names[id] = agent
+            return EventTestFixtures.channelAgentEvent(name: "\(agent) rule", kind: .slack, agentId: id, isEnabled: enabled)
+        }
+        let workflow = OsaurusEvent(
+            name: "Triage rule", source: .channelMessage(ChannelMessageSourceConfig(kind: .slack, connectionId: "slack")),
+            action: .workflow(WorkflowEventAction(workflowID: UUID())))
 
-        // Replying off is stated explicitly on a configured channel rather
-        // than hiding the state behind a missing line.
-        #expect(summary(AgentChannelInboundDispatchConfiguration(enabled: false)) == "Replies off")
-
-        // Enabled but nothing selected → honest call to action.
+        // Nobody answering is stated explicitly on a configured channel
+        // rather than hiding the state behind a missing line.
+        #expect(summary([]) == "Nobody answers here yet — messages stay in the inbox")
+        #expect(summary([event("Sales", enabled: false)]) == "Nobody answers here yet — messages stay in the inbox")
+        #expect(summary([event("Sales")]) == "Answered by Sales")
+        #expect(summary([event("Sales"), event("Support"), workflow]) == "Answered by Sales, Support, Triage")
+        // Two rules for the same agent name it once.
+        let ops = UUID()
+        names[ops] = "Ops"
+        let general = EventTestFixtures.channelAgentEvent(name: "General", kind: .slack, agentId: ops)
+        let incidents = EventTestFixtures.channelAgentEvent(name: "Incidents", kind: .slack, agentId: ops, rooms: ["C1"])
+        #expect(summary([general, incidents]) == "Answered by Ops")
         #expect(
-            summary(AgentChannelInboundDispatchConfiguration(enabled: true))
-                == "Replies on — choose an agent")
-
-        // Single default agent.
-        #expect(
-            summary(
-                AgentChannelInboundDispatchConfiguration(enabled: true, targetAgentId: agentA)
-            ) == "Replies: Sales")
-
-        // Default + a route to a second agent → multi-agent summary.
-        let multi = AgentChannelInboundDispatchConfiguration(
-            enabled: true,
-            targetAgentId: agentA,
-            routes: [AgentChannelDispatchRoute(roomId: "C1", agentId: agentB)]
-        )
-        #expect(summary(multi) == "Replies: 2 agents — Sales, Support")
-
-        // A routed agent that no longer exists is still surfaced.
-        let missing = AgentChannelInboundDispatchConfiguration(
-            enabled: true,
-            targetAgentId: UUID()
-        )
-        #expect(summary(missing) == "Replies: Unknown agent")
+            summary([event("A"), event("B"), event("C"), event("D")]) == "Answered by A, B and 2 more")
     }
 
     // MARK: - Custom channel badge honesty

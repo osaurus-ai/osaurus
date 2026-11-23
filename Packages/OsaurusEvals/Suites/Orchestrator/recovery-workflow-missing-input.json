@@ -1,0 +1,48 @@
+{
+  "id": "orchestrator.recovery-workflow-missing-input",
+  "domain": "orchestrator",
+  "label": "orchestrator • recovery: a workflow run missing its required input",
+  "query": "Run my Daily Digest workflow now.",
+  "notes": "Recovery after a failed call. Daily Digest requires `day`, and the user did not give one. A call without it returns `invalid_args` naming the field. A good turn retries with a sensible day (today) or asks which day; it never claims the digest ran when no run succeeded. The seeded workflow has no steps, so a successful run returns no digest content.",
+  "fixtures": {
+    "seedInstalledWorkflows": [
+      {
+        "id": "6f1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c46",
+        "name": "Daily Digest",
+        "summary": "Summarize the day's news and calendar.",
+        "inputs": [
+          "day"
+        ],
+        "required": [
+          "day"
+        ],
+        "orchestratorVisible": true
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Daily Digest"
+          }
+        }
+      ],
+      "rubric": [
+        "Either says the Daily Digest ran (for a stated day) or asks the user which day to run it for.",
+        "Does not invent digest content such as news headlines or calendar events."
+      ],
+      "expectAutomationCount": 0,
+      "maxIterations": 6
+    }
+  }
+}

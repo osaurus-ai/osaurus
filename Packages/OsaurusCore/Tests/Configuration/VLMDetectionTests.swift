@@ -62,6 +62,22 @@ import Testing
         #expect(VLMDetection.isVLM(at: root))
     }
 
+    @Test func isVLMInkling2_modelTypeAndInstalledBundles() throws {
+        #expect(LocalVisionEvidence.inkling2VisionRuntimeAvailable)
+        #expect(VLMDetection.isVLM(modelType: "inkling2_loop"))
+        for layout in ["official", "mlxlm"] {
+            let root = try VisionBundleFixture.makeInkling2(layout: layout)
+            defer { try? FileManager.default.removeItem(at: root) }
+            #expect(VLMDetection.isVLM(at: root), "layout \(layout)")
+        }
+        // A tower missing a block or the projector is not image-capable.
+        for omit in ["layers.1.self_attn", "proj_out", "patch_embedding"] {
+            let root = try VisionBundleFixture.makeInkling2(omit: omit)
+            defer { try? FileManager.default.removeItem(at: root) }
+            #expect(!VLMDetection.isVLM(at: root), "omitting \(omit)")
+        }
+    }
+
     @Test func isVLMModelType_rejectsUnknownArchitecture() {
         #expect(!VLMDetection.isVLM(modelType: "totally_made_up_arch_xyz"))
     }

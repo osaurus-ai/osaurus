@@ -1,5 +1,9 @@
 // swift-tools-version: 6.2
 import PackageDescription
+import Foundation
+
+// Runtime design library ships in every build; the editor/verification catalog is opt-in.
+let designInspectorBuild = ProcessInfo.processInfo.environment["OSAURUS_DESIGN_INSPECTOR_BUILD"] == "1"
 
 let package = Package(
     name: "OsaurusCore",
@@ -13,15 +17,19 @@ let package = Package(
         // of hanging in-process. See `PluginHost/main.swift` and
         // `Services/Plugin/PluginProcessHost.swift`.
         .executable(name: "osaurus-plugin-host", targets: ["osaurus-plugin-host"]),
+        // Workflow code-node runtime: JavaScriptCore in a fresh, Seatbelt-
+        // confined process per run, killed on timeout or memory breach. See
+        // `JSHost/main.swift` and `Services/Workflow/CodeNodeExecutor.swift`.
+        .executable(name: "osaurus-js-host", targets: ["osaurus-js-host"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
         // Keep this exact pin aligned with SandboxRuntimeAssets.initfsReference.
-        // Containerization 0.41 is the SDK shipped by Apple container 1.3 and
-        // includes restricted OCI capability defaults, vminit secret
-        // redaction, atomic image-store state, and startup cleanup fixes.
+        // 0.54 adds the LinuxPod per-container isolation the sandbox relies
+        // on, opt-in seccomp, unpacker path-escape fixes, and VMResources
+        // (replacing cpuOverhead/memoryOverhead).
         // Keep both app workspace lockfiles in step when bumping.
-        .package(url: "https://github.com/apple/containerization.git", exact: "0.41.0"),
+        .package(url: "https://github.com/apple/containerization.git", exact: "0.54.0"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.1"),
         // MCP pulls EventSource transitively. Enable its AsyncHTTPClient
         // trait at the root so the target's conditional AsyncHTTPClient
@@ -356,15 +364,41 @@ let package = Package(
         // (memory now means only the opt-in RAM tier).
         // Gemma unified vision: match reference LayerNorm epsilon and invalidate
         // old image-conditioned KV under a versioned unified-only cache identity.
+        // Gemma QAT tied heads keep their loaded activation precision, and seeded
+        // DFlash chain sampling is isolated per request.
+        // vmlx-swift#772 keeps a declared string argument's edge whitespace in
+        // GLM4/Spark2.5 tool calls (a `file_write` append lost its blank line).
+        // vmlx-swift#779 adds the Inkling-2-Mini runtime (`inkling2_loop`: fused decode, the
+        // bundled dSpark drafter, channel reasoning and JSON tool parsing); main also carries
+        // #774 (Qwen-VL resizes an image smaller than the patch factor). The Inkling decode
+        // speedups follow: fused loop message gates, relative bias spread over key slices,
+        // cached kernel constants, batch-1 NVFP4 expert kernels, and VMLX_DECODE_CPU_TRACE.
+        // vmlx-swift#781 runs Inkling-2-Mini JANGH bundles (OsaurusAI/Inkling-2-Mini-JANGH2): codebook routed
+        // experts with Inkling's softcapped activation, affine 8-bit projections in the fused decode and verify
+        // steps, dSpark with an affine output head, and fewer graph nodes per token (slice assignment no longer
+        // reshapes a same-shape update, which every model's KV append benefits from). The merge also carries
+        // vmlx-swift#782 (community MLX Inkling bundles load and keep their quantized projections) and Inkling image
+        // input (the in-bundle vision tower, built only for a vision request).
+        // vmlx-swift#783 moves MLX to osaurus-ai/mlx#55 (rcfa's CPU kernels, IO and upstream Metal fixes: column-reduction
+        // offsets, fp8 NaN handling, single-rounding biased GEMV, temp-file + rename saves) and sweeps the save temps
+        // a killed cache store leaves behind.
+        // vmlx-swift#784 keeps Inkling sliding-window KV bounded during decode and in stored prefixes.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "1bcd74ad182103a3b83941f61e57ee0bac23b330"
+            revision: "22ecedd3a4e0b5a820e99b213a54bfa0f1fc1b6d"
         ),
-        // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
-        // calls that osaurus's `TTSService` doesn't pass. Pinning to the
-        // last working version until osaurus catches up. Bumping requires
-        // a paired osaurus-side TTSService update.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", "0.14.0" ..< "0.14.2"),
+        // FluidAudio minors break source compatibility (0.14.3 added a
+        // required `language:` to PocketTTS downloads; 0.18.2 moved the
+        // English PocketTTS pack). Stay within one minor so a bump is always
+        // paired with a `Managers/TTS` + `SpeechService` update.
+        // Traits: `TTS` only. `NemoTextProcessing` links a prebuilt Rust
+        // staticlib whose personality routine, on top of the Rust code
+        // already in this graph, exceeds what compact unwind can encode
+        // (ld: "Too many personality routines"). TTS frontends then use
+        // FluidAudio's built-in normalizers. `Diarizer` is unused.
+        .package(
+            url: "https://github.com/FluidInference/FluidAudio.git", "0.18.3" ..< "0.19.0",
+            traits: ["TTS"]),
         // VecturaKit 6.x keeps embedding providers out of the core package.
         // Osaurus supplies its embedder from vmlx-swift so the app graph does
         // not pull a second transformer/embedding stack.
@@ -374,6 +408,8 @@ let package = Package(
         ),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.23.2"),
         .package(path: "../OsaurusNetworking"),
+        // osaurus-sync's Swift package, vendored by scripts/update-osaurus-sync.sh.
+        .package(path: "../Vendor/OsaurusSync"),
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
         .package(url: "https://github.com/raspu/Highlightr", from: "2.3.0"),
@@ -387,6 +423,10 @@ let package = Package(
         // Crash + app-hang reporting (Sentry). Consent-gated through the same
         // `TelemetryService` opt-in as Aptabase — see `CrashReportingService`.
         .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "9.15.0"),
+        // The onboarding dino character (`Resources/Animations/dino.riv`).
+        // 6.29 is the first release whose concurrency API (`Worker`, `File`,
+        // `ViewModelInstance`) is the supported data-binding path.
+        .package(url: "https://github.com/rive-app/rive-ios", from: "6.29.0"),
     ],
     targets: [
         // Vendored SQLCipher 4.6.1 amalgamation (CommonCrypto
@@ -522,22 +562,36 @@ let package = Package(
                 .product(name: "VecturaKit", package: "VecturaKit"),
                 .product(name: "OsaurusNetworking", package: "OsaurusNetworking"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
+                .product(name: "OsaurusSync", package: "OsaurusSync"),
                 .product(name: "P256K", package: "swift-secp256k1"),
                 .product(name: "libsecp256k1", package: "swift-secp256k1"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
                 .product(name: "Containerization", package: "containerization"),
                 .product(name: "ContainerizationExtras", package: "containerization"),
+                .product(name: "ContainerizationArchive", package: "containerization"),
                 .product(name: "Highlightr", package: "Highlightr"),
                 .product(name: "AAInfographics", package: "AAChartKit-Swift"),
                 .product(name: "Aptabase", package: "aptabase-swift"),
                 .product(name: "Sentry", package: "sentry-cocoa"),
+                .product(name: "RiveRuntime", package: "rive-ios"),
             ],
             path: ".",
-            exclude: ["Tests", "SQLCipher", "ObjCSupport", "PluginHost"],
+            exclude: ["Tests", "DesignLibraryTests", "SQLCipher", "ObjCSupport", "PluginHost", "JSHost"]
+                + (designInspectorBuild ? [] : ["DevelopmentDesign"]),
             // `.copy` keeps the embedding model's folder intact; `.process`
             // would flatten its config.json/tokenizer.json into the bundle root.
-            resources: [.process("Resources"), .copy("EmbeddingModels/potion-base-4M")],
-            swiftSettings: [
+            resources: [
+                .process("Resources"),
+                .copy("Models/Theme/DesignLibrary/LibraryResources"),
+                .copy("EmbeddingModels/potion-base-4M"),
+            ]
+                + (designInspectorBuild ? [.copy("DevelopmentDesign/DesignInspectorResources")] : []),
+            // This local UI tool uses the Release dependency graph while avoiding
+            // expensive whole-app optimization on every structural inspector edit.
+            // Normal builds retain their existing optimization settings.
+            swiftSettings: (designInspectorBuild ? [
+                .define("OSAURUS_DESIGN_INSPECTOR"), .unsafeFlags(["-Onone"])
+            ] : []) + [
                 // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+
                 // SDK. Enable this flag when building against that SDK (or newer) to
                 // read the real on-device context window; leave it off on older SDKs
@@ -552,6 +606,16 @@ let package = Package(
             name: "osaurus-plugin-host",
             path: "PluginHost"
         ),
+        // Foundation + JavaScriptCore only, for the same reason.
+        .executableTarget(
+            name: "osaurus-js-host",
+            path: "JSHost"
+        ),
+        .testTarget(
+            name: "DesignLibraryTests",
+            dependencies: ["OsaurusCore"],
+            path: "DesignLibraryTests"
+        ),
         .testTarget(
             name: "OsaurusCoreTests",
             dependencies: [
@@ -561,12 +625,16 @@ let package = Package(
                 // directory for every test lane (swift test AND xcodebuild),
                 // so PluginProcessHostTests can spawn the real executable.
                 "osaurus-plugin-host",
+                "osaurus-js-host",
                 .product(name: "VMLXJinja", package: "vmlx-swift"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
             ],
             path: "Tests",
-            resources: [.process("ComputerUse/Fixtures"), .copy("Identity/Fixtures")]
+            resources: [
+                .process("ComputerUse/Fixtures"), .copy("Identity/Fixtures"), .copy("Workflow/RegistryFixtures"),
+                .copy("Sync/SyncFixtures"),
+            ]
         ),
     ]
 )

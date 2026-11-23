@@ -4,152 +4,132 @@
 //
 //  Cross-tab results for the settings sidebar search (Phase 1 of global
 //  settings search). Replaces the tab content while the search field has a
-//  query, listing matching settings from every tab grouped by tab. Selecting a
-//  result navigates to its tab.
+//  query, listing matching settings from every tab grouped by tab, then the
+//  user's own agents, workflows, models, servers, providers and themes whose
+//  name matches. Selecting a result navigates to it.
 //
 
 import SwiftUI
 
 struct SettingsSearchResultsView: View {
+    @Environment(\.theme) private var theme
     let query: String
     let onSelect: (SettingsSearchEntry) -> Void
+    let onOpenEntity: (SettingsEntityCandidate) -> Void
 
-    @Environment(\.theme) private var theme
+    @State private var candidates: [SettingsEntityCandidate] = []
+    /// Results for the last settled query. The ranked search includes a
+    /// typo pass, so it runs once per query rather than per render.
+    @State private var snapshot: Snapshot?
 
-    private var results: [SettingsSearchEntry] {
-        SettingsSearchIndex.search(query)
-    }
+    struct Snapshot {
+        let query: String
+        let results: [SettingsSearchEntry]
+        let entities: [SettingsEntityCandidate]
+        /// Results grouped by tab, tabs ordered by their first (best-ranked) hit.
+        let grouped: [(tab: ManagementTab, entries: [SettingsSearchEntry])]
 
-    /// Results grouped by tab, tabs ordered by their first (best-ranked) hit.
-    private var grouped: [(tab: ManagementTab, entries: [SettingsSearchEntry])] {
-        var order: [ManagementTab] = []
-        var byTab: [ManagementTab: [SettingsSearchEntry]] = [:]
-        for entry in results {
-            if byTab[entry.tab] == nil { order.append(entry.tab) }
-            byTab[entry.tab, default: []].append(entry)
+        init(query: String, candidates: [SettingsEntityCandidate]) {
+            self.query = query
+            results = SettingsSearchIndex.search(query)
+            entities = SettingsEntitySearch.match(query, in: candidates)
+            var order: [ManagementTab] = []
+            var byTab: [ManagementTab: [SettingsSearchEntry]] = [:]
+            for entry in results {
+                if byTab[entry.tab] == nil { order.append(entry.tab) }
+                byTab[entry.tab, default: []].append(entry)
+            }
+            grouped = order.map { ($0, byTab[$0] ?? []) }
         }
-        return order.map { ($0, byTab[$0] ?? []) }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            if results.isEmpty {
-                emptyState
+        let current = snapshot ?? Snapshot(query: query, candidates: candidates)
+        let results = current.results
+        let entities = current.entities
+        VStack(alignment: .leading, spacing: theme.space.s0) {
+            SettingsPageHeader(title: "Search Results", subtitle: matchSummary(current))
+            if results.isEmpty && entities.isEmpty {
+                SettingsEmptyState(
+                    inline: "magnifyingglass",
+                    title: L("No settings match \"\(current.query)\""),
+                    hint: "Try a different term, like \u{201C}hotkey\u{201D} or \u{201C}transcription\u{201D}."
+                )
+                .frame(maxHeight: .infinity)
             } else {
-                resultsList
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Search Results", bundle: .module)
-                .font(.system(size: 22, weight: .bold))
-                .foregroundColor(theme.primaryText)
-            Text(
-                results.count == 1
-                    ? L("1 setting matches \"\(query)\"")
-                    : L("\(results.count) settings match \"\(query)\"")
-            )
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 24)
-        .padding(.top, 28)
-        .padding(.bottom, 16)
-    }
-
-    private var resultsList: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                ForEach(grouped, id: \.tab) { group in
-                    VStack(alignment: .leading, spacing: 6) {
-                        groupHeader(group.tab)
-                        ForEach(group.entries) { entry in
-                            resultRow(entry)
+                ScrollView {
+                    SettingsPageContent {
+                        ForEach(current.grouped, id: \.tab) { group in
+                            SettingsSection(title: group.tab.label) {
+                                ForEach(group.entries) { entry in
+                                    resultRow(entry)
+                                }
+                            }
+                        }
+                        if !entities.isEmpty {
+                            SettingsSection(title: "Your Items") {
+                                ForEach(entities) { entity in
+                                    entityRow(entity)
+                                }
+                            }
                         }
                     }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            candidates = SettingsEntitySearch.liveCandidates()
+            snapshot = Snapshot(query: query, candidates: candidates)
+        }
+        .task(id: query) {
+            guard snapshot?.query != query else { return }
+            try? await Task.sleep(for: SearchDebounce.interval)
+            guard !Task.isCancelled else { return }
+            snapshot = Snapshot(query: query, candidates: candidates)
         }
     }
 
-    private func groupHeader(_ tab: ManagementTab) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: tab.icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.accentColor)
-            Text(tab.label)
-                .textCase(.uppercase)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(theme.secondaryText)
-                .tracking(0.5)
+    private func matchSummary(_ current: Snapshot) -> String {
+        current.results.count == 1
+            ? L("1 setting matches \"\(current.query)\"")
+            : L("\(current.results.count) settings match \"\(current.query)\"")
+    }
+
+    private func entityRow(_ entity: SettingsEntityCandidate) -> some View {
+        Button {
+            onOpenEntity(entity)
+        } label: {
+            SettingsRow(title: entity.name, verbatimTitle: true) {
+                SettingsIconTile(icon: entity.kind.icon)
+            } description: {
+                Text(LocalizedStringKey(entity.kind.label), bundle: .module)
+            } trailing: {
+                SettingsChevron()
+            }
+            .contentShape(Rectangle())
         }
-        .padding(.bottom, 2)
+        .buttonStyle(.plain)
+        .pointingHandCursor()
     }
 
     private func resultRow(_ entry: SettingsSearchEntry) -> some View {
         Button {
             onSelect(entry)
         } label: {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(LocalizedStringKey(entry.title), bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                    if !entry.section.isEmpty {
-                        Text(LocalizedStringKey(entry.section), bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    if let note = entry.disambiguation {
-                        Text(LocalizedStringKey(note), bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+            SettingsRow(title: entry.title) {
+                if !entry.section.isEmpty {
+                    Text(LocalizedStringKey(entry.section), bundle: .module)
                 }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                if let note = entry.disambiguation {
+                    Text(LocalizedStringKey(note), bundle: .module)
+                }
+            } trailing: {
+                SettingsChevron()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 26))
-                .foregroundColor(theme.tertiaryText)
-            Text("No settings match \"\(query)\"", bundle: .module)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-            Text("Try a different term, like \u{201C}hotkey\u{201D} or \u{201C}transcription\u{201D}.", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
     }
 }

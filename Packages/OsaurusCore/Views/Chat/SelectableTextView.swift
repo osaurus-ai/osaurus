@@ -10,14 +10,6 @@ import SwiftUI
 
 // MARK: - Typography Spacing Constants
 
-/// Line spacing within text blocks (space between lines of the same block)
-private enum LineSpacing {
-    static let paragraph: CGFloat = 7  // ~1.5 line height for body text
-    static let heading: CGFloat = 2  // Tighter for headings
-    static let blockquote: CGFloat = 5  // Slightly open feel
-    static let listItem: CGFloat = 6  // Good for multi-line items
-}
-
 /// Block spacing between different content blocks
 private enum BlockSpacing {
     static let paragraphAfterOther: CGFloat = 14
@@ -49,6 +41,7 @@ enum SelectableTextBlock: Equatable {
 extension NSAttributedString.Key {
     /// Marks a range as a blockquote for custom drawing (vertical accent bar)
     static let blockquoteMarker = NSAttributedString.Key("osaurus.blockquote")
+    static let inspectionMinimumLineHeight = NSAttributedString.Key("osaurus.inspectionLineHeight")
     /// Marks a range as a heading that should have an underline (H1/H2)
     static let headingUnderline = NSAttributedString.Key("osaurus.headingUnderline")
 }
@@ -58,14 +51,18 @@ extension NSAttributedString.Key {
 struct SelectableTextView: NSViewRepresentable {
     let blocks: [SelectableTextBlock]
     let baseWidth: CGFloat
-    let theme: ThemeProtocol
+    private let sourceTheme: any ThemeProtocol
+    var theme: any ThemeProtocol { RichTextInspectionStyle.scope(sourceTheme) }
+    init(blocks: [SelectableTextBlock], baseWidth: CGFloat, theme: any ThemeProtocol, cacheKey: String? = nil) {
+        self.blocks = blocks; self.baseWidth = baseWidth; self.sourceTheme = theme; self.cacheKey = cacheKey
+    }
     /// Optional cache key (turn ID) for persisting measured height across view recycling
     var cacheKey: String? = nil
 
     final class Coordinator {
         var lastBlocks: [SelectableTextBlock] = []
         var lastWidth: CGFloat = 0
-        var lastThemeFingerprint: String = ""
+        var lastThemeFingerprint: Int?
         var lastMeasuredHeight: CGFloat = 0
         var cacheKey: String? = nil
         var blockLengths: [Int] = []  // per-block rendered lengths for incremental updates
@@ -113,25 +110,30 @@ struct SelectableTextView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = false
         textView.textContainer?.lineFragmentPadding = 0
 
-        // Apply theme selection color
+        // Selection, cursor and link roles.
         textView.selectedTextAttributes = [
-            .backgroundColor: NSColor(theme.selectionColor)
+            .backgroundColor: NSColor(theme.selection.background),
+            .foregroundColor: NSColor(theme.selection.foreground),
+        ]
+        textView.insertionPointColor = NSColor(theme.cursor)
+        textView.linkTextAttributes = [
+            .foregroundColor: NSColor(theme.text.link),
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .cursor: NSCursor.pointingHand,
         ]
 
-        // Apply cursor color
-        textView.insertionPointColor = NSColor(theme.cursorColor)
-
         // Set theme colors for custom drawing
-        textView.accentColor = NSColor(theme.accentColor)
-        textView.blockquoteBarColor = NSColor(theme.accentColor).withAlphaComponent(0.6)
-        textView.secondaryBackgroundColor = NSColor(theme.secondaryBackground)
+        textView.accentColor = NSColor(theme.text.link)
+        textView.blockquoteBarColor = NSColor(theme.border.strong)
+        textView.secondaryBackgroundColor = NSColor(theme.surface.subtle)
+        RichTextInspectionStyle.prepare(textView, theme: theme)
 
         return textView
     }
 
     func updateNSView(_ textView: SelectableNSTextView, context: Context) {
         // compute change flags first so every guard below can reference them cheaply
-        let themeFingerprint = makeThemeFingerprint()
+        let themeFingerprint = theme.renderFingerprint
         let widthChanged = abs(context.coordinator.lastWidth - baseWidth) > 0.1
         let themeChanged = context.coordinator.lastThemeFingerprint != themeFingerprint
         let blocksChanged = context.coordinator.lastBlocks != blocks
@@ -147,11 +149,19 @@ struct SelectableTextView: NSViewRepresentable {
         // custom drawing — only push these when the theme actually changes.
         if themeChanged {
             textView.selectedTextAttributes = [
-                .backgroundColor: NSColor(theme.selectionColor)
+                .backgroundColor: NSColor(theme.selection.background),
+                .foregroundColor: NSColor(theme.selection.foreground),
             ]
-            textView.accentColor = NSColor(theme.accentColor)
-            textView.blockquoteBarColor = NSColor(theme.accentColor).withAlphaComponent(0.6)
-            textView.secondaryBackgroundColor = NSColor(theme.secondaryBackground)
+            textView.insertionPointColor = NSColor(theme.cursor)
+            textView.linkTextAttributes = [
+                .foregroundColor: NSColor(theme.text.link),
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .cursor: NSCursor.pointingHand,
+            ]
+            textView.accentColor = NSColor(theme.text.link)
+            textView.blockquoteBarColor = NSColor(theme.border.strong)
+            textView.secondaryBackgroundColor = NSColor(theme.surface.subtle)
+        RichTextInspectionStyle.prepare(textView, theme: theme)
         }
 
         if blocksChanged || widthChanged || themeChanged {
@@ -258,6 +268,11 @@ struct SelectableTextView: NSViewRepresentable {
 
         let damageStart = prefixLength
 
+        // One edit session: each mutation outside one runs its own
+        // `processEditing` and layout invalidation.
+        storage.beginEditing()
+        defer { storage.endEditing() }
+
         // Delete everything after the common prefix
         let deleteRange = NSRange(location: prefixLength, length: storage.length - prefixLength)
         if deleteRange.length > 0 { storage.deleteCharacters(in: deleteRange) }
@@ -273,17 +288,12 @@ struct SelectableTextView: NSViewRepresentable {
         }
 
         // Render and append changed/new blocks
-        let scale = Typography.scale(for: Typography.baseWidth)
-        let bodyFontSize = CGFloat(theme.bodySize) * scale
-
         for i in diffIndex ..< newBlocks.count {
             let isFirst = i == 0
             let attrString = renderBlock(
                 newBlocks[i],
                 isFirst: isFirst,
-                previousBlock: isFirst ? nil : newBlocks[i - 1],
-                bodyFontSize: bodyFontSize,
-                scale: scale
+                previousBlock: isFirst ? nil : newBlocks[i - 1]
             )
             storage.append(attrString)
             var blockLen = attrString.length
@@ -320,8 +330,6 @@ struct SelectableTextView: NSViewRepresentable {
 
     func buildAttributedString(coordinator: Coordinator) -> NSMutableAttributedString {
         let result = NSMutableAttributedString()
-        let scale = Typography.scale(for: Typography.baseWidth)
-        let bodyFontSize = CGFloat(theme.bodySize) * scale
         var lengths: [Int] = []
 
         for (i, block) in blocks.enumerated() {
@@ -330,9 +338,7 @@ struct SelectableTextView: NSViewRepresentable {
             let attr = renderBlock(
                 block,
                 isFirst: isFirst,
-                previousBlock: isFirst ? nil : blocks[i - 1],
-                bodyFontSize: bodyFontSize,
-                scale: scale
+                previousBlock: isFirst ? nil : blocks[i - 1]
             )
             result.append(attr)
 
@@ -351,23 +357,20 @@ struct SelectableTextView: NSViewRepresentable {
     func renderBlock(
         _ block: SelectableTextBlock,
         isFirst: Bool,
-        previousBlock: SelectableTextBlock?,
-        bodyFontSize: CGFloat,
-        scale: CGFloat
+        previousBlock: SelectableTextBlock?
     ) -> NSMutableAttributedString {
         let spacing = isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock)
 
         switch block {
         case .paragraph(let text):
-            let attrString = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular)
-            applyParagraphStyle(to: attrString, lineSpacing: LineSpacing.paragraph, spacingBefore: spacing)
+            let attrString = renderInlineMarkdown(text, role: .body)
+            applyParagraphStyle(to: attrString, role: .body, spacingBefore: spacing)
             return attrString
 
         case .heading(let level, let text):
-            let fontSize = headingSize(level: level, scale: scale)
-            let weight = level <= 2 ? NSFont.Weight.bold : .semibold
-            let attrString = renderInlineMarkdown(text, fontSize: fontSize, weight: weight)
-            applyParagraphStyle(to: attrString, lineSpacing: LineSpacing.heading, spacingBefore: spacing)
+            let role = headingRole(level: level)
+            let attrString = renderInlineMarkdown(text, role: role)
+            applyParagraphStyle(to: attrString, role: role, spacingBefore: spacing)
             if level <= 2 {
                 attrString.addAttribute(
                     .headingUnderline,
@@ -378,15 +381,15 @@ struct SelectableTextView: NSViewRepresentable {
             return attrString
 
         case .blockquote(let text):
-            let attrString = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular, isItalic: true)
+            let attrString = renderInlineMarkdown(text, role: .body, isItalic: true)
             let fullRange = NSRange(location: 0, length: attrString.length)
-            attrString.addAttribute(.foregroundColor, value: NSColor(theme.secondaryText), range: fullRange)
+            attrString.addAttribute(.foregroundColor, value: NSColor(theme.text.secondary), range: fullRange)
             attrString.addAttribute(.blockquoteMarker, value: true, range: fullRange)
             applyParagraphStyle(
                 to: attrString,
-                lineSpacing: LineSpacing.blockquote,
+                role: .body,
                 spacingBefore: spacing,
-                leftIndent: 20
+                leftIndent: RichTextInspectionStyle.metric("padding", theme.space.s20, theme)
             )
             return attrString
 
@@ -399,17 +402,17 @@ struct SelectableTextView: NSViewRepresentable {
                 NSMutableAttributedString(
                     string: bullet,
                     attributes: [
-                        .font: nsFont(size: bodyFontSize, weight: .medium),
-                        .foregroundColor: NSColor(theme.accentColor),
+                        .font: font(.body),
+                        .foregroundColor: NSColor(theme.text.secondary),
                     ]
                 )
             )
             fullLine.append(NSAttributedString(string: "\t"))
-            fullLine.append(renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular))
+            fullLine.append(renderInlineMarkdown(text, role: .body))
 
             applyListParagraphStyle(
                 to: fullLine,
-                lineSpacing: LineSpacing.listItem,
+                role: .body,
                 spacingBefore: spacing,
                 bulletWidth: bulletWidth,
                 indentLevel: indentLevel
@@ -421,14 +424,13 @@ struct SelectableTextView: NSViewRepresentable {
             let hrAttr = NSMutableAttributedString(
                 string: hrText,
                 attributes: [
-                    .font: cachedFont(size: bodyFontSize * 0.5, weight: .ultraLight, italic: false),
-                    .foregroundColor: NSColor(theme.primaryBorder.opacity(0.4)),
+                    .font: font(.caption),
+                    .foregroundColor: NSColor(theme.border.subtle),
                 ]
             )
-            let style = NSMutableParagraphStyle()
-            style.alignment = .center
+            let style = theme.paragraphStyle(.caption, alignment: .center)
             style.paragraphSpacingBefore = spacing
-            style.paragraphSpacing = 4
+            style.paragraphSpacing = theme.space.s4
             hrAttr.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: hrAttr.length))
             return hrAttr
 
@@ -436,7 +438,6 @@ struct SelectableTextView: NSViewRepresentable {
             return renderTable(
                 headers: headers,
                 rows: rows,
-                bodyFontSize: bodyFontSize,
                 spacingBefore: spacing
             )
         }
@@ -451,11 +452,9 @@ struct SelectableTextView: NSViewRepresentable {
     private func renderTable(
         headers: [String],
         rows: [[String]],
-        bodyFontSize: CGFloat,
         spacingBefore: CGFloat
     ) -> NSMutableAttributedString {
-        let fontSize = bodyFontSize * 0.95
-        let columnGap: CGFloat = 16
+        let columnGap = RichTextInspectionStyle.metric("gap", theme.space.s16, theme)
         let maxColumnWidth: CGFloat = 280
 
         let columnCount = max(headers.count, rows.map(\.count).max() ?? 0)
@@ -467,12 +466,12 @@ struct SelectableTextView: NSViewRepresentable {
         // Header cells use semibold weight.
         let headerCells: [NSMutableAttributedString] = (0 ..< columnCount).map { i in
             let text = i < headers.count ? headers[i] : ""
-            return renderInlineMarkdown(text, fontSize: fontSize, weight: .semibold)
+            return renderInlineMarkdown(text, role: .label)
         }
         let bodyCells: [[NSMutableAttributedString]] = rows.map { row in
             (0 ..< columnCount).map { i in
                 let text = i < row.count ? row[i] : ""
-                return renderInlineMarkdown(text, fontSize: fontSize, weight: .regular)
+                return renderInlineMarkdown(text, role: .bodySmall)
             }
         }
 
@@ -520,12 +519,10 @@ struct SelectableTextView: NSViewRepresentable {
             tabStops.append(NSTextTab(textAlignment: .left, location: cursor, options: [:]))
         }
 
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 2
+        let paragraphStyle = theme.paragraphStyle(.bodySmall, lineBreakMode: .byTruncatingTail)
         paragraphStyle.paragraphSpacingBefore = spacingBefore
         paragraphStyle.tabStops = tabStops
         paragraphStyle.defaultTabInterval = max(columnGap, 1)
-        paragraphStyle.lineBreakMode = .byTruncatingTail
 
         let result = NSMutableAttributedString()
 
@@ -545,13 +542,14 @@ struct SelectableTextView: NSViewRepresentable {
         appendRow(cappedHeaders, isLast: false)
 
         // Separator — horizontal rule beneath headers
-        let separatorFont = cachedFont(size: fontSize * 0.5, weight: .ultraLight, italic: false)
+        let separatorFont = font(.caption)
         let separatorWidth = (cursor + colWidths.last!)
+        let ruleAdvance = max(("\u{2500}" as NSString).size(withAttributes: [.font: separatorFont]).width, 1)
         let separator = NSMutableAttributedString(
-            string: String(repeating: "\u{2500}", count: max(Int(separatorWidth / (fontSize * 0.3)), 8)),
+            string: String(repeating: "\u{2500}", count: max(Int(separatorWidth / ruleAdvance), 8)),
             attributes: [
                 .font: separatorFont,
-                .foregroundColor: NSColor(theme.primaryBorder.opacity(0.5)),
+                .foregroundColor: NSColor(theme.border.subtle),
             ]
         )
         result.append(separator)
@@ -574,12 +572,14 @@ struct SelectableTextView: NSViewRepresentable {
 
     private func applyParagraphStyle(
         to attrString: NSMutableAttributedString,
-        lineSpacing: CGFloat,
+        role: ThemeTextStyleRole,
         spacingBefore: CGFloat,
         leftIndent: CGFloat = 0
     ) {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = lineSpacing
+        let paragraphStyle = theme.paragraphStyle(role)
+        attrString.enumerateAttribute(.inspectionMinimumLineHeight, in: NSRange(location: 0, length: attrString.length)) { value, _, _ in
+            if let value = value as? CGFloat { paragraphStyle.minimumLineHeight = max(paragraphStyle.minimumLineHeight, value) }
+        }
         paragraphStyle.paragraphSpacingBefore = spacingBefore
         paragraphStyle.firstLineHeadIndent = leftIndent
         paragraphStyle.headIndent = leftIndent
@@ -593,18 +593,20 @@ struct SelectableTextView: NSViewRepresentable {
 
     private func applyListParagraphStyle(
         to attrString: NSMutableAttributedString,
-        lineSpacing: CGFloat,
+        role: ThemeTextStyleRole,
         spacingBefore: CGFloat,
         bulletWidth: CGFloat,
         indentLevel: Int = 0
     ) {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = lineSpacing
+        let paragraphStyle = theme.paragraphStyle(role)
+        attrString.enumerateAttribute(.inspectionMinimumLineHeight, in: NSRange(location: 0, length: attrString.length)) { value, _, _ in
+            if let value = value as? CGFloat { paragraphStyle.minimumLineHeight = max(paragraphStyle.minimumLineHeight, value) }
+        }
         paragraphStyle.paragraphSpacingBefore = spacingBefore
 
         // Base indent for the list, plus additional indent per nesting level
-        let baseIndent: CGFloat = 24
-        let indentPerLevel: CGFloat = 20
+        let baseIndent = RichTextInspectionStyle.metric("padding", theme.space.s24, theme)
+        let indentPerLevel = RichTextInspectionStyle.metric("padding", theme.space.s20, theme)
         let totalIndent = baseIndent + (CGFloat(indentLevel) * indentPerLevel)
 
         // Hanging indent: bullet at left margin, text indented
@@ -624,6 +626,10 @@ struct SelectableTextView: NSViewRepresentable {
     }
 
     private func spacingBefore(block: SelectableTextBlock, previousBlock: SelectableTextBlock?) -> CGFloat {
+        guard previousBlock != nil else { return 0 }
+        return RichTextInspectionStyle.metric("gap", originalSpacingBefore(block: block, previousBlock: previousBlock), theme)
+    }
+    private func originalSpacingBefore(block: SelectableTextBlock, previousBlock: SelectableTextBlock?) -> CGFloat {
         guard previousBlock != nil else { return 0 }
 
         switch block {
@@ -666,16 +672,15 @@ struct SelectableTextView: NSViewRepresentable {
 
     private func renderInlineMarkdown(
         _ text: String,
-        fontSize: CGFloat,
-        weight: NSFont.Weight,
+        role: ThemeTextStyleRole,
         isItalic: Bool = false
     ) -> NSMutableAttributedString {
-        // Base attributes - use cached font
-        let baseFont = cachedFont(size: fontSize, weight: weight, italic: isItalic)
-        let baseAttributes: [NSAttributedString.Key: Any] = [
-            .font: baseFont,
-            .foregroundColor: NSColor(theme.primaryText),
+        var baseAttributes: [NSAttributedString.Key: Any] = [
+            .font: font(role, italic: isItalic),
+            .foregroundColor: NSColor(theme.text.primary),
         ]
+        let tracking = theme.scaledTextStyle(role).tracking
+        if tracking != 0 { baseAttributes[.kern] = tracking }
 
         // Check for inline math — if present, split and render segments
         if InlineMathScanner.mayContainMath(text) {
@@ -684,8 +689,7 @@ struct SelectableTextView: NSViewRepresentable {
                 return withKnowledgeLinks(
                     renderSegmentsWithMath(
                         segments,
-                        fontSize: fontSize,
-                        weight: weight,
+                        role: role,
                         isItalic: isItalic,
                         baseAttributes: baseAttributes
                     ))
@@ -704,7 +708,7 @@ struct SelectableTextView: NSViewRepresentable {
         ) {
             // Convert to mutable and apply theme styling
             let mutable = NSMutableAttributedString(attributedString: markdownAttr)
-            applyThemeStyling(to: mutable, baseFontSize: fontSize, baseWeight: weight, isItalic: isItalic)
+            applyThemeStyling(to: mutable, role: role, isItalic: isItalic, tracking: tracking)
             return withKnowledgeLinks(mutable)
         }
 
@@ -718,7 +722,7 @@ struct SelectableTextView: NSViewRepresentable {
     private func withKnowledgeLinks(_ attrString: NSMutableAttributedString) -> NSMutableAttributedString {
         let matches = KnowledgeLinkResolver.plainTextMatches(in: attrString.string)
         guard !matches.isEmpty else { return attrString }
-        let accentColor = NSColor(theme.accentColor)
+        let accentColor = NSColor(theme.text.link)
         for match in matches {
             guard match.range.location + match.range.length <= attrString.length,
                 attrString.attribute(.link, at: match.range.location, effectiveRange: nil) == nil
@@ -739,13 +743,13 @@ struct SelectableTextView: NSViewRepresentable {
     /// Build an attributed string from mixed text/math segments.
     private func renderSegmentsWithMath(
         _ segments: [InlineMathScanner.Segment],
-        fontSize: CGFloat,
-        weight: NSFont.Weight,
+        role: ThemeTextStyleRole,
         isItalic: Bool,
         baseAttributes: [NSAttributedString.Key: Any]
     ) -> NSMutableAttributedString {
         let result = NSMutableAttributedString()
-        let textColor = NSColor(theme.primaryText)
+        let textColor = NSColor(theme.text.primary)
+        let fontSize = theme.pointSize(role)
 
         for segment in segments {
             if segment.isMath {
@@ -779,7 +783,12 @@ struct SelectableTextView: NSViewRepresentable {
                     )
                 {
                     let mutable = NSMutableAttributedString(attributedString: markdownAttr)
-                    applyThemeStyling(to: mutable, baseFontSize: fontSize, baseWeight: weight, isItalic: isItalic)
+                    applyThemeStyling(
+                        to: mutable,
+                        role: role,
+                        isItalic: isItalic,
+                        tracking: theme.scaledTextStyle(role).tracking
+                    )
                     result.append(mutable)
                 } else {
                     result.append(NSMutableAttributedString(string: segment.text, attributes: baseAttributes))
@@ -798,47 +807,43 @@ struct SelectableTextView: NSViewRepresentable {
         return cache
     }()
 
-    private func cachedFont(size: CGFloat, weight: NSFont.Weight, italic: Bool) -> NSFont {
-        let key = "\(theme.primaryFontName)-\(size)-\(weight.rawValue)-\(italic)" as NSString
+    /// The role's font with emphasis traits layered on, so bold and italic
+    /// runs keep the style's family and size.
+    private func font(_ role: ThemeTextStyleRole, bold: Bool = false, italic: Bool = false) -> NSFont {
+        let key = "\(theme.renderFingerprint)-\(role.rawValue)-\(bold)-\(italic)" as NSString
         if let cached = Self.fontCache.object(forKey: key) {
             return cached
         }
-        let font = nsFont(size: size, weight: weight, italic: italic)
-        Self.fontCache.setObject(font, forKey: key)
-        return font
-    }
-
-    private func cachedMonoFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
-        let key = "mono-\(theme.monoFontName)-\(size)-\(weight.rawValue)" as NSString
-        if let cached = Self.fontCache.object(forKey: key) {
-            return cached
-        }
-        let font = nsMonoFont(size: size, weight: weight)
+        var font = theme.nsFont(role)
+        if bold { font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) }
+        if italic { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
         Self.fontCache.setObject(font, forKey: key)
         return font
     }
 
     private func applyThemeStyling(
         to attrString: NSMutableAttributedString,
-        baseFontSize: CGFloat,
-        baseWeight: NSFont.Weight,
-        isItalic: Bool
+        role: ThemeTextStyleRole,
+        isItalic: Bool,
+        tracking: Double
     ) {
         let fullRange = NSRange(location: 0, length: attrString.length)
 
         // Cache colors to avoid repeated conversions
-        let primaryTextColor = NSColor(theme.primaryText)
-        let accentColor = NSColor(theme.accentColor)
+        let primaryTextColor = NSColor(theme.text.primary)
+        let accentColor = NSColor(theme.text.link)
 
         // Apply base text color
         attrString.addAttribute(.foregroundColor, value: primaryTextColor, range: fullRange)
+        if tracking != 0 { attrString.addAttribute(.kern, value: tracking, range: fullRange) }
 
         // Pre-cache common fonts
-        let baseFont = cachedFont(size: baseFontSize, weight: baseWeight, italic: isItalic)
-        let boldFont = cachedFont(size: baseFontSize, weight: .bold, italic: false)
-        let boldItalicFont = cachedFont(size: baseFontSize, weight: .bold, italic: true)
-        let italicFont = cachedFont(size: baseFontSize, weight: baseWeight, italic: true)
-        let codeFont = cachedMonoFont(size: baseFontSize * 0.9, weight: .regular)
+        let baseIsBold = theme.scaledTextStyle(role).weight >= 600
+        let baseFont = font(role, bold: baseIsBold, italic: isItalic)
+        let boldFont = font(role, bold: true)
+        let boldItalicFont = font(role, bold: true, italic: true)
+        let italicFont = font(role, bold: baseIsBold, italic: true)
+        let codeFont = font(.code)
 
         // Enumerate and fix fonts/styles
         attrString.enumerateAttributes(in: fullRange, options: []) { attributes, range, _ in
@@ -857,9 +862,10 @@ struct SelectableTextView: NSViewRepresentable {
             if traits.contains(.monoSpace) || intent.contains(.code) {
                 // Inline code styling (bold-wrapped code keeps its bold)
                 let isBoldCode = traits.contains(.bold) || intent.contains(.stronglyEmphasized)
-                let font = isBoldCode ? cachedMonoFont(size: baseFontSize * 0.9, weight: .bold) : codeFont
-                attrString.addAttribute(.font, value: font, range: range)
+                attrString.addAttribute(.font, value: isBoldCode ? font(.code, bold: true) : codeFont, range: range)
                 attrString.addAttribute(.foregroundColor, value: accentColor, range: range)
+                attrString.addAttribute(.kern, value: theme.assignedTracking(RichTextInspectionStyle.key + "code") ?? 0, range: range)
+                attrString.addAttribute(.inspectionMinimumLineHeight, value: theme.assignedLineHeight(RichTextInspectionStyle.key + "code", fallback: CGFloat(theme.lineHeight(.code))), range: range)
                 // A code span naming a real knowledge document becomes a
                 // clickable link to it (existence-gated, so ordinary
                 // path-shaped spans are untouched).
@@ -879,8 +885,7 @@ struct SelectableTextView: NSViewRepresentable {
             if attributes[.font] is NSFont {
                 // Determine weight and italic from existing font or intent
                 let isBold =
-                    traits.contains(.bold) || intent.contains(.stronglyEmphasized)
-                    || baseWeight == .bold || baseWeight == .semibold
+                    traits.contains(.bold) || intent.contains(.stronglyEmphasized) || baseIsBold
                 let fontIsItalic = traits.contains(.italic) || intent.contains(.emphasized) || isItalic
 
                 // Use pre-cached fonts
@@ -893,6 +898,13 @@ struct SelectableTextView: NSViewRepresentable {
                 }
             }
 
+            if [.body, .bodySmall].contains(role), intent.contains(.stronglyEmphasized) || (traits.contains(.bold) && !baseIsBold) {
+                let key = RichTextInspectionStyle.key + "emphasis"
+                newFont = theme.assignedNativeFont(key, fallback: boldFont)
+                if intent.contains(.emphasized) || traits.contains(.italic) { newFont = NSFontManager.shared.convert(newFont, toHaveTrait: .italicFontMask) }
+                attrString.addAttribute(.kern, value: theme.assignedTracking(key) ?? 0, range: range)
+                attrString.addAttribute(.inspectionMinimumLineHeight, value: theme.assignedLineHeight(key, fallback: CGFloat(theme.lineHeight(role))), range: range)
+            }
             attrString.addAttribute(.font, value: newFont, range: range)
 
             // Style links
@@ -922,91 +934,14 @@ struct SelectableTextView: NSViewRepresentable {
         return []
     }
 
-    // MARK: - Font Helpers
-
-    private func nsFont(size: CGFloat, weight: NSFont.Weight, italic: Bool = false) -> NSFont {
-        let fontName = theme.primaryFontName
-
-        // System font
-        if fontName.lowercased().contains("sf pro") || fontName.isEmpty {
-            var font = NSFont.systemFont(ofSize: size, weight: weight)
-            if italic {
-                font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
-            }
-            return font
-        }
-
-        // Custom font
-        if let customFont = NSFont(name: fontName, size: size) {
-            var font = customFont
-            if italic {
-                font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
-            }
-            // Apply weight
-            let weightValue = weightToNumber(weight)
-            font =
-                NSFontManager.shared.font(
-                    withFamily: fontName,
-                    traits: italic ? .italicFontMask : [],
-                    weight: weightValue,
-                    size: size
-                ) ?? font
-            return font
-        }
-
-        // Fallback
-        return NSFont.systemFont(ofSize: size, weight: weight)
-    }
-
-    private func nsMonoFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
-        let fontName = theme.monoFontName
-
-        // System mono font
-        if fontName.lowercased().contains("sf mono") || fontName.isEmpty {
-            return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
-        }
-
-        // Custom mono font
-        if let customFont = NSFont(name: fontName, size: size) {
-            return customFont
-        }
-
-        // Fallback
-        return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
-    }
-
-    private func weightToNumber(_ weight: NSFont.Weight) -> Int {
-        switch weight {
-        case .ultraLight: return 1
-        case .thin: return 2
-        case .light: return 3
-        case .regular: return 5
-        case .medium: return 6
-        case .semibold: return 8
-        case .bold: return 9
-        case .heavy: return 10
-        case .black: return 11
-        default: return 5
-        }
-    }
-
     // MARK: - Sizing Helpers
 
-    private func headingSize(level: Int, scale: CGFloat) -> CGFloat {
+    private func headingRole(level: Int) -> ThemeTextStyleRole {
         switch level {
-        case 1: return CGFloat(theme.titleSize) * scale
-        case 2: return (CGFloat(theme.titleSize) - 4) * scale
-        case 3: return CGFloat(theme.headingSize) * scale
-        case 4: return (CGFloat(theme.headingSize) - 2) * scale
-        case 5: return (CGFloat(theme.bodySize) + 2) * scale
-        default: return CGFloat(theme.bodySize) * scale
+        case 1, 2: return .title
+        case 3, 4: return .heading
+        default: return .label
         }
-    }
-
-    // MARK: - Theme Fingerprint
-
-    private func makeThemeFingerprint() -> String {
-        "\(theme.primaryFontName)|\(theme.monoFontName)|\(theme.titleSize)|\(theme.headingSize)|\(theme.bodySize)|\(theme.captionSize)|\(theme.codeSize)"
     }
 }
 
@@ -1016,6 +951,7 @@ struct SelectableTextView: NSViewRepresentable {
 /// Code blocks are now rendered as standalone `CodeBlockView` / `CodeNSTextView` — no code-block
 /// drawing happens here.
 final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
+    private let knowledgeMenuPresenter = AssignedMenuPanelPresenter()
 
     /// Slice of the thread-wide cross-block selection (see ChatCrossSelection).
     /// Painted at the top of `draw(_:)` — drawsBackground is false here, so
@@ -1195,7 +1131,9 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
         copyPath.representedObject = fileURL
         menu.addItem(copyPath)
 
-        return menu
+        knowledgeMenuPresenter.showContextMenu(menu, from: self,
+            theme: ThemeManager.shared.currentTheme, at: point)
+        return nil
     }
 
     /// One item per app that can open the file, default handler first.
@@ -1282,10 +1220,13 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
         }
     }
 
-    /// Theme colors for custom drawing (set by SelectableTextView on update)
-    var accentColor: NSColor = .controlAccentColor
-    var blockquoteBarColor: NSColor = .controlAccentColor
+    /// Theme colors for custom drawing (set by SelectableTextView on update).
+    /// `accentColor` carries `text.link`; `blockquoteBarColor` is `border.strong`.
+    var accentColor: NSColor = .linkColor
+    var blockquoteBarColor: NSColor = .separatorColor
     var secondaryBackgroundColor: NSColor = .clear
+    var inspectedQuoteWidth: CGFloat = 3
+    var inspectedQuoteRadius: CGFloat = 1.5
 
     /// Closure invoked on every `mouseMoved` (when the text view is
     /// the owner of an `NSTrackingArea` with `.mouseMoved`). Used by
@@ -1408,21 +1349,25 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
 
             guard rect.intersects(dirtyRect) else { return }
 
-            secondaryBackgroundColor.withAlphaComponent(0.3).setFill()
-            NSBezierPath(
-                roundedRect: NSRect(x: 4, y: rect.origin.y - 2, width: rect.width - 8, height: rect.height + 4),
-                xRadius: 6,
-                yRadius: 6
-            ).fill()
+            // The minimum line height adds its leading above the glyphs; start
+            // the bar at the glyphs so it brackets the text evenly.
+            if let font = textStorage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont,
+                let style = textStorage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+                    as? NSParagraphStyle
+            {
+                let natural = ceil(font.ascender - font.descender + font.leading)
+                let leading = min(max(0, style.minimumLineHeight - natural), rect.height / 2)
+                rect.origin.y += leading
+                rect.size.height -= leading
+            }
 
-            // Inset the bar 2pt from the background's top/bottom so it stays
-            // inside the corner curvature (radius 6 from x:4) instead of
-            // poking past the rounded corners.
+            // Bar only: a filled panel reads as a second surface on top of
+            // the assistant reply surface.
             blockquoteBarColor.setFill()
             NSBezierPath(
-                roundedRect: NSRect(x: 6, y: rect.origin.y, width: 3, height: rect.height),
-                xRadius: 1.5,
-                yRadius: 1.5
+                roundedRect: NSRect(x: 4, y: rect.origin.y, width: inspectedQuoteWidth, height: rect.height),
+                xRadius: inspectedQuoteRadius,
+                yRadius: inspectedQuoteRadius
             ).fill()
         }
 
@@ -1431,12 +1376,12 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
             guard value != nil else { return }
             let gr = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             let rect = layoutManager.boundingRect(forGlyphRange: gr, in: textContainer)
-            let lineRect = NSRect(x: 0, y: rect.maxY + 4, width: bounds.width, height: 1)
+            let lineRect = NSRect(x: 0, y: rect.maxY + 4, width: bounds.width, height: inspectedQuoteWidth)
 
             guard lineRect.intersects(dirtyRect) else { return }
 
-            NSGradient(colors: [accentColor.withAlphaComponent(0.3), accentColor.withAlphaComponent(0.05)])?
-                .draw(in: lineRect, angle: 0)
+            blockquoteBarColor.setFill()
+            lineRect.fill()
         }
 
         super.draw(dirtyRect)

@@ -33,8 +33,10 @@ final class FavoriteModelsStore: ObservableObject {
     /// Osaurus Cloud models every new user starts with in the Favourites
     /// shortlist, in display order. Matched against Router model ids by final
     /// path component (Router ids are provider-prefixed, e.g.
-    /// `osaurus/deepseek-v4-1-flash`), exactly like the first-run slug.
-    static let starterOsaurusCloudSlugs: [String] = [
+    /// `osaurus/deepseek-v4-1-flash`). The first slot is the first-run model:
+    /// `starterSlugs(routerModelIds:)` swaps in the newest DeepSeek Flash the
+    /// Router offers.
+    nonisolated static let starterOsaurusCloudSlugs: [String] = [
         RemoteProviderManager.firstRunOsaurusModelSlug,
         "claude-opus-5-5",
         "gpt-6-astra",
@@ -75,7 +77,11 @@ final class FavoriteModelsStore: ObservableObject {
     func seedStarterFavoritesIfNeeded(routerModelIds: [String], routerSourceKey: String) {
         var ledger = seededStarterSlugs
         let ledgerSet = Set(ledger)
-        let pending = Self.starterOsaurusCloudSlugs.filter { !ledgerSet.contains($0) }
+        let flashHandled = ledger.contains(where: RemoteProviderManager.isFirstRunOsaurusModelId)
+        let pending = Self.starterSlugs(routerModelIds: routerModelIds).filter { slug in
+            if RemoteProviderManager.isFirstRunOsaurusModelId(slug) { return !flashHandled }
+            return !ledgerSet.contains(slug)
+        }
         guard !pending.isEmpty else { return }
 
         if ledger.isEmpty, !favoriteKeys.isEmpty {
@@ -93,6 +99,17 @@ final class FavoriteModelsStore: ObservableObject {
         }
         if ledger != seededStarterSlugs {
             userDefaults.set(ledger, forKey: starterLedgerKey)
+        }
+    }
+
+    /// The starter slugs for this Router catalog: the first-run slot names
+    /// the newest DeepSeek Flash offered, and the fixed slug before the
+    /// catalog has one. A Flash slug already in the ledger fills the slot,
+    /// so a newer version never seeds a second Flash favourite.
+    nonisolated static func starterSlugs(routerModelIds: [String]) -> [String] {
+        let flash = RemoteProviderManager.newestFirstRunOsaurusModelId(in: routerModelIds).map(slug(of:))
+        return starterOsaurusCloudSlugs.map { starter in
+            starter == RemoteProviderManager.firstRunOsaurusModelSlug ? (flash ?? starter) : starter
         }
     }
 

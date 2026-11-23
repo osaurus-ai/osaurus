@@ -216,29 +216,32 @@ struct PerChatFolderIsolationTests {
         #expect(legacy.folderPath == nil)
     }
 
-    /// The v10 columns round-trip through SQLite, and sessions without a
-    /// folder store NULLs.
-    @Test func databaseRoundTripsFolderFields() throws {
-        let db = ChatHistoryDatabase()
-        try db.openInMemory()
+    /// The folder fields round-trip through the conversation store, and
+    /// sessions without a folder have none.
+    @MainActor
+    @Test func storeRoundTripsFolderFields() async throws {
+        try await ChatHistoryTestStorage.run {
+            let store = SyncConversationStore.shared
+            let bookmark = Data([0x01, 0x02, 0x03, 0x04, 0x05])
+            var withFolder = ChatSessionData(
+                title: "folder chat", turns: [ChatTurnData(role: .user, content: "work here")])
+            withFolder.folderBookmark = bookmark
+            withFolder.folderPath = "/Users/example/repo"
+            ChatSessionStore.save(withFolder)
 
-        let bookmark = Data([0x01, 0x02, 0x03, 0x04, 0x05])
-        var withFolder = ChatSessionData(title: "folder chat")
-        withFolder.folderBookmark = bookmark
-        withFolder.folderPath = "/Users/example/repo"
-        try db.saveSession(withFolder)
+            let withoutFolder = ChatSessionData(
+                title: "plain chat", turns: [ChatTurnData(role: .user, content: "no folder")])
+            ChatSessionStore.save(withoutFolder)
 
-        let withoutFolder = ChatSessionData(title: "plain chat")
-        try db.saveSession(withoutFolder)
+            let loadedWith = store.loadSession(id: withFolder.id)
+            #expect(loadedWith?.folderBookmark == bookmark)
+            #expect(loadedWith?.folderPath == "/Users/example/repo")
 
-        let loadedWith = db.loadSession(id: withFolder.id)
-        #expect(loadedWith?.folderBookmark == bookmark)
-        #expect(loadedWith?.folderPath == "/Users/example/repo")
-
-        let loadedWithout = db.loadSession(id: withoutFolder.id)
-        #expect(loadedWithout != nil)
-        #expect(loadedWithout?.folderBookmark == nil)
-        #expect(loadedWithout?.folderPath == nil)
+            let loadedWithout = store.loadSession(id: withoutFolder.id)
+            #expect(loadedWithout != nil)
+            #expect(loadedWithout?.folderBookmark == nil)
+            #expect(loadedWithout?.folderPath == nil)
+        }
     }
 
     // MARK: - Session round-trip through ChatSession

@@ -198,6 +198,13 @@ enum ExternalModelLocator {
         return url
     }
 
+    /// The registered entry for `id`, whether or not its bundle is still on disk.
+    static func entry(forId id: String) -> Discovered? {
+        lock.lock()
+        defer { lock.unlock() }
+        return loadedLocked()[id.lowercased()]
+    }
+
     /// Memoized result of `models()` for the registry generation it was built
     /// from. `models()` is on the 2s RAM-feasibility tick's call path (via
     /// `ModelManager.localModelsSnapshotNonBlocking`), and rebuilding it reads

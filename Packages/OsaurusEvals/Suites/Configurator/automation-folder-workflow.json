@@ -1,0 +1,62 @@
+{
+  "id": "configurator.automation-folder-workflow",
+  "domain": "configurator",
+  "label": "configurator • folder automation that runs an installed workflow on the changed files",
+  "query": "Watch my Downloads folder and run my Receipt Filer workflow on new files.",
+  "notes": "Folder source (path ~/Downloads) bound to the installed `Receipt Filer` workflow; its required `files` input takes the changed files ({{folder.changed_paths}}, which a new binding prefills). No agent.",
+  "fixtures": {
+    "seedInstalledWorkflows": [
+      {
+        "id": "6f1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c43",
+        "name": "Receipt Filer",
+        "summary": "File receipts into the right folder.",
+        "inputs": [
+          "files"
+        ],
+        "required": [
+          "files"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "folder"
+          }
+        }
+      ],
+      "argsMustNotContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "agents:"
+          }
+        }
+      ],
+      "expectAutomations": [
+        {
+          "sourceKind": "folder",
+          "action": "workflow",
+          "workflow": "Receipt Filer",
+          "inputKeys": [
+            "files"
+          ]
+        }
+      ],
+      "expectAutomationCount": 1,
+      "maxIterations": 8
+    }
+  }
+}

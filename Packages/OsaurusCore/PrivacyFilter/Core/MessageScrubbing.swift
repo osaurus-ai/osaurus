@@ -55,29 +55,41 @@ extension Array where Element == ChatMessage {
         return pieces
     }
 
-    /// Scrubbable segments contributed by the latest user turn only —
-    /// i.e. the slice starting at the most recent `role == "user"`
-    /// message and extending to the end of the array. Detection only
-    /// needs to scan new originals, because anything already scrubbed
-    /// on a prior turn is captured by the per-session `RedactionMap`
-    /// and re-applied via `applyingScrub(approved:)`.
-    ///
-    /// Returns the whole-history segments as a fallback when there is
-    /// no user message in scope (e.g. a system-only kickoff or an
-    /// assistant-led plugin agent transcript) so we don't accidentally
-    /// skip detection on a turn that actually does carry PII.
-    func latestUserTurnSegments() -> [String] {
-        guard let lastUserIdx = lastIndex(where: { $0.role == "user" }) else {
-            return scrubbableTexts()
+    /// Start of the latest user turn: the most recent `role == "user"`
+    /// message, or 0 when there is none (a system-only kickoff or an
+    /// assistant-led plugin transcript), so the whole array counts as
+    /// the turn and detection never skips one that carries PII.
+    var latestUserTurnStart: Int {
+        lastIndex(where: { $0.role == "user" }) ?? 0
+    }
+
+    /// Every scrubbable segment outside `system` messages, tagged with
+    /// the index of its message and who wrote it: the user (`user` and
+    /// any non-assistant, non-tool role), a tool (`tool`, named from the
+    /// matching assistant tool call), or the model (`assistant`: replies,
+    /// reasoning, tool-call arguments).
+    func originSegments() -> [(index: Int, text: String, origin: PrivacySegmentOrigin)] {
+        var toolNames: [String: String] = [:]
+        for message in self {
+            for call in message.tool_calls ?? [] {
+                toolNames[call.id] = call.function.name
+            }
         }
-        let slice = self[lastUserIdx...]
-        var pieces: [String] = []
-        pieces.reserveCapacity(slice.count)
-        for message in slice {
+        var out: [(index: Int, text: String, origin: PrivacySegmentOrigin)] = []
+        out.reserveCapacity(count)
+        for (index, message) in enumerated() {
             if message.role == "system" { continue }
+            let origin: PrivacySegmentOrigin
+            switch message.role {
+            case "assistant": origin = .modelOutput
+            case "tool": origin = .toolResult(message.tool_call_id.flatMap { toolNames[$0] })
+            default: origin = .userInput
+            }
+            var pieces: [String] = []
             message.appendScrubbableTexts(into: &pieces)
+            out.append(contentsOf: pieces.map { (index: index, text: $0, origin: origin) })
         }
-        return pieces
+        return out
     }
 
     /// Produce new messages with every scrubbable field rewritten by

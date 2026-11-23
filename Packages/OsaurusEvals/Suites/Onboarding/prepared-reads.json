@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.prepared-reads",
+  "domain": "onboarding",
+  "label": "onboarding • each card ask is a fixed read run by workflow id",
+  "query": "prepared_reads",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "prepared_reads"
+    }
+  }
+}

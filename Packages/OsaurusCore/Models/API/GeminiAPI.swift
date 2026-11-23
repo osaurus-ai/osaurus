@@ -250,6 +250,9 @@ struct GeminiGenerationConfig: Codable, Sendable {
     /// `"application/json"` for JSON mode (maps OpenAI
     /// `response_format: {type: json_object}`).
     var responseMimeType: String? = nil
+    /// JSON Schema the response must satisfy (maps OpenAI
+    /// `response_format: {type: json_schema}`).
+    var responseJsonSchema: JSONValue? = nil
     /// Thinking control. Gemini 3 models take `thinkingLevel`; Gemini 2.5
     /// models take a `thinkingBudget` token count. See
     /// `GeminiReasoningContract`.

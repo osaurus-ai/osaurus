@@ -427,6 +427,12 @@ public final class CrashReportingService {
             // Scope: crashes + app hangs. Watchdog termination is not
             // available on macOS; everything performance-related is off.
             options.enableCrashHandler = true
+            // Off by default on macOS. Without it, an uncaught NSException
+            // (e.g. AppKit throwing mid-layout) reaches
+            // `+[NSApplication _crashOnException:]` and is reported only as a
+            // bare EXC_BREAKPOINT trap with the exception name and reason lost
+            // (APPLE-MACOS-EF).
+            options.enableUncaughtNSExceptionReporting = true
             options.enableAppHangTracking = true
             // The SDK's 2s default fires on transient, non-fully-blocking
             // stalls — a few dropped frames during heavy SwiftUI updates or

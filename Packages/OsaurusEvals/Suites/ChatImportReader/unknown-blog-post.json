@@ -1,0 +1,22 @@
+{
+  "id": "chat_import_reader.unknown-blog-post",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • an unknown format: a blog post with a remote MCP URL",
+  "query": "Set up what this post describes",
+  "notes": "Prose only. The reader reports the remote server with the exact URL and the sign-up as a manual step.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "https://blog.notesly.app/mcp-launch",
+          "text": "# Notesly now speaks MCP\n\nWe're excited to announce our hosted MCP server! Any MCP client can now read and write your Notesly notes.\n\nTo connect, sign up for a Notesly Pro account, then point your client at https://mcp.notesly.app/sse and sign in with OAuth when prompted.\n\nThanks for being with us since 2021."
+        }
+      ],
+      "items": [
+        { "kind": "mcp_server", "name": "notesly" },
+        { "kind": "manual_step", "name": "" }
+      ]
+    }
+  }
+}

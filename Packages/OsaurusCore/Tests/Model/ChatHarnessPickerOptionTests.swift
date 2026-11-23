@@ -70,6 +70,89 @@ struct ChatHarnessPickerOptionTests {
         #expect(harnesses[1].harnessOptions.count == 4)
     }
 
+    @Test func claudeCodeColumnsShowOnlyOnceInstalledUnlessCurrent() {
+        func titles(_ availability: [UUID: HarnessRuntimeAvailability.State], current: UUID? = nil) -> [String] {
+            ChatModelPickerProvider.harnessProviders(
+                runtimes: [claude, pi],
+                current: current.map { (runtimeId: $0, claudeModel: "sonnet") },
+                availability: availability
+            ).map(\.title)
+        }
+        #expect(titles([:]) == ["Spotlight"], "an unchecked CLI isn't offered yet; Pi is never checked")
+        #expect(titles([claude.id: .notInstalled]) == ["Spotlight"])
+        #expect(titles([claude.id: .notInstalled], current: claude.id) == ["Claude Code", "Spotlight"])
+        #expect(titles([:], current: claude.id) == ["Claude Code", "Spotlight"])
+        #expect(titles([claude.id: .needsSignIn]) == ["Claude Code", "Spotlight"])
+        #expect(titles([claude.id: .ready]) == ["Claude Code", "Spotlight"])
+    }
+
+    @Test func aSignedOutColumnSaysSoAndCountsTheNote() {
+        let signedOut = ChatModelPickerProvider.harnessProviders(
+            runtimes: [claude, pi], availability: [claude.id: .needsSignIn])
+        #expect(signedOut.map(\.needsSignIn) == [true, false])
+        #expect(signedOut[0].rowCount == 5)
+        let ready = ChatModelPickerProvider.harnessProviders(runtimes: [claude], availability: [claude.id: .ready])
+        #expect(ready.map(\.needsSignIn) == [false])
+        #expect(ready[0].rowCount == 4)
+    }
+
+    @Test func onlyASignedOutOrMissingClaudeCodeRowSignsInFirst() {
+        #expect(ChatHarnessPickerOption.needsSetup(claude, state: .needsSignIn))
+        #expect(ChatHarnessPickerOption.needsSetup(claude, state: .notInstalled))
+        #expect(!ChatHarnessPickerOption.needsSetup(claude, state: .ready))
+        #expect(!ChatHarnessPickerOption.needsSetup(claude, state: nil), "an unchecked runtime applies at once")
+        #expect(!ChatHarnessPickerOption.needsSetup(pi, state: .needsSignIn))
+        #expect(!ChatHarnessPickerOption.needsSetup(nil, state: .needsSignIn))
+    }
+
+    @Test func availabilityChecksAtMostEveryThirtySecondsUnlessForced() async {
+        let availability = HarnessRuntimeAvailability(observeRuntimeChanges: false)
+        let calls = CallCounter()
+        availability.check = { _ in
+            await calls.bump()
+            return .needsSignIn
+        }
+        var clock = Date(timeIntervalSince1970: 0)
+        availability.now = { clock }
+
+        availability.refresh([claude, pi])
+        await availability.settle()
+        #expect(availability.state(of: claude.id) == .needsSignIn)
+        #expect(availability.state(of: pi.id) == nil)
+        #expect(await calls.count == 1)
+
+        availability.refresh([claude])
+        await availability.settle()
+        #expect(await calls.count == 1)
+
+        clock = clock.addingTimeInterval(HarnessRuntimeAvailability.minimumInterval + 1)
+        availability.refresh([claude])
+        await availability.settle()
+        #expect(await calls.count == 2)
+
+        availability.refresh([claude], force: true)
+        await availability.settle()
+        #expect(await calls.count == 3)
+    }
+
+    @Test func aForcedCheckSupersedesOneStillRunning() async throws {
+        let availability = HarnessRuntimeAvailability(observeRuntimeChanges: false)
+        let calls = CallCounter()
+        availability.check = { _ in
+            let call = await calls.bump()
+            if call == 1 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return .notInstalled
+            }
+            return .ready
+        }
+        availability.refresh([claude])
+        availability.refresh([claude], force: true)
+        await availability.settle()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(availability.state(of: claude.id) == .ready, "the older check's answer is dropped")
+    }
+
     @Test func initialSizeOpensOnTheSelectedHarnessColumn() {
         let harnesses = ChatModelPickerProvider.harnessProviders(runtimes: [claude])
         let groups = ChatModelPickerProvider.groups(from: [.foundation()], harnesses: harnesses)
@@ -80,5 +163,15 @@ struct ChatHarnessPickerOptionTests {
             providers: groups, selectedModel: "foundation", optionsControl: nil)
         #expect(onHarness.width > 0 && onHarness.height > 0)
         #expect(onModel.width > 0 && onModel.height > 0)
+    }
+}
+
+private actor CallCounter {
+    private(set) var count = 0
+
+    @discardableResult
+    func bump() -> Int {
+        count += 1
+        return count
     }
 }

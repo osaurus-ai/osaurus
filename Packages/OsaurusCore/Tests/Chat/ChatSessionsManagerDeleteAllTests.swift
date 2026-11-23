@@ -74,4 +74,32 @@ struct ChatSessionsManagerDeleteAllTests {
             #expect(Set(manager.sessions.map(\.id)) == Set([b1]))
         }
     }
+
+    /// The sidebar's batch delete: exactly the given ids, across agents,
+    /// in one background batch.
+    @Test
+    func deleteIds_removesExactlyThoseSessionsAcrossAgents() async throws {
+        try await ChatHistoryTestStorage.run {
+            let manager = ChatSessionsManager.shared
+            manager.refresh()
+
+            let agentA = UUID()
+            let agentB = UUID()
+            let a1 = manager.createNew(agentId: agentA)
+            let a2 = manager.createNew(agentId: agentA)
+            let b1 = manager.createNew(agentId: agentB)
+            let b2 = manager.createNew(agentId: agentB)
+            manager.currentSessionId = b1
+
+            await manager.delete(ids: [a1, b1])
+
+            #expect(Set(manager.sessions.map(\.id)) == Set([a2, b2]))
+            #expect(manager.currentSessionId == nil)
+            manager.refresh()
+            #expect(Set(manager.sessions.map(\.id)) == Set([a2, b2]))
+
+            await manager.delete(ids: [])
+            #expect(Set(manager.sessions.map(\.id)) == Set([a2, b2]))
+        }
+    }
 }

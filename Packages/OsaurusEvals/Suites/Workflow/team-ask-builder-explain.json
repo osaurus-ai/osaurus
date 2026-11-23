@@ -1,0 +1,63 @@
+{
+  "id": "workflow.team-ask-builder-explain",
+  "domain": "workflow",
+  "label": "workflow • prepared ask: explain this project",
+  "query": "prepared ask: explain this project",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-builder-explain",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "kind": "directory",
+          "entries": [
+            {
+              "name": "Package.swift",
+              "path": "Package.swift",
+              "type": "file"
+            },
+            {
+              "name": "Sources",
+              "path": "Sources",
+              "type": "directory"
+            },
+            {
+              "name": "main.swift",
+              "path": "Sources/Weatherly/main.swift",
+              "type": "file"
+            },
+            {
+              "name": "README.md",
+              "path": "README.md",
+              "type": "file"
+            }
+          ]
+        }
+      },
+      "toolArguments": {
+        "read": {
+          "path": ".",
+          "max_depth": 2
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "swift"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

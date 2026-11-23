@@ -742,7 +742,7 @@ public enum AgentChannelEvalHarness {
             bindings: [],
             source: .chat
         )
-        expect(noBindingSection == nil, "agent without bindings gets no Channel Destinations prompt")
+        expect(noBindingSection == nil, "agent without bindings gets no Where It Can Post prompt")
         let ghost = await service.publish(
             AgentChannelPublishRequest(bindingId: "ghost", content: "x", intentKey: "k-ghost"),
             context: context(source: .schedule)
@@ -986,10 +986,11 @@ public enum AgentChannelEvalHarness {
                 hasCredential: true,
                 writeEnabled: true,
                 writableRoomIds: rooms,
-                dispatch: AgentChannelInboundDispatchConfiguration(
-                    enabled: true,
-                    targetAgentId: ownerAgent
-                )
+                listeners: ChannelEventListeners(listeners: [
+                    .init(
+                        eventId: UUID(), eventName: "Eval", target: .local(ownerAgent), roomIds: [],
+                        repliesAutomatically: true)
+                ])
             )
         }
         let sourcesBox = SourcesBox([derivedSource(rooms: ["R-EVAL"])])
@@ -1112,9 +1113,9 @@ public enum AgentChannelEvalHarness {
 
         final class RelayRecorder: @unchecked Sendable {
             private let lock = NSLock()
-            private var _requests: [AgentChannelInboundRelayRequest] = []
-            var requests: [AgentChannelInboundRelayRequest] { lock.withLock { _requests } }
-            func record(_ request: AgentChannelInboundRelayRequest) { lock.withLock { _requests.append(request) } }
+            private var _requests: [ChannelInboundMessage] = []
+            var requests: [ChannelInboundMessage] { lock.withLock { _requests } }
+            func record(_ request: ChannelInboundMessage) { lock.withLock { _requests.append(request) } }
         }
 
         func connection(policy: AgentChannelN8nRemoteTransportPolicy) -> AgentChannelConnection {
@@ -1130,10 +1131,6 @@ public enum AgentChannelEvalHarness {
                 ),
                 n8n: AgentChannelN8nConfiguration(
                     inboundVerification: AgentChannelN8nInboundVerification(method: .sharedSecretHeader),
-                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                        enabled: true,
-                        targetAgentId: agentId
-                    ),
                     remoteTransportPolicy: policy
                 )
             )
@@ -1205,6 +1202,7 @@ public enum AgentChannelEvalHarness {
                 return .dispatched(agentId: agentId, rule: "default")
             },
             taskLookup: taskLookup,
+            targetLookup: { _ in .local(agentId) },
             rateLimiter: PairingRateLimiter(window: 60, maxPerWindow: 1_000, denialCooldown: 0)
         )
 

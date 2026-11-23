@@ -14,6 +14,7 @@
 
 import Foundation
 import OSLog
+import OsaurusSync
 
 private let imageDownloadLog = Logger(subsystem: "com.dinoki.osaurus", category: "ImageModelDownload")
 
@@ -24,13 +25,15 @@ public struct ImageModelDownload: Identifiable, Sendable, Hashable {
     public let id: String
     public let repoId: String
     public let displayName: String
-    public let note: String?
+    /// Published as an image-to-image pipeline: edits a source image rather
+    /// than creating one from text.
+    public let isEditOnly: Bool
 
-    public init(repoId: String, displayName: String, note: String? = nil) {
+    public init(repoId: String, displayName: String, isEditOnly: Bool = false) {
         self.id = ImageModelDownload.directoryName(forRepoId: repoId)
         self.repoId = repoId
         self.displayName = displayName
-        self.note = note
+        self.isEditOnly = isEditOnly
     }
 
     /// Local directory name for a repo id: its last path component.
@@ -71,13 +74,11 @@ final class ImageModelDownloadService: ObservableObject {
     static let curatedCatalog: [ImageModelDownload] = [
         ImageModelDownload(
             repoId: "cocktailpeanut/ideogram-4-fp8",
-            displayName: "Ideogram 4 (fp8)",
-            note: "Text-to-image · mflux · strong typography"
+            displayName: "Ideogram 4 (fp8)"
         ),
         ImageModelDownload(
             repoId: "cocktailpeanut/ideogram-4-nf4",
-            displayName: "Ideogram 4 (NF4)",
-            note: "Text-to-image · mflux · 4-bit"
+            displayName: "Ideogram 4 (NF4)"
         ),
     ]
 
@@ -92,7 +93,7 @@ final class ImageModelDownloadService: ObservableObject {
     /// Hidden marker written into each staged bundle recording the source HF
     /// repo id, so a later re-download knows where to fetch from (installed
     /// bundles otherwise only carry the local directory name).
-    private static let sourceMarkerName = ".osaurus-source"
+    private nonisolated static let sourceMarkerName = ".osaurus-source"
 
     /// Max files staged in parallel. A single HTTPS connection to the HF CDN is
     /// throttled well below a fast link, so serial per-file fetches leave most
@@ -110,6 +111,8 @@ final class ImageModelDownloadService: ObservableObject {
     private var liveBytes: [String: [String: Int64]] = [:]
     /// Trailing throughput samples per bundle for a stable speed/ETA readout.
     private var speedSamples: [String: [(t: TimeInterval, bytes: Int64)]] = [:]
+    /// The nearby Mac the user picked a bundle from, keyed by bundle id.
+    private var nearbyPicks: [String: NearbySource] = [:]
 
     /// True when a bundle directory for `id` already exists on disk.
     func isInstalled(_ id: String) -> Bool {
@@ -118,19 +121,26 @@ final class ImageModelDownloadService: ObservableObject {
         return FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue
     }
 
-    /// Source HF repo a staged bundle was downloaded from. Reads the hidden
-    /// marker; falls back to a fetched- or curated-catalog entry with the same
-    /// id. `nil` when neither is known (e.g. an old imported bundle), in which
-    /// case re-download is unavailable and only delete is offered.
-    func sourceRepoId(for id: String) -> String? {
-        let marker = ImageGenerationService.imageModelsRoot()
-            .appendingPathComponent(id, isDirectory: true)
-            .appendingPathComponent(Self.sourceMarkerName)
-        if let raw = try? String(contentsOf: marker, encoding: .utf8) {
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return trimmed }
-        }
-        return (fetchedCatalog + Self.curatedCatalog).first { $0.id == id }?.repoId
+    /// Source HF repo a staged bundle was downloaded from: the hidden marker's
+    /// value (`markedSourceRepoId`), else a fetched- or curated-catalog entry
+    /// with the same id. `nil` when neither is known (e.g. an old imported
+    /// bundle), in which case re-download is unavailable and only delete is
+    /// offered.
+    func sourceRepoId(for id: String, marked: String?) -> String? {
+        marked ?? (fetchedCatalog + Self.curatedCatalog).first { $0.id == id }?.repoId
+    }
+
+    /// The repo id recorded in a bundle's `.osaurus-source` marker. Disk
+    /// read, so callers on the main actor run it detached.
+    nonisolated static func markedSourceRepoId(for id: String) -> String? {
+        markedSourceRepoId(in: ImageGenerationService.imageModelsRoot().appendingPathComponent(id, isDirectory: true))
+    }
+
+    nonisolated static func markedSourceRepoId(in bundle: URL) -> String? {
+        let marker = bundle.appendingPathComponent(sourceMarkerName)
+        guard let raw = try? String(contentsOf: marker, encoding: .utf8) else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// Best-effort total download size for a catalog repo, mirroring
@@ -195,10 +205,8 @@ final class ImageModelDownloadService: ObservableObject {
     /// Heuristic: does this HF repo look like a diffusers/mflux image bundle?
     /// Used by the global Import flow to route image repos here instead of the
     /// LLM path (which rejects them and would stage to the wrong directory).
-    /// Detects the diffusers layout — a top-level `model_index.json`, or a
-    /// `vae/` alongside a `transformer/`/`unet/` subdir — which mflux mirrors
-    /// preserve. Returns `false` on any listing failure so the caller falls
-    /// back to the existing LLM compatibility check.
+    /// Returns `false` on any listing failure so the caller falls back to the
+    /// existing LLM compatibility check.
     static func isImageRepo(_ repoId: String) async -> Bool {
         guard
             let files = await HuggingFaceService.shared.fetchMatchingFiles(
@@ -210,6 +218,10 @@ final class ImageModelDownloadService: ObservableObject {
         return isImageBundle(paths: files.map(\.path))
     }
 
+    /// The diffusers layout mflux mirrors preserve (a top-level
+    /// `model_index.json`, or a `vae/` alongside a `transformer/`/`unet/`
+    /// subdir), or a single-file `vae.safetensors` beside a
+    /// `transformer.safetensors` (SeedVR2).
     nonisolated static func isImageBundle(paths: [String]) -> Bool {
         let paths = paths.map { $0.lowercased() }
         let hasModelIndex = paths.contains { $0 == "model_index.json" }
@@ -218,7 +230,8 @@ final class ImageModelDownloadService: ObservableObject {
             path.hasPrefix("transformer/") || path.contains("/transformer/")
                 || path.hasPrefix("unet/") || path.contains("/unet/")
         }
-        return hasModelIndex || (hasVAE && hasTransformer)
+        let hasSingleFilePair = paths.contains("vae.safetensors") && paths.contains("transformer.safetensors")
+        return hasModelIndex || (hasVAE && hasTransformer) || hasSingleFilePair
     }
 
     /// Offer a linked bundle in Images without starting a download. Keep it
@@ -266,7 +279,7 @@ final class ImageModelDownloadService: ObservableObject {
         return ImageModelDownload(
             repoId: row.id,
             displayName: tail,
-            note: isEdit ? "Image edit · mflux" : "Text-to-image · mflux"
+            isEditOnly: isEdit
         )
     }
 
@@ -277,12 +290,25 @@ final class ImageModelDownloadService: ObservableObject {
         return entries.filter { seen.insert($0.id).inserted }
     }
 
+    /// Copies a bundle a nearby Mac shares. Files still come from the Hub's
+    /// list, checked against its digests, when the bundle names a repo the
+    /// Hub can answer for.
+    /// `repoId` is the catalog row's repo, for bundles the host can't name.
+    func download(nearby offer: NearbyOffer, repoId: String? = nil) {
+        start(repoId: offer.model.repoId ?? repoId ?? "", dirName: offer.localId, nearby: offer.source)
+    }
+
     /// Start downloading any HuggingFace mflux repo into the image models root.
     func download(repoId: String, displayName: String) {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let dirName = ImageModelDownload.directoryName(forRepoId: trimmed)
+        start(repoId: trimmed, dirName: ImageModelDownload.directoryName(forRepoId: trimmed), nearby: nil)
+    }
+
+    private func start(repoId trimmed: String, dirName: String, nearby: NearbySource?) {
+        guard HuggingFaceService.normalizedRemoteFilePath(dirName) == dirName, !dirName.contains("/") else { return }
         if case .downloading = states[dirName, default: .notStarted] { return }
+        nearbyPicks[dirName] = nearby
         states[dirName] = .downloading(progress: 0)
         metrics[dirName] = nil
         liveBytes[dirName] = [:]
@@ -295,6 +321,7 @@ final class ImageModelDownloadService: ObservableObject {
     }
 
     func cancel(_ id: String) {
+        nearbyPicks[id] = nil
         tasks[id]?.cancel()
         tasks[id] = nil
         downloaders[id]?.forEach { $0.pause() }
@@ -309,15 +336,19 @@ final class ImageModelDownloadService: ObservableObject {
         let root = ImageGenerationService.imageModelsRoot()
             .appendingPathComponent(dirName, isDirectory: true)
 
-        guard
-            let files = try? await HuggingFaceService.shared.fetchDownloadFiles(
+        let listed =
+            repoId.isEmpty
+            ? nil
+            : try? await HuggingFaceService.shared.fetchDownloadFiles(
                 repoId: repoId,
                 patterns: Self.patterns,
                 excludedFiles: Self.excluded
-            ),
-            !files.isEmpty
-        else {
-            states[dirName] = .failed(error: "Could not list files for \(repoId)")
+            )
+        // The picked Mac's own list stands in only when the Hub can't answer.
+        let nearbyOnly = listed?.isEmpty == false ? nil : nearbyOffer(for: dirName)
+        let files = listed?.isEmpty == false ? listed! : nearbyOnly.map(Self.matchedFiles(from:)) ?? []
+        guard !files.isEmpty else {
+            states[dirName] = .failed(error: "Could not list files for \(repoId.isEmpty ? dirName : repoId)")
             tasks[dirName] = nil
             return
         }
@@ -325,7 +356,9 @@ final class ImageModelDownloadService: ObservableObject {
         let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
         liveBytes[dirName] = [:]
         downloaders[dirName] = []
-        writeSourceMarker(repoId: repoId, root: root)
+        if !repoId.isEmpty { writeSourceMarker(repoId: repoId, root: root) }
+        let plan = nearbyPlan(dirName: dirName, repoId: repoId, files: files, nearbyOnly: nearbyOnly)
+        let node = ModelShareService.shared.node
 
         do {
             // Fetch up to `maxConcurrentFiles` at once, refilling a lane as each
@@ -334,13 +367,16 @@ final class ImageModelDownloadService: ObservableObject {
                 var iterator = files.makeIterator()
                 func addNext() -> Bool {
                     guard let file = iterator.next() else { return false }
+                    let nearby = plan[file.path].flatMap { source in node.map { (source, $0) } }
                     group.addTask { [weak self] in
                         try await self?.downloadFile(
                             file,
                             repoId: repoId,
                             root: root,
                             dirName: dirName,
-                            total: totalBytes
+                            total: totalBytes,
+                            nearby: nearby,
+                            nearbyOnly: nearbyOnly != nil
                         )
                     }
                     return true
@@ -350,6 +386,7 @@ final class ImageModelDownloadService: ObservableObject {
             }
             states[dirName] = .completed
             metrics[dirName] = nil
+            nearbyPicks[dirName] = nil
             // Refresh the picker catalog + any listeners so the freshly staged
             // bundle becomes selectable without a relaunch.
             NotificationCenter.default.post(name: .localModelsChanged, object: nil)
@@ -380,7 +417,9 @@ final class ImageModelDownloadService: ObservableObject {
         repoId: String,
         root: URL,
         dirName: String,
-        total: Int64
+        total: Int64,
+        nearby: (source: NearbySource, node: ModelShareNode)? = nil,
+        nearbyOnly: Bool = false
     ) async throws {
         try Task.checkCancellation()
         // Containment validation stats every existing path component (plus
@@ -420,14 +459,7 @@ final class ImageModelDownloadService: ObservableObject {
             staging.cancel()
         }
         try Task.checkCancellation()
-        guard
-            let (destination, alreadyComplete) = staged,
-            let url = ModelDownloadService.resolveURL(
-                repoId: repoId,
-                path: file.path,
-                revision: file.revision ?? "main"
-            )
-        else { throw URLError(.badURL) }
+        guard let (destination, alreadyComplete) = staged else { throw URLError(.badURL) }
 
         // Skip verified files already present or recovered from the old route.
         if alreadyComplete {
@@ -435,6 +467,41 @@ final class ImageModelDownloadService: ObservableObject {
             updateProgress(dirName, total: total)
             return
         }
+
+        if let nearby, let digest = file.digest {
+            do {
+                try await NearbyFileDownloader.download(
+                    node: nearby.node,
+                    source: nearby.source,
+                    path: file.path,
+                    size: file.size,
+                    digest: digest,
+                    to: destination
+                ) { [weak self] received in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.liveBytes[dirName, default: [:]][file.path] = received
+                        self.updateProgress(dirName, total: total)
+                    }
+                }
+                liveBytes[dirName, default: [:]][file.path] = file.size
+                updateProgress(dirName, total: total)
+                return
+            } catch {
+                if nearbyOnly || error is CancellationError || Task.isCancelled { throw error }
+                imageDownloadLog.info("Nearby copy failed, using Hugging Face: \(error.localizedDescription)")
+            }
+        } else if nearbyOnly {
+            throw NearbyTransferError.notRunning
+        }
+
+        guard
+            let url = ModelDownloadService.resolveURL(
+                repoId: repoId,
+                path: file.path,
+                revision: file.revision ?? "main"
+            )
+        else { throw URLError(.badURL) }
 
         let downloader = DirectDownloader()
         downloaders[dirName, default: []].append(downloader)
@@ -452,6 +519,44 @@ final class ImageModelDownloadService: ObservableObject {
         }
         liveBytes[dirName, default: [:]][file.path] = file.size
         updateProgress(dirName, total: total)
+    }
+
+    // MARK: - Nearby Macs
+
+    private func nearbyOffer(for dirName: String) -> NearbyOffer? {
+        guard let pick = nearbyPicks[dirName] else { return nil }
+        return ModelShareService.shared.offers(kind: .image)
+            .first { $0.hostId == pick.hostId && $0.model.id == pick.itemId }
+    }
+
+    nonisolated static func matchedFiles(from offer: NearbyOffer) -> [HuggingFaceService.MatchedFile] {
+        offer.model.files.compactMap { file in
+            guard HuggingFaceService.normalizedRemoteFilePath(file.path) != nil else { return nil }
+            return HuggingFaceService.MatchedFile(
+                path: file.path,
+                size: Int64(file.size),
+                digest: .sha256(file.sha256),
+                revision: offer.model.revision
+            )
+        }
+    }
+
+    private func nearbyPlan(
+        dirName: String,
+        repoId: String,
+        files: [HuggingFaceService.MatchedFile],
+        nearbyOnly: NearbyOffer?
+    ) -> [String: NearbySource] {
+        let service = ModelShareService.shared
+        guard service.configuration.useNearbyMacs, service.node != nil else { return [:] }
+        if let nearbyOnly {
+            return Dictionary(files.map { ($0.path, nearbyOnly.source) }, uniquingKeysWith: { first, _ in first })
+        }
+        return ModelDownloadService.nearbyPlan(
+            files: files,
+            offers: service.offers(kind: .image, localId: dirName, repoId: repoId.isEmpty ? nil : repoId),
+            preferredHostId: nearbyPicks[dirName]?.hostId
+        )
     }
 
     /// Repair the old language-model download route without re-downloading

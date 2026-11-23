@@ -84,21 +84,6 @@ public struct ImageModelCapabilities: Sendable, Equatable, Hashable {
 /// the exact bundle directory name and is what callers must send back in a
 /// request (exact-name resolution preserves the `-4bit`/`-8bit`/`-qN` quant
 /// suffix so co-installed quants never collapse onto each other).
-public struct ImageRequestLimits: Sendable, Hashable {
-    public let minimumSteps: Int
-    public let maximumSteps: Int?
-    public let fixedSteps: Int?
-    public let dimensionMultiple: Int
-    public let minimumDimension: Int
-    public let maximumDimension: Int?
-    public let maximumPixels: Int?
-    public let maximumImages: Int
-    public let maximumSourceImages: Int
-    public let formats: [String]
-    public let samplers: [String]
-    public let schedulers: [String]
-}
-
 public struct ImageModelInfo: Sendable, Equatable {
     public let id: String
     public let canonicalName: String?
@@ -118,6 +103,8 @@ public struct ImageModelInfo: Sendable, Equatable {
     /// "incomplete" hint.
     public let blockedReasons: [String]
     public let totalBytes: UInt64
+    /// The engine's request limits for this bundle; nil when its family
+    /// publishes none.
     public let requestLimits: ImageRequestLimits?
 
     public init(
@@ -476,7 +463,7 @@ public enum ImageGenerationError: Error, CustomStringConvertible, LocalizedError
     case wrongModelKind(expected: String, actual: String)
     case invalidRequest(String)
     case engine(String)
-    case memoryAdmission(field: String, estimatedBytes: Int64, message: String)
+    case memoryAdmission(field: String, estimatedBytes: Int64, budgetBytes: Int64?, message: String)
 
     public var errorDescription: String? { description }
 
@@ -490,7 +477,7 @@ public enum ImageGenerationError: Error, CustomStringConvertible, LocalizedError
             return "wrong model kind: expected \(e), got \(a)"
         case .invalidRequest(let s): return "invalid request: \(s)"
         case .engine(let s): return s
-        case .memoryAdmission(let field, let bytes, let message):
+        case .memoryAdmission(let field, let bytes, _, let message):
             return "Image memory admission refused by \(field) (estimated peak \(bytes) bytes): \(message)"
         }
     }

@@ -136,15 +136,20 @@ public final class SandboxPluginManager: ObservableObject {
                     )
                 )
                 let hostPluginDir = self.hostPluginDir(agentName: agentName, pluginId: plugin.id)
+                let agentDir = OsaurusPaths.containerAgentDir(agentName)
                 for (path, content) in files {
-                    let fullPath = hostPluginDir.appendingPathComponent(path)
-                    let dir = fullPath.deletingLastPathComponent()
-                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                    try content.write(to: fullPath, atomically: true, encoding: .utf8)
+                    // The plugin dir is guest-writable: a planted symlink
+                    // must not redirect this host write outside the home.
+                    try SandboxAgentPathScope.writeContained(
+                        Data(content.utf8),
+                        to: hostPluginDir.appendingPathComponent(path),
+                        within: agentDir
+                    )
                 }
                 // Fix ownership inside the container so the agent user can access the files
                 _ = try await SandboxManager.shared.execAsRoot(
-                    command: "chown -R agent-\(agentName):agent-\(agentName) \(pluginDir)"
+                    command: "chown -R agent-\(agentName):agent-\(agentName) \(pluginDir)",
+                    target: .agent(agentName)
                 )
             }
 
@@ -203,7 +208,10 @@ public final class SandboxPluginManager: ObservableObject {
             )
         }
 
-        try? FileManager.default.removeItem(at: hostPluginDir(agentName: agentName, pluginId: pluginId))
+        let hostDir = hostPluginDir(agentName: agentName, pluginId: pluginId)
+        if SandboxAgentPathScope.parentIsContained(hostDir, within: OsaurusPaths.containerAgentDir(agentName)) {
+            try? FileManager.default.removeItem(at: hostDir)
+        }
 
         list.remove(at: index)
         installedPlugins[agentId] = list
@@ -243,37 +251,35 @@ public final class SandboxPluginManager: ObservableObject {
     public func verifyAndRepairAllPlugins() async {
         guard await SandboxManager.shared.status().isRunning else { return }
 
+        // Only agents with a container in the running pod: verifying any
+        // other agent would restart the VM to add it.
+        let members = Set(await SandboxManager.shared.podMemberNames)
+        let freshlyCloned = await SandboxManager.shared.freshlyClonedMembers
         let snapshot = installedPlugins.flatMap { agentId, plugins in
             plugins.filter { $0.status == .ready }.map { (agentId, $0.plugin) }
-        }
+        }.filter { members.contains(SandboxAgentProvisioner.linuxName(for: $0.0)) }
         guard !snapshot.isEmpty else { return }
 
         NSLog("[SandboxPluginManager] Verifying \(snapshot.count) installed plugin(s) after container start")
 
-        // Warm restart: the in-guest apk db from the previous boot is
-        // still on disk, so every previously-installed system package is
-        // already present. Skip `batchInstallDependencies` and seed
-        // `agentsWithSeededDeps` so per-plugin repair also short-circuits
-        // `installSystemDependencies`. Per-plugin verify still runs to
-        // catch app-version changes, but for unchanged plugins it's just
-        // a few hundred ms of bridge stat()s.
-        let isWarmBoot = await SandboxManager.shared.wasLastBootWarm
-
-        if isWarmBoot {
-            agentsWithSeededDeps = Set(
-                snapshot.compactMap { (agentId, plugin) -> String? in
-                    plugin.dependencies?.isEmpty == false ? agentId : nil
-                }
-            )
-        } else {
-            // Cold boot: reset the per-launch "deps seeded" set so each
-            // post-start pass re-seeds for the freshly booted rootfs.
-            // `apk` is sequential per agent because it acquires a
-            // container-wide lock — parallel calls would just serialize
-            // inside the guest while burning extra exec round-trips.
-            agentsWithSeededDeps.removeAll()
-            await batchInstallDependencies(snapshot)
+        // An agent whose environment clone survived from an earlier boot
+        // still has its apk packages on disk: seed `agentsWithSeededDeps`
+        // so per-plugin repair short-circuits `installSystemDependencies`.
+        // Freshly cloned environments get one batched `apk add` each.
+        // Per-plugin verify still runs to catch app-version changes, but
+        // for unchanged plugins it's just a few hundred ms of bridge stat()s.
+        let isFresh: ((String, SandboxPlugin)) -> Bool = {
+            freshlyCloned.contains(SandboxAgentProvisioner.linuxName(for: $0.0))
         }
+        let keptSnapshot = snapshot.filter { !isFresh($0) }
+        let freshSnapshot = snapshot.filter(isFresh)
+        for (agentId, plugin) in keptSnapshot where plugin.dependencies?.isEmpty == false {
+            agentsWithSeededDeps.insert(agentId)
+        }
+        for (agentId, _) in freshSnapshot {
+            agentsWithSeededDeps.remove(agentId)
+        }
+        await batchInstallDependencies(freshSnapshot)
 
         await runRepairsConcurrently(snapshot, maxConcurrent: 4)
     }
@@ -310,6 +316,7 @@ public final class SandboxPluginManager: ObservableObject {
             do {
                 let result = try await SandboxManager.shared.execAsRoot(
                     command: "apk add --no-cache \(request.shellArguments)",
+                    target: .agent(SandboxAgentProvisioner.linuxName(for: agentId)),
                     timeout: 300,
                     streamToLogs: true,
                     logSource: "plugin-repair:\(agentId)"
@@ -578,7 +585,9 @@ public final class SandboxPluginManager: ObservableObject {
         if hadStoreDir {
             try? fm.removeItem(at: storeDir)
         }
-        if hadHostPluginsDir {
+        if hadHostPluginsDir,
+            SandboxAgentPathScope.parentIsContained(hostPluginsDir, within: OsaurusPaths.containerAgentDir(agentName))
+        {
             try? fm.removeItem(at: hostPluginsDir)
         }
 
@@ -693,6 +702,7 @@ public final class SandboxPluginManager: ObservableObject {
         }
         let result = try await SandboxManager.shared.execAsRoot(
             command: "apk add --no-cache \(request.shellArguments)",
+            target: .agent(SandboxAgentProvisioner.linuxName(for: agentId)),
             timeout: 300,
             streamToLogs: true,
             logSource: plugin.id
@@ -709,24 +719,33 @@ public final class SandboxPluginManager: ObservableObject {
 
     private func runSetupCommand(for plugin: SandboxPlugin, agentName: String, agentId: String) async throws {
         guard let setup = plugin.setup else { return }
-        let env = secretsEnvironment(agentId: agentId, pluginId: plugin.id)
-        let result = try await SandboxManager.shared.execAsAgent(
-            agentName,
-            command: setup,
-            pluginName: plugin.id,
-            env: env,
-            timeout: 300,
-            streamToLogs: true,
-            logSource: plugin.id
-        )
+        let env = secretsEnvironment(agentId: agentId, plugin: plugin)
+        let secrets = CredentialResolver.scrubValues(
+            from: env, agentId: CredentialResolver.credentialAgent(fallback: UUID(uuidString: agentId)))
+        let result = try await SandboxLogScrubbing.$secrets.withValue(secrets) {
+            try await SandboxManager.shared.execAsAgent(
+                agentName,
+                command: setup,
+                pluginName: plugin.id,
+                env: env,
+                timeout: 300,
+                streamToLogs: true,
+                logSource: plugin.id
+            )
+        }
         guard result.succeeded else {
-            throw SandboxPluginError.setupFailed(result.stderr)
+            throw SandboxPluginError.setupFailed(SecretScrubber.scrub(result.stderr, secrets: secrets))
         }
     }
 
-    private func secretsEnvironment(agentId: String, pluginId: String) -> [String: String] {
+    private func secretsEnvironment(agentId: String, plugin: SandboxPlugin) -> [String: String] {
         guard let uuid = UUID(uuidString: agentId) else { return [:] }
-        return AgentSecretsKeychain.mergedSecretsEnvironment(agentId: uuid, pluginId: pluginId)
+        return CredentialResolver.sandboxPluginEnvironment(
+            agentId: CredentialResolver.credentialAgent(fallback: uuid),
+            pluginId: plugin.id,
+            pluginName: plugin.name,
+            declared: plugin.secrets ?? []
+        )
     }
 
     private func hostPluginDir(agentName: String, pluginId: String) -> URL {

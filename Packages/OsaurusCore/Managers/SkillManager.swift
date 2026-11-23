@@ -576,6 +576,10 @@ public final class SkillManager {
         return SkillImportResult(skill: skill, notes: notes)
     }
 
+    /// Agent Skills package folders kept on install. `scripts/` runs only
+    /// inside the sandbox, from the agent's workspace copy.
+    nonisolated static let packageSubdirectories = ["references", "assets", "scripts"]
+
     nonisolated private static func installImportedSkill(
         _ skill: Skill,
         from sourceSkillRoot: URL?,
@@ -595,7 +599,7 @@ public final class SkillManager {
         )
 
         if let sourceSkillRoot {
-            for subdirectory in ["references", "assets"] {
+            for subdirectory in Self.packageSubdirectories {
                 let source = sourceSkillRoot.appendingPathComponent(subdirectory, isDirectory: true)
                 var isDirectory: ObjCBool = false
                 if fileManager.fileExists(atPath: source.path, isDirectory: &isDirectory) {
@@ -778,7 +782,8 @@ public final class SkillManager {
     /// named omission note.
     public func buildFullInstructions(
         for skill: Skill,
-        referenceBudget: Int = .max
+        referenceBudget: Int = .max,
+        sandboxAgentName: String? = ChatExecutionContext.sandboxAgentName
     ) async -> String {
         var sections: [String] = []
 
@@ -792,10 +797,21 @@ public final class SkillManager {
             atPath: directoryURL.path,
             isDirectory: &isDirectory
         ), isDirectory.boolValue {
-            sections.append(
-                "Skill directory: `\(directoryURL.path)`. "
-                    + "Resolve relative paths in this skill against that directory."
-            )
+            if let sandboxAgentName,
+                let guestPath = Self.mirrorSkillPackage(
+                    from: directoryURL, slug: skill.xplaceholder_agentSkillsNamex, agentName: sandboxAgentName)
+            {
+                sections.append(
+                    "Skill directory: `\(guestPath)` inside the sandbox (a copy of `\(directoryURL.path)` "
+                        + "on this Mac). Resolve relative paths in this skill against the sandbox directory "
+                        + "when you run its scripts."
+                )
+            } else {
+                sections.append(
+                    "Skill directory: `\(directoryURL.path)`. "
+                        + "Resolve relative paths in this skill against that directory."
+                )
+            }
         }
 
         sections.append(skill.instructions)
@@ -808,6 +824,35 @@ public final class SkillManager {
         }
 
         return sections.joined(separator: "\n")
+    }
+
+    /// Copies a skill's `scripts/`, `references/`, and `assets/` into the
+    /// sandboxed agent's home so its scripts can run in the VM, and returns
+    /// the guest path. Nil when the skill has no package folders or the
+    /// agent's sandbox home doesn't exist yet (not provisioned).
+    nonisolated static func mirrorSkillPackage(from directory: URL, slug: String, agentName: String) -> String? {
+        let fm = FileManager.default
+        let folders = packageSubdirectories.filter { sub in
+            var isDirectory: ObjCBool = false
+            return fm.fileExists(atPath: directory.appendingPathComponent(sub).path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
+        }
+        let home = OsaurusPaths.containerAgentDir(agentName)
+        guard !folders.isEmpty, !slug.isEmpty, fm.fileExists(atPath: home.path) else { return nil }
+        let destination = home.appendingPathComponent("skills", isDirectory: true)
+            .appendingPathComponent(slug, isDirectory: true)
+        do {
+            try? fm.removeItem(at: destination)
+            try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+            for sub in folders {
+                try fm.copyItem(
+                    at: directory.appendingPathComponent(sub, isDirectory: true),
+                    to: destination.appendingPathComponent(sub, isDirectory: true))
+            }
+        } catch {
+            return nil
+        }
+        return OsaurusPaths.inContainerAgentHome(agentName) + "/skills/" + slug
     }
 
     /// Wrap a slash-selected skill as instructions that are already active,

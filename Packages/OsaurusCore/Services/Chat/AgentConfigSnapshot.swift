@@ -203,6 +203,17 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// the Default agent never receives any Apple tool (its allowlist wins).
     public let enabledAppleApps: Set<AppleApp>
 
+    /// `workflow_<slug>` tools of the installed workflows this custom agent
+    /// has enabled (Agents → Workflows). Empty for the Orchestrator, which
+    /// reaches workflows through `run_workflow`, and for the Architect.
+    public let workflowToolNames: [String]
+
+    /// Whether any installed workflow is visible to the Orchestrator. The
+    /// Orchestrator's `run_workflow` is in its schema only when this is true.
+    public let hasOrchestratorWorkflows: Bool
+    /// What `run_workflow` can run, captured with `hasOrchestratorWorkflows`
+    /// for the Orchestrator's Team section. Empty for every other agent.
+    public let orchestratorTeam: OrchestratorTeam
     /// Per-agent opt-ins for the specialist built-ins (`calculate`, and the
     /// host-folder redaction pair `detect_pii` / `redact_file`).
     public let calculatorEnabled: Bool
@@ -212,6 +223,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     public let taskChecklistEnabled: Bool
     public let clarifyEnabled: Bool
     public let artifactsEnabled: Bool
+    /// The agent's working folder is read only (`AgentSettings.workingFolderReadOnly`).
+    public let workingFolderReadOnly: Bool
 
     public init(
         agentId: UUID,
@@ -246,11 +259,15 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         hasChannelPublishDestinations: Bool = false,
         projectId: UUID? = nil,
         enabledAppleApps: Set<AppleApp> = [],
+        workflowToolNames: [String] = [],
+        hasOrchestratorWorkflows: Bool = false,
+        orchestratorTeam: OrchestratorTeam = OrchestratorTeam(),
         calculatorEnabled: Bool = false,
         redactionToolsEnabled: Bool = false,
         taskChecklistEnabled: Bool = true,
         clarifyEnabled: Bool = true,
-        artifactsEnabled: Bool = true
+        artifactsEnabled: Bool = true,
+        workingFolderReadOnly: Bool = false
     ) {
         self.agentId = agentId
         self.projectId = projectId
@@ -284,11 +301,15 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.knowledgeCollections = knowledgeCollections
         self.hasChannelPublishDestinations = hasChannelPublishDestinations
         self.enabledAppleApps = enabledAppleApps
+        self.workflowToolNames = workflowToolNames
+        self.hasOrchestratorWorkflows = hasOrchestratorWorkflows
+        self.orchestratorTeam = orchestratorTeam
         self.calculatorEnabled = calculatorEnabled
         self.redactionToolsEnabled = redactionToolsEnabled
         self.taskChecklistEnabled = taskChecklistEnabled
         self.clarifyEnabled = clarifyEnabled
         self.artifactsEnabled = artifactsEnabled
+        self.workingFolderReadOnly = workingFolderReadOnly
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -325,6 +346,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         let subagentConfig = SubagentConfigurationStore.snapshot()
         let isDefault = agentId == Agent.defaultId
         let settings = mgr.agent(for: agentId)?.settings
+        let orchestratorTeam = isDefault ? RoutableWorkflowCatalog.team() : OrchestratorTeam()
         let sharedParallelLimit =
             SpawnBatchConcurrencyContract.configuredLimit(
                 for: ServerRuntimeSettingsStore.snapshot()
@@ -401,7 +423,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             }(),
             // Source-usable = enabled, outbound mode != off, and explicitly
             // allowed from this run provenance. Keep the tool out when no
-            // matching Channel Destinations section can be rendered; otherwise
+            // matching Where It Can Post section can be rendered; otherwise
             // the model has no valid binding_id and may mistake a capability id
             // (for example plugin/osaurus.calendar) for a channel binding.
             hasChannelPublishDestinations: !AgentChannelAutoDestinationResolver
@@ -413,11 +435,16 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
                 .isEmpty,
             projectId: projectId,
             enabledAppleApps: caps.enabledAppleApps,
+            workflowToolNames: isDefault || agentId == Agent.architectId
+                ? [] : WorkflowTool.toolNames(enabled: settings?.enabledWorkflowIDs ?? []),
+            hasOrchestratorWorkflows: !orchestratorTeam.isEmpty,
+            orchestratorTeam: orchestratorTeam,
             calculatorEnabled: caps.calculatorEnabled,
             redactionToolsEnabled: caps.redactionToolsEnabled,
             taskChecklistEnabled: caps.taskChecklistEnabled,
             clarifyEnabled: caps.clarifyEnabled,
-            artifactsEnabled: caps.artifactsEnabled
+            artifactsEnabled: caps.artifactsEnabled,
+            workingFolderReadOnly: !isDefault && settings?.workingFolderReadOnly == true
         )
     }
 }

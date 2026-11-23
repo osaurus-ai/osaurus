@@ -1,0 +1,22 @@
+{
+  "id": "architect.media-pipeline",
+  "domain": "architect",
+  "label": "architect \u2022 generate then upscale an image per item",
+  "query": "Make a workflow that takes a list of product names and, for each one, generates a product photo on a plain white background and then upscales it to twice the size. The output is the final images. Test it with two products and offer to save it.",
+  "notes": "Hard case. A map whose step generates and then upscales (two media steps), with the images in the workflow output. Skipped as blocked unless this Mac has an image model that can generate and one that can upscale; never counted as a pass then.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 30,
+      "needsImageModel": true,
+      "nodeKinds": ["map", "media"],
+      "structure": {
+        "fileOutput": true
+      },
+      "requireTestRun": true,
+      "requireProposeSave": true,
+      "maxToolCalls": 20,
+      "maxPromptTokens": 400000
+    }
+  }
+}

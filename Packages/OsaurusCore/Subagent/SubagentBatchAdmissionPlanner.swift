@@ -244,6 +244,18 @@ struct SubagentBatchMemoryFacts: Sendable, Equatable {
             && allocatorCacheAllowanceBytes != nil
     }
 
+    /// Fitting a resident child's window to the memory left takes the same
+    /// evidence as incremental admission, except that elevated pressure is
+    /// allowed: there `usesIncrementalResidentAdmission` is off, so the fit
+    /// is priced with the full cold-load reserve and no allocator allowance.
+    /// Critical or unknown pressure never fits.
+    var allowsContextFitting: Bool {
+        targetAlreadyResident && (memoryPressure == .normal || memoryPressure == .warning)
+            && (requestBoundedChildHeadroomBytes ?? 0) > 0
+            && resolvedLoadBudgetBytes != nil
+            && allocatorCacheAllowanceBytes != nil
+    }
+
     var effectiveOSHeadroomBytes: UInt64 {
         usesIncrementalResidentAdmission ? 0 : osHeadroomBytes
     }
@@ -360,7 +372,7 @@ enum SubagentBatchAdmissionPlanner {
         headroomForPositions: (Int) -> UInt64?
     ) -> Int? {
         guard minimum > 0, requested > minimum,
-            memory.usesIncrementalResidentAdmission,
+            memory.allowsContextFitting,
             resolveMemoryCapacity(memory)?.slots == 0
         else { return nil }
 

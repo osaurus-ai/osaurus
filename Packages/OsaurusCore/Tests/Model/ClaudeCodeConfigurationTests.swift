@@ -143,7 +143,7 @@ struct ClaudeCodeConfigurationTests {
             mode: .agent,
             allowWrites: true,
             allowShell: false,
-            allowOsaurusTools: true,
+            osaurusTools: false,
             allowOsaurusConfigWrites: false
         )
         let original = DefaultAgentConfiguration(claudeCode: claude)
@@ -151,8 +151,19 @@ struct ClaudeCodeConfigurationTests {
         let decoded = try JSONDecoder().decode(DefaultAgentConfiguration.self, from: data)
 
         #expect(decoded.claudeCode == claude)
-        #expect(decoded.claudeCode?.allowOsaurusTools == true)
+        #expect(decoded.claudeCode?.osaurusTools == false)
         #expect(decoded.claudeCode?.allowOsaurusConfigWrites == false)
+    }
+
+    /// Use Osaurus Tools defaults on, and the retired `allowOsaurusTools`
+    /// key is not read: its `false` meant "no inspect/help", not "no tools".
+    @Test func osaurusToolsDefaultOnAndIgnoreTheRetiredKey() throws {
+        #expect(ClaudeCodeAgentConfig.default.osaurusTools)
+        let legacy = try JSONDecoder().decode(
+            ClaudeCodeAgentConfig.self, from: Data(#"{"allowOsaurusTools":false}"#.utf8))
+        #expect(legacy.osaurusTools)
+        let off = try JSONDecoder().decode(ClaudeCodeAgentConfig.self, from: Data(#"{"osaurusTools":false}"#.utf8))
+        #expect(!off.osaurusTools)
     }
 
     // MARK: - Auth status
@@ -316,21 +327,13 @@ struct ClaudeCodeConfigurationTests {
 
     // MARK: - Osaurus MCP bridge
 
-    @Test func configWritesAreOptIn() {
-        let readOnly = ClaudeCodeConfiguration.osaurusToolPatterns(allowConfigWrites: false)
-        let full = ClaudeCodeConfiguration.osaurusToolPatterns(allowConfigWrites: true)
-
-        #expect(readOnly == ["osaurus_inspect", "osaurus_help"])
-        #expect(full == ["osaurus_inspect", "osaurus_help", "osaurus_config"])
-    }
-
     /// Every name handed to the CLI must be a tool the Osaurus registry
     /// actually serves; a stale name is silently never callable.
     @MainActor
     @Test func exposedNamesAreRealRegistryTools() {
         let registered = Set(ToolRegistry.shared.listTools().map(\.name))
             .union(ConfigDeclarativeDomain.domain.tools.map(\.name))
-        for name in ClaudeCodeConfiguration.osaurusToolPatterns(allowConfigWrites: true) {
+        for name in ClaudeCodeConfiguration.osaurusReadOnlyTools + [HarnessGrantStore.configWriteToolName] {
             #expect(registered.contains(name), "\(name) is not a registered tool")
         }
     }
@@ -338,17 +341,20 @@ struct ClaudeCodeConfigurationTests {
     /// Claude Code addresses MCP tools as `mcp__<server>__<tool>`; the bare
     /// name would silently never match the allow-list.
     @Test func allowedNamesUseClaudeCodeMCPNamespace() {
-        let names = ClaudeCodeConfiguration.osaurusAllowedToolNames(allowConfigWrites: false)
-
+        let names = ClaudeCodeConfiguration.namespaced(ClaudeCodeConfiguration.osaurusReadOnlyTools)
         #expect(names == ["mcp__osaurus__osaurus_inspect", "mcp__osaurus__osaurus_help"])
-        #expect(names.allSatisfy { $0.hasPrefix("mcp__osaurus__") })
+    }
+
+    @Test func emptyPatternsAttachNoServer() {
+        #expect(ClaudeCodeConfiguration.mcpConfigJSON(cliPath: "/Apps/osaurus", patterns: [], bridgeGrant: "osh") == nil)
     }
 
     @Test func mcpConfigPointsAtTheGivenCLIWithAFilter() throws {
         let json = try #require(
             ClaudeCodeConfiguration.mcpConfigJSON(
                 cliPath: "/Apps/Osaurus.app/Contents/Helpers/osaurus",
-                allowConfigWrites: false
+                patterns: ClaudeCodeConfiguration.osaurusReadOnlyTools,
+                bridgeGrant: nil
             )
         )
         let root = try #require(
@@ -372,14 +378,11 @@ struct ClaudeCodeConfigurationTests {
     /// The whole point: an un-bridged run must be told the tools are absent,
     /// or it spends the turn guessing at permission errors.
     @Test func unavailableNoteSaysToolsAreAbsentAndWhy() {
-        let note = ClaudeCodeConfiguration.osaurusToolsSystemNote(
-            available: false,
-            reason: .notEnabled
-        )
+        let note = ClaudeCodeConfiguration.osaurusToolsSystemNote(tools: [], reason: .notEnabled)
 
         #expect(note.contains("NOT"))
-        #expect(note.contains("osaurus_inspect"))
-        #expect(note.contains("Allow Osaurus read tools"))
+        #expect(note.contains("mcp__osaurus__"))
+        #expect(note.contains("Use Osaurus Tools"))
         // Must steer away from the exact failure mode observed in the wild.
         #expect(note.lowercased().contains("permission"))
     }
@@ -387,46 +390,37 @@ struct ClaudeCodeConfigurationTests {
     /// "Switch it on" and "start the server" are different fixes; naming the
     /// right one saves the user a round trip.
     @Test func unavailableNoteDistinguishesTheCause() {
-        let disabled = ClaudeCodeConfiguration.osaurusToolsSystemNote(
-            available: false,
-            reason: .notEnabled
-        )
-        let serverDown = ClaudeCodeConfiguration.osaurusToolsSystemNote(
-            available: false,
-            reason: .serverNotRunning
-        )
-        let textOnly = ClaudeCodeConfiguration.osaurusToolsSystemNote(
-            available: false,
-            reason: .textOnlyMode
-        )
-
-        #expect(disabled != serverDown)
-        #expect(serverDown != textOnly)
-        #expect(serverDown.lowercased().contains("server"))
-        #expect(textOnly.lowercased().contains("text-only"))
+        let reasons: [ClaudeCodeConfiguration.OsaurusToolsUnavailableReason] = [
+            .notEnabled, .agentToolsOff, .bridgeMissing, .serverNotRunning, .textOnlyMode,
+        ]
+        let notes = reasons.map { ClaudeCodeConfiguration.osaurusToolsSystemNote(tools: [], reason: $0) }
+        #expect(Set(notes).count == reasons.count)
+        #expect(notes[3].lowercased().contains("server"))
+        #expect(notes[4].lowercased().contains("text-only"))
     }
 
-    @Test func availableNoteListsExactlyTheGrantedTools() {
-        let note = ClaudeCodeConfiguration.osaurusToolsSystemNote(
-            available: true,
-            allowConfigWrites: false
-        )
+    @Test func availableNoteSaysWhenConfigurationIsReadOnly() {
+        let readOnly = ClaudeCodeConfiguration.osaurusToolsSystemNote(tools: ["osaurus_inspect", "calendar_list"])
+        #expect(readOnly.contains("mcp__osaurus__"))
+        #expect(readOnly.contains("cannot change Osaurus's configuration"))
+        #expect(!readOnly.contains("NOT"))
 
-        #expect(note.contains("osaurus_inspect"))
-        #expect(note.contains("osaurus_help"))
-        // Un-granted tools must not be advertised.
-        #expect(!note.contains("osaurus_config"))
-        #expect(note.lowercased().contains("read-only"))
+        let writable = ClaudeCodeConfiguration.osaurusToolsSystemNote(tools: ["osaurus_inspect", "osaurus_config"])
+        #expect(!writable.contains("cannot change"))
     }
 
-    @Test func availableNoteDropsReadOnlyClaimWhenWritesGranted() {
-        let note = ClaudeCodeConfiguration.osaurusToolsSystemNote(
-            available: true,
-            allowConfigWrites: true
-        )
+    @MainActor
+    @Test func teammateNoteNeedsRunWorkflow() {
+        #expect(ClaudeCodeConfiguration.teammateRoutingNote(tools: ["osaurus_inspect"]) == nil)
+    }
 
-        #expect(note.contains("osaurus_config"))
-        #expect(!note.lowercased().contains("read-only"))
+    @Test func harnessTeamSectionNeverPointsAtTheConfiguratorHandoff() throws {
+        let team = OrchestratorTeam(workflows: [RoutableWorkflowDoc(id: "1", name: "Digest", summary: "", kind: .installed)])
+        let builtIn = try #require(SystemPromptTemplates.orchestratorTeam(team))
+        let harness = try #require(SystemPromptTemplates.orchestratorTeam(team, canHandOffToConfigurator: false))
+        #expect(builtIn.contains("configurator_handoff"))
+        #expect(!harness.contains("configurator_handoff"))
+        #expect(harness.contains("Digest"))
     }
 
     @Test func displayPlanNormalizesWhitespaceAndEmpty() {

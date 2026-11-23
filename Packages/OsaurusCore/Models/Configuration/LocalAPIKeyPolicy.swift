@@ -7,8 +7,9 @@
 //  rewrite configuration?
 //
 //  Off (the default) keeps today's contract: loopback callers are trusted
-//  without a key. On, `/sessions`, `/agents`, `/mcp/*`, `/admin/config/*`
-//  and `/admin/import/*` require a valid access key (or a harness token
+//  without a key. On, `/sessions`, `/agents`, `/attention`,
+//  `/conversations/*`, `/devices/*`, `/mcp/*`, `/admin/config/*` and
+//  `/admin/import/*` require a valid access key (or a harness token
 //  where it already applies) even from 127.0.0.1, and browser requests to
 //  those routes are refused unless their `Origin` is listed by name in
 //  Allowed Origins (CORS).
@@ -49,6 +50,7 @@ enum LocalAPIKeyPolicy {
     nonisolated static func isProtectedRoute(_ path: String) -> Bool {
         path == "/sessions" || path.hasPrefix("/sessions/")
             || path == "/agents" || path.hasPrefix("/agents/")
+            || path.hasPrefix("/conversations/")
             || path.hasPrefix("/mcp/")
             || path.hasPrefix("/admin/config/")
             || path.hasPrefix("/admin/import/")

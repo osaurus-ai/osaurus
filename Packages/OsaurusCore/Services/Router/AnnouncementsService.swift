@@ -9,7 +9,8 @@
 //  Contract (see docs/osaurus-integration.md in osaurus-router):
 //  - `GET /announcements?app_version=…` is unauthenticated, IP rate-limited,
 //    and returns only what is live right now by the router's clock. The
-//    client never re-evaluates the schedule locally.
+//    client never shows anything by its own clock; it only hides an
+//    announcement in Help once its `ends_at` has passed.
 //  - `slug` is the dismissal key: `ai.osaurus.announcement.<slug>.seen`.
 //  - The router counts each feed response that includes an announcement as
 //    a "delivery", so fetches stay on the natural triggers (launch and
@@ -190,6 +191,14 @@ final class AnnouncementsService: ObservableObject {
     var eligibleAnnouncement: OsaurusRouterAnnouncement? {
         guard !isPresenting else { return nil }
         return announcements.first { $0.isRenderable && !hasSeen($0.slug) }
+    }
+
+    /// What Help shows: every live announcement this build can render,
+    /// dismissed or not. One leaves when the router stops returning it
+    /// (ended or archived) or its `ends_at` passes.
+    var standingAnnouncements: [OsaurusRouterAnnouncement] {
+        let instant = now()
+        return announcements.filter { $0.isRenderable && !$0.hasEnded(at: instant) }
     }
 
     /// Call at the moment of presentation. Marks the slug seen immediately

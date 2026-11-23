@@ -245,8 +245,9 @@ final class MapKitMapsService: MapsServicing, @unchecked Sendable {
         // `locationServicesEnabled()` can block briefly; keep it off the main
         // actor (this method is not main-actor bound).
         guard CLLocationManager.locationServicesEnabled() else {
-            throw AppleToolError.unavailable(
-                "Location Services are turned off in System Settings → Privacy & Security → Location Services.", retryable: false
+            throw AppleToolError.permissionDenied(
+                .location,
+                detail: "Location Services are off for the whole Mac: the switch at the top of that pane."
             )
         }
         try await ensureLocationAuthorized()

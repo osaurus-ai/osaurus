@@ -74,6 +74,18 @@ struct ActivityFilter: Equatable, Hashable, Sendable {
     var destinationHost: String?
     var model: String?
     var agentId: UUID?
+    /// Every row of one workflow run: the run, its steps, and the model,
+    /// tool, and network events inside them.
+    var workflowRunId: UUID?
+    /// Every row of one task: the task row and the model, tool, and network
+    /// events it produced.
+    var taskId: UUID?
+    /// Every row one participant drove or answered (`Participant.key`).
+    var participantKey: String?
+    /// Every row one agent took part in by address: as a calling remote
+    /// agent, or as the shared agent an interaction was on. For agents on
+    /// another Mac, which have no local id.
+    var agentAddress: String?
     var status: ActivityStatusFilter = .all
     var privacyFilterApplied: Bool?
     /// Hide plugin console log lines (noise for audit review) unless asked.
@@ -94,6 +106,10 @@ struct ActivityFilter: Equatable, Hashable, Sendable {
         if destinationHost != nil { n += 1 }
         if model != nil { n += 1 }
         if agentId != nil { n += 1 }
+        if workflowRunId != nil { n += 1 }
+        if taskId != nil { n += 1 }
+        if participantKey != nil { n += 1 }
+        if agentAddress != nil { n += 1 }
         if status != .all { n += 1 }
         if privacyFilterApplied != nil { n += 1 }
         if !includePluginLogs { n += 1 }

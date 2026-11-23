@@ -20,13 +20,31 @@ struct IMEAwareTextField: NSViewRepresentable {
     var font: NSFont
     var textColor: NSColor
     var onSubmit: (() -> Void)? = nil
+    /// Reports first-responder changes so the host can draw the focus ring.
+    var onFocusChange: ((Bool) -> Void)? = nil
+    var tracking: CGFloat? = nil
+    var editable: Bool = true
+    /// ↑ / ↓ while typing: -1 / +1. Nil leaves the arrows to the text view.
+    var onMove: ((Int) -> Void)? = nil
+    /// Escape. Nil leaves it to the text view, or to `clearsOnEscape`.
+    var onCancel: (() -> Void)? = nil
+    /// Escape without `onCancel`: empties the field and gives up focus,
+    /// so Esc never reaches a handler further out while the field has focus.
+    var clearsOnEscape: Bool = false
+    /// Take keyboard focus once the field is in a window.
+    var focusOnAppear: Bool = false
+    /// False leaves the field out of Tab order and out of the window's own
+    /// pick of what to focus first; a click or `focusOnAppear` still focuses it.
+    var joinsKeyLoop: Bool = true
 
     func makeNSView(context: Context) -> IMETrackingTextView {
         let textView = IMETrackingTextView()
+        textView.focusOnAppear = focusOnAppear
+        textView.joinsKeyLoop = joinsKeyLoop
         textView.delegate = context.coordinator
         textView.drawsBackground = false
         textView.isRichText = false
-        textView.isEditable = true
+        textView.isEditable = editable
         textView.isSelectable = true
         textView.allowsUndo = true
         textView.focusRingType = .none
@@ -55,6 +73,9 @@ struct IMEAwareTextField: NSViewRepresentable {
         textView.onSubmit = { [weak coordinator] in
             coordinator?.parent.onSubmit?()
         }
+        textView.onFocusChange = { [weak coordinator] focused in
+            coordinator?.parent.onFocusChange?(focused)
+        }
 
         return textView
     }
@@ -67,6 +88,12 @@ struct IMEAwareTextField: NSViewRepresentable {
         }
         if textView.font != font { textView.font = font }
         if textView.textColor != textColor { textView.textColor = textColor }
+        textView.insertionPointColor = textColor
+        textView.isEditable = editable
+        if let tracking, !textView.hasMarkedText() {
+            textView.typingAttributes[.kern] = tracking
+            textView.textStorage?.addAttribute(.kern, value: tracking, range: NSRange(location: 0, length: textView.textStorage?.length ?? 0))
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -87,11 +114,29 @@ struct IMEAwareTextField: NSViewRepresentable {
         func textView(
             _ textView: NSTextView, doCommandBy commandSelector: Selector
         ) -> Bool {
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            switch commandSelector {
+            case #selector(NSResponder.insertNewline(_:)):
                 (textView as? IMETrackingTextView)?.onSubmit?()
                 return true
+            case #selector(NSResponder.moveUp(_:)) where parent.onMove != nil:
+                parent.onMove?(-1)
+                return true
+            case #selector(NSResponder.moveDown(_:)) where parent.onMove != nil:
+                parent.onMove?(1)
+                return true
+            case #selector(NSResponder.cancelOperation(_:)) where parent.onCancel != nil:
+                parent.onCancel?()
+                return true
+            case #selector(NSResponder.cancelOperation(_:)) where parent.clearsOnEscape:
+                if !textView.string.isEmpty {
+                    textView.string = ""
+                    parent.text = ""
+                }
+                textView.window?.makeFirstResponder(nil)
+                return true
+            default:
+                return false
             }
-            return false
         }
     }
 }
@@ -101,6 +146,32 @@ final class IMETrackingTextView: NSTextView {
     /// Called when IME marked-text state changes (composing / not composing).
     var onMarkedTextChanged: ((Bool) -> Void)?
     var onSubmit: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
+    var focusOnAppear = false
+    var joinsKeyLoop = true
+
+    override var canBecomeKeyView: Bool { joinsKeyLoop && super.canBecomeKeyView }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard focusOnAppear, window != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window else { return }
+            window.makeFirstResponder(self)
+        }
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { onFocusChange?(true) }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { onFocusChange?(false) }
+        return resigned
+    }
 
     override func setMarkedText(
         _ string: Any, selectedRange: NSRange, replacementRange: NSRange

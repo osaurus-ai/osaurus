@@ -284,7 +284,9 @@ final class OsaurusBundleTests: XCTestCase {
 
         try manifest([:], drop: ["skills", "mcp_servers", "agents"])
         let found = issues { _ = try OsaurusBundle.load(from: root) }
-        XCTAssertTrue(found.contains { $0.contains("no agents, skills, MCP servers, harness runtimes or settings") }, "\(found)")
+        XCTAssertTrue(
+            found.contains { $0.contains("no agents, skills, MCP servers, harness runtimes, settings or onboarding") },
+            "\(found)")
     }
 
     func testRejectsUnknownSettingsWrongTypesAndBadOrigins() throws {
@@ -459,6 +461,113 @@ final class OsaurusBundleTests: XCTestCase {
         XCTAssertTrue(ImportQueue.pending().isEmpty)
     }
 
+    // MARK: Onboarding
+
+    func testOnboardingLoadsNamesAndAll() throws {
+        try writeFixture()
+        try manifest(["onboarding": ["skip": true, "exclude_teammates": ["Keeper", " planner ", "keeper"]]])
+        XCTAssertEqual(
+            try OsaurusBundle.load(from: root).manifest.onboarding,
+            BundleOnboarding(skip: true, excludeTeammates: .names(["keeper", "planner"])))
+
+        try manifest(["onboarding": ["exclude_teammates": "all"]])
+        XCTAssertEqual(try OsaurusBundle.load(from: root).manifest.onboarding?.excludeTeammates, .all)
+
+        try manifest(["onboarding": ["exclude_teammates": ["ALL"]]])
+        XCTAssertEqual(try OsaurusBundle.load(from: root).manifest.onboarding?.excludeTeammates, .all)
+
+        try manifest()
+        XCTAssertNil(try OsaurusBundle.load(from: root).manifest.onboarding)
+    }
+
+    func testOnboardingRejectsUnknownKeysTeammatesAndMixedAll() throws {
+        try writeFixture()
+        try manifest(["onboarding": ["skp": true]])
+        var found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(found.contains { $0.contains("onboarding: unknown key `skp`") && $0.contains("`skip`") }, "\(found)")
+
+        try manifest(["onboarding": ["exclude_teammates": ["keepr"]]])
+        found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(
+            found.contains { $0.contains("unknown teammate `keepr`") && $0.contains("`keeper`") }, "\(found)")
+
+        try manifest(["onboarding": ["exclude_teammates": ["all", "keeper"]]])
+        found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(found.contains { $0.contains("\"all\" can't be combined") }, "\(found)")
+
+        try manifest(["onboarding": ["exclude_teammates": "keeper"]])
+        found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(found.contains { $0.contains("expected \"all\" or a list of teammate names") }, "\(found)")
+
+        try manifest(["onboarding": true])
+        found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(found.contains { $0.contains("onboarding: must be an object") }, "\(found)")
+    }
+
+    func testOnboardingAloneIsEnoughToShip() throws {
+        try manifest(["onboarding": ["exclude_teammates": "all"]], drop: ["skills", "mcp_servers", "agents"])
+        let bundle = try OsaurusBundle.load(from: root)
+        XCTAssertEqual(bundle.manifest.onboarding?.excludeTeammates, .all)
+        XCTAssertEqual(try bundle.select(kind: nil, names: []), [])
+
+        try manifest(["onboarding": ["skip": false]], drop: ["skills", "mcp_servers", "agents"])
+        let found = issues { _ = try OsaurusBundle.load(from: root) }
+        XCTAssertTrue(found.contains { $0.contains("lists no agents") }, "\(found)")
+    }
+
+    func testOnboardingMergesWithAllWinning() {
+        let manifest = BundleOnboarding(skip: false, excludeTeammates: .names(["keeper"]))
+        XCTAssertEqual(
+            manifest.merged(with: BundleOnboarding(skip: true, excludeTeammates: .names(["planner"]))),
+            BundleOnboarding(skip: true, excludeTeammates: .names(["keeper", "planner"])))
+        XCTAssertEqual(manifest.merged(with: BundleOnboarding(excludeTeammates: .all)).excludeTeammates, .all)
+        XCTAssertEqual(BundleOnboarding(excludeTeammates: .all).merged(with: manifest).excludeTeammates, .all)
+        XCTAssertTrue(BundleOnboarding().merged(with: BundleOnboarding()).isEmpty)
+        XCTAssertTrue(TeammateExclusion.all.excludes("anyone-added-later"))
+        XCTAssertFalse(TeammateExclusion.names(["keeper"]).excludes("scout"))
+    }
+
+    func testOnboardingRecordRoundTripsAndCountsQueuedRequests() throws {
+        ToolsPaths.overrideRoot = root.appendingPathComponent("tools-root", isDirectory: true)
+        XCTAssertTrue(ImportQueue.effectiveOnboarding().isEmpty)
+
+        try ImportQueue.saveOnboarding([
+            "com.Example.Mixed": BundleOnboarding(skip: true, excludeTeammates: .names(["keeper"]))
+        ])
+        XCTAssertEqual(ImportQueue.loadOnboarding().keys.sorted(), ["com.Example.Mixed"])
+        XCTAssertEqual(ImportQueue.effectiveOnboarding(), BundleOnboarding(skip: true, excludeTeammates: .names(["keeper"])))
+
+        // A queued install counts before the app applies it; a queued
+        // whole-bundle remove takes the bundle's request back.
+        let install = ImportRequest(
+            bundleId: "com.example.other", bundleName: nil, bundleVersion: "1.0.0", operations: [],
+            confirmHighRisk: false, onboarding: BundleOnboarding(excludeTeammates: .all))
+        try ImportQueue.enqueue(install, bundle: nil)
+        XCTAssertEqual(ImportQueue.effectiveOnboarding().excludeTeammates, .all)
+
+        let remove = ImportRequest(
+            createdAt: install.createdAt.addingTimeInterval(1), bundleId: "com.Example.Mixed", bundleName: nil,
+            bundleVersion: nil, operations: [], confirmHighRisk: false, forgetsOnboarding: true)
+        try ImportQueue.enqueue(remove, bundle: nil)
+        XCTAssertEqual(ImportQueue.effectiveOnboarding(), BundleOnboarding(excludeTeammates: .all))
+
+        let reloaded = try XCTUnwrap(ImportQueue.pending(id: install.id))
+        XCTAssertEqual(reloaded.request.onboarding, BundleOnboarding(excludeTeammates: .all))
+    }
+
+    func testOlderQueuedRequestsWithoutOnboardingStillLoad() throws {
+        ToolsPaths.overrideRoot = root.appendingPathComponent("tools-root", isDirectory: true)
+        let dir = ImportQueue.pendingRoot().appendingPathComponent("20260101-000000-aaaaaaaa", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try #"""
+        {"id":"20260101-000000-aaaaaaaa","created_at":"2026-01-01T00:00:00Z","bundle_id":"com.example.old",
+         "operations":[],"confirm_high_risk":false}
+        """#.write(to: dir.appendingPathComponent("request.json"), atomically: true, encoding: .utf8)
+        let pending = try XCTUnwrap(ImportQueue.pending().first)
+        XCTAssertNil(pending.request.onboarding)
+        XCTAssertNil(pending.request.forgetsOnboarding)
+    }
+
     // MARK: Shipped example
 
     /// docs/examples/osaurus-bundle-example is what the author guide walks
@@ -479,6 +588,7 @@ final class OsaurusBundleTests: XCTestCase {
         XCTAssertEqual(bundle.agents.map(\.name), ["Support Desk", "Release Checker", "Acme Coder"])
         XCTAssertEqual(bundle.harnessRuntimes.map(\.name), ["Acme Pi"])
         XCTAssertEqual(bundle.agent(named: "Acme Coder")?.harnessRuntime, "Acme Pi")
+        XCTAssertEqual(bundle.manifest.onboarding, BundleOnboarding(skip: false, excludeTeammates: .names(["keeper"])))
 
         let support = try XCTUnwrap(bundle.agent(named: "Support Desk"))
         XCTAssertEqual(support.skills, ["triage-ticket"])

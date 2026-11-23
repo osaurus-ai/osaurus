@@ -19,6 +19,17 @@ extension ChatSession {
 
     var isHarnessAgentActive: Bool { harnessSelection != nil }
 
+    /// Tool steps render in their own group, away from the text, so text
+    /// that resumes after one starts a new paragraph instead of running on
+    /// from the sentence before it.
+    nonisolated static func harnessTextLead(resumingAfterTool: Bool, content: String) -> String {
+        guard resumingAfterTool,
+            !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !content.hasSuffix("\n\n")
+        else { return "" }
+        return content.hasSuffix("\n") ? "\n" : "\n\n"
+    }
+
     /// Run one turn on the agent's harness, streaming into `turn`.
     func runHarnessTurn(
         _ selection: HarnessSelection,
@@ -51,6 +62,7 @@ extension ChatSession {
         var firstOutputAt: Date?
         var lastNotice: String?
         var openDialogs: [String: ClarifyPromptState] = [:]
+        var textFollowsTool = false
 
         func noteOutput(_ text: String) {
             let now = Date()
@@ -102,11 +114,14 @@ extension ChatSession {
                 switch event {
                 case .text(let text):
                     noteOutput(text)
-                    processor.receiveDelta(text)
+                    let lead = Self.harnessTextLead(resumingAfterTool: textFollowsTool, content: turn.content)
+                    textFollowsTool = false
+                    processor.receiveDelta(lead + text)
                 case .reasoning(let text):
                     noteOutput(text)
                     processor.receiveReasoning(text)
                 case .toolStarted(let callId, let name):
+                    textFollowsTool = true
                     await processor.finalize()
                     turn.noteRemoteToolStarted(callId: callId ?? name, name: name)
                     rebuildVisibleBlocks()
@@ -117,6 +132,9 @@ extension ChatSession {
                         isError: isError,
                         failureMessage: message
                     )
+                    if let callId, let record = await HarnessBridgeCalls.shared.record(chatId: chatId, toolCallId: callId) {
+                        turn.noteRemoteToolDetail(callId: callId, arguments: record.arguments, result: record.result)
+                    }
                     rebuildVisibleBlocks()
                 case .notice(let text, _):
                     appendNotice(text)
@@ -124,7 +142,7 @@ extension ChatSession {
                     if let state = presentHarnessDialog(request, session: session) {
                         openDialogs[request.id] = state
                     }
-                case .stats(let outputTokens, let tokensPerSecond, let stopReason):
+                case .stats(let outputTokens, let tokensPerSecond, let stopReason, _):
                     if outputTokens > 0 { turn.generationTokenCount = outputTokens }
                     if tokensPerSecond.isFinite, tokensPerSecond > 0 { authoritativeRate = tokensPerSecond }
                     if let stopReason { turn.terminalStopReason = stopReason }
@@ -141,12 +159,31 @@ extension ChatSession {
             }
         }
 
+        // Nothing waits for an Osaurus tool call once the turn is over
+        // (Stop, a failure, or a harness that exited mid-call).
+        await HarnessBridgeCalls.shared.cancelAll(chatId: chatId)
+
         // Questions the harness stopped waiting for must not stay on screen.
         if !openDialogs.isEmpty {
             promptQueue.dismiss(Set(openDialogs.values.map { ObjectIdentifier($0) }))
         }
         await processor.finalize()
         turn.finalizeRemoteToolActivity()
+
+        // Same card as the built-in loop's; only its Save writes.
+        if let proposal = WorkflowDraftStore.shared.takeSaveProposal(sessionID: chatId.uuidString),
+            isRunActive(runId)
+        {
+            promptQueue.enqueue(
+                .workflowSave(
+                    WorkflowSavePromptState(
+                        draftID: proposal.draftID,
+                        name: proposal.name,
+                        version: proposal.version,
+                        changelog: proposal.changelog,
+                        updates: proposal.updates,
+                        trigger: WorkflowDraftTrigger.proposed(for: proposal.draftID))))
+        }
 
         if let firstOutputAt {
             turn.timeToFirstToken = max(0, firstOutputAt.timeIntervalSince(streamStart))
@@ -227,6 +264,10 @@ extension ChatSession {
     /// when the runtime supports it).
     func closeHarnessSession(for chatId: UUID? = nil) {
         guard let id = chatId ?? sessionId else { return }
-        Task { await HarnessSessionManager.shared.close(chatId: id) }
+        Task {
+            await HarnessBridgeCalls.shared.cancelAll(chatId: id)
+            await HarnessBridgeCalls.shared.clearRecords(chatId: id)
+            await HarnessSessionManager.shared.close(chatId: id)
+        }
     }
 }

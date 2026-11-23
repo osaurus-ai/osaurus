@@ -3,12 +3,11 @@
 //  osaurus
 //
 //  Advertises this Mac itself (not an agent) as `_osaurus-mobile._tcp` so the
-//  Osaurus iPhone app can find it for 6-digit pairing even when no agent has
-//  Bonjour enabled. The TXT record carries only a display name and the
-//  protocol version; identity and keys are exchanged by `POST /pair/code`.
+//  Osaurus iPhone app can find it for 6-digit pairing. The TXT record carries
+//  only a display name and the protocol version; identity and keys are
+//  exchanged by `POST /pair/code`.
 //
-//  Publishing is logged and retried like the agent advertiser's: a publish
-//  that fails (mDNSResponder not ready at launch, a name collision beyond
+//  Publishing is logged and retried: a publish that fails (mDNSResponder not ready at launch, a name collision beyond
 //  auto-rename, local-network access denied) used to fail silently, and a
 //  phone that could not find the Mac was indistinguishable from a Mac that
 //  never said it was there.
@@ -22,6 +21,8 @@ final class MobileConnectAdvertiser: NSObject {
     static let shared = MobileConnectAdvertiser()
     static let serviceType = "_osaurus-mobile._tcp."
     private static let maxPublishRetries = 3
+    /// An mDNS instance name is at most 63 bytes; a longer one is refused.
+    static let maxInstanceNameBytes = 63
     private nonisolated static let logger = Logger(subsystem: "com.osaurus", category: "bonjour")
 
     private var service: NetService?
@@ -46,27 +47,6 @@ final class MobileConnectAdvertiser: NSObject {
         publish()
     }
 
-    /// Publishes a throwaway service of the AGENT type for a moment. If it
-    /// goes through while the pairing type is refused, the pairing type is
-    /// missing from the bundle's declared list; if both are refused, the
-    /// app itself is denied local-network access.
-    private var probe: NetService?
-    private var hasProbed = false
-
-    private func probeAgentType() {
-        guard !hasProbed else { return }
-        hasProbed = true
-        let service = NetService(domain: "", type: BonjourAdvertiser.serviceType, name: "osaurus-probe", port: Int32(port))
-        service.delegate = self
-        service.publish()
-        probe = service
-        MobileConnectLog.write("bonjour: probing \(BonjourAdvertiser.serviceType) as 'osaurus-probe'")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.probe?.stop()
-            self?.probe = nil
-        }
-    }
-
     func stopAdvertising() {
         generation += 1
         if service != nil { MobileConnectLog.write("bonjour: stopped advertising") }
@@ -75,11 +55,7 @@ final class MobileConnectAdvertiser: NSObject {
     }
 
     private func publish() {
-        // An mDNS instance name is at most 63 bytes; a long Mac name would be
-        // refused outright.
-        let name = BonjourAdvertiser.truncateUTF8(
-            Host.current().localizedName ?? "Osaurus", maxBytes: BonjourAdvertiser.maxInstanceNameBytes
-        )
+        let name = Self.truncateUTF8(Host.current().localizedName ?? "Osaurus", maxBytes: Self.maxInstanceNameBytes)
         let service = NetService(domain: "", type: Self.serviceType, name: name, port: Int32(port))
         service.setTXTRecord(
             NetService.data(fromTXTRecord: [
@@ -92,6 +68,21 @@ final class MobileConnectAdvertiser: NSObject {
         self.service = service
         MobileConnectLog.write("bonjour: publishing \(Self.serviceType) as '\(name)' on port \(port)")
         Self.logger.info("Publishing pairing service '\(name, privacy: .public)' on port \(self.port)")
+    }
+
+    /// Truncate a string to at most `maxBytes` of UTF-8 without splitting a
+    /// character.
+    nonisolated static func truncateUTF8(_ string: String, maxBytes: Int) -> String {
+        guard string.utf8.count > maxBytes else { return string }
+        var result = ""
+        var used = 0
+        for char in string {
+            let size = String(char).utf8.count
+            if used + size > maxBytes { break }
+            result.append(char)
+            used += size
+        }
+        return result
     }
 
     private func retryPublish() async {
@@ -117,14 +108,11 @@ extension MobileConnectAdvertiser: NetServiceDelegate {
 
     nonisolated func netServiceDidPublish(_ sender: NetService) {
         MobileConnectLog.write("bonjour: advertised '\(sender.name)' (\(sender.type)) on port \(sender.port)")
-        if sender.name == "osaurus-probe" { return }
         Self.logger.info("Advertised pairing service '\(sender.name, privacy: .public)' on port \(sender.port)")
     }
 
     nonisolated func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
         MobileConnectLog.write("bonjour: FAILED to advertise '\(sender.name)' (\(sender.type)): \(errorDict)")
-        if sender.name == "osaurus-probe" { return }
-        Task { @MainActor [weak self] in self?.probeAgentType() }
         Self.logger.error(
             "Failed to advertise pairing service '\(sender.name, privacy: .public)': \(errorDict, privacy: .public)"
         )

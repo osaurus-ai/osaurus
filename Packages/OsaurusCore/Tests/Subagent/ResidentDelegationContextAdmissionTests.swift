@@ -175,9 +175,33 @@ struct ResidentDelegationContextAdmissionTests {
         #expect(ceiling(facts(available: allocator + floorCost)) == minimum)
     }
 
-    @Test("unknown pressure, critical, warning, cold and missing authoritative facts fail closed")
+    @Test("elevated pressure fits one child while still charging the full cold-load reserve")
+    func warningFitsWithFullReserve() throws {
+        let warning = facts(pressure: .warning)
+        #expect(!warning.usesIncrementalResidentAdmission)
+        #expect(warning.effectiveOSHeadroomBytes == 3_221_225_472)
+        #expect(warning.effectiveAllocatorAllowanceBytes == 0)
+        #expect(plan(warning).localCapacity == 0)
+        let positions = try #require(ceiling(warning))
+        #expect(positions == 240_964)
+        #expect(positions < fitted, "the reserve costs more than the normal-pressure allocator allowance")
+        let bytes = try #require(price(positions))
+        #expect(bytes <= warning.reclaimableBytes! - warning.osHeadroomBytes)
+        #expect(plan(warning.pricingChildHeadroom(bytes)).localCapacity == 1)
+        #expect(plan(warning.pricingChildHeadroom(try #require(price(positions + 1)))).localCapacity == 0)
+    }
+
+    @Test("elevated pressure with only the reserve left still refuses")
+    func warningWithoutRoomPastTheReserveRefuses() throws {
+        let floorCost = try #require(price(minimum))
+        #expect(ceiling(facts(pressure: .warning, available: 3_221_225_472 + floorCost - 1)) == nil)
+        #expect(ceiling(facts(pressure: .warning, available: 3_221_225_472 + floorCost)) == minimum)
+    }
+
+    @Test("unknown pressure, critical, cold and missing authoritative facts fail closed")
     func untrustedFactsDoNotAdapt() {
-        for memory in [facts(pressure: .unknown), facts(pressure: .critical), facts(pressure: .warning),
+        for memory in [facts(pressure: .unknown), facts(pressure: .critical),
+                       facts(pressure: .warning, allocator: nil), facts(pressure: .warning, budget: nil),
                        facts(resident: false), facts(allocator: nil), facts(budget: nil),
                        facts(available: nil), facts(bounded: nil), facts(load: nil)] {
             #expect(ceiling(memory) == nil)

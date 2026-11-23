@@ -19,20 +19,34 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
     static let removedEnvironment: Set<String> = ["ANTHROPIC_API_KEY"]
 
     func tokenToolScope(context: HarnessLaunchContext) -> Set<String>? {
+        if context.isArchitect { return HarnessGrantStore.architectToolNames }
         let config = context.claudeCode
-        guard config.mode == .agent, config.allowOsaurusTools else { return [] }
-        return Set(ClaudeCodeConfiguration.osaurusToolPatterns(allowConfigWrites: Self.allowsConfigWrites(context)))
+        guard config.mode == .agent, config.osaurusTools else { return [] }
+        return context.osaurusToolNames
     }
 
     func tokenAllowsConfigWrites(context: HarnessLaunchContext) -> Bool {
         let config = context.claudeCode
-        return config.mode == .agent && config.allowOsaurusTools && Self.allowsConfigWrites(context)
+        return !context.isArchitect && config.mode == .agent && config.osaurusTools
+            && context.osaurusToolNames.contains(HarnessGrantStore.configWriteToolName)
     }
 
     /// `osaurus_config` only ever runs for the Default agent, so a custom
     /// agent's opt-in is ignored rather than handed a tool that always refuses.
-    static func allowsConfigWrites(_ context: HarnessLaunchContext) -> Bool {
-        context.claudeCode.allowOsaurusConfigWrites && context.agentId == Agent.defaultId
+    static func allowsConfigWrites(agentId: UUID, _ config: ClaudeCodeAgentConfig) -> Bool {
+        config.allowOsaurusConfigWrites && agentId == Agent.defaultId
+    }
+
+    /// Why an agent-mode run has no Osaurus tools; nil once they attach.
+    static func toolsUnavailableReason(
+        _ context: HarnessLaunchContext,
+        attached: Bool
+    ) -> ClaudeCodeConfiguration.OsaurusToolsUnavailableReason? {
+        if attached { return nil }
+        if !context.claudeCode.osaurusTools { return .notEnabled }
+        if context.osaurusToolNames.isEmpty { return .agentToolsOff }
+        if context.osaurusCLIPath == nil { return .bridgeMissing }
+        return .serverNotRunning
     }
 
     func launchPlan(context: HarnessLaunchContext, token: String?) throws -> HarnessLaunchPlan {
@@ -58,6 +72,11 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
         // stream empty thinking deltas; only the explicit flag requests
         // summaries, so the reasoning panel has text to show.
         arguments += ["--thinking-display", "summarized"]
+        if context.claudeCodeFeatures.systemPromptSnapshot {
+            // A relaunch re-reads the prompt (new instructions, a tool note
+            // that changed with the server) instead of replaying turn one's.
+            arguments += ["--system-prompt-snapshot", "off"]
+        }
 
         let sessionId = context.chatId.uuidString.lowercased()
         let environmentForLookup = runtime.environment
@@ -71,7 +90,32 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
         arguments += resume ? ["--resume", sessionId] : ["--session-id", sessionId]
 
         var bridgeAttached = false
-        switch config.mode {
+        var architectBridgeMissing = false
+        switch context.isArchitect ? .agent : config.mode {
+        case .agent where context.isArchitect:
+            // The Architect's surface is fixed: its Osaurus tools and no
+            // built-ins, whatever the Claude Code options say.
+            arguments += ["--permission-mode", "dontAsk", "--tools", ""]
+            if context.serverReachable, let cliPath = context.osaurusCLIPath,
+                let json = ClaudeCodeConfiguration.mcpConfigJSON(
+                    cliPath: cliPath,
+                    patterns: ClaudeCodeConfiguration.architectToolPatterns,
+                    bridgeGrant: token,
+                    port: context.apiBase.flatMap { URL(string: $0)?.port }
+                )
+            {
+                let url = try HarnessScratch.writePrivateFile(
+                    named: "mcp-config-\(UUID().uuidString).json",
+                    contents: json,
+                    in: privateDirectory
+                )
+                temporaryFiles.append(url)
+                arguments += ["--mcp-config", url.path]
+                let allowed = ClaudeCodeConfiguration.namespaced(ClaudeCodeConfiguration.architectToolPatterns)
+                arguments += ["--allowedTools", allowed.joined(separator: ",")]
+            } else {
+                architectBridgeMissing = true
+            }
         case .textOnly:
             arguments += ["--tools", ""]
         case .agent:
@@ -82,11 +126,13 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
                 allowed.append(ClaudeCodeConfiguration.scopedWriteRule(root: context.workingDirectory))
             }
             if config.allowShell { allowed += ClaudeCodeConfiguration.shellTools }
-            if config.allowOsaurusTools, context.serverReachable, let cliPath = context.osaurusCLIPath,
+            let osaurusTools = context.osaurusToolNames.sorted()
+            if config.osaurusTools, context.serverReachable, let cliPath = context.osaurusCLIPath,
                 let json = ClaudeCodeConfiguration.mcpConfigJSON(
                     cliPath: cliPath,
-                    allowConfigWrites: Self.allowsConfigWrites(context),
-                    bridgeGrant: token
+                    patterns: osaurusTools,
+                    bridgeGrant: token,
+                    port: context.apiBase.flatMap { URL(string: $0)?.port }
                 )
             {
                 let url = try HarnessScratch.writePrivateFile(
@@ -96,12 +142,15 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
                 )
                 temporaryFiles.append(url)
                 arguments += ["--mcp-config", url.path]
-                allowed += ClaudeCodeConfiguration.osaurusAllowedToolNames(
-                    allowConfigWrites: Self.allowsConfigWrites(context)
-                )
+                allowed += ClaudeCodeConfiguration.namespaced(osaurusTools)
                 bridgeAttached = true
             }
             arguments += ["--allowedTools", allowed.joined(separator: ",")]
+            let available = ClaudeCodeConfiguration.availableBuiltinTools(
+                allowWrites: config.allowWrites,
+                allowShell: config.allowShell
+            )
+            arguments += ["--tools", available.joined(separator: ",")]
             let hidden = ClaudeCodeConfiguration.hiddenBuiltinTools(
                 allowWrites: config.allowWrites,
                 allowShell: config.allowShell
@@ -115,14 +164,22 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
         {
             promptParts.append(systemPrompt)
         }
-        if config.mode == .agent, config.allowOsaurusTools {
+        if architectBridgeMissing {
             promptParts.append(
-                ClaudeCodeConfiguration.osaurusToolsSystemNote(
-                    available: bridgeAttached,
-                    allowConfigWrites: Self.allowsConfigWrites(context),
-                    reason: bridgeAttached ? nil : (context.osaurusCLIPath == nil ? .notEnabled : .serverNotRunning)
+                ClaudeCodeConfiguration.architectToolsUnavailableNote(
+                    reason: context.osaurusCLIPath == nil ? .bridgeMissing : .serverNotRunning
                 )
             )
+        } else if !context.isArchitect, config.mode == .agent {
+            promptParts.append(
+                ClaudeCodeConfiguration.osaurusToolsSystemNote(
+                    tools: bridgeAttached ? context.osaurusToolNames : [],
+                    reason: Self.toolsUnavailableReason(context, attached: bridgeAttached)
+                )
+            )
+            if bridgeAttached, let routing = context.teammateRoutingNote {
+                promptParts.append(routing)
+            }
         }
         if !promptParts.isEmpty {
             // A file, not `--append-system-prompt`: argv is visible to every
@@ -143,6 +200,9 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
         )
 
         var environment = runtime.environment
+        if environment["MCP_TOOL_TIMEOUT"] == nil {
+            environment["MCP_TOOL_TIMEOUT"] = String(ClaudeCodeConfiguration.mcpToolTimeoutMilliseconds)
+        }
         for (key, value) in HarnessEnvironment.contract(context: context, token: token) {
             environment[key] = value
         }
@@ -209,8 +269,10 @@ final class ClaudeCodeHarnessCodec: HarnessCodec {
     func decode(line: Data) -> (events: [HarnessEvent], replies: [Data]) {
         let decoded = decoder.decode(line: line)
         var events: [HarnessEvent] = []
+        var replies: [Data] = []
         var turnEnded = false
         var failure: String?
+        let display = ClaudeCodeConfiguration.displayToolName
         for event in decoded {
             switch event {
             case .text(let text):
@@ -222,21 +284,36 @@ final class ClaudeCodeHarnessCodec: HarnessCodec {
                 // replaced by the turn-end event.
                 guard !trace.endRun else { continue }
                 if trace.phase == "started" {
-                    events.append(.toolStarted(callId: trace.callId, name: trace.name))
+                    events.append(.toolStarted(callId: trace.callId, name: display(trace.name)))
                 } else {
-                    events.append(.toolFinished(callId: trace.callId, name: trace.name, isError: trace.isError))
+                    events.append(
+                        .toolFinished(callId: trace.callId, name: display(trace.name), isError: trace.isError))
                 }
             case .toolDenied(let callId, let name):
                 events.append(
                     .toolFinished(
                         callId: callId,
-                        name: name,
+                        name: display(name),
                         isError: true,
                         message: ClaudeCodeConfiguration.permissionDeniedMessage(tool: name)
                     )
                 )
-            case .stats(let outputTokens, let tokensPerSecond, let stopReason):
-                events.append(.stats(outputTokens: outputTokens, tokensPerSecond: tokensPerSecond, stopReason: stopReason))
+            case .toolUnavailable(let callId, let name):
+                events.append(
+                    .toolFinished(
+                        callId: callId,
+                        name: display(name),
+                        isError: true,
+                        message: ClaudeCodeConfiguration.unavailableToolMessage(tool: name)
+                    )
+                )
+            case .controlRequest(let requestId, let subtype):
+                if let reply = Self.controlReply(requestId: requestId, subtype: subtype) { replies.append(reply) }
+            case .stats(let outputTokens, let tokensPerSecond, let stopReason, let promptTokens):
+                events.append(
+                    .stats(
+                        outputTokens: outputTokens, tokensPerSecond: tokensPerSecond, stopReason: stopReason,
+                        promptTokens: promptTokens))
                 turnEnded = true
             case .rateLimit(let status, let utilization, _):
                 guard status != "allowed" else { continue }
@@ -256,7 +333,31 @@ final class ClaudeCodeHarnessCodec: HarnessCodec {
         } else if turnEnded {
             events.append(.turnCompleted)
         }
-        return (events, [])
+        return (events, replies)
+    }
+
+    /// Nobody can answer a prompt from inside a harness turn, so a
+    /// permission question is denied and anything else refused. An
+    /// unanswered request would leave the turn waiting forever.
+    static func controlReply(requestId: String, subtype: String) -> Data? {
+        let response: [String: Any]
+        if subtype == "can_use_tool" {
+            response = [
+                "subtype": "success",
+                "request_id": requestId,
+                "response": [
+                    "behavior": "deny",
+                    "message": "Nobody can approve this here. Do not retry it; tell the user what you needed.",
+                ],
+            ]
+        } else {
+            response = [
+                "subtype": "error",
+                "request_id": requestId,
+                "error": "Osaurus does not handle \(subtype) requests.",
+            ]
+        }
+        return try? HarnessJSON.encode(["type": "control_response", "response": response])
     }
 
     func interruptRecords() -> [Data] {

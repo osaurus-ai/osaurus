@@ -481,6 +481,7 @@ enum DeclaredReasoningEffort {
         guard template.contains("reasoning_effort") else { return nil }
         let ns = template as NSString
         let full = NSRange(location: 0, length: ns.length)
+        if let mapped = effortMapDeclaration(template: template) { return mapped }
         guard
             let setRegex = try? NSRegularExpression(
                 pattern: #"reasoning_effort[^\n]{0,160}?not\s+in\s*\(([^)]*)\)"#),
@@ -511,6 +512,51 @@ enum DeclaredReasoningEffort {
             preserveThinking: template.contains("preserve_thinking")
                 ? PreserveThinking(defaultOn: nil) : nil
         )
+    }
+
+    /// Inkling-2 style: a named-level dict the template maps to a scalar effort,
+    /// `{%- set effort_map = {"none": 0.0, "minimal": 0.1, …, "max": 0.99} -%}`, with
+    /// the unknown-name `raise_exception` keyed on that dict. The levels are its keys on
+    /// the app ladder; the default is the key whose value equals the template's numeric
+    /// fallback (`… else 0.9`), when one does.
+    static func effortMapDeclaration(template: String) -> Declaration? {
+        let ns = template as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        guard
+            let mapRegex = try? NSRegularExpression(
+                pattern: #"set\s+effort_map\s*=\s*\{([^}]*)\}"#),
+            let match = mapRegex.firstMatch(in: template, range: full), match.numberOfRanges > 1,
+            let pairRegex = try? NSRegularExpression(
+                pattern: #"['"]([A-Za-z_]+)['"]\s*:\s*([0-9.]+)"#)
+        else { return nil }
+        let body = ns.substring(with: match.range(at: 1)) as NSString
+        var values: [(String, Double)] = []
+        for m in pairRegex.matches(in: body as String, range: NSRange(location: 0, length: body.length)) {
+            guard let v = Double(body.substring(with: m.range(at: 2))) else { continue }
+            values.append((body.substring(with: m.range(at: 1)).lowercased(), v))
+        }
+        var levels = values.map(\.0).filter { ladderRank($0) != nil }
+        guard !levels.isEmpty else { return nil }
+        levels.sort { (ladderRank($0) ?? Int.max) < (ladderRank($1) ?? Int.max) }
+        var defaultLevel: String? = nil
+        if let fallbackRegex = try? NSRegularExpression(
+            pattern: #"reasoning_effort\s+is\s+not\s+none\s+else\s+([0-9.]+)"#),
+            let fm = fallbackRegex.firstMatch(in: template, range: full), fm.numberOfRanges > 1,
+            let fallback = Double(ns.substring(with: fm.range(at: 1)))
+        {
+            defaultLevel = values.first { $0.1 == fallback && levels.contains($0.0) }?.0
+        }
+        let preserve = template.contains("preserve_thinking") ? PreserveThinking(defaultOn: nil) : nil
+        // A `none` key is the template's own Off: offer it as the Off rail, sending the kwarg verbatim.
+        if values.contains(where: { $0.0 == "none" }) {
+            var kwargs: [String: [String: ReasoningModeValue]] = ["none": ["reasoning_effort": .string("none")]]
+            for level in levels { kwargs[level] = ["reasoning_effort": .string(level)] }
+            return Declaration(
+                control: .modeKwargs(levels, defaultLevel: defaultLevel, kwargs: kwargs),
+                preserveThinking: preserve)
+        }
+        return Declaration(
+            control: .levels(levels, defaultLevel: defaultLevel), preserveThinking: preserve)
     }
 
     // MARK: - Snapping

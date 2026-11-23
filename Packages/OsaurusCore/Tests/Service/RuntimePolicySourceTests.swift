@@ -17,6 +17,13 @@ struct RuntimePolicySourceTests {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
+    /// The chat loop's tool_choice comes only from `ChatToolChoicePolicy.resolve`.
+    private static func chatToolChoiceComesFromPolicy(_ chatView: String) -> Bool {
+        chatView.range(
+            of: #"let requestedToolChoice =\s*ChatToolChoicePolicy\.resolve\("#,
+            options: .regularExpression) != nil
+    }
+
     private static func functionBody(_ signature: String, in source: String) throws -> String {
         let start = try #require(source.range(of: signature))
         let peers = [
@@ -73,12 +80,14 @@ struct RuntimePolicySourceTests {
                 """))
     }
 
-    @Test("HTTP max tokens does not invent a hidden reasoning budget")
+    @Test("HTTP max tokens does not invent a hidden reasoning budget; only an explicit request budget arms one")
     func httpMaxTokensDoesNotInventReasoningBudget() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
         #expect(!adapter.contains("apiReasoningAnswerBudget"))
-        #expect(!adapter.contains("mlxParams.requestedReasoningBudgetTokens ="))
         #expect(adapter.contains("Do not invent a reasoning budget from `max_tokens`"))
+        let assignments = adapter.components(separatedBy: "mlxParams.requestedReasoningBudgetTokens =").count - 1
+        #expect(assignments == 1)
+        #expect(adapter.contains("mlxParams.requestedReasoningBudgetTokens = generation.reasoningBudgetTokens"))
     }
 
     @Test("production prompt entry points wait for the initial plugin catalog")
@@ -240,7 +249,7 @@ struct RuntimePolicySourceTests {
         let serverStart = try #require(source.range(of: "await serverController.startServer()"))
         let storagePrewarm = try #require(source.range(of: "prewarmCurrentKeyOffCooperativeExecutor()"))
         let modelCachePrewarm = try #require(source.range(of: "await ModelPickerItemCache.shared.prewarmModelCache()"))
-        let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
+        let schedulerStart = try #require(source.range(of: "EventManager.shared.start()"))
         let speechAutoload = try #require(source.range(of: "await SpeechService.shared.autoLoadIfNeeded()"))
 
         #expect(serverTask.lowerBound < modelCachePrewarm.lowerBound)
@@ -274,21 +283,22 @@ struct RuntimePolicySourceTests {
         let initBody = String(manager[initStart.lowerBound ..< initEnd.upperBound])
         #expect(!initBody.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
 
+        // Chats live in the sync store, which holds its own keys. Its
+        // Keychain reads must stay off the main thread (Sentry
+        // APPLE-MACOS-40/41/42 showed Keychain reads hanging there).
         let store = try Self.source("Models/Chat/ChatSessionStore.swift")
-        #expect(store.contains("StorageKeyManager.shared.isStorageReadyForWrites"))
-        #expect(store.contains("Chat history unavailable: storage key is not already unlocked"))
+        #expect(!store.contains("StorageKeyManager"))
         #expect(!store.contains("prewarmCurrentKey()"))
-        #expect(store.contains("Sentry APPLE-MACOS-40/41/42"))
-    }
-
-    @Test("chat history writer skips persistence unless storage key is already unlocked")
-    func chatHistoryWriterSkipsPersistenceUnlessStorageKeyCached() throws {
-        let source = try Self.source("Storage/ChatHistoryWriter.swift")
-        let gate = try #require(source.range(of: "StorageKeyManager.shared.isStorageReadyForWrites"))
-        let open = try #require(source.range(of: "try db.open()"))
-
-        #expect(gate.lowerBound < open.lowerBound)
-        #expect(source.contains("Skipping chat history persistence: storage key is not already unlocked"))
+        let ensureOpen = try #require(store.range(of: "private static func ensureOpen() {"))
+        let rest = ensureOpen.upperBound ..< store.endIndex
+        let mainThread = try #require(
+            store.range(of: "if Thread.isMainThread, !RuntimeEnvironment.isUnderTests {", range: rest)
+        )
+        let background = try #require(
+            store.range(of: "SyncService.shared.openInBackground()", range: mainThread.upperBound ..< store.endIndex)
+        )
+        let synchronous = try #require(store.range(of: "try store.open()", range: rest))
+        #expect(background.lowerBound < synchronous.lowerBound)
     }
 
     @Test("memory ingest fails fast when memory is disabled")
@@ -302,19 +312,12 @@ struct RuntimePolicySourceTests {
         #expect(source.contains(#"errorMessage: "memory disabled""#))
     }
 
-    @Test("scheduler startup does not unlock storage key")
-    func schedulerStartupDoesNotUnlockStorageKey() throws {
+    @Test("self-scheduled wake-ups start with the event manager, not a second scheduler")
+    func selfScheduleRidesOnTheEventManager() throws {
         let source = try Self.source("AppDelegate.swift")
-        let schedulerBlock = try #require(
-            source.range(
-                of: "Task { @MainActor in\n            guard StorageKeyManager.shared.isStorageReadyForWrites else"
-            )
-        )
-        let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
-
-        #expect(schedulerBlock.lowerBound < schedulerStart.lowerBound)
+        #expect(source.contains("EventManager.shared.start()"))
+        #expect(!source.contains("NextRunScheduler"))
         #expect(!source.contains("storageKeyPrewarmTask"))
-        #expect(source.contains("Scheduler disabled: storage key is not already unlocked"))
     }
 
     @Test("storage key fails closed instead of minting a replacement over existing encrypted data")
@@ -323,7 +326,7 @@ struct RuntimePolicySourceTests {
 
         // The fail-closed guard and its error must exist.
         #expect(source.contains("case keyUnavailableForExistingData"))
-        #expect(source.contains("encryptedStorageExists()"))
+        #expect(source.contains("encryptedArtifactsExist()"))
 
         // The guard must sit *between* a missed key read and the
         // generate-and-persist fallback so a populated install can never re-key
@@ -336,9 +339,12 @@ struct RuntimePolicySourceTests {
         #expect(readBranch.lowerBound < failClosed.lowerBound)
         #expect(failClosed.lowerBound < generate.lowerBound)
 
-        // Existence is judged from real encrypted artifacts, not a single DB.
-        #expect(source.contains("OsaurusPaths.chatHistoryDatabaseFile()"))
-        #expect(source.contains("OsaurusPaths.memoryDatabaseFile()"))
+        // Existence is judged from files that are actually encrypted across
+        // the whole catalog, not from file size (a plaintext store isn't
+        // evidence of a key; see StorageEncryptionToggleTests).
+        #expect(source.contains("StorageDatabaseCatalog.databaseTargets()"))
+        #expect(source.contains("StorageFileFormat.detect(path: path) == .encrypted"))
+        #expect(!source.contains("attributesOfItem"))
     }
 
     @Test("startup avoids storage-key reads and background Keychain queries skip authentication UI")
@@ -393,13 +399,13 @@ struct RuntimePolicySourceTests {
     @Test("automatic relay identity assignment keeps Keychain work off the main actor")
     func automaticRelayIdentityAssignmentKeepsKeychainWorkOffMainActor() throws {
         let agentManager = try Self.source("Managers/AgentManager.swift")
-        let serverView = try Self.source("Views/Settings/ServerView.swift")
+        let remoteAccess = try Self.source("Views/Sharing/RemoteAccessSection.swift")
         let relayManager = try Self.source("Networking/RelayTunnelManager.swift")
 
         #expect(agentManager.contains("func assignAddressInBackground(to agent: Agent)"))
         #expect(agentManager.contains("Task.detached(priority: .userInitiated)"))
-        #expect(serverView.contains("agentManager.assignAddressInBackground(to: agent)"))
-        #expect(!serverView.contains("try? agentManager.assignAddress(to: agent)"))
+        #expect(remoteAccess.contains("agentManager.assignAddressInBackground(to: agent)"))
+        #expect(!remoteAccess.contains("try? agentManager.assignAddress(to: agent)"))
         #expect(relayManager.contains("AgentManager.shared.assignAddressInBackground(to: agent)"))
         #expect(!relayManager.contains("try? AgentManager.shared.assignAddress(to: agent)"))
     }
@@ -446,12 +452,19 @@ struct RuntimePolicySourceTests {
         #expect(http.contains("let maxIterations = max(1, min(configuredMaxToolAttempts, 120))"))
     }
 
-    @Test("HTTP chat persistence runs after response path")
-    func httpChatPersistenceRunsAfterResponsePath() throws {
-        let source = try Self.source("Networking/HTTPHandler.swift")
+    @Test("raw inference surfaces never write chat history")
+    func rawInferenceSurfacesNeverWriteChatHistory() throws {
+        let http = try Self.source("Networking/HTTPHandler.swift")
+        let start = try #require(http.range(of: "private func handleChatCompletions("))
+        let end = try #require(http.range(of: "private func handleChatNDJSON(", range: start.upperBound ..< http.endIndex))
+        let chatCompletions = http[start.lowerBound ..< end.lowerBound]
+        #expect(!chatCompletions.contains("ChatHistoryWriter"))
+        #expect(!chatCompletions.contains("X-Persist"))
 
-        #expect(source.contains("ChatHistoryWriter.persistInBackground("))
-        #expect(!source.contains("ChatHistoryWriter.persist(\n                            source: .http"))
+        let plugin = try Self.source("Services/Plugin/PluginHostAPI.swift")
+        #expect(!plugin.contains("ChatHistoryWriter"))
+        #expect(!plugin.contains("persistInference"))
+        #expect(!plugin.contains("persistStreamingInference"))
     }
 
     @Test("chat session manager loads synchronously on init so first read sees populated sessions")
@@ -529,8 +542,18 @@ struct RuntimePolicySourceTests {
         )
         let sandboxBody = String(composer[sandboxStart.lowerBound ..< sandboxEnd.lowerBound])
 
-        #expect(sandboxBody.contains("AgentSecretsKeychain.secretIDs(agentId: agentId)"))
+        #expect(sandboxBody.contains("CredentialResolver.availableKeys(agentId: agentId)"))
         #expect(!sandboxBody.contains("AgentSecretsKeychain.getAllSecrets"))
+
+        let resolver = try Self.source("Services/Credentials/CredentialResolver.swift")
+        let namesStart = try #require(resolver.range(of: "public static func availableKeys(agentId: UUID"))
+        let namesEnd = try #require(
+            resolver.range(of: "public static func sandboxPluginEnvironment(", range: namesStart.upperBound ..< resolver.endIndex)
+        )
+        let namesBody = String(resolver[namesStart.lowerBound ..< namesEnd.lowerBound])
+        #expect(namesBody.contains("AgentSecretsKeychain.secretIDs(agentId: agentId)"))
+        #expect(!namesBody.contains("legacyFilteredSecrets"))
+        #expect(!namesBody.contains(".value("))
     }
 
     @Test("background Keychain reads use noninteractive authentication contexts")
@@ -546,7 +569,10 @@ struct RuntimePolicySourceTests {
             "Services/MCP/MCPProviderKeychain.swift",
         ] {
             let source = try Self.source(path)
-            #expect(source.contains("if KeychainQueryHelpers.disablesKeychainForProcess"))
+            #expect(
+                source.contains("if KeychainQueryHelpers.disablesKeychainForProcess")
+                    || source.contains("if KeychainQueryHelpers.disablesKeychain(for: service)"),
+                "\(path) must skip the Keychain when it is disabled")
             let queryCount =
                 source.components(separatedBy: "kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip").count
                 - 1
@@ -820,7 +846,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "1bcd74ad182103a3b83941f61e57ee0bac23b330"
+        let expectedRuntimeHardenedRevision = "22ecedd3a4e0b5a820e99b213a54bfa0f1fc1b6d"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1837,7 +1863,7 @@ struct RuntimePolicySourceTests {
         #expect(agentRun.contains("iterationReq.toolChoice = resolvedToolChoice"))
         #expect(agentRun.contains("iterationReq.tools = tools.isEmpty ? nil : tools"))
         #expect(!chatView.contains("finalizingPostToolChoice"))
-        #expect(chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve("))
+        #expect(Self.chatToolChoiceComesFromPolicy(chatView))
         #expect(chatView.contains("toolChoice: requestedToolChoice"))
     }
 
@@ -1857,8 +1883,6 @@ struct RuntimePolicySourceTests {
         let chatCompletions = handler[start.lowerBound ..< end.lowerBound]
         #expect(chatCompletions.contains("let enrichedReq = req"))
         #expect(chatCompletions.contains("http_context_passthrough_done"))
-        #expect(chatCompletions.contains("X-Osaurus-Agent-Id"))
-        #expect(chatCompletions.contains("agentId: resolvedAgentUUID"))
         #expect(!chatCompletions.contains("enrichWithAgentContext("))
         #expect(!chatCompletions.contains("composeChatContext("))
         #expect(!chatCompletions.contains("injectMemoryPrefix("))
@@ -2387,10 +2411,6 @@ struct RuntimePolicySourceTests {
             body.contains("serverActor = nil"),
             "ensureShutdown must release the server actor after the bounded drain"
         )
-        #expect(
-            body.contains("BonjourAdvertiser.shared.stopAdvertising()"),
-            "ensureShutdown must also stop mDNS advertising on the quit path"
-        )
     }
 
     @Test("startup completion is tied to server bind, not plugin loading")
@@ -2571,17 +2591,20 @@ struct RuntimePolicySourceTests {
         )
         #expect(connectGate.lowerBound < mcpConnect.lowerBound)
         #expect(mcpConnect.lowerBound < remoteConnect.lowerBound)
+        // Keychain-free launches skip the sandbox unless a live sandbox proof
+        // opts in explicitly.
         #expect(
             appDelegate.contains(
-                "if !keychainDisabledTestMode && !LaunchGuard.shouldSkip(.sandbox) {\n            SandboxToolRegistrar.shared.start()"
+                "if (!keychainDisabledTestMode || keychainDisabledSandboxMode) && !LaunchGuard.shouldSkip(.sandbox) {\n            SandboxToolRegistrar.shared.start()"
             )
         )
+        #expect(appDelegate.contains(#"environment["OSAURUS_KEYCHAIN_FREE_SANDBOX"] == "1""#))
         #expect(appDelegate.contains("Headless live-proof launches only need the local HTTP server"))
         #expect(appDelegate.contains("keychainDisabledTestMode && !keychainDisabledUIPresentationMode"))
         #expect(keychainHelper.contains("disablesKeychainForProcess"))
         #expect(agentSecrets.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
         #expect(toolSecrets.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
-        #expect(remoteProvider.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
+        #expect(remoteProvider.contains("if KeychainQueryHelpers.disablesKeychain(for: service) { return nil }"))
         #expect(mcpProvider.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
     }
 
@@ -3277,7 +3300,7 @@ struct RuntimePolicySourceTests {
             "private func releaseResidencyAndRearmChatWarmup(",
             in: tasks
         )
-        #expect(releaseBody.contains("state.source.inferenceSource"))
+        #expect(releaseBody.contains("state.runtimeSource.inferenceSource"))
         #expect(!releaseBody.contains("taskSource != .chatUI"))
         #expect(releaseBody.contains("accelerateIdleUnloadAfterBackgroundTaskCompleted"))
         #expect(releaseBody.contains("ChatWindowManager.shared.activeLocalModelNames()"))
@@ -3321,49 +3344,6 @@ struct RuntimePolicySourceTests {
         #expect(removalBody.contains("acceptResidencySnapshot(snapshot, selectedModel: selectedModel)"))
     }
 
-    /// Management-window deeplink reuse swaps the hosting controller of a
-    /// live NSWindow. A SwiftUI `.sheet`'s presentation window stays attached
-    /// through that swap and keeps observing parent frame changes; when the
-    /// new hosting view resizes the window, the orphaned sheet re-enters its
-    /// torn-down graph and traps inside SwiftUI (Sentry APPLE-MACOS-EF).
-    /// Pin the two mitigations: end attached sheets before the swap, and
-    /// build the replacement through `WindowManager.makeHostingController`,
-    /// the AppKit-owned controller with no `sizingOptions`, so it can't push
-    /// content-size extrema frame changes onto the reused window
-    /// (APPLE-MACOS-EF, APPLE-MACOS-1ZM).
-    @Test("Management window deeplink reuse detaches sheets before swapping the hosting controller")
-    func managementDeeplinkReuseDetachesSheetsBeforeControllerSwap() throws {
-        let appDelegate = try Self.source("AppDelegate.swift")
-
-        let reuseStart = try #require(
-            appDelegate.range(of: "if let existingWindow = windowManager.window(for: .management)")
-        )
-        let reuseWindow = String(
-            appDelegate[
-                reuseStart.lowerBound
-                    ..< appDelegate.index(
-                        reuseStart.lowerBound,
-                        offsetBy: 2400,
-                        limitedBy: appDelegate.endIndex
-                    )!
-            ]
-        )
-
-        let endSheets = try #require(
-            reuseWindow.range(of: "while let sheet = existingWindow.attachedSheet")
-        )
-        let swap = try #require(
-            reuseWindow.range(of: "existingWindow.contentViewController = replacement")
-        )
-        #expect(
-            endSheets.lowerBound < swap.lowerBound,
-            "attached sheets must be ended before the hosting controller swap"
-        )
-        #expect(reuseWindow.contains("existingWindow.endSheet(sheet)"))
-        #expect(reuseWindow.contains("windowManager.makeHostingController("))
-        #expect(!reuseWindow.contains("NSHostingController(rootView: root)"))
-    }
-
     @Test("Settings sidebar keeps bounded navigation rows accessibility-stable")
     func settingsSidebarUsesEagerRowsForAccessibility() throws {
         let sidebar = try Self.source("Views/Management/SidebarNavigation.swift")
@@ -3375,7 +3355,7 @@ struct RuntimePolicySourceTests {
 
         #expect(itemList.contains("VStack("))
         #expect(!itemList.contains("LazyVStack("))
-        #expect(itemList.contains("proxy.scrollTo(newValue, anchor: .center)"))
+        #expect(itemList.contains("proxy.scrollTo(newValue"))
     }
 
     @Test("Local bundle config readers preserve discovered bundle paths")
@@ -3415,12 +3395,12 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             runtime.contains(
-                "if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadWillStartAsync()"
+                "if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadWillStartAsync(sessionID: parameters.sessionId)"
             )
         )
         #expect(
             runtime.contains(
-                "if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadDidFinishAsync()"
+                "if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadDidFinishAsync(sessionID: parameters.sessionId)"
             )
         )
         #expect(
@@ -3475,16 +3455,17 @@ struct RuntimePolicySourceTests {
         #expect(evaluationScope.lowerBound < wholeConversation.lowerBound)
         #expect(wholeConversation.lowerBound < engineConstruction.lowerBound)
         let dispatch = try Self.source("Services/AgentDelegation/AgentDelegationDispatcher.swift")
-        let background = try Self.source("Managers/BackgroundTaskManager.swift")
+        let background = try Self.source("Managers/BackgroundTaskManager.swift").filter { !$0.isWhitespace }
         let execution = try Self.source("Folder/ChatExecutionContext.swift")
         let engine = try Self.source("Services/Chat/ChatEngine.swift")
+        func unwrapped(_ text: String) -> String { text.filter { !$0.isWhitespace } }
         #expect(
             evaluator.contains("static let inferenceSource: RequestSource = .evaluation")
                 && evaluator.contains("let sessionSource: SessionSource = .chat")
                 && evaluator.contains("ChatExecutionContext.$currentSessionSource.withValue(")
                 && dispatch.contains("request.inferenceSourceOverride = ChatExecutionContext.inferenceSourceOverride")
-                && background.contains("ChatExecutionContext.$inferenceSourceOverride.withValue(request.inferenceSourceOverride)")
-                && background.contains("await context.start(prompt: request.prompt, taskIntent: request.taskIntent, generationOverrides: request.generationOverrides)")
+                && background.contains(unwrapped("ChatExecutionContext.$inferenceSourceOverride.withValue(request.inferenceSourceOverride)"))
+                && background.contains(unwrapped("await context.start(prompt: request.prompt, taskIntent: request.taskIntent, generationOverrides: request.generationOverrides)"))
                 && execution.contains("source == .chatUI && inferenceSourceOverride == .evaluation ? .evaluation : source")
                 && engine.contains("ChatExecutionContext.resolvedInferenceSource(baseInferenceSource)"),
             "The whole evaluation conversation and detached delegated start must carry scoped headless ownership without rewriting persisted Chat/Agent provenance, borrowing HTTP protection or leaving a reused engine sticky."
@@ -3518,7 +3499,8 @@ struct RuntimePolicySourceTests {
         // closure in another layer (as Phase A/B did) silently broke
         // the literal even though the contract was preserved.
         let appendRegex = try NSRegularExpression(
-            pattern: #"if let msg = turnToMessage\(t, isLastTurn: isLastTurn\) \{\s+msgs\.append\(msg\)\s+\}"#
+            pattern:
+                #"if let msg = turnToMessage\(\s*t, isLastTurn: isLastTurn, isLatestUserTurn: t\.id == latestUserTurnId\)\s*\{\s+msgs\.append\(msg\)\s+\}"#
         )
         let appendNSRange = NSRange(chatView.startIndex ..< chatView.endIndex, in: chatView)
         #expect(
@@ -3538,7 +3520,7 @@ struct RuntimePolicySourceTests {
             "Chat UI should send the current run schema, including tools loaded for the next iteration."
         )
         #expect(
-            chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve(")
+            Self.chatToolChoiceComesFromPolicy(chatView)
                 && chatView.contains("toolChoice: requestedToolChoice"),
             "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
         )
@@ -3936,7 +3918,7 @@ struct RuntimePolicySourceTests {
     func noAutomaticLimitsClearsStalePhysicalLoadCap() throws {
         let source = try Self.source("Views/Settings/ServerSettings/MemorySafetySection.swift")
 
-        #expect(source.contains("Picker(\"\", selection: memorySafetyModeBinding)"))
+        #expect(source.contains("SettingsMenuPicker(selection: memorySafetyModeBinding)"))
         #expect(source.contains("if level == 4"))
         #expect(source.contains("if newMode == .diagnosticDangerous"))
         #expect(

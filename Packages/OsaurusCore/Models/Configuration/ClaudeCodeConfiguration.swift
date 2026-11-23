@@ -161,18 +161,8 @@ public enum ClaudeCodeConfiguration {
     /// runtime. Only read to migrate agents and to refuse those ids.
     public static let modelPrefix = "claude-code/"
 
-    /// Claude's brand gradient, from Anthropic's published accent orange
-    /// (#D97757) to a darker shade of the same hue.
-    ///
-    /// Deliberately not the accent color: the picker's generic `.symbol` rows
-    /// all hover to the accent, so an accent-tinted Claude Code row was
-    /// indistinguishable from "Use an API key". Measured against every existing
-    /// row gradient, the nearest in the same list is OpenRouter at ΔE 22.7
-    /// (CIELAB) — comfortably distinguishable.
-    public static let brandGradient: [Color] = [
-        Color(red: 0.851, green: 0.467, blue: 0.341),
-        Color(red: 0.749, green: 0.373, blue: 0.259),
-    ]
+    /// Claude's brand gradient (`BrandPalette.claudeCode`).
+    public static var brandGradient: [Color] { BrandPalette.claudeCode }
 
     /// The command we look for on PATH.
     public static let executableName = "claude"
@@ -216,6 +206,20 @@ public enum ClaudeCodeConfiguration {
     /// Built-ins no toggle grants.
     public static let neverAllowedTools = ["WebFetch", "WebSearch"]
 
+    /// Permission-free built-ins kept on every agent run. Names a CLI no
+    /// longer has are ignored by `--tools`.
+    public static let permissionFreeTools = ["TodoWrite"]
+
+    /// The `--tools` value: the only built-ins the model sees. An allow list,
+    /// because new CLI releases add built-ins (agent teams, scheduling,
+    /// worktrees, `ToolSearch`) that a deny list never names.
+    public static func availableBuiltinTools(allowWrites: Bool, allowShell: Bool) -> [String] {
+        var tools = defaultAllowedTools + permissionFreeTools
+        if allowWrites { tools += writeTools }
+        if allowShell { tools += shellTools }
+        return tools
+    }
+
     /// Built-ins to remove from the model's tool list for this run.
     ///
     /// `dontAsk` refuses an un-allowlisted tool only after the model calls it,
@@ -247,6 +251,18 @@ public enum ClaudeCodeConfiguration {
         return L("Claude Code isn't allowed to use this tool for this agent.")
     }
 
+    /// What the chat shows when the model called a tool this run doesn't have.
+    public static func unavailableToolMessage(tool: String) -> String {
+        L("Claude Code doesn't have this tool on this run, so the call didn't happen.")
+    }
+
+    /// The name a tool card shows: Osaurus's own tools without the MCP
+    /// namespace Claude Code puts on them.
+    public static func displayToolName(_ name: String) -> String {
+        let prefix = "mcp__\(mcpServerName)__"
+        return name.hasPrefix(prefix) ? String(name.dropFirst(prefix.count)) : name
+    }
+
     // MARK: - Osaurus tools over MCP
 
     /// The MCP server name Osaurus registers itself under. Claude Code exposes
@@ -254,31 +270,30 @@ public enum ClaudeCodeConfiguration {
     /// spelling.
     public static let mcpServerName = "osaurus"
 
-    /// Osaurus config tools that only read. Safe to grant whenever the user
-    /// turns Osaurus tools on.
+    /// Osaurus config tools that only read, added to every agent's harness
+    /// surface whatever its own tool list says.
     public static let osaurusReadOnlyTools = ["osaurus_inspect", "osaurus_help"]
 
-    /// The Osaurus tool that mutates app state — agents, providers, models,
-    /// plugins, and schedules. Behind its own opt-in.
-    public static let osaurusConfigWriteTools = [HarnessGrantStore.configWriteToolName]
+    /// The Architect's Osaurus tools, sorted so the argv is stable.
+    static var architectToolPatterns: [String] { HarnessGrantStore.architectToolNames.sorted() }
 
-    /// The `--tools` value handed to `osaurus mcp`, so the proxy hides
-    /// everything else at the source rather than trusting the client to skip it.
-    public static func osaurusToolPatterns(allowConfigWrites: Bool) -> [String] {
-        allowConfigWrites ? osaurusReadOnlyTools + osaurusConfigWriteTools : osaurusReadOnlyTools
+    static func namespaced(_ tools: [String]) -> [String] {
+        tools.map { "mcp__\(mcpServerName)__\($0)" }
     }
 
-    /// Claude Code's namespaced spelling of the same set, for `--allowedTools`.
-    public static func osaurusAllowedToolNames(allowConfigWrites: Bool) -> [String] {
-        osaurusToolPatterns(allowConfigWrites: allowConfigWrites)
-            .map { "mcp__\(mcpServerName)__\($0)" }
-    }
+    /// Claude Code's own MCP tool timeout (milliseconds). `workflow_test`
+    /// runs a whole workflow, far past the CLI's default.
+    static let mcpToolTimeoutMilliseconds = 15 * 60 * 1000
 
     /// Why Osaurus's own tools aren't reachable on this run.
     public enum OsaurusToolsUnavailableReason: Sendable, Equatable {
-        /// The agent hasn't opted in.
+        /// Use Osaurus Tools is off for this agent.
         case notEnabled
-        /// Opted in, but the local HTTP server the bridge proxies to is down.
+        /// The agent's own tools are off, so there is nothing to attach.
+        case agentToolsOff
+        /// This copy of Osaurus has no embedded `osaurus` CLI to proxy through.
+        case bridgeMissing
+        /// The local HTTP server the bridge proxies to is down.
         case serverNotRunning
         /// Text-only mode disables every tool.
         case textOnlyMode
@@ -287,16 +302,16 @@ public enum ClaudeCodeConfiguration {
     /// A note appended to the system prompt describing which Osaurus tools this
     /// run actually has.
     ///
-    /// An agent's own instructions may tell it to "check `osaurus_inspect`".
-    /// The tools only arrive when the MCP bridge is attached, so without this
-    /// note the model is told to use tools it cannot see and spends the turn
-    /// guessing at permission errors instead of answering.
+    /// An agent's own instructions may name Osaurus tools. They only arrive
+    /// when the MCP bridge is attached, so without this note the model is told
+    /// to use tools it cannot see and spends the turn guessing at permission
+    /// errors instead of answering.
+    /// - Parameter tools: The attached tools; empty when the bridge isn't.
     public static func osaurusToolsSystemNote(
-        available: Bool,
-        allowConfigWrites: Bool = false,
+        tools: Set<String>,
         reason: OsaurusToolsUnavailableReason? = nil
     ) -> String {
-        guard available else {
+        guard !tools.isEmpty else {
             let cause: String
             switch reason {
             case .serverNotRunning:
@@ -305,35 +320,62 @@ public enum ClaudeCodeConfiguration {
                 )
             case .textOnlyMode:
                 cause = L("this agent runs Claude Code in text-only mode, which disables all tools")
+            case .agentToolsOff:
+                cause = L("this agent's tools are turned off in its settings")
+            case .bridgeMissing:
+                cause = L("this copy of Osaurus is missing the bundled part that connects them")
             case .notEnabled, nil:
                 cause = L(
-                    "they are switched off for this agent — tell the user to turn on \"Allow Osaurus read tools\" in this agent's Claude Code Options"
+                    "they are switched off for this agent — tell the user to turn on \"Use Osaurus Tools\" in this agent's Claude Code Options"
                 )
             }
             return String(
                 format: L(
-                    "You do NOT have Osaurus's configuration tools (osaurus_inspect, osaurus_help, osaurus_config) on this run, because %@. Do not try to call them and do not speculate about permission errors. If the user asks about Osaurus's configuration, say plainly that you can't read it right now, explain why, and offer what they can check themselves."
+                    "You do NOT have any Osaurus tools (`mcp__osaurus__*`) on this run, because %@. Do not try to call them and do not speculate about permission errors. If the user asks for something only Osaurus can do, say plainly that you can't right now, explain why, and offer what they can do themselves."
                 ),
                 cause
             )
         }
 
-        let names = osaurusToolPatterns(allowConfigWrites: allowConfigWrites)
-            .map { "`\($0)`" }
-            .joined(separator: ", ")
-        var note = String(
-            format: L(
-                "You can inspect this Osaurus install through these tools: %@. They are the only Osaurus tools available — others named in your instructions are not present on this run."
-            ),
-            names
+        var note = L(
+            "The `mcp__osaurus__*` tools are this agent's Osaurus tools: its plugins, apps, and settings, run by Osaurus with its permission checks. Use them for anything they cover instead of working around them. Tools named in your instructions that aren't among them are not present on this run."
         )
-        if !allowConfigWrites {
+        if !tools.contains(HarnessGrantStore.configWriteToolName) {
             note += " "
             note += L(
-                "They are read-only. You cannot change Osaurus's configuration; describe the change the user should make instead."
+                "You cannot change Osaurus's configuration; describe the change the user should make instead."
             )
         }
         return note
+    }
+
+    /// The Default agent's delegation note: who `run_workflow` can hand a
+    /// request to. Nil without `run_workflow` or anyone to run.
+    @MainActor
+    static func teammateRoutingNote(tools: Set<String>) -> String? {
+        guard tools.contains(RunWorkflowTool.toolName),
+            let team = SystemPromptTemplates.orchestratorTeam(
+                RoutableWorkflowCatalog.team(), canHandOffToConfigurator: false)
+        else { return nil }
+        let rules = L(
+            "When a request needs something a teammate below covers (their calendar, reminders, mail, notes, or a workflow's job), call `mcp__osaurus__run_workflow` with `workflow` set to its name and `input` set to `{\"task\": <the user's request>}` for an agent, then answer from its result. Osaurus shows the run in the chat and asks the user for any approval it needs, so don't ask first. Do the work yourself when your own tools cover it."
+        )
+        return team + "\n\n" + rules
+    }
+
+    /// The Architect's note when its drafting tools can't attach, so it says
+    /// why instead of improvising with tools it doesn't have.
+    public static func architectToolsUnavailableNote(reason: OsaurusToolsUnavailableReason) -> String {
+        let cause =
+            reason == .serverNotRunning
+            ? L("the Osaurus server is not running — tell the person to start it from the Osaurus app")
+            : L("this copy of Osaurus is missing the bundled part that connects them")
+        return String(
+            format: L(
+                "Your workflow tools are NOT connected on this run, because %@. You cannot read or change the draft. Do not call any tool; say plainly that you can't build the workflow until this is fixed, then send a new message."
+            ),
+            cause
+        )
     }
 
     /// Absolute path to the `osaurus` CLI shipped inside this app bundle.
@@ -362,20 +404,24 @@ public enum ClaudeCodeConfiguration {
     ///   than `args`, so it never appears in `ps` output for other processes on
     ///   the machine. Nil omits it, which leaves the child unattributed — fine
     ///   for a custom agent, but the Default agent's tools will refuse.
-    public static func mcpConfigJSON(
-        cliPath: String,
-        allowConfigWrites: Bool,
-        bridgeGrant: String? = nil
-    ) -> String? {
-        let patterns = osaurusToolPatterns(allowConfigWrites: allowConfigWrites)
+    /// - Parameter patterns: The `--tools` value handed to `osaurus mcp`, so
+    ///   the proxy hides everything else at the source. Empty returns nil.
+    /// The `osaurus` CLI's server-port override.
+    static let osaurusCLIPortKey = "OSU_PORT"
+
+    /// `port` is the server the launch resolved; `osaurus mcp` otherwise
+    /// reads the saved server port, which a server on another port (the
+    /// eval lane's) doesn't match.
+    static func mcpConfigJSON(cliPath: String, patterns: [String], bridgeGrant: String?, port: Int? = nil) -> String? {
         guard !patterns.isEmpty else { return nil }
         var server: [String: Any] = [
             "command": cliPath,
             "args": ["mcp", "--tools", patterns.joined(separator: ",")],
         ]
-        if let bridgeGrant, !bridgeGrant.isEmpty {
-            server["env"] = [HarnessGrantStore.environmentKey: bridgeGrant]
-        }
+        var env: [String: String] = [:]
+        if let bridgeGrant, !bridgeGrant.isEmpty { env[HarnessGrantStore.environmentKey] = bridgeGrant }
+        if let port { env[osaurusCLIPortKey] = String(port) }
+        if !env.isEmpty { server["env"] = env }
         let payload: [String: Any] = ["mcpServers": [mcpServerName: server]]
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         else { return nil }

@@ -126,17 +126,6 @@ enum ToolCategory {
         }
     }
 
-    var gradient: [Color] {
-        switch self {
-        case .file: return [Color(hex: "f59e0b"), Color(hex: "d97706")]
-        case .search: return [Color(hex: "8b5cf6"), Color(hex: "7c3aed")]
-        case .terminal: return [Color(hex: "10b981"), Color(hex: "059669")]
-        case .network: return [Color(hex: "3b82f6"), Color(hex: "2563eb")]
-        case .database: return [Color(hex: "ec4899"), Color(hex: "db2777")]
-        case .code: return [Color(hex: "06b6d4"), Color(hex: "0891b2")]
-        case .general: return [Color(hex: "6b7280"), Color(hex: "4b5563")]
-        }
-    }
 
     static func from(toolName: String) -> ToolCategory {
         let name = toolName.lowercased()
@@ -193,6 +182,16 @@ enum ToolCategory {
 
 /// Generates human-readable previews for JSON and text content
 enum PreviewGenerator {
+    /// The expanded ARGUMENTS body, cut at a line once it passes `limit`.
+    /// A `workflow_draft` patch can carry whole prompts, and the markdown
+    /// view lays the block out again on every streamed reconfigure.
+    static func cappedArguments(_ text: String, limit: Int = 12_000) -> String {
+        guard text.count > limit else { return text }
+        var head = text.prefix(limit)
+        if let lastBreak = head.lastIndex(of: "\n") { head = head[..<lastBreak] }
+        return head + "\n… (\(text.count - head.count) more characters)"
+    }
+
     /// Generate a preview for JSON arguments (object)
     static func jsonPreview(_ jsonString: String, maxLength: Int = 60) -> String? {
         guard let data = jsonString.data(using: .utf8),
@@ -347,21 +346,6 @@ enum PreviewGenerator {
     }
 }
 
-// MARK: - ToolCategory + AppKit
-extension ToolCategory {
-    /// First color of the SwiftUI gradient, translated to NSColor.
-    var primaryNSColor: NSColor {
-        switch self {
-        case .file: return NSColor(red: 0.96, green: 0.62, blue: 0.27, alpha: 1)
-        case .search: return NSColor(red: 0.55, green: 0.36, blue: 0.96, alpha: 1)
-        case .terminal: return NSColor(red: 0.06, green: 0.73, blue: 0.51, alpha: 1)
-        case .network: return NSColor(red: 0.23, green: 0.51, blue: 0.96, alpha: 1)
-        case .database: return NSColor(red: 0.93, green: 0.29, blue: 0.60, alpha: 1)
-        case .code: return NSColor(red: 0.02, green: 0.71, blue: 0.83, alpha: 1)
-        case .general: return NSColor(red: 0.42, green: 0.45, blue: 0.50, alpha: 1)
-        }
-    }
-}
 
 // MARK: - RailLineView
 
@@ -561,6 +545,10 @@ final class TimelineNodeView: NSView {
         get { shape.strokeColor }
         set { shape.strokeColor = newValue }
     }
+    var inspectionStrokeWidth: CGFloat {
+        get { shape.lineWidth }
+        set { shape.lineWidth = newValue; updatePath() }
+    }
 
     override func layout() {
         super.layout()
@@ -678,6 +666,14 @@ final class NativeToolCallGroupView: NSView {
     /// / bloom history so nothing leaks across groups.
     private var lastFirstCallId: String?
 
+    private struct GroupInputs: Equatable {
+        let calls: [ToolCallItem]
+        let expanded: [Bool]
+        let width: CGFloat
+        let themeFingerprint: Int
+    }
+    private var lastGroupInputs: GroupInputs?
+
     /// Sequential delay between the two halves of a new connector (the upper
     /// node's lower rail draws first, then the new node's upper rail), matching
     /// `RailLineView.drawDuration` so the two halves read as one continuous line.
@@ -708,11 +704,23 @@ final class NativeToolCallGroupView: NSView {
         onToggle: @escaping (String) -> Void,
         onHeightChanged: @escaping () -> Void
     ) {
+        let theme = theme.catalogFamily(34)
+        rowStack.spacing = max(0, ActivityInspectionStyle.layout("resultCardsGap", "gap", theme.space.s8, theme))
+        rowStack.catalogAssignmentTarget([ActivityInspectionStyle.key + "elements.layout.resultCardsGap"], name: "Individual tool result cards", theme: theme)
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
 
-        // Borderless timeline: no card background/border. A single call renders
-        // as a lone node; 2+ consecutive calls connect via the per-row rail.
+        let inputs = GroupInputs(
+            calls: calls,
+            expanded: calls.map { expandedIds.contains($0.call.id) },
+            width: width,
+            themeFingerprint: theme.renderFingerprint
+        )
+        if inputs == lastGroupInputs, groupHeightConstraint != nil { return }
+        lastGroupInputs = inputs
+
+        // A single call renders as a lone card; 2+ consecutive calls connect
+        // via the per-row rail.
 
         while rowViews.count < calls.count {
             let row = NativeToolCallRowView()
@@ -782,16 +790,23 @@ final class NativeToolCallGroupView: NSView {
             ) { [weak self] in
                 self?.onToggle?(item.call.id)
             } onHeightChanged: { [weak self] in
+                self?.syncGroupHeight()
                 self?.onHeightChanged?()
             }
         }
         lastCallIds = newIds
+        syncGroupHeight()
+    }
 
-        let totalH = measuredHeight()
+    /// The group's height is required, so it must follow every row change,
+    /// not only a reconfigure, or a row resizing on its own is squeezed.
+    private func syncGroupHeight() {
+        let totalH = max(measuredHeight(), 1)
         if let c = groupHeightConstraint {
-            c.constant = max(totalH, 1)
+            guard c.constant != totalH else { return }
+            c.constant = totalH
         } else {
-            let c = heightAnchor.constraint(equalToConstant: max(totalH, 1))
+            let c = heightAnchor.constraint(equalToConstant: totalH)
             c.priority = .required
             c.isActive = true
             groupHeightConstraint = c
@@ -801,8 +816,10 @@ final class NativeToolCallGroupView: NSView {
 
     // MARK: Measured height (used by cell coordinator)
 
+    /// Height on screen, following any row's disclosure in motion.
     func measuredHeight() -> CGFloat {
-        rowViews.reduce(0) { $0 + $1.measuredHeight() }
+        rowViews.reduce(0) { $0 + $1.displayedHeight() }
+            + rowStack.spacing * CGFloat(max(0, rowViews.count - 1))
     }
 
     // provide intrinsic content size for auto layout
@@ -868,6 +885,27 @@ final class NativeToolCallRowView: NSView {
     /// Changes inspector on that change set. Write/edit calls get the diff
     /// card instead.
     private let fileChangesButton = NSButton()
+    /// Workflow calls: opens the run's workflow tab. Shares the link slot.
+    private let openRunButton = NSButton()
+    private let remedyButton = NSButton()
+    private var workflowRemedy: WorkflowFailureRemedy?
+    private var remedyLeadingToOpenRun: NSLayoutConstraint?
+    private var remedyLeadingToName: NSLayoutConstraint?
+    private var openRunID: UUID?
+    private var openRunRetries = 0
+    private var headerLinkPins: [NSButton: [NSLayoutConstraint]] = [:]
+
+    private struct ConfigureInputs: Equatable {
+        let item: ToolCallItem
+        let index: Int
+        let totalCount: Int
+        let isExpanded: Bool
+        let width: CGFloat
+        let themeFingerprint: Int
+    }
+    private var lastConfigureInputs: ConfigureInputs?
+    private var openRunLeadingToName: NSLayoutConstraint?
+    private var openRunLeadingToShimmer: NSLayoutConstraint?
     private var fileChangeSet: FileChangeSet?
     private var fileChangeLookupCallId: String?
     nonisolated(unsafe) private var fileChangeObservation: NSObjectProtocol?
@@ -929,6 +967,7 @@ final class NativeToolCallRowView: NSView {
     // MARK: Self-sizing height constraint
 
     private var rowHeight: NSLayoutConstraint?
+    private let heightAnimation = DisclosureHeightAnimation()
 
     // MARK: State
 
@@ -942,6 +981,17 @@ final class NativeToolCallRowView: NSView {
     private var currentItem: ToolCallItem?
     private var currentWidth: CGFloat = 0
     private var lastConfiguredTheme: (any ThemeProtocol)?
+    private var sectionInset: CGFloat { ActivityInspectionStyle.layout("toolInnerPaddingX", "padding", Self.sectionContentInset, lastConfiguredTheme ?? CustomizableTheme.light()) }
+    private var outerInset: CGFloat { ActivityInspectionStyle.layout("toolOuterPaddingX", "padding", Self.sectionContentInset, lastConfiguredTheme ?? CustomizableTheme.light()) }
+    private var sectionWidthDeduction: CGFloat { 2 * outerInset + 2 * sectionInset }
+    private var contentGap: CGFloat { ActivityInspectionStyle.layout("toolContentGap", "gap", (lastConfiguredTheme ?? CustomizableTheme.light()).space.s8, lastConfiguredTheme ?? CustomizableTheme.light()) }
+    /// A section label sits closer to its own content than to the section above it.
+    private var sectionTitleGap: CGFloat { contentGap / 2 }
+    private var sectionGap: CGFloat { contentGap * 2 }
+    private var sectionTitleHeight: CGFloat { ceil(argumentsSectionTitle.intrinsicContentSize.height) }
+    private var argsViewTopToTitle: NSLayoutConstraint?
+    private var assignedHeaderHeight: CGFloat { ActivityInspectionStyle.headerHeight(lastConfiguredTheme ?? CustomizableTheme.light()) }
+    private let inspectionHeader = InspectorActivityHeaderSurface()
     /// `nonisolated(unsafe)` so deinit can read it; only ever set in
     /// init on the main actor.
     nonisolated(unsafe) private var ttsObservation: NSObjectProtocol?
@@ -1059,17 +1109,40 @@ final class NativeToolCallRowView: NSView {
         onToggle: @escaping () -> Void,
         onHeightChanged: @escaping () -> Void
     ) {
+        let theme = theme.catalogFamily(34)
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
+        // Streaming reconfigures the whole group on every sync. An unchanged
+        // row must not be touched: rewriting its links ends a click in progress.
+        let inputs = ConfigureInputs(
+            item: item,
+            index: index,
+            totalCount: totalCount,
+            isExpanded: isExpanded,
+            width: width,
+            themeFingerprint: theme.renderFingerprint
+        )
+        if inputs == lastConfigureInputs, drawRailAboveAfter == nil, drawRailBelowAfter == nil,
+            animateAppearanceAfter == nil
+        {
+            return
+        }
+        lastConfigureInputs = inputs
+        heightAnimation.isConfiguring = true
         self.currentWidth = width
         self.lastConfiguredTheme = theme
 
         let isNew = item.call.id != currentItemId
-        if isNew { stopRegistryObservation() }
+        if isNew {
+            stopRegistryObservation()
+            heightAnimation.cancel()
+        }
         let argumentsChanged = item.call.function.arguments != currentItem?.call.function.arguments
         if argumentsChanged { cachedArgs = nil }
         currentItemId = item.call.id
         currentItem = item
+        let wasExpanded = self.isExpanded
+        self.isExpanded = isExpanded
 
         // Node: category icon shape in the foreground. The icon/circle colors and
         // the running shimmer are applied in `applyStatusAndShimmer()` below.
@@ -1078,7 +1151,7 @@ final class NativeToolCallRowView: NSView {
         let toolName = item.call.function.name
         let category = ToolCategory.from(toolName: toolName)
         let glyph = SubagentCapabilityRegistry.iconName(forToolName: toolName) ?? category.icon
-        let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        let cfg = theme.symbolConfiguration(.caption, weight: .semibold)
         // Suppress the default `contents` action so the symbol swap doesn't
         // run its own 0.25s implicit fade alongside `playNodeAppearance`'s
         // explicit opacity animation (the two would race and pop the icon in
@@ -1090,7 +1163,9 @@ final class NativeToolCallRowView: NSView {
         CATransaction.commit()
 
         // Rail connects consecutive calls; a lone call (only row) shows none.
-        let railColor = NSColor(theme.tertiaryText).withAlphaComponent(0.28).cgColor
+        let railColor = NSColor(theme.border.default).cgColor
+        separatorView.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
+        chevron.contentTintColor = NSColor(theme.text.tertiary)
         railAbove.color = railColor
         railBelow.color = railColor
         railAbove.isHidden = index == 0
@@ -1117,21 +1192,25 @@ final class NativeToolCallRowView: NSView {
         // completed, so it reads in past tense ("Inserted into the database");
         // the running state shimmers `runningTitle` in present tense instead.
         // Expanded: the raw technical name (monospaced), since that's the detail view.
+        nameLabel.toolTip = item.approvalSkip.map {
+            L("Ran without an approval card.") + " " + $0.displayDetail
+        }
         if isExpanded {
             nameLabel.stringValue = item.call.function.name
-            nameLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
+            nameLabel.font = theme.nsFont(.code, weight: .semibold)
             runningTitle = item.call.function.name
-            nameLabel.textColor = NSColor(theme.primaryText)
-            searchSettingsButton.isHidden = true
+            nameLabel.textColor = NSColor(theme.text.primary)
+            setHeaderLink(searchSettingsButton, visible: false)
         } else {
-            let titleFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            let titleFont = theme.nsFont(.caption, weight: .semibold)
             nameLabel.font = titleFont
             // A completed call that returned an error keeps its red node but must
             // not claim success in the title — reflect the failure verdict here.
             let failed = item.result.map { isErrorResult($0, callId: item.call.id) } ?? false
+            let outcome = failed ? item.result.flatMap(ChatRunOutcome.classify(envelope:)) : nil
             let past = item.unobservedResult != nil
                 ? "\(item.call.function.name) · \(L("Result not received"))"
-                : ToolDisplayName.friendly(
+                : outcome?.toolLabel ?? ToolDisplayName.friendly(
                     for: item.call.function.name,
                     running: false,
                     arguments: item.call.function.arguments,
@@ -1147,16 +1226,19 @@ final class NativeToolCallRowView: NSView {
             // hint otherwise lives only in the model-facing result JSON.
             let showSearchLink = failed && ToolDisplayName.isSearchTool(toolName)
             if showSearchLink {
-                searchSettingsButton.attributedTitle = NSAttributedString(
-                    string: L("Search settings"),
-                    attributes: [
-                        .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-                        .foregroundColor: NSColor(theme.accentColor),
-                        .underlineStyle: NSUnderlineStyle.single.rawValue,
-                    ]
+                setHeaderLinkTitle(
+                    searchSettingsButton,
+                    NSAttributedString(
+                        string: L("Search settings"),
+                        attributes: [
+                            .font: theme.nsFont(.footnote, weight: .semibold),
+                            .foregroundColor: NSColor(theme.text.link),
+                            .underlineStyle: NSUnderlineStyle.single.rawValue,
+                        ]
+                    )
                 )
             }
-            searchSettingsButton.isHidden = !showSearchLink
+            setHeaderLink(searchSettingsButton, visible: showSearchLink)
             // Search-source tag for completed search rows: premium (Osaurus
             // hosted) tints accent, the user's own provider reads neutral,
             // and the built-in scrapers stay dimmed — the at-a-glance state
@@ -1167,24 +1249,24 @@ final class NativeToolCallRowView: NSView {
                     let source = Self.searchSource(inToolResult: result)
                 else { return nil }
                 switch source {
-                case "premium": return (L("Premium"), NSColor(theme.accentColor))
-                case "custom": return (L("Your provider"), NSColor(theme.secondaryText))
-                case "free": return (L("Built-in"), NSColor(theme.tertiaryText))
+                case "premium": return (L("Premium"), NSColor(theme.status.info.foreground))
+                case "custom": return (L("Your provider"), NSColor(theme.text.secondary))
+                case "free": return (L("Built-in"), NSColor(theme.text.tertiary))
                 default: return nil
                 }
             }()
             // Append the recorded duration after an interpunct, dimmed.
-            if item.duration != nil || sourceTag != nil || item.repeatCount > 1 {
+            if item.duration != nil || sourceTag != nil || item.repeatCount > 1 || item.approvalSkip != nil {
                 let s = NSMutableAttributedString(
                     string: past,
-                    attributes: [.font: titleFont, .foregroundColor: NSColor(theme.primaryText)]
+                    attributes: [.font: titleFont, .foregroundColor: NSColor(theme.text.primary)]
                 )
                 if let tag = sourceTag {
                     s.append(
                         NSAttributedString(
                             string: " · \(tag.label)",
                             attributes: [
-                                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                                .font: theme.nsFont(.caption, weight: .medium),
                                 .foregroundColor: tag.color,
                             ]
                         )
@@ -1195,8 +1277,8 @@ final class NativeToolCallRowView: NSView {
                         NSAttributedString(
                             string: " · \(Self.formatElapsed(elapsed))",
                             attributes: [
-                                .font: NSFont.systemFont(ofSize: 12, weight: .regular),
-                                .foregroundColor: NSColor(theme.tertiaryText),
+                                .font: theme.nsFont(.caption),
+                                .foregroundColor: NSColor(theme.text.tertiary),
                             ]
                         )
                     )
@@ -1212,8 +1294,19 @@ final class NativeToolCallRowView: NSView {
                         NSAttributedString(
                             string: " · ×\(item.repeatCount)",
                             attributes: [
-                                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                                .foregroundColor: NSColor(theme.secondaryText),
+                                .font: theme.nsFont(.caption, weight: .medium),
+                                .foregroundColor: NSColor(theme.text.secondary),
+                            ]
+                        )
+                    )
+                }
+                if item.approvalSkip != nil {
+                    s.append(
+                        NSAttributedString(
+                            string: " · \(L("Ran without asking"))",
+                            attributes: [
+                                .font: theme.nsFont(.caption),
+                                .foregroundColor: NSColor(theme.text.tertiary),
                             ]
                         )
                     )
@@ -1221,16 +1314,18 @@ final class NativeToolCallRowView: NSView {
                 nameLabel.attributedStringValue = s
             } else {
                 nameLabel.stringValue = past
-                nameLabel.textColor = NSColor(theme.primaryText)
+                nameLabel.textColor = NSColor(theme.text.primary)
             }
         }
 
         if isNew {
             fileChangeLookupCallId = nil
             fileChangeSet = nil
-            fileChangesButton.isHidden = true
+            setHeaderLink(fileChangesButton, visible: false)
         }
         refreshFileChangesLink(expanded: isExpanded)
+        if isNew { openRunRetries = 0 }
+        refreshOpenRunLink()
 
         // Node colors (status-driven) + running shimmer on the title.
         applyStatusAndShimmer()
@@ -1253,17 +1348,18 @@ final class NativeToolCallRowView: NSView {
         } else {
             argPreviewLabel.isHidden = true
         }
-        argPreviewLabel.font = NSFont.systemFont(ofSize: 11)
-        argPreviewLabel.textColor = NSColor(theme.tertiaryText)
+        argPreviewLabel.font = theme.nsFont(.footnote)
+        argPreviewLabel.textColor = NSColor(theme.text.tertiary)
 
         // Same-call collapsed → expanded: fade the details in instead of
         // popping (cell recycling and streaming reconfigures must not fade).
-        let expandTransition = !isNew && isExpanded && !self.isExpanded
-        updateChevron(expanded: isExpanded, animated: !isNew && isExpanded != self.isExpanded)
-        self.isExpanded = isExpanded
+        let expandTransition = !isNew && isExpanded && !wasExpanded
+        let toggled = !isNew && isExpanded != wasExpanded
+        updateChevron(expanded: isExpanded, animated: toggled)
 
-        separatorView.isHidden = !isExpanded
-        contentContainer.isHidden = !isExpanded
+        let showsContent = isExpanded || toggled || heightAnimation.isRunning
+        separatorView.isHidden = !showsContent
+        contentContainer.isHidden = !showsContent
 
         if isExpanded {
             applyToolDetailSectionHeading(to: argumentsSectionTitle, text: "ARGUMENTS", theme: theme)
@@ -1271,11 +1367,11 @@ final class NativeToolCallRowView: NSView {
             let rawArgs = item.call.function.arguments
             if isNew || argumentsChanged || cachedArgs == nil {
                 let pretty = JSONFormatter.prettyJSON(rawArgs)
-                cachedArgs = pretty.isEmpty ? rawArgs : pretty
+                cachedArgs = PreviewGenerator.cappedArguments(pretty.isEmpty ? rawArgs : pretty)
             }
             if let args = cachedArgs {
                 let av = ensureArgsView()
-                let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
+                let textW = max(0, width - sectionWidthDeduction)
                 av.configure(
                     text: "```json\n\(args)\n```",
                     width: textW,
@@ -1297,12 +1393,9 @@ final class NativeToolCallRowView: NSView {
             bindSubagentFeedIfPresent(toolCallId: item.call.id)
         }
 
-        // Tear down panes when the row collapses.
-        if !isExpanded {
-            stopRegistryObservation()
-            tearDownTerminalView()
-            tearDownSubagentFeedView()
-        }
+        // Tear down panes when the row collapses; a collapse in motion keeps
+        // them drawn until it finishes.
+        if !showsContent { tearDownCollapsedContent() }
 
         // After the detail views exist — on a first-ever expand the sections
         // are only built above, and a reveal fired before that would find an
@@ -1311,21 +1404,89 @@ final class NativeToolCallRowView: NSView {
         // extra beat makes the reveal register.
         if expandTransition { ExpandFade.run(contentContainer, duration: 0.38) }
 
-        applyHeight()
+        ActivityInspectionStyle.label(nameLabel, property: "label", theme: theme)
+        ActivityInspectionStyle.label(argPreviewLabel, property: "caption", theme: theme)
+        applyAssignedLayout(theme)
+        inspectionHeader.configure(theme: theme, selected: isExpanded)
+        heightAnimation.isConfiguring = false
+        if toggled {
+            heightAnimation.run(
+                on: self,
+                from: rowHeight?.constant ?? measuredHeight(),
+                target: { [weak self] in self?.measuredHeight() ?? 0 },
+                apply: { [weak self] in self?.setHeight($0) },
+                finish: { [weak self] in
+                    guard let self, !self.isExpanded else { return }
+                    self.separatorView.isHidden = true
+                    self.contentContainer.isHidden = true
+                    self.tearDownCollapsedContent()
+                }
+            )
+        } else {
+            applyHeight()
+        }
+    }
+
+    private func tearDownCollapsedContent() {
+        stopRegistryObservation()
+        tearDownTerminalView()
+        tearDownSubagentFeedView()
+    }
+
+    private func applyAssignedLayout(_ theme: any ThemeProtocol) {
+        let pad = ActivityInspectionStyle.layout("toolHeaderPaddingX", "padding", Self.sectionContentInset, theme)
+        let gap = ActivityInspectionStyle.layout("toolContentGap", "gap", theme.space.s8, theme)
+        let height = assignedHeaderHeight
+        headerButton.catalogAssignmentTarget(["toolHeaderPaddingX", "toolHeaderPaddingY", "toolHeaderIconGap", "toolHeaderMetadataGap"].map { ActivityInspectionStyle.key + "elements.layout." + $0 }, name: "Tool result header", theme: theme)
+        contentContainer.catalogAssignmentTarget(["toolOuterPaddingX", "toolInnerPaddingX", "toolContentGap", "toolBottomPadding"].map { ActivityInspectionStyle.key + "elements.layout." + $0 } + [AgentContentSurfaceAssignments.key(34, "toolContent")], name: "Expanded tool arguments and result", theme: theme)
+        headerButton.constraints.first { $0.firstAttribute == .height }?.constant = height
+        separatorView.constraints.first { $0.firstAttribute == .height }?.constant = ActivityInspectionStyle.metric("borderWidth", 1, theme)
+        separatorView.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
+        layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "toolCard", theme)).cgColor
+        catalogAssignmentTarget([AgentContentSurfaceAssignments.key(34, "toolCard")], name: "Tool result card", theme: theme)
+        contentContainer.wantsLayer = true
+        contentContainer.layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "toolContent", theme)).cgColor
+        layer?.borderColor = NSColor(theme.border.subtle).cgColor
+        layer?.borderWidth = ActivityInspectionStyle.metric("borderWidth", 0, theme)
+        layer?.cornerRadius = theme.radius.medium
+        categoryBg.inspectionStrokeWidth = ActivityInspectionStyle.metric("borderWidth", 1.5, theme)
+        for c in constraints {
+            let view = c.firstItem as? NSView
+            if view === categoryBg, c.firstAttribute == .leading { c.constant = pad }
+            if view === categoryBg, c.firstAttribute == .centerY { c.constant = height / 2 }
+            if (view === nameLabel || view === shimmerLabel), c.firstAttribute == .leading { c.constant = ActivityInspectionStyle.layout("toolHeaderIconGap", "gap", theme.space.s8, theme) }
+            if view === argPreviewLabel, c.firstAttribute == .leading { c.constant = ActivityInspectionStyle.layout("toolHeaderMetadataGap", "gap", theme.space.s8, theme) }
+            if view === chevron, c.firstAttribute == .trailing { c.constant = -pad }
+            if view === separatorView, c.firstAttribute == .top { c.constant = height }
+            if view === separatorView, c.firstAttribute == .leading { c.constant = 2 * pad }
+            if view === separatorView, c.firstAttribute == .trailing { c.constant = -2 * pad }
+            if view === contentContainer, c.firstAttribute == .leading { c.constant = outerInset }
+            if view === contentContainer, c.firstAttribute == .trailing { c.constant = -outerInset }
+            if view === contentContainer, c.firstAttribute == .top { c.constant = gap }
+        }
+        for c in contentContainer.constraints {
+            let view = c.firstItem as? NSView
+            if c.firstAttribute == .leading, c.secondItem as? NSView === contentContainer { c.constant = sectionInset }
+            if c.firstAttribute == .trailing, c.secondItem as? NSView === contentContainer { c.constant = -sectionInset }
+            if c.firstAttribute == .top, view !== argumentsSectionTitle { c.constant = sectionGap }
+        }
+        argsViewTopToTitle?.constant = sectionTitleGap
+        resultViewTopToTitle?.constant = sectionTitleGap
     }
 
     // MARK: Measured height
 
     func measuredHeight() -> CGFloat {
-        let rowH = Self.rowHeaderHeight
-        guard isExpanded else { return rowH + 1 }  // header + 1pt reserved gap
-        // matches InlineToolCallView ToolDetailSection header row (~9pt bold + padding)
-        let sectionTitleH: CGFloat = 22
-        let textW = max(0, currentWidth - Self.sectionMarkdownWidthDeduction)
+        let rowH = assignedHeaderHeight
+        let theme = lastConfiguredTheme ?? CustomizableTheme.light()
+        guard isExpanded else { return rowH + ActivityInspectionStyle.metric("borderWidth", 1, theme) }
+        let gap = contentGap
+        let sectionTitleH = sectionTitleHeight + sectionTitleGap
+        let textW = max(0, currentWidth - sectionWidthDeduction)
         let argsH = argsView?.measuredHeight(for: textW) ?? 0
         let resultH: CGFloat
         if let rv = resultView, !rv.isHidden {
-            resultH = 8 + sectionTitleH + rv.measuredHeight(for: textW)
+            resultH = sectionGap + sectionTitleH + rv.measuredHeight(for: textW)
         } else {
             resultH = 0
         }
@@ -1333,12 +1494,12 @@ final class NativeToolCallRowView: NSView {
         // view's adaptive measured height (60–140pt body + 30pt header).
         let terminalH: CGFloat
         if let tv = terminalView {
-            terminalH = 8 + tv.currentMeasuredHeight
+            terminalH = sectionGap + tv.currentMeasuredHeight
         } else {
             terminalH = 0
         }
-        let subagentH: CGFloat = subagentFeedHostingView != nil ? (8 + Self.subagentPaneHeight) : 0
-        return rowH + 1 + 8 + sectionTitleH + argsH + terminalH + subagentH + resultH + 8
+        let subagentH: CGFloat = subagentFeedHostingView != nil ? (sectionGap + Self.subagentPaneHeight) : 0
+        return rowH + ActivityInspectionStyle.metric("borderWidth", 1, theme) + gap + sectionTitleH + argsH + terminalH + subagentH + resultH + ActivityInspectionStyle.layout("toolBottomPadding", "padding", theme.space.s8, theme)
     }
 
     // MARK: - Terminal pane bindings
@@ -1409,7 +1570,7 @@ final class NativeToolCallRowView: NSView {
         ensureResultSectionTitle(theme: theme).isHidden = false
         let rv = ensureResultView()
         rv.isHidden = false
-        let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
+        let textW = max(0, width - sectionWidthDeduction)
         let resultMarkdown = Self.markdownForToolResultDisplay(
             result, toolName: item.call.function.name)
         rv.configure(
@@ -1479,13 +1640,13 @@ final class NativeToolCallRowView: NSView {
             NSLayoutConstraint.activate([
                 view.leadingAnchor.constraint(
                     equalTo: contentContainer.leadingAnchor,
-                    constant: Self.sectionContentInset
+                    constant: sectionInset
                 ),
                 view.trailingAnchor.constraint(
                     equalTo: contentContainer.trailingAnchor,
-                    constant: -Self.sectionContentInset
+                    constant: -sectionInset
                 ),
-                view.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8),
+                view.topAnchor.constraint(equalTo: av.bottomAnchor, constant: sectionGap),
                 heightConst,
             ])
             let pin = contentContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor)
@@ -1571,7 +1732,7 @@ final class NativeToolCallRowView: NSView {
         if let existing = subagentFeedHostingView {
             host = existing
         } else {
-            let hosting = NSHostingView(rootView: SubagentFeedView(feed: feed))
+            let hosting = NSHostingView(rootView: HostedSubagentFeedView(feed: feed))
             hosting.translatesAutoresizingMaskIntoConstraints = false
             contentContainer.addSubview(hosting)
             let av = ensureArgsView()
@@ -1582,13 +1743,13 @@ final class NativeToolCallRowView: NSView {
             NSLayoutConstraint.activate([
                 hosting.leadingAnchor.constraint(
                     equalTo: contentContainer.leadingAnchor,
-                    constant: Self.sectionContentInset
+                    constant: sectionInset
                 ),
                 hosting.trailingAnchor.constraint(
                     equalTo: contentContainer.trailingAnchor,
-                    constant: -Self.sectionContentInset
+                    constant: -sectionInset
                 ),
-                hosting.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8),
+                hosting.topAnchor.constraint(equalTo: av.bottomAnchor, constant: sectionGap),
                 heightConst,
             ])
             let pin = contentContainer.bottomAnchor.constraint(equalTo: hosting.bottomAnchor)
@@ -1635,7 +1796,7 @@ final class NativeToolCallRowView: NSView {
         _ result: String, toolName: String = ""
     ) -> String {
         if ToolEnvelope.isError(result) {
-            return result
+            return markdownForErrorResult(result)
         }
         let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -1677,6 +1838,33 @@ final class NativeToolCallRowView: NSView {
             return "```json\n\(pretty)\n```"
         }
         return trimmed
+    }
+
+    /// A failed envelope leads with its message, the part a person reads;
+    /// the remaining fields follow as formatted JSON for diagnosis. Text
+    /// errors (`[REJECTED] …`) and unparseable results stay verbatim.
+    /// Internal (not private) so unit tests can pin the rendering contract.
+    static func markdownForErrorResult(_ result: String) -> String {
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8),
+            var payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return trimmed }
+        var message = payload.removeValue(forKey: "message") as? String
+        if message?.isEmpty ?? true, let error = payload["error"] as? String {
+            message = error
+            payload["error"] = nil
+        }
+        payload["ok"] = nil
+        var parts: [String] = []
+        if let message, !message.isEmpty { parts.append(message) }
+        if !payload.isEmpty,
+            let pretty = try? JSONSerialization.data(
+                withJSONObject: payload, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+            let details = String(data: pretty, encoding: .utf8)
+        {
+            parts.append("```json\n\(details)\n```")
+        }
+        return parts.isEmpty ? trimmed : parts.joined(separator: "\n\n")
     }
 
     /// Render an `osaurus_config` plan or apply payload as a readable
@@ -1759,9 +1947,9 @@ final class NativeToolCallRowView: NSView {
         case "models": return .models
         // Native plugins now live under the Tools tab.
         case "plugins": return .tools
-        case "schedules": return .schedules
-        case "watchers": return .watchers
+        case "automations", "events", "schedules", "watchers": return .automations
         case "agents", "default_agent", "active_agent", "harness_runtimes": return .agents
+        case "configurator": return .configurator
         case "tools": return .tools
         case "search_providers": return .search
         case "server": return .server
@@ -1834,8 +2022,16 @@ final class NativeToolCallRowView: NSView {
         return lines.joined(separator: "\n")
     }
 
+    /// Height the row occupies now: mid-disclosure the animated value.
+    func displayedHeight() -> CGFloat { heightAnimation.height(measured: measuredHeight()) }
+
     private func applyHeight() {
-        rowHeight?.constant = measuredHeight()
+        guard !heightAnimation.holdsHeight else { return }
+        setHeight(measuredHeight())
+    }
+
+    private func setHeight(_ height: CGFloat) {
+        rowHeight?.constant = height
         invalidateIntrinsicContentSize()
         onHeightChanged?()
     }
@@ -1888,8 +2084,9 @@ final class NativeToolCallRowView: NSView {
         nameLabel.lineBreakMode = .byTruncatingTail; nameLabel.maximumNumberOfLines = 1
         nameLabel.alignment = .left
         nameLabel.usesSingleLineMode = true
-        // keep tool name visible — arg preview + chevron must shrink first
-        nameLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Keep the tool name visible over the arg preview; a shown header
+        // link (required) truncates it instead of overlapping it.
+        nameLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         nameLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         addSubview(nameLabel)
 
@@ -1905,7 +2102,6 @@ final class NativeToolCallRowView: NSView {
         chevron.wantsLayer = true
         chevron.image = SymbolImageCache.image(
             "chevron.right", accessibilityDescription: nil, pointSize: 10, weight: .semibold)
-        chevron.contentTintColor = .tertiaryLabelColor
         // Down-only scaling + a fixed symbol point size keep the right and
         // down chevrons visually the same size; proportional up-scaling into
         // the square frame inflated whichever glyph was wider.
@@ -1915,7 +2111,6 @@ final class NativeToolCallRowView: NSView {
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
         separatorView.wantsLayer = true
-        separatorView.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.2).cgColor
         separatorView.isHidden = true
         addSubview(separatorView)
 
@@ -1933,7 +2128,7 @@ final class NativeToolCallRowView: NSView {
         NSLayoutConstraint.activate([
             argumentsSectionTitle.leadingAnchor.constraint(
                 equalTo: contentContainer.leadingAnchor,
-                constant: Self.sectionContentInset
+                constant: sectionInset
             ),
             argumentsSectionTitle.trailingAnchor.constraint(lessThanOrEqualTo: contentContainer.trailingAnchor),
             argumentsSectionTitle.topAnchor.constraint(equalTo: contentContainer.topAnchor),
@@ -1973,8 +2168,31 @@ final class NativeToolCallRowView: NSView {
         fileChangesButton.action = #selector(openFileChanges)
         addSubview(fileChangesButton)
 
-        let rowH = Self.rowHeaderHeight
+        openRunButton.translatesAutoresizingMaskIntoConstraints = false
+        openRunButton.isBordered = false
+        openRunButton.bezelStyle = .inline
+        openRunButton.focusRingType = .none
+        openRunButton.isHidden = true
+        openRunButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        openRunButton.target = self
+        openRunButton.action = #selector(openWorkflowRun)
+        addSubview(openRunButton)
 
+        remedyButton.translatesAutoresizingMaskIntoConstraints = false
+        remedyButton.isBordered = false
+        remedyButton.bezelStyle = .inline
+        remedyButton.focusRingType = .none
+        remedyButton.isHidden = true
+        remedyButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        remedyButton.target = self
+        remedyButton.action = #selector(applyWorkflowRemedy)
+        addSubview(remedyButton)
+
+        let rowH = assignedHeaderHeight
+
+        inspectionHeader.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(inspectionHeader, positioned: .below, relativeTo: categoryBg)
+        NSLayoutConstraint.activate([inspectionHeader.leadingAnchor.constraint(equalTo: leadingAnchor), inspectionHeader.trailingAnchor.constraint(equalTo: trailingAnchor), inspectionHeader.topAnchor.constraint(equalTo: topAnchor), inspectionHeader.heightAnchor.constraint(equalTo: headerButton.heightAnchor)])
         // self-sizing height constraint
         let h = heightAnchor.constraint(equalToConstant: rowH + 1)
         h.priority = NSLayoutConstraint.Priority(rawValue: 750)
@@ -2018,25 +2236,16 @@ final class NativeToolCallRowView: NSView {
 
             nameLabel.leadingAnchor.constraint(equalTo: categoryBg.trailingAnchor, constant: 10),
             nameLabel.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
 
             argPreviewLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
             argPreviewLabel.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
             argPreviewLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
 
-            // Never co-visible with argPreviewLabel (that only shows when
-            // expanded; this only when collapsed), so both can anchor off
-            // nameLabel without a layout conflict.
-            searchSettingsButton.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
             searchSettingsButton.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
-            searchSettingsButton.trailingAnchor.constraint(
-                lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-
-            // Search links only appear on search rows, which never change
-            // files, so this can share the same slot.
-            fileChangesButton.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
             fileChangesButton.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
-            fileChangesButton.trailingAnchor.constraint(
-                lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+            openRunButton.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
+            remedyButton.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
 
             chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             chevron.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
@@ -2048,7 +2257,7 @@ final class NativeToolCallRowView: NSView {
             // Expanded divider aligns with the ARGUMENTS text (right of the rail).
             separatorView.leadingAnchor.constraint(
                 equalTo: leadingAnchor,
-                constant: 12 + Self.sectionContentInset
+                constant: 12 + sectionInset
             ),
             separatorView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             separatorView.topAnchor.constraint(equalTo: topAnchor, constant: rowH),
@@ -2060,6 +2269,60 @@ final class NativeToolCallRowView: NSView {
             contentContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             contentContainer.topAnchor.constraint(equalTo: separatorView.bottomAnchor, constant: 8),
         ])
+
+        for link in [searchSettingsButton, fileChangesButton] {
+            headerLinkPins[link] = [
+                link.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
+                link.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+            ]
+        }
+        openRunLeadingToName = openRunButton.leadingAnchor.constraint(
+            equalTo: nameLabel.trailingAnchor, constant: 10)
+        openRunLeadingToShimmer = openRunButton.leadingAnchor.constraint(
+            equalTo: shimmerLabel.trailingAnchor, constant: 10)
+        headerLinkPins[openRunButton] = [
+            openRunButton.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8)
+        ]
+        remedyLeadingToOpenRun = remedyButton.leadingAnchor.constraint(
+            equalTo: openRunButton.trailingAnchor, constant: 10)
+        remedyLeadingToName = remedyButton.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10)
+        headerLinkPins[remedyButton] = [
+            remedyButton.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8)
+        ]
+    }
+
+    // MARK: - Header links
+
+    /// Show or hide a header link. Writes only on change: reassigning an
+    /// `NSButton`'s state while the mouse is down on it ends the click.
+    private func setHeaderLink(_ link: NSButton, visible: Bool) {
+        if link.isHidden == visible { link.isHidden = !visible }
+        applyHeaderLinkPins()
+    }
+
+    private func setHeaderLinkTitle(_ link: NSButton, _ title: NSAttributedString) {
+        if !link.attributedTitle.isEqual(to: title) { link.attributedTitle = title }
+    }
+
+    /// A link's horizontal pins are active only while it shows. Hidden views
+    /// still take part in Auto Layout, and a hidden link's required width
+    /// would squeeze the title or push past the chevron.
+    private func applyHeaderLinkPins() {
+        let openRunVisible = !openRunButton.isHidden
+        let toShimmer = openRunVisible && !shimmerLabel.isHidden
+        setActive(openRunLeadingToShimmer, toShimmer)
+        setActive(openRunLeadingToName, openRunVisible && !toShimmer)
+        let remedyVisible = !remedyButton.isHidden
+        setActive(remedyLeadingToOpenRun, remedyVisible && openRunVisible)
+        setActive(remedyLeadingToName, remedyVisible && !openRunVisible)
+        for (link, pins) in headerLinkPins {
+            for pin in pins { setActive(pin, !link.isHidden) }
+        }
+    }
+
+    private func setActive(_ constraint: NSLayoutConstraint?, _ active: Bool) {
+        guard let constraint, constraint.isActive != active else { return }
+        constraint.isActive = active
     }
 
     private func ensureArgsView() -> NativeMarkdownView {
@@ -2068,11 +2331,13 @@ final class NativeToolCallRowView: NSView {
         v.translatesAutoresizingMaskIntoConstraints = false
         v.onHeightChanged = { [weak self] in self?.applyHeight() }
         contentContainer.addSubview(v)
+        let top = v.topAnchor.constraint(equalTo: argumentsSectionTitle.bottomAnchor, constant: sectionTitleGap)
         NSLayoutConstraint.activate([
-            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: Self.sectionContentInset),
-            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -Self.sectionContentInset),
-            v.topAnchor.constraint(equalTo: argumentsSectionTitle.bottomAnchor, constant: 4),
+            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: sectionInset),
+            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -sectionInset),
+            top,
         ])
+        argsViewTopToTitle = top
         argsView = v
 
         let pinArgs = contentContainer.bottomAnchor.constraint(equalTo: v.bottomAnchor)
@@ -2096,11 +2361,11 @@ final class NativeToolCallRowView: NSView {
         applyToolDetailSectionHeading(to: t, text: resultLabel, theme: theme)
         contentContainer.addSubview(t)
         let av = ensureArgsView()
-        let top = t.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8)
+        let top = t.topAnchor.constraint(equalTo: av.bottomAnchor, constant: sectionGap)
         top.isActive = true
         resultTitleTopToArgs = top
         NSLayoutConstraint.activate([
-            t.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: Self.sectionContentInset),
+            t.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: sectionInset),
             t.trailingAnchor.constraint(lessThanOrEqualTo: contentContainer.trailingAnchor),
         ])
         resultSectionTitle = t
@@ -2117,7 +2382,7 @@ final class NativeToolCallRowView: NSView {
                 _ = ensureArgsView()
             }
             if resultSectionTitle == nil {
-                _ = ensureResultSectionTitle(theme: lastConfiguredTheme ?? LightTheme())
+                _ = ensureResultSectionTitle(theme: lastConfiguredTheme ?? CustomizableTheme.light())
             }
         }
         guard let rt = resultSectionTitle else {
@@ -2137,33 +2402,26 @@ final class NativeToolCallRowView: NSView {
         pinResult.isActive = true
         contentBottomToResult = pinResult
 
-        let topToTitle = v.topAnchor.constraint(equalTo: rt.bottomAnchor, constant: 4)
+        let topToTitle = v.topAnchor.constraint(equalTo: rt.bottomAnchor, constant: sectionTitleGap)
         topToTitle.isActive = true
         resultViewTopToTitle = topToTitle
 
         NSLayoutConstraint.activate([
-            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: Self.sectionContentInset),
-            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -Self.sectionContentInset),
+            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: sectionInset),
+            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -sectionInset),
         ])
         resultView = v
         return v
     }
 
     /// removes result UI so the args section can own `contentContainer.bottom` without conflicting constraints
-    private static func toolDetailSectionHeadingFont() -> NSFont {
-        let base = NSFont.systemFont(ofSize: 9, weight: .bold)
-        guard let roundedDesc = base.fontDescriptor.withDesign(.rounded) else { return base }
-        return NSFont(descriptor: roundedDesc, size: 9) ?? base
-    }
-
     private func applyToolDetailSectionHeading(to field: NSTextField, text: String, theme: any ThemeProtocol) {
-        let font = Self.toolDetailSectionHeadingFont()
-        let s = NSMutableAttributedString(string: text)
-        let full = NSRange(location: 0, length: s.length)
-        s.addAttribute(.font, value: font, range: full)
-        s.addAttribute(.kern, value: 0.8, range: full)
-        s.addAttribute(.foregroundColor, value: NSColor(theme.tertiaryText), range: full)
-        field.attributedStringValue = s
+        // An all-caps eyebrow: micro bold, opened up so the capitals stay legible.
+        var attributes = theme.textAttributes(.micro, color: NSColor(theme.text.tertiary))
+        attributes[.font] = theme.nsFont(.micro, weight: .bold)
+        attributes[.kern] = 0.8
+        field.attributedStringValue = NSAttributedString(string: text, attributes: attributes)
+        ActivityInspectionStyle.label(field, property: "caption", theme: theme)
     }
 
     private func tearDownResultSection() {
@@ -2236,12 +2494,12 @@ final class NativeToolCallRowView: NSView {
     /// Color of the node (icon + fill tint + ring), driven by run status:
     /// running = accent, error = red, success = green.
     private func nodeStatusColor(item: ToolCallItem, theme: any ThemeProtocol) -> NSColor {
-        if item.unobservedResult != nil { return NSColor(theme.secondaryText) }
-        if isRunning(item) { return NSColor(theme.accentColor) }
+        if item.unobservedResult != nil { return NSColor(theme.text.secondary) }
+        if isRunning(item) { return NSColor(theme.status.info.foreground) }
         if let r = item.result, isErrorResult(r, callId: item.call.id) {
-            return NSColor(theme.errorColor)
+            return NSColor(theme.status.error.foreground)
         }
-        return NSColor(theme.successColor)
+        return NSColor(theme.status.success.foreground)
     }
 
     /// Apply status colors to the node and, while running, shimmer the title
@@ -2259,17 +2517,22 @@ final class NativeToolCallRowView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         categoryIcon.contentTintColor = color
-        categoryBg.fillColor = color.withAlphaComponent(0.14).cgColor
-        categoryBg.strokeColor = color.withAlphaComponent(0.55).cgColor
+        let backing = NSColor(theme.surface.raised)
+        categoryBg.fillColor = (backing.blended(withFraction: 0.14, of: color) ?? backing).cgColor
+        categoryBg.strokeColor = (backing.blended(withFraction: 0.55, of: color) ?? color).cgColor
         CATransaction.commit()
 
         if isRunning(item) {
             let progress = MCPToolProgressRegistry.shared.message(for: item.call.id)
+            let titleTracking = theme.assignedTracking(ActivityInspectionStyle.key + "label")
+            let titleLineHeight: CGFloat? = theme.assignedLineHeight(ActivityInspectionStyle.key + "label", fallback: 18)
             shimmerLabel.configure(
                 text: progress.map { "\(runningTitle) · \($0)" } ?? runningTitle,
-                font: nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .semibold),
-                baseColor: NSColor(theme.primaryText).withAlphaComponent(0.4),
-                highlightColor: NSColor(theme.primaryText)
+                font: theme.assignedNativeFont(ActivityInspectionStyle.key + "label", fallback: nameLabel.font ?? theme.nsFont(.caption, weight: .semibold)),
+                baseColor: NSColor(theme.text.tertiary),
+                highlightColor: NSColor(theme.text.primary),
+                tracking: titleTracking,
+                lineHeight: titleLineHeight
             )
             nameLabel.isHidden = true
             shimmerLabel.isHidden = false
@@ -2279,6 +2542,7 @@ final class NativeToolCallRowView: NSView {
             shimmerLabel.isHidden = true
             nameLabel.isHidden = false
         }
+        applyHeaderLinkPins()
     }
 
     /// Reveals a freshly appearing node as a staged sequence — the ring traces
@@ -2377,7 +2641,7 @@ final class NativeToolCallRowView: NSView {
         guard let item = currentItem, item.result != nil, !(expanded ?? isExpanded),
             !FileDiff.diffProducingToolNames.contains(item.call.function.name)
         else {
-            fileChangesButton.isHidden = true
+            setHeaderLink(fileChangesButton, visible: false)
             return
         }
         let callId = item.call.id
@@ -2395,32 +2659,113 @@ final class NativeToolCallRowView: NSView {
     }
 
     private func applyFileChangesLink() {
-        guard let set = fileChangeSet, !isExpanded, let theme = lastConfiguredTheme,
+        guard let set = fileChangeSet, !isExpanded, openRunButton.isHidden, remedyButton.isHidden,
+            let theme = lastConfiguredTheme,
             !set.entries.isEmpty || set.status == .untracked
         else {
-            fileChangesButton.isHidden = true
+            setHeaderLink(fileChangesButton, visible: false)
             return
         }
         let count = set.entries.count
         var title: String
         switch set.status {
         case .untracked: title = L("Changes not tracked")
-        default: title = L("\(count) files changed")
+        default: title = count == 1 ? L("1 file changed") : L("\(count) files changed")
         }
         if set.status == .reverted { title += " · " + L("reverted") }
-        fileChangesButton.attributedTitle = NSAttributedString(
-            string: title,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-                .foregroundColor: NSColor(set.status == .reverted ? theme.tertiaryText : theme.accentColor),
-            ]
+        setHeaderLinkTitle(
+            fileChangesButton,
+            NSAttributedString(
+                string: title,
+                attributes: [
+                    .font: theme.nsFont(.footnote, weight: .semibold),
+                    .foregroundColor: NSColor(set.status == .reverted ? theme.text.tertiary : theme.text.link),
+                ]
+            )
         )
         fileChangesButton.toolTip = L("Show in File Changes")
-        fileChangesButton.isHidden = false
+        setHeaderLink(fileChangesButton, visible: true)
     }
 
     @objc private func openFileChanges() {
         guard let set = fileChangeSet else { return }
         FileChangeSummaryStore.requestPanel(sessionId: set.sessionId, focusing: set.id)
+    }
+
+    // MARK: - Workflow run link
+
+    private func refreshOpenRunLink() {
+        refreshRemedyLink()
+        guard let item = currentItem, WorkflowToolCall.isWorkflowCall(item.call.function.name), !isExpanded else {
+            setHeaderLink(openRunButton, visible: false)
+            openRunID = nil
+            return
+        }
+        openRunID = (item.result.flatMap(WorkflowToolCall.runID(inResult:))
+            ?? WorkflowRunService.shared.liveRunID(forToolCall: item.call.id))
+            .flatMap { WorkflowRunLauncher.canOpen(runID: $0) ? $0 : nil }
+        guard openRunID != nil else {
+            setHeaderLink(openRunButton, visible: false)
+            // The run starts just after the row appears; look again shortly.
+            if item.result == nil, openRunRetries < 10 {
+                openRunRetries += 1
+                let callId = item.call.id
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    guard let self, self.currentItemId == callId else { return }
+                    self.refreshOpenRunLink()
+                }
+            }
+            return
+        }
+        let theme = lastConfiguredTheme
+        setHeaderLinkTitle(
+            openRunButton,
+            NSAttributedString(
+                string: L("Open Run"),
+                attributes: [
+                    .font: (theme ?? ThemeManager.shared.chatTheme).nsFont(.footnote, weight: .semibold),
+                    .foregroundColor: theme.map { NSColor($0.text.link) } ?? NSColor.linkColor,
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                ]
+            )
+        )
+        setHeaderLink(fileChangesButton, visible: false)
+        setHeaderLink(openRunButton, visible: true)
+    }
+
+    @objc private func openWorkflowRun() {
+        guard let openRunID, window != nil else { return }
+        WorkflowRunLauncher.open(runID: openRunID)
+    }
+
+    /// A failed workflow call's fix, when the person can make it: a
+    /// permission, a folder, search, or a model.
+    private func refreshRemedyLink() {
+        guard let item = currentItem, WorkflowToolCall.isWorkflowCall(item.call.function.name), !isExpanded,
+            let result = item.result, let remedy = WorkflowFailureRemedy.from(result: result)
+        else {
+            workflowRemedy = nil
+            setHeaderLink(remedyButton, visible: false)
+            return
+        }
+        workflowRemedy = remedy
+        let theme = lastConfiguredTheme ?? ThemeManager.shared.chatTheme
+        setHeaderLinkTitle(
+            remedyButton,
+            NSAttributedString(
+                string: remedy.title,
+                attributes: [
+                    .font: theme.nsFont(.footnote, weight: .semibold),
+                    .foregroundColor: NSColor(theme.text.link),
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                ]
+            )
+        )
+        setHeaderLink(fileChangesButton, visible: false)
+        setHeaderLink(remedyButton, visible: true)
+    }
+
+    @objc private func applyWorkflowRemedy() {
+        workflowRemedy?.perform(over: window)
     }
 }

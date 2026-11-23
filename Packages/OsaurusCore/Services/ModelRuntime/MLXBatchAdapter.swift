@@ -130,6 +130,8 @@ struct MLXBatchAdapter {
         let stream: AsyncStream<Generation>
         let promptTokens: [Int]
         let genTask: Task<Void, Never>
+        /// Nil when the request carried no thinking budget.
+        var reasoningBudget: ReasoningBudgetReport? = nil
     }
 
     struct AudioPreencodeResult {
@@ -326,6 +328,7 @@ struct MLXBatchAdapter {
         effectiveDraftStrategy: MLXLMCommon.DraftStrategy?,
         promptTokenCount: Int,
         coldWarmup: Bool,
+        reasoningBudgetArmed: Bool = false,
         loadResolutionReason: String? = nil
     ) -> String? {
         guard requestedNativeMTP || requestedDraftStrategy?.usesNativeMTP == true else {
@@ -337,6 +340,9 @@ struct MLXBatchAdapter {
         // `explicit_sampling` while `native_mtp:dN` actually executes makes
         // the eval/API telemetry internally contradictory.
         guard effectiveDraftStrategy?.usesNativeMTP != true else { return nil }
+        if requestedDraftStrategy?.usesNativeMTP == true, reasoningBudgetArmed {
+            return "reasoning_budget"
+        }
         if requestedDraftStrategy?.usesNativeMTP == true, coldWarmup {
             return "cold_warmup"
         }
@@ -1771,11 +1777,14 @@ struct MLXBatchAdapter {
             modelName: modelName,
             requested: draftStrategy?.usesNativeMTP == true
         )
+        // vmlx decodes an armed thinking budget autoregressively: a drafted
+        // token would bypass the per-token ceiling.
+        let reasoningBudgetArmed = prepared.reasoningBudgetArmed == true
         let effectiveDraftStrategy = Self.effectiveDraftStrategy(
             generation: generation,
             draftStrategy: draftStrategy,
             promptTokenCount: prepared.promptTokens.count,
-            disableNativeMTP: nativeMTPColdWarmup
+            disableNativeMTP: nativeMTPColdWarmup || reasoningBudgetArmed
         )
         let nativeMTPFallbackReason = Self.nativeMTPFallbackReason(
             requestedNativeMTP: nativeMTPRequested,
@@ -1783,6 +1792,7 @@ struct MLXBatchAdapter {
             effectiveDraftStrategy: effectiveDraftStrategy,
             promptTokenCount: prepared.promptTokens.count,
             coldWarmup: nativeMTPColdWarmup,
+            reasoningBudgetArmed: reasoningBudgetArmed,
             loadResolutionReason: nativeMTPLoadResolutionReason
         )
         let nativeMTPRequestFallback =
@@ -1872,6 +1882,12 @@ struct MLXBatchAdapter {
         // drafted token could bypass the per-token budget. Explicit reasoning
         // controls belong on an explicit API field; absent one, the bundle
         // template and generation config remain authoritative.
+        // The explicit field is the caller's thinking budget. It is set only
+        // when it can arm, so a model with no reasoning close token keeps its
+        // normal decode path (including native MTP) untouched.
+        if reasoningBudgetArmed {
+            mlxParams.requestedReasoningBudgetTokens = generation.reasoningBudgetTokens
+        }
         // Block-diffusion speed/quality budget (DiffusionGemma): server
         // setting, default 16 (seeded by ServerRuntimeSettingsStore).
         // nil = bundle's generation_config.json value. Ignored by
@@ -2085,13 +2101,16 @@ struct MLXBatchAdapter {
         }
 
         batchAdapterLog.info(
-            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) nativeMTPFallback=\(nativeMTPFallbackReason ?? "none", privacy: .public) compiledBatchDecodeRequested=\(effective.compiledBatchDecode, privacy: .public)"
+            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) nativeMTPFallback=\(nativeMTPFallbackReason ?? "none", privacy: .public) compiledBatchDecodeRequested=\(effective.compiledBatchDecode, privacy: .public) reasoningBudget=\(generation.reasoningBudgetTokens.map(String.init) ?? "none", privacy: .public) reasoningBudgetArmed=\(reasoningBudgetArmed, privacy: .public)"
         )
 
         return PreparedStream(
             stream: outStream,
             promptTokens: prepared.promptTokens,
-            genTask: producerTask
+            genTask: producerTask,
+            reasoningBudget: generation.reasoningBudgetTokens.map {
+                ReasoningBudgetReport(requestedTokens: $0, applied: reasoningBudgetArmed)
+            }
         )
     }
 
@@ -2100,6 +2119,24 @@ struct MLXBatchAdapter {
     private struct PreparedInput: @unchecked Sendable {
         let input: LMInput
         let promptTokens: [Int]
+        /// Whether vmlx can enforce the request's thinking budget on this
+        /// prompt; nil when no budget was requested.
+        var reasoningBudgetArmed: Bool? = nil
+    }
+
+    /// Mirrors the engine's own submit-time resolution (same 64-token prompt
+    /// tail, same `ReasoningBudget.arm`), so the report and the decode-path
+    /// telemetry agree with what vmlx actually enforces.
+    static func reasoningBudgetArms(
+        tokenCount: Int,
+        promptTokens: [Int],
+        tokenizer: any MLXLMCommon.Tokenizer
+    ) -> Bool {
+        let tail = promptTokens.isEmpty
+            ? nil
+            : tokenizer.decode(tokenIds: Array(promptTokens.suffix(64)), skipSpecialTokens: false)
+        return MLXLMCommon.ReasoningBudget.arm(
+            tokenizer: tokenizer, promptTail: tail, tokenCount: tokenCount) != nil
     }
 
     /// Prepare a warm-up prompt as the send-invariant prefix of the NEXT
@@ -2600,7 +2637,12 @@ struct MLXBatchAdapter {
                     throw ChatEngine.EngineError(kind: .invalidStructuredOutput(error.localizedDescription))
                 }
             }
-            box.result = PreparedInput(input: lmInput, promptTokens: tokens)
+            box.result = PreparedInput(
+                input: lmInput,
+                promptTokens: tokens,
+                reasoningBudgetArmed: generation.reasoningBudgetTokens.map {
+                    Self.reasoningBudgetArms(tokenCount: $0, promptTokens: tokens, tokenizer: context.tokenizer)
+                })
         }
 
         let doneAt = CFAbsoluteTimeGetCurrent()

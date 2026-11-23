@@ -93,28 +93,27 @@ private struct RampartDownloadProgressContent: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             switch manager.state {
             case .downloading(let progress):
-                ProgressView(value: progress)
+                SettingsProgressBar(value: progress)
                 // Explicit format key: a literal `%` after an interpolation
                 // becomes `%%` in the extracted catalog key, which the i18n
                 // checker's interpolation matcher cannot derive from the
                 // interpolated form.
                 Text(String(format: L("Downloading, %lld%%"), Int(progress * 100)))
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
             case .failed(let message):
                 Text(L("Download failed: \(message)"))
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             case .idle, .ready:
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner()
             }
         }
-        .padding(.top, 2)
+        .padding(.top, theme.space.s2)
         .frame(width: 300)
     }
 }

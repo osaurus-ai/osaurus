@@ -22,8 +22,11 @@ PIDFILE="$TEST_ROOT/osaurus.pid"
 # This live-proof launcher intentionally bypasses LaunchServices/open(1) so
 # the keychain-disabled environment is inherited by the app process.
 # Do not add signing, notarization, security(1), or Keychain calls here.
+# Set OSAURUS_KEYCHAIN_FREE_SANDBOX=1 to start the sandbox registrar
+# (auto-start, sandbox tools in chat) for a live sandbox proof.
 nohup env \
   OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
+  OSAURUS_KEYCHAIN_FREE_SANDBOX="${OSAURUS_KEYCHAIN_FREE_SANDBOX:-}" \
   OSAURUS_TEST_ROOT="$TEST_ROOT" \
   OSU_MODELS_DIR="$TEST_ROOT/models" \
   "$BIN" >"$LOG" 2>&1 &

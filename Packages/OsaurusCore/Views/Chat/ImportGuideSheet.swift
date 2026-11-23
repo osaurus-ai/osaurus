@@ -90,18 +90,18 @@ struct ImportGuideSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             Text(
                 "Bring conversations from other AI apps into Osaurus and continue them with any model. Export your chats first:",
                 bundle: .module
             )
-            .font(.system(size: 13))
-            .foregroundColor(theme.secondaryText)
+            .textStyle(.bodySmall)
+            .foregroundColor(theme.text.secondary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
-            .padding(.bottom, 12)
+            .padding(.bottom, theme.space.s12)
 
-            VStack(spacing: 6) {
+            VStack(spacing: theme.space.s6) {
                 ForEach(providers) { provider in
                     providerRow(provider)
                 }
@@ -111,79 +111,66 @@ struct ImportGuideSheet: View {
                 "Then choose the downloaded file below. You can select several files at once.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.tertiaryText)
+            .textStyle(.caption)
+            .foregroundColor(theme.text.tertiary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
-            .padding(.top, 12)
+            .padding(.top, theme.space.s12)
 
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.3))
-                .frame(height: 1)
-                .padding(.top, 14)
+            ThemeHairlineDivider()
+                .padding(.top, theme.space.s14)
 
             HStack {
                 if showsSkipToggle {
                     Toggle(isOn: $pref.skip) {
                         Text("Don't show this again", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
+                            .textStyle(.caption)
+                            .foregroundColor(theme.text.secondary)
                     }
                     .toggleStyle(.checkbox)
                 }
 
                 Spacer()
 
-                Button(action: onChooseFile) {
-                    Text("Choose File…", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(theme.accentColor)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
+                SettingsButton(.primary, "Choose File…", action: onChooseFile)
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(.top, 12)
+            .padding(.top, theme.space.s12)
         }
         .frame(width: contentWidth)
     }
 
     private func providerRow(_ provider: Provider) -> some View {
         let isExpanded = expandedProviderId == provider.id
-        return VStack(alignment: .leading, spacing: 0) {
+        return VStack(alignment: .leading, spacing: theme.space.s0) {
             Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                withAnimation(theme.motion.springAnimation) {
                     expandedProviderId = isExpanded ? nil : provider.id
                 }
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     Text(provider.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .textStyle(.label, weight: 600)
+                        .foregroundColor(theme.text.primary)
 
                     Spacer()
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.micro, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
                 .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
 
             if isExpanded {
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: theme.space.s10) {
                     Text(provider.recipe, bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .textStyle(.caption)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -192,26 +179,26 @@ struct ImportGuideSheet: View {
                             NSWorkspace.shared.open(url)
                         } label: {
                             Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(theme.accentColor)
+                                .glyphSize(.label, weight: .medium)
+                                .foregroundColor(theme.text.link)
                         }
                         .buttonStyle(PlainButtonStyle())
                         .localizedHelp("Open export page")
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.bottom, theme.space.s10)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.tertiaryBackground.opacity(isExpanded ? 0.55 : 0.4))
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .fill(theme.surface.hover)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isExpanded ? theme.accentColor.opacity(0.35) : theme.cardBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .stroke(isExpanded ? theme.border.strong : theme.border.default, lineWidth: theme.stroke.default)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
     }
 }

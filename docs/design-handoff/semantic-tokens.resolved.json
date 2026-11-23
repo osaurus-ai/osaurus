@@ -1,0 +1,1822 @@
+{
+  "semanticTokens": {
+    "color.action.border": {
+      "dark": "#00000000",
+      "light": "#00000000",
+      "type": "color",
+      "use": "No visible border on filled primary/secondary or text tertiary actions. Use a separate focus ring for keyboard focus."
+    },
+    "color.action.brand.default.background": {
+      "dark": "#336170FF",
+      "light": "#4E7881FF",
+      "type": "color",
+      "use": "color.action.primary.default.background — Primary action background, default state."
+    },
+    "color.action.brand.default.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#336170FF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.brand.default.border"
+    },
+    "color.action.brand.default.foreground": {
+      "dark": "#FBFAF9FF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.action.primary.default.foreground — Primary action foreground, default state."
+    },
+    "color.action.brand.disabled.background": {
+      "dark": "#54524FFF",
+      "light": "#ECEBE8FF",
+      "type": "color",
+      "use": "color.action.primary.disabled.background — Primary action background, disabled state."
+    },
+    "color.action.brand.disabled.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#E5E5E1FF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.brand.disabled.border"
+    },
+    "color.action.brand.disabled.foreground": {
+      "dark": "#A1A09BFF",
+      "light": "#888680FF",
+      "type": "color",
+      "use": "color.action.primary.disabled.foreground — Primary action foreground, disabled state."
+    },
+    "color.action.brand.hover.background": {
+      "dark": "#517C85FF",
+      "light": "#336170FF",
+      "type": "color",
+      "use": "color.action.primary.hover.background — Primary action background, hover state."
+    },
+    "color.action.brand.hover.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#1E3E48FF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.brand.hover.border"
+    },
+    "color.action.brand.hover.foreground": {
+      "dark": "#FFFFFFFF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.action.primary.hover.foreground — Primary action foreground, hover state."
+    },
+    "color.action.brand.pressed.background": {
+      "dark": "#336170FF",
+      "light": "#4E7881FF",
+      "type": "color",
+      "use": "color.action.primary.pressed.background — Primary action background, pressed state."
+    },
+    "color.action.brand.pressed.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#4E7881FF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.brand.pressed.border"
+    },
+    "color.action.brand.pressed.foreground": {
+      "dark": "#FBFAF9FF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.action.primary.pressed.foreground — Primary action foreground, pressed state."
+    },
+    "color.action.destructive.default.background": {
+      "dark": "#AF290EFF",
+      "light": "#D31B00FF",
+      "type": "color",
+      "use": "color.action.destructive.default.background — Destructive action background, default state."
+    },
+    "color.action.destructive.default.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#FFFFFFFF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.destructive.default.border"
+    },
+    "color.action.destructive.default.foreground": {
+      "dark": "#FBFAF9FF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.action.destructive.default.foreground — Destructive action foreground, default state."
+    },
+    "color.action.destructive.disabled.background": {
+      "dark": "#353331FF",
+      "light": "#ECEBE8FF",
+      "type": "color",
+      "use": "color.action.destructive.disabled.background — Destructive action background, disabled state."
+    },
+    "color.action.destructive.disabled.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#E5E5E1FF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.destructive.disabled.border"
+    },
+    "color.action.destructive.disabled.foreground": {
+      "dark": "#73726EFF",
+      "light": "#888680FF",
+      "type": "color",
+      "use": "color.action.destructive.disabled.foreground — Destructive action foreground, disabled state."
+    },
+    "color.action.destructive.hover.background": {
+      "dark": "#F2340DFF",
+      "light": "#9B2208FF",
+      "type": "color",
+      "use": "color.action.destructive.hover.background — Destructive action background, hover state."
+    },
+    "color.action.destructive.hover.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#FFFFFFFF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.destructive.hover.border"
+    },
+    "color.action.destructive.hover.foreground": {
+      "dark": "#000000FF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.action.destructive.hover.foreground — Destructive action foreground, hover state."
+    },
+    "color.action.destructive.pressed.background": {
+      "dark": "#85230FFF",
+      "light": "#531609FF",
+      "type": "color",
+      "use": "color.action.destructive.pressed.background — Destructive action background, pressed state."
+    },
+    "color.action.destructive.pressed.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#FFFFFFFF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.destructive.pressed.border"
+    },
+    "color.action.destructive.pressed.foreground": {
+      "dark": "#FBFAF9FF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.action.destructive.pressed.foreground — Destructive action foreground, pressed state."
+    },
+    "color.action.primary.default.background": {
+      "dark": "#EEEEECFF",
+      "light": "#2D2D2AFF",
+      "type": "color",
+      "use": "color.action.primary.default.background — Primary action background, default state."
+    },
+    "color.action.primary.default.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#181816FF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.primary.default.border"
+    },
+    "color.action.primary.default.foreground": {
+      "dark": "#181816FF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.action.primary.default.foreground — Primary action foreground, default state."
+    },
+    "color.action.primary.disabled.background": {
+      "dark": "#54524FFF",
+      "light": "#ECEBE8FF",
+      "type": "color",
+      "use": "color.action.primary.disabled.background — Primary action background, disabled state."
+    },
+    "color.action.primary.disabled.foreground": {
+      "dark": "#A1A09BFF",
+      "light": "#888680FF",
+      "type": "color",
+      "use": "color.action.primary.disabled.foreground — Primary action foreground, disabled state."
+    },
+    "color.action.primary.hover.background": {
+      "dark": "#A1A09BFF",
+      "light": "#181816FF",
+      "type": "color",
+      "use": "color.action.primary.hover.background — Primary action background, hover state."
+    },
+    "color.action.primary.hover.foreground": {
+      "dark": "#181816FF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.action.primary.hover.foreground — Primary action foreground, hover state."
+    },
+    "color.action.primary.pressed.background": {
+      "dark": "#EEEEECFF",
+      "light": "#474543FF",
+      "type": "color",
+      "use": "color.action.primary.pressed.background — Primary action background, pressed state."
+    },
+    "color.action.primary.pressed.foreground": {
+      "dark": "#181816FF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.action.primary.pressed.foreground — Primary action foreground, pressed state."
+    },
+    "color.action.secondary.default.background": {
+      "dark": "#353331FF",
+      "light": "#E5E5E1FF",
+      "type": "color",
+      "use": "color.action.secondary.default.background — Secondary action background, default state."
+    },
+    "color.action.secondary.default.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#D8D8D4FF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.secondary.default.border"
+    },
+    "color.action.secondary.default.foreground": {
+      "dark": "#D8D8D4FF",
+      "light": "#2D2D2AFF",
+      "type": "color",
+      "use": "color.action.secondary.default.foreground — Secondary action foreground, default state."
+    },
+    "color.action.secondary.disabled.background": {
+      "dark": "#2A2928FF",
+      "light": "#ECEBE8FF",
+      "type": "color",
+      "use": "color.action.secondary.disabled.background — Secondary action background, disabled state."
+    },
+    "color.action.secondary.disabled.foreground": {
+      "dark": "#54524FFF",
+      "light": "#888680FF",
+      "type": "color",
+      "use": "color.action.secondary.disabled.foreground — Secondary action foreground, disabled state."
+    },
+    "color.action.secondary.hover.background": {
+      "dark": "#3F3D3BFF",
+      "light": "#D8D8D4FF",
+      "type": "color",
+      "use": "color.action.secondary.hover.background — Secondary action background, hover state."
+    },
+    "color.action.secondary.hover.foreground": {
+      "dark": "#D8D8D4FF",
+      "light": "#2D2D2AFF",
+      "type": "color",
+      "use": "color.action.secondary.hover.foreground — Secondary action foreground, hover state."
+    },
+    "color.action.secondary.pressed.background": {
+      "dark": "#353331FF",
+      "light": "#E5E5E1FF",
+      "type": "color",
+      "use": "color.action.secondary.pressed.background — Secondary action background, pressed state."
+    },
+    "color.action.secondary.pressed.foreground": {
+      "dark": "#FBFAF9FF",
+      "light": "#2D2D2AFF",
+      "type": "color",
+      "use": "color.action.secondary.pressed.foreground — Secondary action foreground, pressed state."
+    },
+    "color.action.tertiary.default.background": {
+      "dark": "#00000000",
+      "light": "#00000000",
+      "type": "color",
+      "use": "color.action.tertiary.default.background — Tertiary action background, default state."
+    },
+    "color.action.tertiary.default.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#FFFFFFFF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.tertiary.default.border"
+    },
+    "color.action.tertiary.default.foreground": {
+      "dark": "#D8D8D4FF",
+      "light": "#2D2D2AFF",
+      "type": "color",
+      "use": "color.action.tertiary.default.foreground — Tertiary action foreground, default state."
+    },
+    "color.action.tertiary.disabled.background": {
+      "dark": "#00000000",
+      "light": "#00000000",
+      "type": "color",
+      "use": "color.action.tertiary.disabled.background — Tertiary action background, disabled state."
+    },
+    "color.action.tertiary.disabled.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#E5E5E1FF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.tertiary.disabled.border"
+    },
+    "color.action.tertiary.disabled.foreground": {
+      "dark": "#73726EFF",
+      "light": "#888680FF",
+      "type": "color",
+      "use": "color.action.tertiary.disabled.foreground — Tertiary action foreground, disabled state."
+    },
+    "color.action.tertiary.hover.background": {
+      "dark": "#A1A09B1A",
+      "light": "#E5E5E1FF",
+      "type": "color",
+      "use": "color.action.tertiary.hover.background — Tertiary action background, hover state."
+    },
+    "color.action.tertiary.hover.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#FFFFFFFF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.tertiary.hover.border"
+    },
+    "color.action.tertiary.hover.foreground": {
+      "dark": "#D8D8D4FF",
+      "light": "#2D2D2AFF",
+      "type": "color",
+      "use": "color.action.tertiary.hover.foreground — Tertiary action foreground, hover state."
+    },
+    "color.action.tertiary.pressed.background": {
+      "dark": "#A1A09B40",
+      "light": "#D8D8D4FF",
+      "type": "color",
+      "use": "color.action.tertiary.pressed.background — Tertiary action background, pressed state."
+    },
+    "color.action.tertiary.pressed.border": {
+      "dark": "#FFFFFFFF",
+      "light": "#FFFFFFFF",
+      "type": "color",
+      "use": "Imported from Osaurus 1.0: color.action.tertiary.pressed.border"
+    },
+    "color.action.tertiary.pressed.foreground": {
+      "dark": "#D8D8D4FF",
+      "light": "#2D2D2AFF",
+      "type": "color",
+      "use": "color.action.tertiary.pressed.foreground — Tertiary action foreground, pressed state."
+    },
+    "color.border.control": {
+      "dark": "#73726EFF",
+      "light": "#888680FF",
+      "type": "color",
+      "use": "Input, select, editor and switch boundaries; independent of decorative dividers."
+    },
+    "color.border.controlCheck": {
+      "dark": "#73726EFF",
+      "light": "#888680FF",
+      "type": "color",
+      "use": "Checkbox boundary; preserves its independent Dark-mode outline."
+    },
+    "color.border.controlHover": {
+      "dark": "#A1A09BFF",
+      "light": "#888680FF",
+      "type": "color",
+      "use": "Hovered input boundary, distinct from its resting stroke and keyboard focus."
+    },
+    "color.border.default": {
+      "dark": "#3F3D3BFF",
+      "light": "#BAB9B5FF",
+      "type": "color",
+      "use": "color.border.default — Decorative container outlines"
+    },
+    "color.border.error": {
+      "dark": "#F2340DFF",
+      "light": "#D31B00FF",
+      "type": "color",
+      "use": "color.border.error — Invalid input boundary"
+    },
+    "color.border.focus": {
+      "dark": "#FBFAF9FF",
+      "light": "#181816FF",
+      "type": "color",
+      "use": "color.border.focus — Keyboard focus ring; never substitute hover"
+    },
+    "color.border.none": {
+      "dark": "#00000000",
+      "light": "#00000000",
+      "type": "color",
+      "use": "No visible border. Explicitly removes the assigned stroke in both appearances."
+    },
+    "color.border.strong": {
+      "dark": "#73726EFF",
+      "light": "#888680FF",
+      "type": "color",
+      "use": "color.border.strong — Input or control boundary when needed for identification"
+    },
+    "color.border.subtle": {
+      "dark": "#353331FF",
+      "light": "#D8D8D4FF",
+      "type": "color",
+      "use": "color.border.subtle — Decorative separators; not the sole indicator of a control"
+    },
+    "color.chat.assistant.background": {
+      "dark": "#201F1DFF",
+      "light": "#F0EFEDFF",
+      "type": "color",
+      "use": "color.chat.assistant.background — Opaque assistant message surface. Independent of navigation selection and main canvas colors."
+    },
+    "color.chat.user.background": {
+      "dark": "#3F3D3BFF",
+      "light": "#E5E5E1FF",
+      "type": "color",
+      "use": "color.chat.user.background — Opaque user message surface. Independent of navigation selection and main canvas colors."
+    },
+    "color.control.offIndicator": {
+      "dark": "#A1A09BFF",
+      "light": "#474543FF",
+      "type": "color",
+      "use": "Off-state switch thumb; independent of the on-state indicator."
+    },
+    "color.cursor": {
+      "dark": "#FBFAF9FF",
+      "light": "#181816FF",
+      "type": "color",
+      "use": "color.cursor — Insertion caret"
+    },
+    "color.danger.default": {
+      "dark": "#F2340DFF",
+      "light": "#D31B00FF",
+      "type": "color",
+      "use": "color.danger.default — Filled destructive action"
+    },
+    "color.danger.hover": {
+      "dark": "#F37358FF",
+      "light": "#9B2208FF",
+      "type": "color",
+      "use": "color.danger.hover — Hovered destructive action"
+    },
+    "color.danger.pressed": {
+      "dark": "#F99B86FF",
+      "light": "#531609FF",
+      "type": "color",
+      "use": "color.danger.pressed — Pressed destructive action"
+    },
+    "color.scrim": {
+      "dark": "#00000080",
+      "light": "#00000066",
+      "type": "color",
+      "use": "color.scrim — Modal overlay over app content"
+    },
+    "color.selection.background": {
+      "dark": "#3F3D3BFF",
+      "light": "#E5E5E1FF",
+      "type": "color",
+      "use": "color.selection.background — Text selection background; explicit opaque value"
+    },
+    "color.selection.foreground": {
+      "dark": "#EEEEECFF",
+      "light": "#2D2D2AFF",
+      "type": "color",
+      "use": "color.selection.foreground — Selected text foreground"
+    },
+    "color.shadow": {
+      "dark": "#000000FF",
+      "light": "#000000FF",
+      "type": "color",
+      "use": "color.shadow — Base shadow color; use with elevation recipe"
+    },
+    "color.status.error.background": {
+      "dark": "#5C180AFF",
+      "light": "#FEEBE7FF",
+      "type": "color",
+      "use": "color.status.error.background — Subtle error message fill"
+    },
+    "color.status.error.border": {
+      "dark": "#85230FFF",
+      "light": "#D31B00FF",
+      "type": "color",
+      "use": "color.status.error.border — Boundary for error message or indicator"
+    },
+    "color.status.error.foreground": {
+      "dark": "#F37358FF",
+      "light": "#9B2208FF",
+      "type": "color",
+      "use": "color.status.error.foreground — Readable error text or icon on its status surface or a neutral surface"
+    },
+    "color.status.info.background": {
+      "dark": "#092E53FF",
+      "light": "#E5F5FFFF",
+      "type": "color",
+      "use": "color.status.info.background — Subtle info message fill"
+    },
+    "color.status.info.border": {
+      "dark": "#0F4D86FF",
+      "light": "#2375C7FF",
+      "type": "color",
+      "use": "color.status.info.border — Boundary for info message or indicator"
+    },
+    "color.status.info.foreground": {
+      "dark": "#70B8FFFF",
+      "light": "#0E4F90FF",
+      "type": "color",
+      "use": "color.status.info.foreground — Readable info text or icon on its status surface or a neutral surface"
+    },
+    "color.status.success.background": {
+      "dark": "#073120FF",
+      "light": "#E3FCF4FF",
+      "type": "color",
+      "use": "color.status.success.background — Subtle success message fill"
+    },
+    "color.status.success.border": {
+      "dark": "#106043FF",
+      "light": "#40BF90FF",
+      "type": "color",
+      "use": "color.status.success.border — Boundary for success message or indicator"
+    },
+    "color.status.success.foreground": {
+      "dark": "#4CE5ADFF",
+      "light": "#227758FF",
+      "type": "color",
+      "use": "color.status.success.foreground — Readable success text or icon on its status surface or a neutral surface"
+    },
+    "color.status.urgentWarning.background": {
+      "dark": "#57370FFF",
+      "light": "#FFA033FF",
+      "type": "color",
+      "use": "Stronger warning surface for an immediate risk or irreversible action."
+    },
+    "color.status.urgentWarning.border": {
+      "dark": "#8A530FFF",
+      "light": "#FFBA6BFF",
+      "type": "color",
+      "use": "Border of the urgent warning surface."
+    },
+    "color.status.urgentWarning.foreground": {
+      "dark": "#FFB35CFF",
+      "light": "#523614FF",
+      "type": "color",
+      "use": "Readable text and icon color on the urgent warning surface."
+    },
+    "color.status.warning.background": {
+      "dark": "#57370FFF",
+      "light": "#FFEDD6FF",
+      "type": "color",
+      "use": "color.status.warning.background — Subtle warning message fill"
+    },
+    "color.status.warning.border": {
+      "dark": "#8A530FFF",
+      "light": "#FFBA6BFF",
+      "type": "color",
+      "use": "color.status.warning.border — Boundary for warning message or indicator"
+    },
+    "color.status.warning.foreground": {
+      "dark": "#FFB35CFF",
+      "light": "#976000FF",
+      "type": "color",
+      "use": "color.status.warning.foreground — Readable warning text or icon on its status surface or a neutral surface"
+    },
+    "color.surface.canvas": {
+      "dark": "#181816FF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.surface.canvas — Opaque main-content surface when needed, and solid window fallback. The normal base window uses the material treatment instead."
+    },
+    "color.surface.code": {
+      "dark": "#201F1DFF",
+      "light": "#F0EFEDFF",
+      "type": "color",
+      "use": "color.surface.code — Code blocks and monospaced output"
+    },
+    "color.surface.disabled": {
+      "dark": "#2A2928FF",
+      "light": "#E5E5E1FF",
+      "type": "color",
+      "use": "color.surface.disabled — Disabled controls"
+    },
+    "color.surface.hover": {
+      "dark": "#A1A09B1A",
+      "light": "#453d3614",
+      "type": "color",
+      "use": "color.surface.hover — Hovered neutral row or selectable item. Button hover uses its own action role."
+    },
+    "color.surface.inverse": {
+      "dark": "#FBFAF9FF",
+      "light": "#181816FF",
+      "type": "color",
+      "use": "Opaque inverse surface: dark in Light mode, light in Dark mode. Pair with color.text.inverse. Backed by neutral/900 independently in each appearance."
+    },
+    "color.surface.none": {
+      "dark": "#00000000",
+      "light": "#00000000",
+      "type": "color",
+      "use": "No background fill. Explicitly removes the assigned surface in both appearances; does not add glass or material."
+    },
+    "color.surface.overlay": {
+      "dark": "#353331FF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.surface.overlay — Popover and dialog surface"
+    },
+    "color.surface.pressed": {
+      "dark": "#A1A09B26",
+      "light": "#453d3626",
+      "type": "color",
+      "use": "color.surface.pressed — Pressed neutral row or selectable item. Button press uses its own action role."
+    },
+    "color.surface.raised": {
+      "dark": "#2A2928FF",
+      "light": "#F0EFEDFF",
+      "type": "color",
+      "use": "color.surface.raised — Opaque cards and grouped settings."
+    },
+    "color.surface.selected": {
+      "dark": "#A1A09B40",
+      "light": "#E5E5E1FF",
+      "type": "color",
+      "use": "color.surface.selected — Selected navigation row; pair with primary text and a checkmark or another non-color indicator."
+    },
+    "color.surface.sidebar": {
+      "dark": "#201F1DFF",
+      "light": "#ECEBE8FF",
+      "type": "color",
+      "use": "color.surface.sidebar — Opaque navigation container when a solid sidebar is needed. A sidebar sharing the base material has no additional fill."
+    },
+    "color.surface.subtle": {
+      "dark": "#201F1DFF",
+      "light": "#ECEBE8FF",
+      "type": "color",
+      "use": "color.surface.subtle — Inset or quiet supporting container; does not automatically define secondary actions."
+    },
+    "color.text.disabled": {
+      "dark": "#54524FFF",
+      "light": "#888680FF",
+      "type": "color",
+      "use": "color.text.disabled — Unavailable controls only; never ordinary metadata"
+    },
+    "color.text.inverse": {
+      "dark": "#201F1DFF",
+      "light": "#F0EFEDFF",
+      "type": "color",
+      "use": "color.text.inverse — Text on inverse surfaces"
+    },
+    "color.text.link": {
+      "dark": "#FBFAF9FF",
+      "light": "#181816FF",
+      "type": "color",
+      "use": "color.text.link — Links on neutral backgrounds; underline where context needs it"
+    },
+    "color.text.linkHover": {
+      "dark": "#EEEEECFF",
+      "light": "#2D2D2AFF",
+      "type": "color",
+      "use": "color.text.linkHover — Hovered link"
+    },
+    "color.text.onDanger": {
+      "dark": "#201F1DFF",
+      "light": "#FBFAF9FF",
+      "type": "color",
+      "use": "color.text.onDanger — Text on the filled destructive button"
+    },
+    "color.text.placeholder": {
+      "dark": "#A1A09BFF",
+      "light": "#5A5852FF",
+      "type": "color",
+      "use": "color.text.placeholder — Empty-field instructions; readable against input surface"
+    },
+    "color.text.primary": {
+      "dark": "#FBFAF9FF",
+      "light": "#2D2D2AFF",
+      "type": "color",
+      "use": "color.text.primary — Main content and labels"
+    },
+    "color.text.secondary": {
+      "dark": "#D8D8D4FF",
+      "light": "#474543FF",
+      "type": "color",
+      "use": "color.text.secondary — Supporting content"
+    },
+    "color.text.tertiary": {
+      "dark": "#A1A09BFF",
+      "light": "#5A5852FF",
+      "type": "color",
+      "use": "color.text.tertiary — Metadata and lower-emphasis readable text"
+    },
+    "effect.bevel.inset.brand": {
+      "dark": {
+        "available": false,
+        "layers": []
+      },
+      "light": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 8,
+            "color": "#1E3E48FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 2
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 2,
+            "color": "#1E3E48FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 2
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 0.5,
+            "color": "#8FB4B7FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": -1
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 0.5,
+            "color": "#8FB4B7FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 1
+          }
+        ]
+      },
+      "type": "effect",
+      "use": "Figma effect style bevel.inset.brand. Assign explicitly; no component appearance is changed automatically."
+    },
+    "effect.bevel.inset.neutral": {
+      "dark": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 8,
+            "color": "#EEEEECFF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 2
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 2,
+            "color": "#EEEEECFF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 2
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 0.5,
+            "color": "#73726EFF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": -1
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 0.5,
+            "color": "#73726EFF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 1
+          }
+        ]
+      },
+      "light": {
+        "available": false,
+        "layers": []
+      },
+      "type": "effect",
+      "use": "Figma effect style bevel.inset.neutral. Assign explicitly; no component appearance is changed automatically."
+    },
+    "effect.bevel.raised.brand": {
+      "dark": {
+        "available": false,
+        "layers": []
+      },
+      "light": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 1,
+            "color": "#336170FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": -2.5
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 1,
+            "color": "#336170FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": -1
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 8,
+            "color": "#A8C5C7FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 4
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 2,
+            "color": "#E6EEEFFF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 1.5
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 1,
+            "color": "#336170FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 0.5
+          }
+        ]
+      },
+      "type": "effect",
+      "use": "Figma effect style bevel.raised.brand. Assign explicitly; no component appearance is changed automatically."
+    },
+    "effect.bevel.raised.neutral": {
+      "dark": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 1,
+            "color": "#FFFFFFFF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": -2.5
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 1,
+            "color": "#FFFFFFFF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": -1
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 8,
+            "color": "#D8D8D4FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 4
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 2,
+            "color": "#54524FFF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 1.5
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 1,
+            "color": "#FFFFFFFF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 0.5
+          }
+        ]
+      },
+      "light": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 1,
+            "color": "#D8D8D4FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": -2.5
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 1,
+            "color": "#D8D8D4FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": -1
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 8,
+            "color": "#E5E5E1FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 4
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 2,
+            "color": "#FBFAF9FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 1.5
+          },
+          {
+            "blendMode": "NORMAL",
+            "blur": 1,
+            "color": "#D8D8D4FF",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "INNER_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 0.5
+          }
+        ]
+      },
+      "type": "effect",
+      "use": "Figma effect style bevel.raised.neutral. Assign explicitly; no component appearance is changed automatically."
+    },
+    "effect.elevation.1": {
+      "dark": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 4,
+            "color": "#00000033",
+            "showShadowBehindNode": true,
+            "spread": 0,
+            "type": "DROP_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 1
+          }
+        ]
+      },
+      "light": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 3,
+            "color": "#00000014",
+            "showShadowBehindNode": true,
+            "spread": 0,
+            "type": "DROP_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 1
+          }
+        ]
+      },
+      "type": "effect",
+      "use": "Figma effect style elevation.1. Assign explicitly; no component appearance is changed automatically."
+    },
+    "effect.elevation.2": {
+      "dark": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 12,
+            "color": "#00000033",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "DROP_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 3
+          }
+        ]
+      },
+      "light": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 8,
+            "color": "#0000001F",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "DROP_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 2
+          }
+        ]
+      },
+      "type": "effect",
+      "use": "Figma effect style elevation.2. Assign explicitly; no component appearance is changed automatically."
+    },
+    "effect.elevation.3": {
+      "dark": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 18,
+            "color": "#00000040",
+            "showShadowBehindNode": true,
+            "spread": 0,
+            "type": "DROP_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 6
+          }
+        ]
+      },
+      "light": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 16,
+            "color": "#0000001F",
+            "showShadowBehindNode": true,
+            "spread": 0,
+            "type": "DROP_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 6
+          }
+        ]
+      },
+      "type": "effect",
+      "use": "Figma effect style elevation.3. Assign explicitly; no component appearance is changed automatically."
+    },
+    "effect.elevation.4": {
+      "dark": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 32,
+            "color": "#00000073",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "DROP_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 12
+          }
+        ]
+      },
+      "light": {
+        "available": true,
+        "layers": [
+          {
+            "blendMode": "NORMAL",
+            "blur": 32,
+            "color": "#00000029",
+            "showShadowBehindNode": false,
+            "spread": 0,
+            "type": "DROP_SHADOW",
+            "visible": true,
+            "x": 0,
+            "y": 12
+          }
+        ]
+      },
+      "type": "effect",
+      "use": "Figma effect style elevation.4. Assign explicitly; no component appearance is changed automatically."
+    },
+    "effect.elevation.none": {
+      "dark": {
+        "available": true,
+        "layers": []
+      },
+      "light": {
+        "available": true,
+        "layers": []
+      },
+      "type": "effect",
+      "use": "Figma effect style elevation.none. Assign explicitly; no component appearance is changed automatically."
+    },
+    "elevation.none": {
+      "dark": {
+        "blur": 0,
+        "color": "#000000FF",
+        "opacity": 0,
+        "x": 0,
+        "y": 0
+      },
+      "light": {
+        "blur": 0,
+        "color": "#000000FF",
+        "opacity": 0,
+        "x": 0,
+        "y": 0
+      },
+      "type": "shadow",
+      "use": "elevation.none.x — Shadow recipe in points; omit for panels already receiving a window-server shadow Recipe field: x."
+    },
+    "elevation.overlay": {
+      "dark": {
+        "blur": 16,
+        "color": "#000000FF",
+        "opacity": 0.3499999940395355,
+        "x": 0,
+        "y": 6
+      },
+      "light": {
+        "blur": 16,
+        "color": "#000000FF",
+        "opacity": 0.11999999731779099,
+        "x": 0,
+        "y": 6
+      },
+      "type": "shadow",
+      "use": "elevation.overlay.x — Shadow recipe in points; omit for panels already receiving a window-server shadow Recipe field: x."
+    },
+    "elevation.raised": {
+      "dark": {
+        "blur": 10,
+        "color": "#000000FF",
+        "opacity": 0.3199999928474426,
+        "x": 0,
+        "y": 3
+      },
+      "light": {
+        "blur": 8,
+        "color": "#000000FF",
+        "opacity": 0.11999999731779099,
+        "x": 0,
+        "y": 2
+      },
+      "type": "shadow",
+      "use": "elevation.raised.x — Shadow recipe in points; omit for panels already receiving a window-server shadow Recipe field: x."
+    },
+    "focus.offset": {
+      "dark": 2,
+      "light": 2,
+      "type": "dimension",
+      "use": "focus.offset — Gap between control bounds and outer focus ring"
+    },
+    "font.family.code": {
+      "dark": "SF Mono",
+      "light": "SF Mono",
+      "type": "fontFamily",
+      "use": "font.family.code — System monospaced font used by code text style."
+    },
+    "font.family.ui": {
+      "dark": "SF Pro",
+      "light": "SF Pro",
+      "type": "fontFamily",
+      "use": "font.family.ui — System UI font used by interface text styles."
+    },
+    "material.window.blending": {
+      "dark": "behindWindow",
+      "light": "behindWindow",
+      "type": "enum",
+      "use": "material.window.blending — Behind-window blending against the actual desktop; requires a transparent window backing."
+    },
+    "material.window.fallback": {
+      "dark": "#201F1DFF",
+      "light": "#F0EFEDFF",
+      "type": "color",
+      "use": "material.window.fallback — Opaque canvas color used when Reduce Transparency is enabled or native material is unavailable. Disable the blur and tint overlay in this fallback."
+    },
+    "material.window.nativeMaterial": {
+      "dark": "underWindowBackground",
+      "light": "underWindowBackground",
+      "type": "materialRole",
+      "use": "material.window.nativeMaterial — Initial native material candidate. Confirm visually in the Mac app; it is not a numeric blur radius."
+    },
+    "material.window.tint": {
+      "dark": "#201F1DFF",
+      "light": "#F0EFEDFF",
+      "type": "color",
+      "use": "material.window.tint — Canvas-colored tint above one native behind-window base material."
+    },
+    "material.window.tintOpacity": {
+      "dark": 0.55,
+      "light": 0.55,
+      "type": "number",
+      "use": "material.window.tintOpacity — Working tint opacity, applied to base only, never entire window or its children."
+    },
+    "motion.duration.quick": {
+      "dark": 0.15000000596046448,
+      "light": 0.15000000596046448,
+      "type": "duration",
+      "use": "motion.duration.quick — Seconds; resolve to zero for nonessential animation with Reduce Motion"
+    },
+    "motion.duration.slow": {
+      "dark": 0.3499999940395355,
+      "light": 0.3499999940395355,
+      "type": "duration",
+      "use": "motion.duration.slow — Seconds; resolve to zero for nonessential animation with Reduce Motion"
+    },
+    "motion.duration.standard": {
+      "dark": 0.25,
+      "light": 0.25,
+      "type": "duration",
+      "use": "motion.duration.standard — Seconds; resolve to zero for nonessential animation with Reduce Motion"
+    },
+    "motion.easing": {
+      "dark": "easeInOut",
+      "light": "easeInOut",
+      "type": "easing",
+      "use": "motion.easing — Standard timing for non-spring transitions"
+    },
+    "motion.spring": {
+      "dark": {
+        "dampingFraction": 0.8199999928474426,
+        "response": 0.3499999940395355
+      },
+      "light": {
+        "dampingFraction": 0.8199999928474426,
+        "response": 0.3499999940395355
+      },
+      "type": "spring",
+      "use": "motion.spring.response — Default spring; use instant state change for nonessential motion with Reduce Motion Recipe field: response."
+    },
+    "radius.bubble": {
+      "dark": 18,
+      "light": 18,
+      "type": "dimension",
+      "use": "radius.bubble — Corner radius in points"
+    },
+    "radius.large": {
+      "dark": 12,
+      "light": 12,
+      "type": "dimension",
+      "use": "radius.large — Corner radius in points"
+    },
+    "radius.medium": {
+      "dark": 8,
+      "light": 8,
+      "type": "dimension",
+      "use": "radius.medium — Corner radius in points"
+    },
+    "radius.none": {
+      "dark": 0,
+      "light": 0,
+      "type": "dimension",
+      "use": "radius.none — Corner radius in points"
+    },
+    "radius.pill": {
+      "dark": "capsule",
+      "light": "capsule",
+      "type": "shape",
+      "use": "radius.pill — Capsule geometry, not a large magic radius"
+    },
+    "radius.small": {
+      "dark": 4,
+      "light": 4,
+      "type": "dimension",
+      "use": "radius.small — Corner radius in points"
+    },
+    "radius.xlarge": {
+      "dark": 16,
+      "light": 16,
+      "type": "dimension",
+      "use": "radius.xlarge — Corner radius in points"
+    },
+    "size.chat.avatar": {
+      "dark": 24,
+      "light": 24,
+      "type": "dimension",
+      "use": "size.chat.avatar — Inline avatar diameter in points"
+    },
+    "size.control.compactHeight": {
+      "dark": 28,
+      "light": 28,
+      "type": "dimension",
+      "use": "size.control.compactHeight — Minimum control height in points; grow with font zoom"
+    },
+    "size.control.defaultHeight": {
+      "dark": 32,
+      "light": 32,
+      "type": "dimension",
+      "use": "size.control.defaultHeight — Minimum standard control height in points; grow with font zoom"
+    },
+    "size.row.minimumHeight": {
+      "dark": 36,
+      "light": 36,
+      "type": "dimension",
+      "use": "size.row.minimumHeight — Minimum navigation or picker row height; grow with wrapped text"
+    },
+    "space.0": {
+      "dark": 0,
+      "light": 0,
+      "type": "dimension",
+      "use": "space.0 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.12": {
+      "dark": 12,
+      "light": 12,
+      "type": "dimension",
+      "use": "space.12 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.16": {
+      "dark": 16,
+      "light": 16,
+      "type": "dimension",
+      "use": "space.16 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.2": {
+      "dark": 2,
+      "light": 2,
+      "type": "dimension",
+      "use": "space.2 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.24": {
+      "dark": 24,
+      "light": 24,
+      "type": "dimension",
+      "use": "space.24 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.32": {
+      "dark": 32,
+      "light": 32,
+      "type": "dimension",
+      "use": "space.32 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.4": {
+      "dark": 4,
+      "light": 4,
+      "type": "dimension",
+      "use": "space.4 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.40": {
+      "dark": 40,
+      "light": 40,
+      "type": "dimension",
+      "use": "space.40 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.48": {
+      "dark": 48,
+      "light": 48,
+      "type": "dimension",
+      "use": "space.48 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.6": {
+      "dark": 6,
+      "light": 6,
+      "type": "dimension",
+      "use": "space.6 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.64": {
+      "dark": 64,
+      "light": 64,
+      "type": "dimension",
+      "use": "space.64 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "space.8": {
+      "dark": 8,
+      "light": 8,
+      "type": "dimension",
+      "use": "space.8 — Spacing primitive in points; component aliases select the appropriate step"
+    },
+    "stroke.default": {
+      "dark": 1,
+      "light": 1,
+      "type": "dimension",
+      "use": "stroke.default — Stroke width in points"
+    },
+    "stroke.focus": {
+      "dark": 2,
+      "light": 2,
+      "type": "dimension",
+      "use": "stroke.focus — Stroke width in points"
+    },
+    "stroke.hairline": {
+      "dark": {
+        "formula": "1 / backingScaleFactor",
+        "unit": "pt"
+      },
+      "light": {
+        "formula": "1 / backingScaleFactor",
+        "unit": "pt"
+      },
+      "type": "dimensionRule",
+      "use": "stroke.hairline.formula — One physical pixel, resolved for the destination display Recipe field: formula."
+    },
+    "stroke.none": {
+      "dark": 0,
+      "light": 0,
+      "type": "dimension",
+      "use": "stroke.none — Stroke width in points"
+    },
+    "type.body": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 22,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 15,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 22,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 15,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "type": "typography",
+      "use": "Complete body text style. Scale once with user font zoom; line height is a target minimum, not a clipping box."
+    },
+    "type.bodyEmphasis": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 22,
+        "size": 15,
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 600
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 22,
+        "size": 15,
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 600
+      },
+      "type": "typography",
+      "use": "Imported from Osaurus 1.0: type.bodyEmphasis"
+    },
+    "type.bodySmall": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 20,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 14,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 20,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 14,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "type": "typography",
+      "use": "Complete bodySmall text style. Scale once with user font zoom; line height is a target minimum, not a clipping box."
+    },
+    "type.caption": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 16,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 12,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 16,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 12,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "type": "typography",
+      "use": "Complete caption text style. Scale once with user font zoom; line height is a target minimum, not a clipping box."
+    },
+    "type.chatBody": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 22,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 14,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 22,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 14,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "type": "typography",
+      "use": "Imported from Osaurus 1.0: type.chatBody"
+    },
+    "type.code": {
+      "dark": {
+        "family": "SF Mono",
+        "lineHeight": 20,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 13,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "light": {
+        "family": "SF Mono",
+        "lineHeight": 20,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 13,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "type": "typography",
+      "use": "Complete code text style. Scale once with user font zoom; line height is a target minimum, not a clipping box."
+    },
+    "type.display": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 48,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 40,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 700
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 48,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 40,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 700
+      },
+      "type": "typography",
+      "use": "Complete display text style. Scale once with user font zoom; line height is a target minimum, not a clipping box."
+    },
+    "type.footnote": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 14,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 11,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 14,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 11,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "type": "typography",
+      "use": "Imported from Osaurus 1.0: type.footnote"
+    },
+    "type.heading": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 24,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 18,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 600
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 24,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 18,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 600
+      },
+      "type": "typography",
+      "use": "Complete heading text style. Scale once with user font zoom; line height is a target minimum, not a clipping box."
+    },
+    "type.label": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 13,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 13,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 13,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 13,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "type": "typography",
+      "use": "Complete label text style. Scale once with user font zoom; line height is a target minimum, not a clipping box."
+    },
+    "type.labelEmphasis": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 13,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 13,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 500
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 22,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 13,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 500
+      },
+      "type": "typography",
+      "use": "Figma type.labelEmphasis: emphasized labels. Appearance-specific line heights are preserved."
+    },
+    "type.micro": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 13,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 10,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 13,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 10,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 400
+      },
+      "type": "typography",
+      "use": "Imported from Osaurus 1.0: type.micro"
+    },
+    "type.subheading": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 22,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 16,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 600
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 22,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 16,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 600
+      },
+      "type": "typography",
+      "use": "Imported from Osaurus 1.0: type.subheading"
+    },
+    "type.title": {
+      "dark": {
+        "family": "SF Pro",
+        "lineHeight": 32,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 26,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 600
+      },
+      "light": {
+        "family": "SF Pro",
+        "lineHeight": 32,
+        "paragraphIndent": 0,
+        "paragraphSpacing": 0,
+        "size": 26,
+        "textCase": "ORIGINAL",
+        "textDecoration": "NONE",
+        "tracking": 0,
+        "unit": "pt",
+        "weight": 600
+      },
+      "type": "typography",
+      "use": "Complete title text style. Scale once with user font zoom; line height is a target minimum, not a clipping box."
+    }
+  }
+}

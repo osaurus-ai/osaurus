@@ -229,6 +229,68 @@ final class SSEResponseWriter: ResponseWriter {
         writeSSEChunk(chunk, context: context)
     }
 
+    private struct OwnerApprovalChunk: Encodable {
+        var id: String
+        var object: String
+        var created: Int
+        var model: String
+        var choices: [StreamChoice]
+        var osaurus_owner_approval: OwnerApprovalStatus
+    }
+
+    /// A tool call on a shared agent is waiting on (or was settled by) the
+    /// agent's owner. Name only; arguments never leave the host.
+    func writeOwnerApproval(
+        _ status: OwnerApprovalStatus,
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        writeSSEChunk(
+            OwnerApprovalChunk(
+                id: responseId,
+                object: "chat.completion.chunk",
+                created: created,
+                model: model,
+                choices: [],
+                osaurus_owner_approval: status
+            ),
+            context: context
+        )
+    }
+
+    private struct ParticipantMessageChunk: Encodable {
+        var id: String
+        var object: String
+        var created: Int
+        var model: String
+        var choices: [StreamChoice]
+        var osaurus_participant_message: ParticipantMessage.Wire
+    }
+
+    /// Someone else in a hosted conversation (the agent's owner) said
+    /// something while this run was live.
+    func writeParticipantMessage(
+        _ message: ParticipantMessage,
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        writeSSEChunk(
+            ParticipantMessageChunk(
+                id: responseId,
+                object: "chat.completion.chunk",
+                created: created,
+                model: model,
+                choices: [],
+                osaurus_participant_message: message.wire
+            ),
+            context: context
+        )
+    }
+
     @inline(__always)
     func writeRole(
         _ role: String,
@@ -951,6 +1013,8 @@ final class AnthropicSSEResponseWriter {
     /// Prompt tokens served from the prefix cache, known only at completion;
     /// reported in the final `message_delta` as `cache_read_input_tokens`.
     private var cachedInputTokens: Int?
+    /// Reported in the final `message_delta` usage when the request set a budget.
+    private var reasoningBudget: ReasoningBudgetReport?
     private var currentBlockIndex: Int = 0
     private var hasStartedTextBlock: Bool = false
     private var hasStartedThinkingBlock: Bool = false
@@ -1122,6 +1186,10 @@ final class AnthropicSSEResponseWriter {
         cachedInputTokens = count.map { max(0, $0) }
     }
 
+    func setReasoningBudget(_ report: ReasoningBudgetReport?) {
+        reasoningBudget = report
+    }
+
     /// Write tool_use block start
     func writeToolUseBlockStart(
         toolId: String,
@@ -1158,7 +1226,7 @@ final class AnthropicSSEResponseWriter {
         let split = AnthropicUsage.split(promptTokens: inputTokens, cachedPromptTokens: cachedInputTokens)
         let event = MessageDeltaEvent(
             stopReason: stopReason, outputTokens: outputTokens, inputTokens: split.input,
-            cacheReadInputTokens: split.cacheRead)
+            cacheReadInputTokens: split.cacheRead, reasoningBudget: reasoningBudget)
         writeSSEEvent("message_delta", payload: event, context: context)
     }
 
@@ -1284,6 +1352,8 @@ final class OpenResponsesSSEWriter {
     private var tokensPerSecond: Double?
     private var cachedInputTokens: Int?
     func setCachedInputTokens(_ count: Int) { cachedInputTokens = count }
+    private var reasoningBudget: ReasoningBudgetReport?
+    func setReasoningBudget(_ report: ReasoningBudgetReport?) { reasoningBudget = report }
     private var completedOutput: [OpenResponsesOutputItem] = []
     private var completedOutputIDs: Set<String> = []
     private var sequenceNumber: Int = 0
@@ -1645,9 +1715,10 @@ final class OpenResponsesSSEWriter {
         metadata: [String: String]? = nil,
         context: ChannelHandlerContext
     ) {
-        let response = OpenResponsesResponse(id: responseId, createdAt: createdAt, status: status,
+        var response = OpenResponsesResponse(id: responseId, createdAt: createdAt, status: status,
             model: model, output: completedOutput, usage: reportedUsage,
             metadata: metadata, incompleteReason: incompleteReason)
+        response.generation_metrics = reasoningBudget.map { ["reasoning_budget": $0.jsonValue] }
         let name = "response." + status.rawValue
         struct Terminal: Encodable {
             let type: String
@@ -1837,7 +1908,7 @@ struct AgentToolTraceDetail: Sendable {
         )
     }
 
-    private static func categoryAndIcon(_ toolName: String) -> (String, String) {
+    static func categoryAndIcon(_ toolName: String) -> (String, String) {
         let category = ToolCategory.from(toolName: toolName)
         return (
             String(describing: category),

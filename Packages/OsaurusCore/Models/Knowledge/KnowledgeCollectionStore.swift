@@ -4,7 +4,7 @@
 //
 //  Persistence for knowledge collections. One JSON file per collection
 //  under `~/.osaurus/knowledge/collections/`, mirroring AgentStore /
-//  ScheduleStore. Only registry metadata lives here — the corpus stays
+//  EventStore. Only registry metadata lives here — the corpus stays
 //  in the user's folder and the derived index lives in knowledge.sqlite.
 //
 

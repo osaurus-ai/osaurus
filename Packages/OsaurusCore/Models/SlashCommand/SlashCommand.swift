@@ -16,6 +16,9 @@ public enum SlashCommandKind: String, Codable, Sendable {
     case template
     /// Activates a Skill for the next sent message (injects skill instructions into system context).
     case skill
+    /// Opens one of the agent's enabled workflows in a workflow tab; the
+    /// command's id is the installed workflow's id.
+    case workflow
 }
 
 /// A slash command available in the chat input.

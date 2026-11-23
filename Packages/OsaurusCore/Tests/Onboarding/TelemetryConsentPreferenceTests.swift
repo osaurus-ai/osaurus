@@ -149,6 +149,27 @@ struct TelemetryConsentPreferenceTests {
         }
     }
 
+    @Test func undecidedUsersReadPreferencesOnlyOnce() throws {
+        let suite = "TelemetryConsentPreferenceTests.undecided.\(UUID())"
+        let defaults = try #require(ObservedConsentDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var emitted: [String] = []
+        let service = TelemetryService(defaults: defaults, emit: { name, _ in emitted.append(name) })
+        service.markStartedForTesting()
+        // No setEnabled: a user who never decided still must not hit
+        // cfprefsd on every event.
+        service.track("first")
+        let afterFirst = defaults.observation.reads
+        #expect(afterFirst == 1)
+        for _ in 0 ..< 16 {
+            service.track("agent_run")
+            _ = service.needsConsentDecision
+            _ = service.isEnabled
+        }
+        #expect(defaults.observation.reads == afterFirst)
+        #expect(emitted.isEmpty)
+    }
+
     @Test func keylessEarlyReturnsDoNotReadPreferences() throws {
         let suite = "TelemetryConsentPreferenceTests.keyless.\(UUID())"
         let defaults = try #require(ObservedConsentDefaults(suiteName: suite))

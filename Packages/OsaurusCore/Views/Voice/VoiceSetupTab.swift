@@ -69,16 +69,16 @@ struct VoiceSetupTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 // Onboarding hero — kept in a narrow, centered column
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     Spacer()
                         .frame(height: 40)
 
                     // Requirements checklist (compact)
                     requirementsSection
                         .opacity(hasAppeared ? 1 : 0)
-                        .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
+                        .animation(theme.motion.standard.delay(0.05), value: hasAppeared)
 
                     Spacer()
                         .frame(height: 24)
@@ -88,7 +88,7 @@ struct VoiceSetupTab: View {
                     voiceTestSection
                         .opacity(hasAppeared ? 1 : 0)
                         .scaleEffect(hasAppeared ? 1 : 0.95)
-                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                        .animation(theme.motion.springAnimation, value: hasAppeared)
 
                     Spacer()
                         .frame(height: 16)
@@ -96,9 +96,9 @@ struct VoiceSetupTab: View {
                     // Privacy footer
                     privacyFooter
                         .opacity(hasAppeared ? 1 : 0)
-                        .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
+                        .animation(theme.motion.standard.delay(0.05), value: hasAppeared)
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, theme.space.s24)
                 .frame(maxWidth: 520)
                 .frame(maxWidth: .infinity)
 
@@ -109,8 +109,8 @@ struct VoiceSetupTab: View {
                 // matching the other voice settings tabs.
                 audioSettingsSection
                     .opacity(hasAppeared ? 1 : 0)
-                    .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
-                    .padding(.horizontal, 24)
+                    .animation(theme.motion.standard.delay(0.05), value: hasAppeared)
+                    .padding(.horizontal, theme.space.s24)
 
                 Spacer()
             }
@@ -144,55 +144,47 @@ struct VoiceSetupTab: View {
     // MARK: - Requirements Section
 
     private var requirementsSection: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: theme.space.s24) {
             // Microphone requirement
             microphoneRequirementItem
 
             // Separator
-            Rectangle()
-                .fill(theme.primaryBorder)
-                .frame(width: 1, height: 20)
+            ThemeHairlineDivider(axis: .vertical)
+                .frame(height: 20)
 
             // Model requirement
             modelRequirementItem
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s12)
+        .settingsChrome(.card)
     }
 
     private var microphoneRequirementItem: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             // Status icon
             ZStack {
                 if speechService.microphonePermissionGranted {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(theme.successColor)
+                        .glyphSize(.medium, weight: .medium)
+                        .foregroundColor(theme.status.success.foreground)
                 } else {
                     Circle()
-                        .stroke(theme.tertiaryText.opacity(0.5), lineWidth: 1.5)
+                        .stroke(theme.border.default, lineWidth: theme.stroke.default)
                         .frame(width: 16, height: 16)
                 }
             }
             .frame(width: 20, height: 20)
 
             Text("Microphone", bundle: .module)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(speechService.microphonePermissionGranted ? theme.primaryText : theme.secondaryText)
+                .font(SettingsFont.rowTitle)
+                .foregroundColor(speechService.microphonePermissionGranted ? theme.text.primary : theme.text.secondary)
 
             if !speechService.microphonePermissionGranted {
                 Button(action: requestMicrophonePermission) {
                     Text("Grant", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(.plain)
             }
@@ -204,7 +196,7 @@ struct VoiceSetupTab: View {
     }
 
     private var modelRequirementItem: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             // `voice.stt.model` landing: the checklist item is the fastest
             // route to a working transcription model.
             // Icon with status
@@ -213,8 +205,8 @@ struct VoiceSetupTab: View {
 
             // Label
             Text("Speech Model", bundle: .module)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(hasModel ? theme.primaryText : theme.secondaryText)
+                .font(SettingsFont.rowTitle)
+                .foregroundColor(hasModel ? theme.text.primary : theme.text.secondary)
 
             // Download action or model name
             modelActionView
@@ -226,21 +218,21 @@ struct VoiceSetupTab: View {
     private var modelStatusIcon: some View {
         if hasModel {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundColor(theme.successColor)
+                .glyphSize(.medium, weight: .medium)
+                .foregroundColor(theme.status.success.foreground)
         } else if let progress = downloadProgress {
             ZStack {
                 Circle()
-                    .stroke(theme.tertiaryBackground, lineWidth: 2)
+                    .stroke(theme.border.default, lineWidth: theme.stroke.focus)
                 Circle()
                     .trim(from: 0, to: progress)
-                    .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .stroke(theme.status.info.foreground, style: StrokeStyle(lineWidth: theme.stroke.focus, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
             .frame(width: 16, height: 16)
         } else {
             Circle()
-                .stroke(theme.tertiaryText.opacity(0.5), lineWidth: 1.5)
+                .stroke(theme.border.default, lineWidth: theme.stroke.default)
                 .frame(width: 16, height: 16)
         }
     }
@@ -250,20 +242,20 @@ struct VoiceSetupTab: View {
         if hasModel {
             if let modelName = modelManager.selectedModel?.name {
                 Text(modelName)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
         } else if isDownloading {
             if let progress = downloadProgress {
                 Text("\(Int(progress * 100))%", bundle: .module)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.accentColor)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.link)
             }
         } else if let recommendedModel = modelManager.availableModels.first(where: { $0.isRecommended }) {
             Button(action: { modelManager.downloadModel(recommendedModel) }) {
                 Text("Download", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.link)
             }
             .buttonStyle(.plain)
         }
@@ -272,7 +264,7 @@ struct VoiceSetupTab: View {
     // MARK: - Voice Test Section
 
     private var voiceTestSection: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             // Mic button with waveform ring
             micButton
 
@@ -281,19 +273,16 @@ struct VoiceSetupTab: View {
 
             // Error message
             if let error = testError {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
+                        .glyphSize(.footnote)
                     Text(error)
-                        .font(.system(size: 12))
+                        .font(SettingsFont.caption)
                 }
-                .foregroundColor(theme.errorColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.errorColor.opacity(0.1))
-                )
+                .foregroundColor(theme.status.error.foreground)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
+                .settingsChrome(.status(.error))
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
@@ -309,7 +298,7 @@ struct VoiceSetupTab: View {
                 WaveformRing(
                     level: speechService.audioLevel,
                     size: ringSize,
-                    color: theme.accentColor
+                    color: theme.action.primary.default.background
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
@@ -317,7 +306,7 @@ struct VoiceSetupTab: View {
             // Idle ring (when not recording but ready)
             if !isTestingVoice && isSetupComplete {
                 Circle()
-                    .stroke(theme.primaryBorder, lineWidth: 2)
+                    .stroke(theme.border.subtle, lineWidth: theme.stroke.focus)
                     .frame(width: ringSize, height: ringSize)
             }
 
@@ -328,30 +317,26 @@ struct VoiceSetupTab: View {
                     Circle()
                         .fill(
                             isTestingVoice
-                                ? theme.errorColor
-                                : (isSetupComplete ? theme.accentColor : theme.tertiaryBackground)
+                                ? theme.status.error.foreground
+                                : (isSetupComplete ? theme.action.primary.default.background : theme.surface.hover)
                         )
                         .frame(width: buttonSize, height: buttonSize)
-                        .shadow(
-                            color: isTestingVoice ? theme.errorColor.opacity(0.3) : theme.shadowColor.opacity(0.15),
-                            radius: isTestingVoice ? 20 : 10,
-                            y: 4
-                        )
+                        .themeElevation(theme.elevation.overlay)
 
                     // Icon
                     Image(systemName: isTestingVoice ? "stop.fill" : "mic.fill")
-                        .font(.system(size: 32, weight: .medium))
+                        .glyphSize(.hero, weight: .medium)
                         .foregroundColor(
                             isSetupComplete
-                                ? (isTestingVoice ? .white : (theme.isDark ? theme.primaryBackground : .white))
-                                : theme.tertiaryText
+                                ? (isTestingVoice ? theme.text.onDanger : theme.action.primary.default.foreground)
+                                : theme.text.tertiary
                         )
                 }
             }
             .buttonStyle(.plain)
             .disabled(!isSetupComplete)
             .scaleEffect(micButtonScale)
-            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: micButtonScale)
+            .animation(theme.motion.springAnimation, value: micButtonScale)
             .onLongPressGesture(minimumDuration: .infinity, maximumDistance: .infinity) {
                 // Never triggers
             } onPressingChanged: { pressing in
@@ -361,11 +346,11 @@ struct VoiceSetupTab: View {
             }
         }
         .frame(width: ringSize, height: ringSize)
-        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: isTestingVoice)
+        .animation(theme.motion.springAnimation, value: isTestingVoice)
     }
 
     private var transcriptionArea: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             if testTranscription.isEmpty {
                 // Hint text
                 Text(
@@ -373,265 +358,123 @@ struct VoiceSetupTab: View {
                         ? L("Listening...")
                         : (isSetupComplete ? L("Tap to test your voice") : L("Complete setup to begin"))
                 )
-                .font(.system(size: 14))
-                .foregroundColor(theme.tertiaryText)
-                .animation(.easeInOut(duration: 0.2), value: isTestingVoice)
+                .textStyle(.bodySmall)
+                .foregroundColor(theme.text.tertiary)
+                .animation(theme.motion.quick, value: isTestingVoice)
             } else {
                 // Transcription with cursor
-                HStack(spacing: 0) {
+                HStack(spacing: theme.space.s0) {
                     Text(testTranscription)
-                        .font(.system(size: 15))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.body)
+                        .foregroundColor(theme.text.primary)
                         .multilineTextAlignment(.center)
 
                     if isTestingVoice {
-                        BlinkingCursor(color: theme.accentColor)
+                        BlinkingCursor(color: theme.action.primary.default.background)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(
-                                    isTestingVoice ? theme.accentColor.opacity(0.4) : theme.inputBorder,
-                                    lineWidth: 1
-                                )
-                        )
-                )
+                .padding(.horizontal, theme.space.s16)
+                .padding(.vertical, theme.space.s12)
+                .settingsChrome(isTestingVoice ? .selected : .control)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
         .frame(minHeight: 50)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: testTranscription.isEmpty)
+        .animation(theme.motion.springAnimation, value: testTranscription.isEmpty)
     }
 
     // MARK: - Privacy Footer
 
     private var privacyFooter: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: "lock.fill")
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(.micro)
+                .foregroundColor(theme.text.tertiary)
 
             Text("All processing happens on your Mac", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
         }
     }
 
     // MARK: - Audio Settings Section
 
     private var audioSettingsSection: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: theme.settingsSectionGap) {
             inputDeviceCard
             sensitivitySettingsCard
         }
     }
 
     private var sensitivitySettingsCard: some View {
-        SettingsSection(title: "Voice Sensitivity", icon: "waveform", anchorId: "voice.setup.sensitivity") {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Adjust how sensitive voice detection is", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-
-                // Sensitivity Picker
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Sensitivity Level", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-
-                    HStack(spacing: 0) {
-                        ForEach(VoiceSensitivity.allCases, id: \.self) { level in
-                            Button(action: {
-                                sensitivity = level
-                                saveSettings()
-                            }) {
-                                Text(level.displayName)
-                                    .font(.system(size: 13, weight: sensitivity == level ? .semibold : .medium))
-                                    .foregroundColor(
-                                        sensitivity == level
-                                            ? (theme.isDark ? theme.primaryBackground : .white)
-                                            : theme.primaryText
-                                    )
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 8)
-                                    .contentShape(Rectangle())
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(sensitivity == level ? theme.accentColor : Color.clear)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .contentShape(Rectangle())
-                        }
+        SettingsSection(
+            title: "Voice Sensitivity",
+            subtitle: "Applies to every voice mode: pause detection, wake word and voice activity.",
+            anchorId: "voice.setup.sensitivity"
+        ) {
+            SettingsPickerRow(
+                title: "Sensitivity Level",
+                description: sensitivity.description,
+                selection: Binding(
+                    get: { sensitivity },
+                    set: {
+                        sensitivity = $0
+                        saveSettings()
                     }
-                    .padding(4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(theme.tertiaryBackground)
-                    )
-
-                    Text(sensitivity.description)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                }
-
-                // Additional info
-                HStack(spacing: 8) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.accentColor)
-                    Text(
-                        "Applies to all voice modes: pause detection, wake word, and voice activity",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor.opacity(0.1))
-                )
-            }
+                ),
+                options: VoiceSensitivity.allCases.map { .init($0, $0.displayName, verbatim: true) }
+            )
         }
     }
 
     private var inputDeviceCard: some View {
-        SettingsSection(title: "Audio Input", icon: "mic") {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 12) {
-                    Text(inputSourceDescription)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-
-                    Spacer()
-
-                    Button(action: { audioInputManager.refreshDevices() }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.tertiaryBackground)
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .localizedHelp("Refresh available devices")
-                }
-
-                // Input Source Picker
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Input Source", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-
-                    HStack(spacing: 8) {
-                        ForEach(AudioInputSource.allCases, id: \.self) { source in
-                            let isSelected = audioInputManager.selectedInputSource == source
-                            let isDisabled = source == .systemAudio && !systemAudioManager.isAvailable
-
-                            Button(action: {
-                                if !isDisabled {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        audioInputManager.selectedInputSource = source
-                                    }
-                                }
-                            }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: source.iconName)
-                                        .font(.system(size: 12, weight: .medium))
-                                    Text(source.displayName)
-                                        .font(.system(size: 12, weight: .medium))
-                                }
-                                .foregroundColor(
-                                    isDisabled
-                                        ? theme.tertiaryText
-                                        : (isSelected
-                                            ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText)
-                                )
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(isSelected ? theme.accentColor : theme.tertiaryBackground)
-                                )
+        SettingsSection(title: "Audio Input") {
+            // System Audio needs a macOS that can capture it; without it the
+            // microphone is the only source and there is nothing to choose.
+            if systemAudioManager.isAvailable {
+                SettingsPickerRow(
+                    title: "Input Source",
+                    description: inputSourceDescription,
+                    selection: Binding(
+                        get: { audioInputManager.selectedInputSource },
+                        set: { source in
+                            withAnimation(theme.motion.quick) {
+                                audioInputManager.selectedInputSource = source
                             }
-                            .buttonStyle(PlainButtonStyle())
-                            .disabled(isDisabled)
                         }
+                    ),
+                    options: AudioInputSource.allCases.map { .init($0, $0.displayName, verbatim: true) }
+                )
+            }
 
-                        Spacer()
-                    }
-                }
-
-                // Device picker (microphone mode only)
-                if audioInputManager.selectedInputSource == .microphone {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Select Input Device", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-
-                        Menu {
-                            Button(action: { audioInputManager.selectDevice(nil) }) {
-                                HStack {
-                                    Text("System Default", bundle: .module)
-                                    if audioInputManager.selectedDeviceId == nil {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-
+            if audioInputManager.selectedInputSource == .microphone {
+                SettingsRow(title: "Select Input Device", description: "System Default follows the input chosen in macOS Sound settings.") {
+                    HStack(spacing: theme.settingsControlGap) {
+                        SettingsMenuPicker(
+                            selection: Binding(
+                                get: { audioInputManager.selectedDeviceId },
+                                set: { audioInputManager.selectDevice($0) }
+                            )
+                        ) {
+                            Text("System Default", bundle: .module).tag(String?.none)
                             Divider()
-
                             ForEach(audioInputManager.availableDevices) { device in
-                                Button(action: { audioInputManager.selectDevice(device.id) }) {
-                                    HStack {
-                                        Text(device.name)
-                                        if device.isDefault {
-                                            Text("(Default)", bundle: .module)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        if audioInputManager.selectedDeviceId == device.id {
-                                            Image(systemName: "checkmark")
-                                        }
+                                Group {
+                                    if device.isDefault {
+                                        Text(verbatim: device.name + " ") + Text("(Default)", bundle: .module)
+                                    } else {
+                                        Text(verbatim: device.name)
                                     }
                                 }
+                                .tag(String?.some(device.id))
                             }
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: "mic.fill")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(theme.accentColor)
-
-                                Text(selectedDeviceName)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
-                                    .lineLimit(1)
-
-                                Spacer()
-
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(theme.inputBackground)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(theme.inputBorder, lineWidth: 1)
-                                    )
-                            )
                         }
-                        .menuStyle(.borderlessButton)
+                        .settingsPickerHugging()
+                        .accessibilityLabel(Text("Select Input Device", bundle: .module))
+
+                        SettingsIconButton("arrow.clockwise", help: "Refresh available devices", size: .compact) {
+                            audioInputManager.refreshDevices()
+                        }
                     }
                 }
             }
@@ -641,21 +484,12 @@ struct VoiceSetupTab: View {
     private var inputSourceDescription: String {
         switch audioInputManager.selectedInputSource {
         case .microphone:
-            return audioInputManager.selectedDevice?.name ?? L("System Default")
+            return L("Your voice, through the input device below.")
         case .systemAudio:
             return systemAudioManager.hasPermission
-                ? L("Computer audio")
-                : L("Permission required")
+                ? L("Audio playing on this Mac, except Osaurus's own output.")
+                : L("Needs Screen Recording permission.")
         }
-    }
-
-    private var selectedDeviceName: String {
-        if let selectedId = audioInputManager.selectedDeviceId,
-            let device = audioInputManager.availableDevices.first(where: { $0.id == selectedId })
-        {
-            return device.name
-        }
-        return L("System Default")
     }
 
     // MARK: - Actions
@@ -696,6 +530,7 @@ struct VoiceSetupTab: View {
 // MARK: - Waveform Ring
 
 private struct WaveformRing: View {
+    @Environment(\.theme) private var theme
     let level: Float
     let size: CGFloat
     let color: Color
@@ -735,7 +570,7 @@ private struct WaveformRing: View {
                 context.stroke(
                     path,
                     with: .color(color.opacity(0.6 + Double(normalizedLevel) * 0.4)),
-                    lineWidth: 2.5
+                    lineWidth: theme.stroke.focus
                 )
             }
         }
@@ -746,6 +581,7 @@ private struct WaveformRing: View {
 // MARK: - Blinking Cursor
 
 private struct BlinkingCursor: View {
+    @Environment(\.theme) private var theme
     let color: Color
 
     @State private var isVisible = true
@@ -756,7 +592,7 @@ private struct BlinkingCursor: View {
             .frame(width: 2, height: 16)
             .opacity(isVisible ? 1 : 0)
             .onAppear {
-                withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
+                withAnimation(theme.motion.loop(.easeInOut, duration: 0.5, autoreverses: true)) {
                     isVisible = false
                 }
             }

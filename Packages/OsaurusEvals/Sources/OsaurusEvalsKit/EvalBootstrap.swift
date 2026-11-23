@@ -325,6 +325,9 @@ public enum EvalBootstrap {
         //     runtime applies these on every generation, so a hermetic run
         //     that drops them measures an untuned configuration the user
         //     never sees.
+        //   - embedding.json: Model Defaults → Embedding Model. Capability,
+        //     memory and knowledge search embed with the user's model; a run
+        //     without it scores the built-in embedder instead.
         // A copy keeps the real files pristine when a run (or an executed
         // configure tool) writes them back — the write lands in the copy.
         let realConfig = realRoot.appendingPathComponent("config", isDirectory: true)
@@ -333,7 +336,7 @@ public enum EvalBootstrap {
         // explicit bundle defaults, fp16 heads, or cache choices may be reset
         // when the runtime store first loads the copied configuration.
         for fileName in [
-            "chat.json", "sandbox.json", "prefill-tuning.json",
+            "chat.json", "sandbox.json", "prefill-tuning.json", "embedding.json",
             ".model-idle-residency-warm-default-migrated",
             ".server-runtime-cache-defaults-v2-migrated",
             ".server-runtime-paged-cache-default-off-v3-migrated",
@@ -836,6 +839,14 @@ public enum EvalBootstrap {
         FileHandle.standardError.write(
             Data("[evals] KV override → \(notes.joined(separator: "; ")) (process-local)\n".utf8)
         )
+    }
+
+    /// The embedding model this process resolved at launch, for
+    /// `RunEnvironment.embeddingModel`.
+    public static var embeddingModelLabel: String {
+        let state = EmbeddingService.launchState
+        if let profile = state.profile { return profile.modelId }
+        return "\(state.requestedModelId) (unavailable)"
     }
 
     /// Bring up the search indices used by `CapabilitySearchEvaluator`

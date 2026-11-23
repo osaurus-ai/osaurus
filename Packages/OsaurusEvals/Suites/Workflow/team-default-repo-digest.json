@@ -1,0 +1,44 @@
+{
+  "id": "workflow.team-default-repo-digest",
+  "domain": "workflow",
+  "label": "workflow • Repo Digest reads git status and the week's commits",
+  "query": "Repo Digest reads git status and the week's commits",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. The fixtures are the text `git_status` and `git_log` return; `since` is seven days back on this Mac's clock at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "default-workflow-repo-digest",
+      "input": {},
+      "toolResults": {
+        "status": {
+          "text": "On branch main\nChanges not staged for commit:\n\tmodified:   Sources/Parser.swift\n"
+        },
+        "week": {
+          "text": "1a2b3c4 2026-11-03 Sam Lee\n    Parser: handle empty tokens\n Sources/Parser.swift | 3 +++\n 1 file changed, 3 insertions(+)"
+        }
+      },
+      "toolArguments": {
+        "week": {
+          "since": "{{date:days_ago:7}}",
+          "stat": true
+        }
+      },
+      "outputKeys": [
+        "digest"
+      ],
+      "outputContains": {
+        "digest": [
+          "Parser"
+        ]
+      },
+      "outputExcludes": {
+        "digest": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}
