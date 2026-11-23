@@ -153,16 +153,13 @@ extension CommandLineToolSection {
 
         let linkURL = dir.appendingPathComponent("osaurus")
 
-        // If an entry exists, replace only if it's a symlink
-        if fm.fileExists(atPath: linkURL.path) {
-            do {
-                _ = try fm.destinationOfSymbolicLink(atPath: linkURL.path)
-                // It's a symlink – remove and replace
-                try? fm.removeItem(at: linkURL)
-            } catch {
-                // Not a symlink (likely a real file); do not overwrite
-                return false
-            }
+        // Replace an existing entry only if it is a symlink. `fileExists`
+        // follows links, so a link to a moved or deleted app reads as absent;
+        // `destinationOfSymbolicLink` sees the link itself.
+        if (try? fm.destinationOfSymbolicLink(atPath: linkURL.path)) != nil {
+            try? fm.removeItem(at: linkURL)
+        } else if fm.fileExists(atPath: linkURL.path) {
+            return false
         }
 
         do {

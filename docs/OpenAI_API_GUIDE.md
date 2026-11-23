@@ -255,6 +255,7 @@ When you want Osaurus to execute tools on your behalf (manage the iteration budg
 - Independent tool calls within a single model turn run **in parallel**.
 - The loop runs up to 30 iterations by default (Chat → Advanced → **Max Tool Attempts**, clamped to 120); if the budget is exhausted while still requesting tools, a notice is appended to the stream so the client sees a clear reason rather than a silent stop.
 - Honors client-supplied `tools` (merged with the agent's always-loaded set) and `tool_choice` (defaults to `"auto"` when tools are present).
+- Tools whose policy is **Ask** are declined (with a `rejected` envelope the model can explain) because no one can click an approval card for an HTTP caller. Two exceptions answer the card instead: the owner's paired phone, and the approved `osaurus` command on this Mac when it sends `X-Osaurus-CLI-Approval-Session: <id>` (8–64 letters, digits, `-` or `_`). Such a run's cards still show in the app, and are also returned by `GET /approvals?session=<id>` and answered with `POST /approvals/{id}` (body `{"decision": "allow_once" | "allow_for_run" | "always_allow" | "deny", "session": "<id>"}`). Both need the command's `X-Osaurus-CLI-Token`; without it they answer `403 cli_only`. `osaurus agent run` uses this.
 - **Authenticated remote callers** (Osaurus [Secure Channel](SECURE_CHANNEL.md), agent-scoped) that drive an agent whose owner granted a **host workspace folder** also get host file tools (`file_read` / `file_write` / `file_edit`) confined to that folder. `shell_run` / `git_commit` / `file_undo` stay denied (see the deny list below), and loopback callers never mount it.
 
 ### Aggregating Osaurus tools through MCP
@@ -265,6 +266,20 @@ The Model Context Protocol endpoints let any MCP-aware harness connect and disco
 - `POST /mcp/call` — invoke a tool by name with structured arguments
 
 Combine `/chat/completions` (your harness's own tool loop) with `/mcp/tools` + `/mcp/call` (Osaurus tool surface) to keep both sides authoritative.
+
+For a stdio MCP client, `osaurus mcp` proxies the same tools, and `osaurus mcp --workflows` adds your installed workflows as `workflow_<name>` tools plus `workflow_run_status`. `osaurus mcp install --client cursor|claude-code|claude-desktop|codex` writes the client's config.
+
+### Workflows — `GET /workflows`, `POST /workflows/{id}/run`
+
+Owner-only routes (this Mac, or the owner over the Secure Channel):
+
+- `GET /workflows` — installed workflows: `id`, `name`, `summary`, `tool_name`, `input_schema`, `needs_setup`, and `setup_summary` when it does.
+- `POST /workflows/{id}/run` — body `{"input": {...}}`. Only Osaurus's own Shortcuts actions and the approved `osaurus` command may start a run; anyone else gets `403 app_only`. Returns the run, including `run_id` and `status`.
+- `GET /workflows/runs` — recent runs, newest first (`?workflow=<id>`, `?limit=<n>`).
+- `GET /workflows/runs/{id}` — one run's status, output or error, and the form it waits on.
+- `POST /workflows/runs/{id}/cancel` — stops a run (`404 run_not_found`, `409 run_finished`).
+
+`osaurus workflow list | run | status | runs | cancel` wraps these.
 
 #### External surface deny list
 

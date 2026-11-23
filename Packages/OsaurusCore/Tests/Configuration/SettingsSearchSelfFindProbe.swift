@@ -291,6 +291,8 @@ struct SettingsSearchSelfFindProbe {
             // Command Line Tool moved to Server → Overview.
             ("Command Line Tool", "server.cli"),
             ("install cli", "server.cli"),
+            ("Command-Line Tool Access", "server.cliAccess"),
+            ("revoke cli", "server.cliAccess"),
             // Conversation (formerly Chat).
             ("Automatically Name Chats", "settings.chat.autoGenerateTitles"),
             ("Suggest Follow-Up Questions", "settings.chat.generateFollowUps"),

@@ -36,7 +36,7 @@ struct ConnectionSection: View {
             SettingsToggle(
                 title: "Expose to Network",
                 description:
-                    "Off binds to 127.0.0.1 (this Mac only). On binds to 0.0.0.0 so phones, iPads, and other devices on your network can connect.",
+                    "Off binds to 127.0.0.1 (this Mac only). On binds to 0.0.0.0 so phones, iPads, and other devices on your network can connect. While on, apps on this Mac need an access key too; the osaurus command asks you to allow it instead.",
                 isOn: Binding(
                     get: { draft.network.host == "0.0.0.0" },
                     set: { draft.network.host = $0 ? "0.0.0.0" : "127.0.0.1" }

@@ -492,6 +492,21 @@ public enum ChatExecutionContext {
     /// only. Module-internal so out-of-module callers cannot bind it.
     @TaskLocal static var syncReviewerScope: String? = nil
 
+    /// The approval session of an `osaurus agent run` in a terminal: the
+    /// approved CLI (valid `X-Osaurus-CLI-Token` over physical loopback)
+    /// said someone is at the keyboard. Its `.ask` tool cards show on this
+    /// Mac as usual instead of being refused as an external surface, and the
+    /// same terminal may answer them through `GET /approvals?session=`.
+    /// Nothing else the phone's standing unlocks follows: the external deny
+    /// list, config and workflow gates still treat the run as external.
+    /// Bound by `handleAgentRunEndpoint` only. Module-internal so
+    /// out-of-module callers cannot bind it.
+    @TaskLocal static var terminalReviewerSession: String? = nil
+
+    /// Someone can answer this run's `.ask` tool cards: the paired phone, or
+    /// the terminal that started it.
+    static var hasInteractiveToolReviewer: Bool { hasRemoteReviewer || terminalReviewerSession != nil }
+
     /// The person answering this run's reviews is on another of their
     /// devices: the paired phone, or the device a hosted run is for.
     static var reviewsElsewhere: Bool { hasRemoteReviewer || syncReviewerScope != nil }

@@ -1,0 +1,13 @@
+{
+  "id": "terminal_approval.terminal-approve",
+  "domain": "terminal_approval",
+  "label": "terminal approval • an approved CLI run's Ask card is answered from its own terminal",
+  "query": "deterministic policy pin — no model involved",
+  "notes": "An external /agents/{id}/run bound to an `osaurus agent run` terminal session: the probe tool's Ask card waits instead of being refused, is listed only for that session (not the phone, not another session), cannot be answered by another session or the phone route, and allow_once from its own session runs the tool exactly once.",
+  "fixtures": {},
+  "expect": {
+    "terminalApproval": {
+      "scenario": "terminal_approve"
+    }
+  }
+}

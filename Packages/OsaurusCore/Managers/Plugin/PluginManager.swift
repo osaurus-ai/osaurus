@@ -378,8 +378,7 @@ final class PluginManager {
     ///
     /// Plugins that explicitly want to opt out of the probe can match
     /// `key == "__osaurus_abi_probe__"` and early-return; the value is
-    /// always a fresh UUID with no semantic meaning. Documented under
-    /// `docs/plugins/HOST_API.md` so authors know to ignore it.
+    /// always a fresh UUID with no semantic meaning.
     ///
     /// `nonisolated` because the constant is a literal string — safe
     /// to read from any actor / queue, including plugin-author tests
@@ -804,9 +803,8 @@ final class PluginManager {
     /// declare routes. Shared body for `handleAgentAdded` (force=false)
     /// and the relay-reconnect branch in `handleTunnelStatusChange`
     /// (force=true). With `force: true` both dedup layers are bypassed
-    /// so plugins re-fire `on_config_changed` on identical values —
-    /// documented under `docs/plugins/HOST_API.md`; plugin authors
-    /// must keep `on_config_changed` idempotent for repeat values.
+    /// so plugins re-fire `on_config_changed` on identical values;
+    /// plugins must keep `on_config_changed` idempotent for repeat values.
     private func deliverFullAgentSnapshot(
         agentId: UUID,
         status: AgentRelayStatus?,
@@ -1866,9 +1864,7 @@ final class PluginManager {
             {
                 // Surfaced verbatim in PluginsView and the AgentsView
                 // "Failed" tab — point users at the in-app Retry /
-                // Uninstall buttons rather than the legacy
-                // `osaurus tools reset` CLI (which unquarantines all
-                // failed plugins at once).
+                // Uninstall buttons.
                 failures[pluginId] =
                     "Plugin quarantined after a crash during load — use the Retry or Uninstall button below to recover."
                 continue

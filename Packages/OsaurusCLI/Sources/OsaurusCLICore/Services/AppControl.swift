@@ -20,69 +20,87 @@ public struct AppControl {
         )
     }
 
+    /// Probes the server and launches the app only when it is not running.
+    /// Returns the probe result from before any launch, so callers know
+    /// whether to wait for a cold start or for a busy app.
     @MainActor
-    public static func launchAppIfNeeded() async {
-        // Try to detect if server responds; if yes, nothing to do
-        let port = Configuration.resolveConfiguredPort() ?? 1337
-        if await ServerControl.checkHealth(port: port) { return }
+    @discardableResult
+    public static func launchAppIfNeeded(
+        port: Int = Configuration.resolveConfiguredPort() ?? 1337
+    ) async -> ServerState {
+        let state = await ServerControl.probe(port: port)
+        guard state == .appNotRunning else { return state }
+        await launchApp()
+        return state
+    }
 
-        // Launch the app via `open -b` by bundle id, with fallback to explicit app path search
-        var launched = false
-        do {
-            let openByBundle = Process()
-            openByBundle.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            openByBundle.arguments = ["-n", "-b", "com.dinoki.osaurus", "--args", "--launched-by-cli"]
-            try? openByBundle.run()
-            openByBundle.waitUntilExit()
-            launched = (openByBundle.terminationStatus == 0)
-        }
-        // Even if `open -b` returned success, verify the app process actually
-        // came up (LaunchServices can fail to resolve the bundle id for some
-        // setups) and only then fall back to an explicit-path launch. Checking
-        // /health here instead would always fail on a cold start — the server
-        // needs seconds to come up — so the fallback `open` fired every time,
-        // and its reopen event made the running app pop the main window.
-        var appIsRunning = false
-        if launched {
-            for _ in 0..<20 {  // up to ~2s
-                if !NSRunningApplication.runningApplications(
-                    withBundleIdentifier: "com.dinoki.osaurus"
-                ).isEmpty {
-                    appIsRunning = true
-                    break
-                }
-                try? await Task.sleep(nanoseconds: 100_000_000)
-            }
-        }
-        if !launched || !appIsRunning {
-            if let appPath = findAppBundlePath() {
-                let openByPath = Process()
-                openByPath.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                openByPath.arguments = ["-a", appPath, "--args", "--launched-by-cli"]
-                try? openByPath.run()
-                openByPath.waitUntilExit()
-                launched = (openByPath.terminationStatus == 0)
-            }
+    /// Launches the app without `-n`, so LaunchServices reuses a copy that
+    /// started in the meantime instead of opening a second one.
+    @MainActor
+    static func launchApp() async {
+        let bundleId = AppIdentity.bundleIdentifier
+        var launched = runOpen(["-b", bundleId, "--args", "--launched-by-cli"])
+        // `open -b` can succeed without starting anything when LaunchServices
+        // cannot resolve the id; confirm the process exists before falling
+        // back to an explicit path. Waiting for /health here instead would
+        // always time out on a cold start.
+        if launched { launched = await waitForAppProcess(seconds: 2) }
+        if !launched, let appPath = findAppBundlePath() {
+            launched = runOpen(["-a", appPath, "--args", "--launched-by-cli"])
+            if launched { launched = await waitForAppProcess(seconds: 2) }
         }
         if !launched {
             fputs(
                 "Could not launch Osaurus.app. Install it with Homebrew: brew install --cask osaurus\n",
                 stderr
             )
-            return
         }
-        // Give the app a moment to initialize (cold start can take a bit)
-        try? await Task.sleep(nanoseconds: 1_500_000_000)
+    }
+
+    private static func runOpen(_ arguments: [String]) -> Bool {
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = arguments
+        open.standardError = FileHandle.nullDevice
+        do {
+            try open.run()
+        } catch {
+            return false
+        }
+        open.waitUntilExit()
+        return open.terminationStatus == 0
+    }
+
+    private static func waitForAppProcess(seconds: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        repeat {
+            if ServerControl.isAppRunning() { return true }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        } while Date() < deadline
+        return false
     }
 
     /// Attempts to locate the installed Osaurus.app bundle path using common locations and Spotlight.
     @MainActor
     public static func findAppBundlePath() -> String? {
-        let fm = FileManager.default
-        for path in commonAppBundlePaths() where fm.fileExists(atPath: path) {
+        let bundleId = AppIdentity.bundleIdentifier
+        if let companion = CLIVersionResolver.companionAppPath(for: CommandLine.arguments.first ?? ""),
+            AppIdentity.bundleIdentifier(ofAppAt: companion) == bundleId
+        {
+            return companion
+        }
+        for path in commonAppBundlePaths() where AppIdentity.bundleIdentifier(ofAppAt: path) == bundleId {
             return path
         }
         return findAppBundlePaths().first
+    }
+
+    /// Every running process of this app. More than one means a duplicate
+    /// launch slipped past the app's own guard.
+    public static func runningInstances() -> [(pid: Int32, path: String?)] {
+        NSRunningApplication.runningApplications(withBundleIdentifier: AppIdentity.bundleIdentifier)
+            .filter { !$0.isTerminated }
+            .map { ($0.processIdentifier, $0.bundleURL?.path) }
     }
 
     /// Returns every known bundle for the Osaurus identifier. Multiple rows
@@ -93,14 +111,14 @@ public struct AppControl {
         let fm = FileManager.default
         let home = NSHomeDirectory()
         let candidates = commonAppBundlePaths()
-        var paths = candidates.filter { fm.fileExists(atPath: $0) }
+        var paths = candidates.filter { AppIdentity.bundleIdentifier(ofAppAt: $0) == AppIdentity.bundleIdentifier }
         if let launchServicesSelection = NSWorkspace.shared.urlForApplication(
-            withBundleIdentifier: "com.dinoki.osaurus"
+            withBundleIdentifier: AppIdentity.bundleIdentifier
         ) {
             paths.append(launchServicesSelection.path)
         }
         if includeSpotlightSearch {
-            let query = "kMDItemCFBundleIdentifier == 'com.dinoki.osaurus'"
+            let query = "kMDItemCFBundleIdentifier == '\(AppIdentity.bundleIdentifier)'"
             paths.append(contentsOf: spotlightFindAll(queryArgs: ["-onlyin", "/Applications", query]))
             paths.append(contentsOf: spotlightFindAll(queryArgs: ["-onlyin", "\(home)/Applications", query]))
             // Preserve discovery of side-loaded and development bundles that
@@ -118,6 +136,8 @@ public struct AppControl {
             "\(NSHomeDirectory())/Applications/Osaurus.app",
             "/Applications/osaurus.app",
             "\(NSHomeDirectory())/Applications/osaurus.app",
+            "/Applications/Osaurus Beta.app",
+            "\(NSHomeDirectory())/Applications/Osaurus Beta.app",
         ]
     }
 
@@ -136,7 +156,7 @@ public struct AppControl {
 
     @MainActor
     public static func runningAppBundlePath() -> String? {
-        NSRunningApplication.runningApplications(withBundleIdentifier: "com.dinoki.osaurus")
+        NSRunningApplication.runningApplications(withBundleIdentifier: AppIdentity.bundleIdentifier)
             .first?.bundleURL?.path
     }
 

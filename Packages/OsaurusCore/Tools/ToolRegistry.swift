@@ -1148,7 +1148,7 @@ public final class ToolRegistry: ObservableObject {
                     // Headless eval / external MCP with no UI: deny instead of
                     // hanging on an approval card nobody can click.
                     approved = false
-                } else if ChatExecutionContext.isExternalSurface, !ChatExecutionContext.hasRemoteReviewer,
+                } else if ChatExecutionContext.isExternalSurface, !ChatExecutionContext.hasInteractiveToolReviewer,
                     let route = ChatExecutionContext.ownerApprovalRoute
                 {
                     // A teammate / remote caller on a shared agent set to Ask
@@ -1175,12 +1175,13 @@ public final class ToolRegistry: ObservableObject {
                             ]
                         )
                     }
-                } else if ChatExecutionContext.isExternalSurface, !ChatExecutionContext.hasRemoteReviewer {
+                } else if ChatExecutionContext.isExternalSurface, !ChatExecutionContext.hasInteractiveToolReviewer {
                     // External MCP/HTTP callers cannot interact with GUI prompts.
-                    // The owner's paired phone can: its run falls through to
-                    // the card below, which `GET /approvals` relays to it
+                    // The owner's paired phone can, and so can the terminal of
+                    // an approved `osaurus agent run`: their runs fall through
+                    // to the card below, which `GET /approvals` relays
                     // (MOBILE_PROTOCOL §16). The external deny list still
-                    // applies to it, checked before this switch.
+                    // applies to them, checked before this switch.
                     approved = false
                 } else if ChatExecutionContext.isUnattendedDispatch
                     && Self.unattendedAutoApprovableToolNames.contains(name)
@@ -1259,7 +1260,7 @@ public final class ToolRegistry: ObservableObject {
                 }
                 if !approved {
                     let unanswerable =
-                        (ChatExecutionContext.isExternalSurface && !ChatExecutionContext.hasRemoteReviewer)
+                        (ChatExecutionContext.isExternalSurface && !ChatExecutionContext.hasInteractiveToolReviewer)
                         || ChatExecutionContext.denyUnapprovedToolPrompts
                     let message =
                         unanswerable

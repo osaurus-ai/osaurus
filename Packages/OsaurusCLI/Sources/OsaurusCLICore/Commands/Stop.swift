@@ -10,13 +10,30 @@ import Foundation
 public struct StopCommand: Command {
     public static let name = "stop"
 
+    static let usage = """
+        Usage: osaurus stop
+
+        Stops the Osaurus server. The app keeps running.
+        """
+
     public static func execute(args: [String]) async {
-        AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.stop", userInfo: [:])
-        // Verify stopped within a short timeout
+        if args.contains("--help") || args.contains("-h") {
+            print(usage)
+            exit(EXIT_SUCCESS)
+        }
+        if let unknown = args.first {
+            fputs("osaurus stop: unknown argument `\(unknown)`\n\n\(usage)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
         let port = Configuration.resolveConfiguredPort() ?? 1337
-        let deadline = Date().addingTimeInterval(3.0)
+        if await ServerControl.probe(port: port) == .appNotRunning {
+            print("stopped")
+            exit(EXIT_SUCCESS)
+        }
+        AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.stop", userInfo: [:])
+        let deadline = Date().addingTimeInterval(5.0)
         while Date() < deadline {
-            if !(await ServerControl.checkHealth(port: port)) {
+            if !(await ServerControl.checkHealth(port: port, timeout: 1.0)) {
                 print("stopped")
                 exit(EXIT_SUCCESS)
             }
