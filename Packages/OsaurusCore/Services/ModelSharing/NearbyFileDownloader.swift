@@ -62,8 +62,11 @@ private final class TransferProgressRelay: TransferProgress, @unchecked Sendable
 
 enum NearbyFileDownloader {
     static func partURL(for destination: URL) -> URL {
+        // The hint matters: without `isDirectory`, URL stats the filesystem
+        // (lstat) to decide whether to append a trailing slash — synchronous
+        // I/O on a path that runs on MainActor from ModelDownloadService.
         destination.deletingLastPathComponent()
-            .appendingPathComponent(".\(destination.lastPathComponent).nearby.part")
+            .appendingPathComponent(".\(destination.lastPathComponent).nearby.part", isDirectory: false)
     }
 
     /// Bytes of `destination` already received from a nearby Mac.
