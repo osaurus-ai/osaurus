@@ -21,6 +21,10 @@ struct IdentityView: View {
 
     @State private var phase: IdentityPhase = .checking
     @State private var drift: IdentityDrift?
+    /// An archived identity that reproduces at least one drifted agent.
+    @State private var switchBackCandidate: OsaurusID?
+    @State private var showPreviousIdentities = false
+    @State private var hasArchivedIdentities = false
 
     /// Non-nil presents `RecoverFromMnemonicSheet` in the given mode
     /// (drift repair, fresh restore, or replace-existing).
@@ -60,6 +64,14 @@ struct IdentityView: View {
             )
             .environment(\.theme, theme)
         }
+        .sheet(isPresented: $showPreviousIdentities) {
+            PreviousIdentitiesSheet(
+                currentAddress: currentAddress,
+                onSwitched: handleSwitched,
+                onClose: { showPreviousIdentities = false }
+            )
+            .environment(\.theme, theme)
+        }
         .sheet(isPresented: $showRecoveryPhraseSheet) {
             RecoveryPhraseSheet(
                 words: recoveryPhraseWords ?? [],
@@ -86,7 +98,7 @@ struct IdentityView: View {
             },
             message: {
                 Text(
-                    "This deletes your signature, every agent's derived address, and every access key. Onboarding will start over. The backup in your iCloud Keychain will also be removed.",
+                    "This deletes your signature, every agent's derived address, and every access key. Onboarding will start over. The backup in your iCloud Keychain will also be removed. A copy stays in Previous Identities on this Mac.",
                     bundle: .module
                 )
             }
@@ -104,6 +116,7 @@ struct IdentityView: View {
             IdentitySetupCard(
                 onCreated: handleIdentityCreated,
                 onRestore: { restoreSheetMode = .freshRestore },
+                onUsePrevious: hasArchivedIdentities ? { showPreviousIdentities = true } : nil,
                 onCheckAgain: checkIdentityStatus
             )
             .settingsLandingAnchor("identity.keys")
@@ -118,6 +131,7 @@ struct IdentityView: View {
         if let drift, drift.hasDrift {
             IdentityDriftBanner(
                 drift: drift,
+                onSwitchBack: switchBackCandidate == nil ? nil : { showPreviousIdentities = true },
                 onRecover: { restoreSheetMode = .driftRepair(drift) },
                 onRepair: { showRepairConfirm = true },
                 onReset: { showResetConfirm = true }
@@ -149,9 +163,15 @@ struct IdentityView: View {
         )
         DevicesLinkSection()
         DangerZoneSection(
+            onSwitchPrevious: { showPreviousIdentities = true },
             onRestore: { restoreSheetMode = .replaceExisting(current: osaurusId) },
             onReset: { showResetConfirm = true }
         )
+    }
+
+    private var currentAddress: OsaurusID? {
+        if case .ready(let osaurusId, _) = phase { return osaurusId }
+        return nil
     }
 
     // MARK: - Header
@@ -207,7 +227,33 @@ struct IdentityView: View {
         } else {
             phase = .noIdentity
             drift = nil
+            switchBackCandidate = nil
+            hasArchivedIdentities = !MasterKeyArchive.list().isEmpty
         }
+    }
+
+    /// The archived identity that reproduces the most drifted agents, if any.
+    nonisolated private static func archivedIdentityMatching(
+        _ mismatched: [Agent],
+        excluding current: OsaurusID,
+        deviceScope: String,
+        context: LAContext
+    ) -> OsaurusID? {
+        guard !mismatched.isEmpty else { return nil }
+        let candidates = MasterKeyArchive.list().filter { $0.id != current.lowercased() }
+        let matches: [IdentityCandidateMatch] = candidates.compactMap { candidate in
+            guard var seed = try? MasterKeyArchive.loadSeed(address: candidate.address, context: context) else {
+                return nil
+            }
+            defer { seed.zeroOut() }
+            return IdentityHealthCheck.match(
+                masterKey: seed,
+                agents: mismatched,
+                accessKeys: [],
+                currentDeviceScope: deviceScope
+            )
+        }
+        return IdentityHealthCheck.rank(matches).first { $0.matchedAgents > 0 }?.address
     }
 
     private func loadExistingIdentity() {
@@ -216,7 +262,7 @@ struct IdentityView: View {
             // The device and master key reads block on securityd XPC + decrypt,
             // which can take seconds on a slow or legacy keychain, so the load
             // runs off the main actor and only the resulting phase is published.
-            let (newPhase, newDrift, repairedScopes): (IdentityPhase, IdentityDrift?, Int) = await Task.detached(
+            let (newPhase, newDrift, repairedScopes, switchBack): (IdentityPhase, IdentityDrift?, Int, OsaurusID?) = await Task.detached(
                 priority: .userInitiated
             ) {
                 do {
@@ -254,14 +300,27 @@ struct IdentityView: View {
                             currentDeviceScope: deviceId
                         )
                     }
-                    return (.ready(osaurusId: osaurusId, deviceId: deviceId), diagnosed, repaired)
+                    let switchBack =
+                        diagnosed.hasDrift
+                        ? Self.archivedIdentityMatching(
+                            diagnosed.mismatchedAgents,
+                            excluding: osaurusId,
+                            deviceScope: deviceId,
+                            context: context
+                        )
+                        : nil
+                    return (.ready(osaurusId: osaurusId, deviceId: deviceId), diagnosed, repaired, switchBack)
                 } catch {
-                    return (.noIdentity, nil, 0)
+                    return (.noIdentity, nil, 0, nil)
                 }
             }.value
 
             phase = newPhase
             drift = newDrift
+            switchBackCandidate = switchBack
+            if case .noIdentity = newPhase {
+                hasArchivedIdentities = !MasterKeyArchive.list().isEmpty
+            }
             if repairedScopes > 0 {
                 lastActionResult = ActionResult(
                     message:
@@ -292,8 +351,16 @@ struct IdentityView: View {
 
     private func handleRecovered(_ result: OsaurusIdentity.RestoreResult) {
         restoreSheetMode = nil
+        reportRestore(result, headline: "Identity \(result.osaurusId) restored from recovery phrase.")
+    }
 
-        var parts = ["Identity \(result.osaurusId) restored from recovery phrase."]
+    private func handleSwitched(_ result: OsaurusIdentity.RestoreResult) {
+        showPreviousIdentities = false
+        reportRestore(result, headline: "Switched to identity \(result.osaurusId).")
+    }
+
+    private func reportRestore(_ result: OsaurusIdentity.RestoreResult, headline: String) {
+        var parts = [headline]
         if result.rederivedAgentCount > 0 {
             parts.append("Re-derived addresses for \(result.rederivedAgentCount) agent(s).")
         }
@@ -367,6 +434,7 @@ struct IdentityView: View {
             isError: false
         )
         phase = .noIdentity
+        hasArchivedIdentities = !MasterKeyArchive.list().isEmpty
         drift = nil
 
         restartServerIfRunning()
@@ -447,6 +515,8 @@ private struct IdentityDriftBanner: View {
     private var theme: any ThemeProtocol { inheritedTheme }
 
     let drift: IdentityDrift
+    /// Set when an archived identity reproduces the drifted agents.
+    let onSwitchBack: (() -> Void)?
     let onRecover: () -> Void
     let onRepair: () -> Void
     let onReset: () -> Void
@@ -478,7 +548,17 @@ private struct IdentityDriftBanner: View {
             .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: theme.space.s8) {
-                SettingsButton(.primary, "Recover from phrase", icon: "arrow.uturn.backward", size: .compact) {
+                if let onSwitchBack {
+                    SettingsButton(.primary, "Switch back", icon: "clock.arrow.circlepath", size: .compact) {
+                        onSwitchBack()
+                    }
+                }
+                SettingsButton(
+                    onSwitchBack == nil ? .primary : .secondary,
+                    "Recover from phrase",
+                    icon: "arrow.uturn.backward",
+                    size: .compact
+                ) {
                     onRecover()
                 }
                 SettingsButton(.secondary, "Repair forward", icon: "wrench.and.screwdriver", size: .compact) {
@@ -520,11 +600,21 @@ private struct IdentityDriftBanner: View {
 // MARK: - Danger Zone
 
 private struct DangerZoneSection: View {
+    let onSwitchPrevious: () -> Void
     let onRestore: () -> Void
     let onReset: () -> Void
 
     var body: some View {
         SettingsDestructiveZone {
+            SettingsDestructiveRow(
+                title: "Switch to a Previous Identity",
+                description:
+                    "Go back to an identity this Mac used before, for example one that a new identity replaced. Agents that don't match get new addresses.",
+                actionTitle: "Choose…",
+                severity: .warning,
+                anchorId: "identity.previousIdentities",
+                action: onSwitchPrevious
+            )
             SettingsDestructiveRow(
                 title: "Restore From Recovery Phrase",
                 description:
@@ -536,7 +626,7 @@ private struct DangerZoneSection: View {
             SettingsDestructiveRow(
                 title: "Reset Identity",
                 description:
-                    "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. Onboarding will start over.",
+                    "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. A copy stays in Previous Identities on this Mac. Onboarding will start over.",
                 actionTitle: "Reset…",
                 action: onReset
             )
@@ -563,6 +653,8 @@ private struct IdentitySetupCard: View {
     let onCreated: (IdentityInfo) -> Void
     /// Open the fresh-restore mnemonic sheet.
     let onRestore: () -> Void
+    /// Open Previous Identities; nil when this Mac's archive is empty.
+    let onUsePrevious: (() -> Void)?
     /// Re-probe Keychain — an identity synced from another device via iCloud
     /// Keychain may have arrived since this card was rendered.
     let onCheckAgain: () -> Void
@@ -602,6 +694,11 @@ private struct IdentitySetupCard: View {
 
             SettingsButton(.secondary, "Restore From Recovery Phrase", icon: "arrow.counterclockwise.circle", action: onRestore)
                 .disabled(isCreating)
+
+            if let onUsePrevious {
+                SettingsButton(.secondary, "Use a previous identity", icon: "clock.arrow.circlepath", action: onUsePrevious)
+                    .disabled(isCreating)
+            }
 
             VStack(spacing: theme.space.s4) {
                 Text(

@@ -520,7 +520,8 @@ enum LocalVisionEvidence {
         Set(try tensorPayloadSizes(directory).keys)
     }
 
-    private static func tensorPayloadSizes(_ directory: URL) throws -> [String: UInt64] {
+    /// Internal (not private) so tests can exercise the shard/index checks.
+    static func tensorPayloadSizes(_ directory: URL) throws -> [String: UInt64] {
         let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
         let indexExists = FileManager.default.fileExists(atPath: indexURL.path)
         let index = object(indexURL)?["weight_map"] as? [String: String]
@@ -540,6 +541,15 @@ enum LocalVisionEvidence {
                 .filter { $0.pathExtension == "safetensors" && !$0.lastPathComponent.hasPrefix("jangtq_runtime") }
         }
         guard !files.isEmpty else { throw InvalidWeights(detail: "no safetensors weight files") }
+        // Group the index by shard once; filtering the whole weight map per
+        // shard is O(shards x tensors) and hung the main thread on large
+        // bundles (APPLE-MACOS-324).
+        var declaredByShard: [String: Set<String>] = [:]
+        if let index {
+            for (tensor, shard) in index {
+                declaredByShard[shard, default: []].insert(tensor)
+            }
+        }
         var sizes: [String: UInt64] = [:]
         for file in files {
             let handle = try FileHandle(forReadingFrom: file)
@@ -568,8 +578,8 @@ enum LocalVisionEvidence {
                     throw InvalidWeights(detail: "duplicate tensor: \(name)")
                 }
             }
-            if let index {
-                let declared = Set(index.filter { $0.value == file.lastPathComponent }.keys)
+            if index != nil {
+                let declared = declaredByShard[file.lastPathComponent] ?? []
                 guard declared.isSubset(of: fileKeys) else {
                     throw InvalidWeights(detail: "index names tensors absent from \(file.lastPathComponent)")
                 }

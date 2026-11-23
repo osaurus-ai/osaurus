@@ -431,12 +431,28 @@ Format: `OSAURUS-` prefix followed by 4 groups of 4 uppercase hex characters (8 
 - **Cannot rebuild the local master** — it is only an authenticator for the future server-side recovery flow.
 - Discarded from application memory after display; never stored on device in plaintext.
 
-### The three "fix it" exits
+### Previous identities archive (local switch-back)
 
-When the persisted derivatives no longer match the current master (see [Identity Health and Drift](#identity-health-and-drift)), the Identity view surfaces three actions in a banner:
+The master and the phrase are one synced iCloud Keychain slot each (`com.osaurus.account` / `master-key` and `master-mnemonic`). A second identity created on any Mac — most often by onboarding's silent `OsaurusIdentity.setup()` on a new Mac before iCloud finished syncing the original — writes the same slot, and iCloud keeps one item per slot, so the original is replaced on **every** Mac, including the one that created it. Without a local copy, the phrase is the only way back.
+
+[`Identity/MasterKeyArchive.swift`](../Packages/OsaurusCore/Identity/MasterKeyArchive.swift) keeps that copy:
+
+- One generic-password item per identity: service `com.osaurus.account.archive` (Space-scoped like every identity service), account = lowercased master address, data = the 32-byte seed. Metadata (`source`: `created` / `restored` / `keychain`, `firstSeenAt`, `lastActiveAt`) lives in `kSecAttrGeneric`, so `list()` reads attributes only and never prompts.
+- Always device-only (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, never synchronizable). The Mac that held the original is the one that needs it; switching back re-writes the synced slot, so the other Macs follow.
+- Written by `MasterKey.install` (every generate and restore) and after every successful `MasterKey.getPrivateKey` read, once per process per address. Kept by **Reset Identity** (`OsaurusIdentity.wipe()`); removed by factory reset (it is in `OsaurusKeychainServices.all`) and per entry with **Forget**.
+- Under `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1` every call is a no-op. Test processes skip writes unless `serviceOverrideForTesting` points the archive at a throwaway service, so fixture seeds never land in a developer's real archive.
+
+`IdentityHealthCheck.match(masterKey:agents:accessKeys:currentDeviceScope:)` scores a candidate seed (agents whose own key path re-derives their stored address, and active access keys issued by the candidate or one of those agents); `rank(_:)` orders candidates by agents, then keys. **Previous Identities** (`Views/Identity/PreviousIdentitiesSheet.swift`, opened from Danger Zone → **Switch to a Previous Identity**, the setup card's **Use a previous identity**, and the drift banner's **Switch back**) lists the archive, unlocks every seed behind one `LAContext` to show the scores, and calls `OsaurusIdentity.switchTo(archivedAddress:context:)`. That runs the same engine as a phrase restore (`restore(seed:words:)`): install, phrase re-store, device attestation, scope repair, re-mint of agents that still don't match, revocation of stale keys, `.osaurusIdentityChanged`.
+
+Limitation: an identity that was replaced before the archive shipped, or that a Mac never read, is not in that Mac's archive. The phrase remains the only way back for it.
+
+### The "fix it" exits
+
+When the persisted derivatives no longer match the current master (see [Identity Health and Drift](#identity-health-and-drift)), the Identity view surfaces these actions in a banner:
 
 | Action | What it does | When to use |
 |--------|--------------|-------------|
+| **Switch back** | Shown only when an archived identity reproduces at least one drifted agent. Opens Previous Identities, where the switch runs `OsaurusIdentity.switchTo`. | The identity your agents were made with is still in this Mac's archive. |
 | **Recover from phrase** | Opens `RecoverFromMnemonicSheet`, validates the entered 24 words against the BIP39 wordlist + checksum, derives a candidate `OsaurusID`, and confirms it reproduces the persisted agent addresses before calling `MasterKey.install(seed:allowReplace: true)`. Drift goes away because every existing derivative now matches. | The user has the original mnemonic from onboarding and wants their old identity back. |
 | **Repair forward** | Re-derives every mismatched agent at a fresh unused index off the *current* master and revokes every stale osk-v1 access key in one synchronous pass. The HTTP server is restarted so the new validator picks up the change. | The original mnemonic is gone. Existing pairings will need to be re-issued. |
 | **Reset identity** | `OsaurusIdentity.wipe()` deletes the master, clears every non-built-in agent's address/index, calls `APIKeyManager.deleteAll()`, clears the `masterMnemonicAcknowledged` flag, then triggers `OnboardingService.resetOnboarding()`. The revocation store is intentionally kept (cheap and harmless). | Nuclear option. Start completely fresh. |
@@ -622,6 +638,7 @@ First-party websites (store.osaurus.ai and other allowlisted origins) can sign a
 | `MasterKey.swift` | Generate (`generate(allowReplace:)`), install a caller-supplied seed (`install(seed:allowReplace:)`), read, sign, and delete the secp256k1 master key in iCloud Keychain |
 | `MasterKeyMnemonic.swift` | BIP39 24-word encode/decode of the 32-byte master, backed by the bundled English wordlist |
 | `MasterMnemonicStore.swift` | iCloud Keychain item for the 24-word phrase, same service / access group as the master |
+| `MasterKeyArchive.swift` | Device-only per-address copies of every master this Mac created, restored or read; list / load / forget for Previous Identities |
 | `OsaurusKeychainGroup.swift` | Resolves the shared Keychain access group from Info.plist (nil in builds without the entitlement); pure dual-write order (`writeAttemptGroups`) and add-only mirror decision (`mirrorPlan`) |
 | `IdentityHealthCheck.swift` | Pure helper that classifies persisted derivatives as healthy / mismatched / recoverable-scope against the current master |
 | `AgentKey.swift` | Deterministic child key derivation (HMAC-SHA512, v1 master-global and v2 device-scoped), `AgentKeyPath`, and signing for per-agent identities |
@@ -650,6 +667,7 @@ First-party websites (store.osaurus.ai and other allowlisted origins) can sign a
 | `MasterMnemonicCard.swift` | Numbered 4×6 grid of the 24-word BIP39 phrase with copy / save / print actions. Shared between onboarding and the recovery prompt |
 | `AgentKeyManagement.swift` | Expandable per-agent row: rotate / revoke address + scoped osk-v1 list + scoped generate/revoke |
 | `RecoverFromMnemonicSheet.swift` | Phrase-entry sheet with live word count, BIP39 validation, prior-master matching, and "Restore Anyway" override |
+| `PreviousIdentitiesSheet.swift` | Lists `MasterKeyArchive`, ranks entries against this Mac's agents and access keys after one unlock, switches back or forgets an entry |
 
 ### Log in with Osaurus (`Packages/OsaurusCore/Services/Auth/LoginWithOsaurus/`)
 

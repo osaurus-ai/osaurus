@@ -967,6 +967,7 @@ final class ModelDownloadService: ObservableObject {
                     proxyDisabledModels.insert(model.id)
                 }
             }
+            let nearbyPartURL = NearbyFileDownloader.partURL(for: destination)
             do {
                 try await downloader.download(
                     from: downloadURL,
@@ -974,11 +975,15 @@ final class ModelDownloadService: ObservableObject {
                     expectedSize: file.size,
                     expectedDigest: file.digest,
                     resumeData: resumeDataForAttempt,
-                    seed: NearbyFileDownloader.partURL(for: destination),
+                    seed: nearbyPartURL,
                     onProgress: onProgress
                 )
                 finishFileTransfer(modelId: model.id, token: token, path: file.path, size: file.size)
-                try? FileManager.default.removeItem(at: NearbyFileDownloader.partURL(for: destination))
+                // Leftover nearby partial cleanup is filesystem I/O; keep it
+                // off MainActor so a busy disk can't hang the UI.
+                Task.detached(priority: .utility) {
+                    try? FileManager.default.removeItem(at: nearbyPartURL)
+                }
                 return .completed
             } catch let pauseInfo as DirectDownloader.PauseInfo {
                 notePausedFileBytes(

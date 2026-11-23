@@ -41,7 +41,12 @@ struct CoreModelServiceFallbackTests {
 
     private actor ResidencyProbe: ModelService {
         nonisolated let id = "core-residency-probe"
+        private let response: String
         private(set) var parameters: GenerationParameters?
+
+        init(response: String = "UTILITY-OK") {
+            self.response = response
+        }
 
         nonisolated func isAvailable() -> Bool { true }
         nonisolated func handles(requestedModel: String?) -> Bool {
@@ -54,7 +59,7 @@ struct CoreModelServiceFallbackTests {
             requestedModel: String?
         ) async throws -> String {
             self.parameters = parameters
-            return "UTILITY-OK"
+            return response
         }
 
         func streamDeltas(
@@ -65,6 +70,25 @@ struct CoreModelServiceFallbackTests {
         ) async throws -> AsyncThrowingStream<String, Error> {
             throw CancellationError()
         }
+    }
+
+    @Test("session state extraction uses the settled turn's speculation preference", arguments: [nil, false, true] as [Bool?])
+    func sessionStateExtractionPreservesSpeculation(explicitOverride: Bool?) async throws {
+        let probe = ResidencyProbe(response: #"{"goal":"keep the same model"}"#)
+        let service = CoreModelService(localServices: [probe])
+        let state = await SessionStateExtraction.extract(
+            previous: .empty,
+            turn: [.init(speaker: "User", text: "Keep the same model.")],
+            model: probe.id,
+            speculativeDecoding: explicitOverride,
+            using: service
+        )
+        #expect(state?.goal == "keep the same model")
+        let parameters = try #require(await probe.parameters)
+        #expect(parameters.speculativeDecoding == explicitOverride)
+        #expect(parameters.loadIntent == .background)
+        #expect(parameters.auxiliaryCacheIntent)
+        #expect(parameters.preserveExistingResidencyOwner)
     }
 
     @Test("utility calls preserve model defaults or an explicit override", arguments: [false, true])
