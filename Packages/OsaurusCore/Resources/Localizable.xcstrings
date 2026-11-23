@@ -1,6 +1,74 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ becomes the identity on this Mac and on every Mac signed in to this iCloud Keychain." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ wird die Identität auf diesem Mac und auf jedem Mac, der bei diesem iCloud-Schlüsselbund angemeldet ist."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@이(가) 이 Mac과 이 iCloud 키체인에 로그인된 모든 Mac의 ID가 됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ станет идентификатором на этом Mac и на каждом Mac, подключённом к этой Связке ключей iCloud."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 将成为这台 Mac 以及所有登录此 iCloud 钥匙串的 Mac 上的身份。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 將成為這台 Mac 以及所有登入此 iCloud 鑰匙串的 Mac 上的身份。"
+          }
+        }
+      }
+    },
+    "%@ · First seen %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · Zuerst gesehen %2$@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · 처음 확인 %2$@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · Впервые замечен %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · 首次发现于 %2$@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · 首次發現於 %2$@"
+          }
+        }
+      }
+    },
     "1 nearby Mac sharing models" : {
       "localizations" : {
         "de" : {
@@ -57,6 +125,278 @@
         }
       }
     },
+    "Couldn't remove this identity from the Keychain." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Identität konnte nicht aus dem Schlüsselbund entfernt werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "키체인에서 이 ID를 제거할 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось удалить этот идентификатор из Связки ключей."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法从钥匙串中移除此身份。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法從鑰匙串中移除此身份。"
+          }
+        }
+      }
+    },
+    "Created on this Mac" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf diesem Mac erstellt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에서 생성됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создан на этом Mac"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在这台 Mac 上创建"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在這台 Mac 上建立"
+          }
+        }
+      }
+    },
+    "Forget This Identity?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Identität vergessen?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 ID를 잊을까요?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Забыть этот идентификатор?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "忘记此身份？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "忘記此身份？"
+          }
+        }
+      }
+    },
+    "Found in Keychain" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Im Schlüsselbund gefunden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "키체인에서 발견됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Найден в Связке ключей"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在钥匙串中找到"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在鑰匙串中找到"
+          }
+        }
+      }
+    },
+    "Go back to an identity this Mac used before, for example one that a new identity replaced. Agents that don't match get new addresses." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kehre zu einer Identität zurück, die dieser Mac früher verwendet hat, zum Beispiel einer, die durch eine neue Identität ersetzt wurde. Agenten, die nicht passen, erhalten neue Adressen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에서 이전에 사용한 ID(예: 새 ID로 대체된 ID)로 돌아갑니다. 일치하지 않는 에이전트는 새 주소를 받습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вернуться к идентификатору, который этот Mac использовал раньше, например к заменённому новым. Несоответствующие агенты получат новые адреса."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返回这台 Mac 以前使用过的身份，例如被新身份替换的身份。不匹配的智能体会获得新地址。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返回這台 Mac 以前使用過的身份，例如被新身份取代的身份。不匹配的智能體會獲得新地址。"
+          }
+        }
+      }
+    },
+    "Identities this Mac has used. If a new identity replaced the one your agents were made with, switch back to it here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Identitäten, die dieser Mac verwendet hat. Wenn eine neue Identität die ersetzt hat, mit der deine Agenten erstellt wurden, kannst du hier zu ihr zurückwechseln."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에서 사용한 ID입니다. 에이전트를 만들 때 사용한 ID가 새 ID로 대체되었다면 여기에서 다시 전환하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Идентификаторы, которые использовались на этом Mac. Если новый идентификатор заменил тот, с которым были созданы ваши агенты, вернитесь к нему здесь."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 使用过的身份。如果新身份替换了创建智能体时使用的身份，可以在这里切换回去。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這台 Mac 使用過的身份。如果新身份取代了建立智能體時使用的身份，可以在這裡切換回去。"
+          }
+        }
+      }
+    },
+    "Matches %lld of %lld agents and %lld access keys" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Übereinstimmungen: %1$lld von %2$lld Agenten, Zugriffsschlüssel: %3$lld"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 %2$lld개 중 %1$lld개, 액세스 키 %3$lld개와 일치"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Совпадения: агенты — %1$lld из %2$lld, ключи доступа — %3$lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "匹配 %2$lld 个智能体中的 %1$lld 个和 %3$lld 个访问密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "匹配 %2$lld 個智能體中的 %1$lld 個和 %3$lld 個訪問密鑰"
+          }
+        }
+      }
+    },
+    "Matches none of this Mac's agents or access keys" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passt zu keinem Agenten oder Zugriffsschlüssel dieses Macs"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac의 에이전트나 액세스 키와 일치하지 않음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не соответствует ни одному агенту или ключу доступа этого Mac"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "与这台 Mac 的智能体或访问密钥均不匹配"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "與這台 Mac 的智能體或訪問密鑰均不匹配"
+          }
+        }
+      }
+    },
     "No nearby Macs sharing models" : {
       "localizations" : {
         "de" : {
@@ -81,6 +421,142 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "附近没有正在共享模型的 Mac"
+          }
+        }
+      }
+    },
+    "No previous identities on this Mac" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine früheren Identitäten auf diesem Mac"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에 이전 ID가 없습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На этом Mac нет предыдущих идентификаторов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 上没有以前的身份"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這台 Mac 上沒有以前的身份"
+          }
+        }
+      }
+    },
+    "Osaurus keeps a copy of each identity it creates, restores or reads on this Mac. Identities replaced before this version, or never used here, can only come back with their recovery phrase." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus behält eine Kopie jeder Identität, die es auf diesem Mac erstellt, wiederherstellt oder liest. Identitäten, die vor dieser Version ersetzt oder hier nie verwendet wurden, lassen sich nur mit ihrer Wiederherstellungsphrase zurückholen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus는 이 Mac에서 만들거나 복원하거나 읽은 모든 ID의 사본을 보관합니다. 이 버전 이전에 대체되었거나 여기에서 사용된 적 없는 ID는 복구 구문으로만 되돌릴 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus сохраняет копию каждого идентификатора, который он создаёт, восстанавливает или считывает на этом Mac. Идентификаторы, заменённые до этой версии или никогда не использовавшиеся здесь, можно вернуть только с помощью фразы восстановления."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 会保留它在这台 Mac 上创建、恢复或读取的每个身份的副本。在此版本之前被替换、或从未在这里使用过的身份，只能通过恢复助记词找回。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 會保留它在這台 Mac 上建立、恢復或讀取的每個身份的副本。在此版本之前被取代、或從未在這裡使用過的身份，只能透過恢復助記詞找回。"
+          }
+        }
+      }
+    },
+    "Previous Identities" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Frühere Identitäten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 ID"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предыдущие идентификаторы"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以前的身份"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以前的身份"
+          }
+        }
+      }
+    },
+    "Restored on this Mac" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf diesem Mac wiederhergestellt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에서 복원됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановлен на этом Mac"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在这台 Mac 上恢复"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在這台 Mac 上恢復"
           }
         }
       }
@@ -389,6 +865,176 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "由此网络上的 %@ 共享。"
+          }
+        }
+      }
+    },
+    "Switch" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wechseln"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전환"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переключить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切换"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切換"
+          }
+        }
+      }
+    },
+    "Switch back" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zurückwechseln"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다시 전환"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вернуться"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切换回去"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切換回去"
+          }
+        }
+      }
+    },
+    "Switch Identity?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Identität wechseln?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ID를 전환할까요?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сменить идентификатор?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切换身份？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切換身份？"
+          }
+        }
+      }
+    },
+    "Switch to a Previous Identity" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zu einer früheren Identität wechseln"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 ID로 전환"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переключиться на предыдущий идентификатор"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切换到以前的身份"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切換到以前的身份"
+          }
+        }
+      }
+    },
+    "Switching replaces the identity on every Mac signed in to this iCloud Keychain. Agents that don't match the identity you pick get new addresses, and access keys it didn't sign are revoked." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beim Wechseln wird die Identität auf jedem Mac ersetzt, der bei diesem iCloud-Schlüsselbund angemeldet ist. Agenten, die nicht zur gewählten Identität passen, erhalten neue Adressen, und Zugriffsschlüssel, die sie nicht signiert hat, werden widerrufen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전환하면 이 iCloud 키체인에 로그인된 모든 Mac의 ID가 대체됩니다. 선택한 ID와 일치하지 않는 에이전트는 새 주소를 받고, 해당 ID가 서명하지 않은 액세스 키는 취소됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переключение заменяет идентификатор на каждом Mac, подключённом к этой Связке ключей iCloud. Агенты, не соответствующие выбранному идентификатору, получат новые адреса, а ключи доступа, которые он не подписывал, будут отозваны."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切换会替换所有登录此 iCloud 钥匙串的 Mac 上的身份。与所选身份不匹配的智能体会获得新地址，未由该身份签名的访问密钥将被撤销。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切換會取代所有登入此 iCloud 鑰匙串的 Mac 上的身份。與所選身份不匹配的智能體會獲得新地址，未由該身份簽名的訪問密鑰將被撤銷。"
           }
         }
       }
@@ -809,6 +1455,142 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "从 %@ 复制时无法连接 Hugging Face，因此文件仅与该 Mac 的列表核对过。“修复”会与 Hugging Face 核对。"
+          }
+        }
+      }
+    },
+    "This deletes your signature, every agent's derived address, and every access key. Onboarding will start over. The backup in your iCloud Keychain will also be removed. A copy stays in Previous Identities on this Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dies löscht deine Signatur, die abgeleitete Adresse jedes Agenten und jeden Zugriffsschlüssel. Das Onboarding beginnt von vorne. Das Backup in deinem iCloud-Schlüsselbund wird ebenfalls entfernt. Eine Kopie bleibt unter „Frühere Identitäten“ auf diesem Mac."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서명, 모든 에이전트의 파생 주소 및 모든 액세스 키가 삭제됩니다. 시작하기가 처음부터 다시 시작됩니다. iCloud 키체인의 백업도 제거됩니다. 사본은 이 Mac의 이전 ID에 남아 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При этом будет удалена ваша подпись, производный адрес каждого агента и каждый ключ доступа. Регистрация начнется заново. Резервная копия в вашей Связке ключей iCloud также будет удалена. Копия останется в разделе «Предыдущие идентификаторы» на этом Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将删除你的签名、每个智能体派生的地址以及每个访问密钥。初始设置将重新开始。你 iCloud 钥匙串中的备份也将被移除。副本会保留在这台 Mac 的“以前的身份”中。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這將刪除你的籤名、每個智能體派生的地址以及每個訪問密鑰。初始設置將重新開始。你 iCloud 鑰匙串中的備份也將被移除。副本會保留在這台 Mac 的「以前的身份」中。"
+          }
+        }
+      }
+    },
+    "This Mac's copy is deleted. Without its recovery phrase you can't switch back to it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Kopie auf diesem Mac wird gelöscht. Ohne ihre Wiederherstellungsphrase kannst du nicht zu ihr zurückwechseln."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac의 사본이 삭제됩니다. 복구 구문이 없으면 이 ID로 다시 전환할 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Копия на этом Mac будет удалена. Без фразы восстановления вернуться к этому идентификатору будет невозможно."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 上的副本将被删除。没有其恢复助记词，你将无法切换回该身份。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這台 Mac 上的副本將被刪除。沒有其恢復助記詞，你將無法切換回該身份。"
+          }
+        }
+      }
+    },
+    "Unlock to compare" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zum Vergleichen entsperren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "잠금 해제하여 비교"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разблокировать для сравнения"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "解锁以比较"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "解鎖以比較"
+          }
+        }
+      }
+    },
+    "Use a previous identity" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Frühere Identität verwenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 ID 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать предыдущий идентификатор"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用以前的身份"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用以前的身份"
           }
         }
       }
@@ -2030,6 +2812,40 @@
     },
     "What does the Pairing Screen in the Osaurus app on your iPhone or iPad show?" : {
 
+    },
+    "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. A copy stays in Previous Identities on this Mac. Onboarding will start over." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Löscht deine Signatur, jede Agentenadresse und jeden Zugriffsschlüssel, einschließlich des Backups in deinem iCloud-Schlüsselbund. Eine Kopie bleibt unter „Frühere Identitäten“ auf diesem Mac. Das Onboarding beginnt von vorne."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 키체인의 백업을 포함하여 서명, 모든 에이전트 주소 및 모든 액세스 키를 지웁니다. 사본은 이 Mac의 이전 ID에 남아 있습니다. 시작하기가 다시 시작됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаляет вашу подпись, каждый адрес агента и каждый ключ доступа, включая резервную копию в вашей Связке ключей iCloud. Копия останется в разделе «Предыдущие идентификаторы» на этом Mac. Регистрация начнется заново."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除你的签名、每个智能体地址和每个访问密钥，包括你 iCloud 钥匙串中的备份。副本会保留在这台 Mac 的“以前的身份”中。初始设置将重新开始。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除你的籤名、每個智能體地址和每個訪問密鑰，包括你 iCloud 鑰匙串中的備份。副本會保留在這台 Mac 的「以前的身份」中。初始設置將重新開始。"
+          }
+        }
+      }
     },
     "With 1.0, every device keeps its own copy of your chats, so they open even when the Mac sleeps." : {
 
@@ -106809,7 +107625,38 @@
       }
     },
     "Current" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktuell"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "현재"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Текущий"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前"
+          }
+        }
+      }
     },
     "Current Agent" : {
       "extractionState" : "stale",
@@ -225136,7 +225983,38 @@
       }
     },
     "On This Mac" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf diesem Mac"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에서"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На этом Mac"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在这台 Mac 上"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在這台 Mac 上"
+          }
+        }
+      }
     },
     "On this Mac · %d tok/s" : {
       "extractionState" : "manual",
@@ -357469,40 +358347,6 @@
         }
       }
     },
-    "This deletes your signature, every agent's derived address, and every access key. Onboarding will start over. The backup in your iCloud Keychain will also be removed." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dies löscht deine Signatur, die abgeleitete Adresse jedes Agenten und jeden Zugriffsschlüssel. Das Onboarding beginnt von vorne. Das Backup in deinem iCloud-Schlüsselbund wird ebenfalls entfernt."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "서명, 모든 에이전트의 파생 주소 및 모든 액세스 키가 삭제됩니다. 시작하기가 처음부터 다시 시작됩니다. iCloud 키체인의 백업도 제거됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "При этом будет удалена ваша подпись, производный адрес каждого агента и каждый ключ доступа. Регистрация начнется заново. Резервная копия в вашей Связке ключей iCloud также будет удалена."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这将删除你的签名、每个智能体派生的地址以及每个访问密钥。初始设置将重新开始。你 iCloud 钥匙串中的备份也将被移除。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "這將刪除你的籤名、每個智能體派生的地址以及每個訪問密鑰。初始設置將重新開始。你 iCloud 鑰匙串中的備份也將被移除。"
-          }
-        }
-      }
-    },
     "This draft is no longer available. Start a new agent from Agents." : {
 
     },
@@ -393358,40 +394202,6 @@
     },
     "Windows PC" : {
 
-    },
-    "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. Onboarding will start over." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Löscht deine Signatur, jede Agentenadresse und jeden Zugriffsschlüssel, einschließlich des Backups in deinem iCloud-Schlüsselbund. Das Onboarding beginnt von vorne."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iCloud 키체인의 백업을 포함하여 서명, 모든 에이전트 주소 및 모든 액세스 키를 지웁니다. 시작하기가 다시 시작됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Удаляет вашу подпись, каждый адрес агента и каждый ключ доступа, включая резервную копию в вашей Связке ключей iCloud. Регистрация начнется заново."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "清除你的签名、每个智能体地址和每个访问密钥，包括你 iCloud 钥匙串中的备份。初始设置将重新开始。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "清除你的籤名、每個智能體地址和每個訪問密鑰，包括你 iCloud 鑰匙串中的備份。初始設置將重新開始。"
-          }
-        }
-      }
     },
     "Wiping the macOS Keychain or migrating to a new Mac without iCloud Keychain sync makes encrypted storage unrecoverable. Take a plaintext backup first if you need to migrate." : {
       "extractionState" : "stale",
