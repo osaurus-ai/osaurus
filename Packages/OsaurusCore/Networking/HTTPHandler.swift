@@ -341,6 +341,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// Sync, also once an iPhone has joined it, so an iPhone still on Classic can pair.
     private let pairingRetiredProvider: @Sendable () -> Bool
 
+    /// The crypto address of a local agent, for the `X-Osaurus-Agent-Id`
+    /// check. Injectable because `AgentManager` rewrites the shared
+    /// registry whenever any agent is added or removed.
+    private let agentAddressProvider: @Sendable (UUID) -> String?
+
     private func localKeyRequired(for normalizedPath: String) -> Bool {
         LocalAPIKeyPolicy.isProtectedRoute(normalizedPath) && localKeyRequiredProvider()
     }
@@ -355,7 +360,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         responseEncryptor: SecureChannelResponseEncryptor? = nil,
         peerInferenceSharingProvider: @escaping @Sendable () -> Bool = { PeerInferenceSharing.isEnabled() },
         localKeyRequiredProvider: @escaping @Sendable () -> Bool = { LocalAPIKeyPolicy.isEnabled() },
-        pairingRetiredProvider: @escaping @Sendable () -> Bool = { false }
+        pairingRetiredProvider: @escaping @Sendable () -> Bool = { false },
+        agentAddressProvider: @escaping @Sendable (UUID) -> String? = {
+            AgentIdentityRegistry.shared.address(forAgentId: $0)
+        }
     ) {
         self.configuration = configuration
         self.apiKeyValidatorProvider = apiKeyValidatorProvider ?? { apiKeyValidator }
@@ -365,6 +373,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         self.peerInferenceSharingProvider = peerInferenceSharingProvider
         self.localKeyRequiredProvider = localKeyRequiredProvider
         self.pairingRetiredProvider = pairingRetiredProvider
+        self.agentAddressProvider = agentAddressProvider
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
     }
 
@@ -861,7 +870,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     ?? Self.agentHeaderScopeRejection(
                         headerValue: head.headers.first(name: "X-Osaurus-Agent-Id"),
                         authedAudience: stateRef.value.authedAudience,
-                        authedScopeIsMaster: stateRef.value.authedScopeIsMaster
+                        authedScopeIsMaster: stateRef.value.authedScopeIsMaster,
+                        resolveAddress: agentAddressProvider
                     )
                 if let rejection {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -4320,7 +4330,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         headerValue: String?,
         authedAudience: String?,
         authedScopeIsMaster: Bool,
-        resolveAddress: (UUID) -> String? = { AgentIdentityRegistry.shared.address(forAgentId: $0) }
+        resolveAddress: (UUID) -> String?
     ) -> (code: String, message: String)? {
         guard let aud = authedAudience, !authedScopeIsMaster else { return nil }
         guard let raw = headerValue?.trimmingCharacters(in: .whitespaces), !raw.isEmpty,

@@ -595,17 +595,16 @@ struct HTTPAuthGateTests {
     /// rather than the (earlier) `peer_inference_disabled` gate.
     @Test func agentScopedKey_cannotNameAnotherAgentInHeader() async throws {
         let fixture = try Self.agentScopedFixture(workspaceMinted: false)
-        let server = try await startAuthTestServer(validator: fixture.validator, peerInferenceSharing: true)
-        defer { Task { await server.shutdown() } }
-
         let mine = UUID()
         let theirs = UUID()
         let theirAddress = try AgentKey.deriveAddress(masterKey: TestKeys.alicePrivateKey, index: 4)
-        AgentIdentityRegistry.shared.update(
-            addresses: [fixture.agent, theirAddress], indices: [3, 4],
-            addressByAgentId: [mine: fixture.agent, theirs: theirAddress]
+        let addresses = [mine: fixture.agent, theirs: theirAddress]
+        let server = try await startAuthTestServer(
+            validator: fixture.validator,
+            peerInferenceSharing: true,
+            agentAddresses: addresses
         )
-        defer { AgentIdentityRegistry.shared.update(addresses: [], indices: [], addressByAgentId: [:]) }
+        defer { Task { await server.shutdown() } }
 
         func send(agentHeader: String) async throws -> (status: Int, body: String) {
             var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/v1/chat/completions")!)
@@ -979,7 +978,8 @@ private func startAuthTestServer(
     trustLoopback: Bool = false,
     peerInferenceSharing: Bool = false,
     localKeyRequired: Bool = false,
-    allowedOrigins: [String] = []
+    allowedOrigins: [String] = [],
+    agentAddresses: [UUID: String]? = nil
 ) async throws -> AuthTestServer {
     var config = ServerConfiguration.default
     config.allowedOrigins = allowedOrigins
@@ -999,7 +999,13 @@ private func startAuthTestServer(
                             eventLoop: channel.eventLoop,
                             trustLoopback: trustLoopback,
                             peerInferenceSharingProvider: { peerInferenceSharing },
-                            localKeyRequiredProvider: { localKeyRequired }
+                            localKeyRequiredProvider: { localKeyRequired },
+                            agentAddressProvider: { id in
+                                guard let agentAddresses else {
+                                    return AgentIdentityRegistry.shared.address(forAgentId: id)
+                                }
+                                return agentAddresses[id]
+                            }
                         )
                     )
                 }
