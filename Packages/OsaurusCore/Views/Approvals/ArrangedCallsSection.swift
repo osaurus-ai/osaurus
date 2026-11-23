@@ -196,14 +196,24 @@ private struct ArrangedCallRow: View {
             trailing: {
                 HStack(spacing: theme.space.s8) {
                     StatusChip(chip.text, tone: chip.tone, showsDot: status == .ringing, pulses: status == .ringing)
-                    SettingsButton(.secondary, "Open Chat", isLoading: openingChat, size: .compact) {
+                    // The spinner in place of the label, inside the button and at its width, while the chat is
+                    // found.
+                    Button {
                         guard !openingChat else { return }
                         openingChat = true
                         Task {
                             await TaskControl.openChatNow(grant.sessionId, agentId: grant.agentId)
                             openingChat = false
                         }
+                    } label: {
+                        Text("Open Chat", bundle: .module)
+                            .opacity(openingChat ? 0 : 1)
+                            .overlay {
+                                if openingChat { SettingsSpinner(size: .mini) }
+                            }
                     }
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
+                    .accessibilityLabel(Text("Open Chat", bundle: .module))
                     if isComing {
                         SettingsButton(.destructive, "Cancel Call", size: .compact) {
                             confirmingCancel = true
