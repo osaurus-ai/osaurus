@@ -25,6 +25,7 @@ enum OsaurusMain {
             print("OSAURUS_SPAWN_OK")
             exit(0)
         }
+        SingleInstanceGuard.exitIfAlreadyRunning()
         // Writes to a peer-closed socket or pipe (a local HTTP client
         // disconnecting mid-response, a plugin process exiting with
         // stdio still open) raise SIGPIPE, which terminates the process

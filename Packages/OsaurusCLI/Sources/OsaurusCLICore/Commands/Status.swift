@@ -2,7 +2,8 @@
 //  Status.swift
 //  osaurus
 //
-//  Command to check if the Osaurus server is currently running and healthy.
+//  Command to report whether the Osaurus server is answering. A running app
+//  whose server does not answer is reported separately from a stopped one.
 //
 
 import Foundation
@@ -10,30 +11,33 @@ import Foundation
 public struct StatusCommand: Command {
     public static let name = "status"
 
+    static let usage = """
+        Usage: osaurus status
+
+        Prints `running (port N)`, `app running, server not answering (port N)` or `stopped`.
+        Exits 0 only when the server answers.
+        """
+
+    static func describe(_ state: ServerState, port: Int) -> String {
+        switch state {
+        case .healthy: return "running (port \(port))"
+        case .appRunningNotAnswering: return "app running, server not answering (port \(port))"
+        case .appNotRunning: return "stopped"
+        }
+    }
+
     public static func execute(args: [String]) async {
+        if args.contains("--help") || args.contains("-h") {
+            print(usage)
+            exit(EXIT_SUCCESS)
+        }
+        if let unknown = args.first {
+            fputs("osaurus status: unknown argument `\(unknown)`\n\n\(usage)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
         let port = Configuration.resolveConfiguredPort() ?? 1337
-
-        guard let url = URL(string: "http://127.0.0.1:\(port)/health") else {
-            fputs("Invalid URL for health check\n", stderr)
-            exit(EXIT_FAILURE)
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 0.6
-
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                print("running (port \(port))")
-                exit(EXIT_SUCCESS)
-            } else {
-                print("stopped")
-                exit(EXIT_FAILURE)
-            }
-        } catch {
-            print("stopped")
-            exit(EXIT_FAILURE)
-        }
+        let state = await ServerControl.probe(port: port)
+        print(describe(state, port: port))
+        exit(state == .healthy ? EXIT_SUCCESS : EXIT_FAILURE)
     }
 }

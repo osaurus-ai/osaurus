@@ -2948,8 +2948,7 @@ extension PluginHostContext {
     /// inspects the resolved IP at the network-layer (see
     /// `URLSessionDelegate.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)`
     /// + a `Network.framework` resolution step). Tracked separately;
-    /// document it under HOST_API.md so plugin authors don't assume
-    /// SSRF is end-to-end.
+    /// SSRF protection here is not end-to-end.
     static func checkSSRF(url: URL) -> String? {
         guard let rawHost = url.host?.lowercased() else { return "Missing host" }
         // URL.host strips the surrounding `[` `]` for IPv6 literals,

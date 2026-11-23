@@ -9,8 +9,8 @@
 //
 //  Security notes:
 //   - The endpoints are loopback-only on the server side; this command
-//     always targets 127.0.0.1. When the server requires a key from local
-//     callers, it is read via `AccessKeyResolver`.
+//     always targets 127.0.0.1 through `LocalServerClient` (access key,
+//     or the token from approving this CLI in the app).
 //   - High-risk applies (prune deletions, screen/browser grants, channel
 //     write enables, new MCP endpoints, ...) are rejected by the server
 //     with the risk list until re-sent with confirmation — the CLI
@@ -82,8 +82,8 @@ public struct ConfigCommand: Command {
         }
 
         let port = await ServerControl.ensureServerReadyOrExit()
-        let response = await request(
-            port: port, path: "/admin/config/export?format=\(format)", body: nil, credential: credential)
+        let client = LocalServerClient(port: port, accessKey: credential, commandLabel: "config")
+        let response = await request(client, path: "/admin/config/export?format=\(format)", body: nil)
         guard let document = response[format] as? String else {
             failFromResponse(response)
         }
@@ -125,8 +125,8 @@ public struct ConfigCommand: Command {
         }
 
         let port = await ServerControl.ensureServerReadyOrExit()
-        let response = await request(
-            port: port, path: "/admin/config/schema?format=\(format)", body: nil, credential: credential)
+        let client = LocalServerClient(port: port, accessKey: credential, commandLabel: "config")
+        let response = await request(client, path: "/admin/config/schema?format=\(format)", body: nil)
         if format == "json" {
             guard let schema = response["json_schema"] as? [String: Any],
                 let data = try? JSONSerialization.data(
@@ -196,10 +196,11 @@ public struct ConfigCommand: Command {
         }
 
         let port = await ServerControl.ensureServerReadyOrExit()
+        let client = LocalServerClient(port: port, accessKey: credential, commandLabel: "config")
         var body: [String: Any] = ["yaml": yaml, "prune": prune]
         if apply && confirm { body["confirm_high_risk"] = true }
         let path = apply ? "/admin/config/apply" : "/admin/config/plan"
-        let response = await request(port: port, path: path, body: body, credential: credential)
+        let response = await request(client, path: path, body: body)
 
         if let error = response["error"] as? [String: Any] {
             if let message = error["message"] as? String { fputs("\(message)\n", stderr) }
@@ -271,44 +272,27 @@ public struct ConfigCommand: Command {
 
     /// GET (nil body) or POST (JSON body) against the loopback admin
     /// endpoint, returning the parsed JSON object. Exits on transport
-    /// errors; HTTP-level errors are returned for the caller to render.
+    /// errors and on a refused credential; other HTTP-level errors are
+    /// returned for the caller to render.
     private static func request(
-        port: Int, path: String, body: [String: Any]?, credential: AccessKeyCredential?
+        _ client: LocalServerClient, path: String, body: [String: Any]?
     ) async -> [String: Any] {
-        guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else {
-            fputs("Invalid URL\n", stderr)
-            exit(EXIT_FAILURE)
-        }
-        var request = URLRequest(url: url)
-        if let credential {
-            request.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
-        }
-        if let body {
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        } else {
-            request.httpMethod = "GET"
-        }
         // Apply can start downloads and open in-app credential sheets that
         // wait on the user; keep a generous ceiling.
-        request.timeoutInterval = 600
+        let request =
+            body.map { client.jsonRequest(path, body: $0, timeout: 600) }
+            ?? client.request(path, timeout: 600)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if (response as? HTTPURLResponse)?.statusCode == 401 {
+            let (data, response) = try await client.data(for: request)
+            if response.statusCode == 401 {
                 let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                if let message = (object?["error"] as? [String: Any])?["message"] as? String {
+                if client.accessKey != nil,
+                    let message = (object?["error"] as? [String: Any])?["message"] as? String
+                {
                     fputs("\(message)\n", stderr)
                 }
-                if let credential {
-                    fputs("The access key from \(credential.source) was rejected.\n", stderr)
-                } else {
-                    fputs(
-                        "This server requires an access key. Pass --access-key KEY or set OSAURUS_API_KEY.\n",
-                        stderr)
-                }
-                exit(EXIT_FAILURE)
+                client.exitUnauthorized()
             }
             guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else {
@@ -359,9 +343,10 @@ public struct ConfigCommand: Command {
             Documents are merge-by-default: keys absent from the document are left
             unchanged; explicit null clears an override. Entities match by name.
 
-            Access key: when Server > Authentication > Require Access Key for Local
-            Admin Routes (or network exposure) is on, pass --access-key KEY or set
-            OSAURUS_API_KEY (also OSAURUS_ACCESS_KEY, OSAURUS_MCP_ACCESS_KEY).
+            Access: the first time Osaurus asks for a key, it shows an approval
+            prompt on this Mac; click Allow and later commands work without one.
+            Scripts can pass --access-key KEY or set OSAURUS_API_KEY (also
+            OSAURUS_ACCESS_KEY, OSAURUS_MCP_ACCESS_KEY) instead.
 
             Exit codes (apply): 0 = fully applied; 1 = a change failed or was
             cancelled; 3 = applied, but a step must be finished in the Osaurus

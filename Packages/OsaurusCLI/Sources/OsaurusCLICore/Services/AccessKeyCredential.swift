@@ -3,15 +3,15 @@
 //  osaurus
 //
 //  Access-key lookup shared by CLI commands that call the local server
-//  (`osaurus mcp`, `osaurus config`): a `--access-key` style option first,
-//  then the documented environment variables.
+//  (through `LocalServerClient`): a `--access-key` style option first, then
+//  the documented environment variables.
 //
 
 import Foundation
 
-struct AccessKeyCredential: Equatable {
-    let token: String
-    let source: String
+public struct AccessKeyCredential: Equatable, Sendable {
+    public let token: String
+    public let source: String
 }
 
 enum AccessKeyResolver {

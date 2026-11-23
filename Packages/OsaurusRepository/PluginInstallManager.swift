@@ -187,8 +187,8 @@ public final class PluginInstallManager: @unchecked Sendable {
         }
         try FileManager.default.copyItem(at: dylibURL, to: finalDylibURL)
 
-        // Copy the static web UI directory when the artifact bundles one
-        // (docs/plugins/PACKAGING.md promises `web/` survives the install).
+        // Copy the static web UI directory when the artifact bundles one;
+        // packaged plugins rely on `web/` surviving the install.
         if let webDir = Self.findWebDirectory(in: tmpDir, near: dylibURL) {
             let destWebDir = installDir.appendingPathComponent(webDir.lastPathComponent, isDirectory: true)
             if FileManager.default.fileExists(atPath: destWebDir.path) {
@@ -548,8 +548,8 @@ public final class PluginInstallManager: @unchecked Sendable {
     }
 
     /// Public facade over the bounded in-process ZIP extractor so other
-    /// install surfaces (e.g. the CLI's manual `tools install`) share the
-    /// same hardened extraction instead of shelling out to /usr/bin/unzip.
+    /// install surfaces share the same hardened extraction instead of
+    /// shelling out to /usr/bin/unzip.
     public static func extractPluginArchive(at archive: URL, to destination: URL) throws {
         do {
             try BoundedArchiveExtractor.extract(archive: archive, to: destination, policy: .plugin)
@@ -634,7 +634,7 @@ public final class PluginInstallManager: @unchecked Sendable {
     }
 
     /// Locates the artifact's static web UI directory (`web/`, the name
-    /// `osaurus tools package` bundles and PACKAGING.md documents). Prefers a
+    /// packaged plugin artifacts use). Prefers a
     /// `web/` sibling of the dylib, then falls back to a top-level `web/`
     /// under the extraction root (archives may nest payloads one level deep).
     static func findWebDirectory(in directory: URL, near dylibURL: URL?) -> URL? {

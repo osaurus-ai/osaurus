@@ -560,6 +560,18 @@ public enum SettingsSearchIndex {
             keywords: ["cli", "install cli", "terminal", "symlink", "install", "command line", "osaurus cli"]
         ),
         .init(
+            id: "server.cliAccess",
+            tab: .server,
+            section: "Overview",
+            title: "Command-Line Tool Access",
+            keywords: [
+                "cli access", "cli approval", "allow cli", "revoke cli", "cli token", "cli 401",
+                "osaurus list unauthorized", "terminal access", "command line access",
+            ],
+            disambiguation:
+                "Whether the osaurus command was allowed to call this server without an access key, with Revoke. Not installing the command (Command Line Tool) and not the access key list."
+        ),
+        .init(
             id: "settings.general.reset",
             tab: .settings,
             section: "Danger Zone",

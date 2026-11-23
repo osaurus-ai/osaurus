@@ -103,41 +103,33 @@ public struct ShowCommand: Command {
 
     // MARK: - Execute
 
+    static let usage = """
+        Usage: osaurus show <model_id> [--access-key KEY]
+
+        Shows metadata for a model: family, size, quantization, context length and more.
+        """
+
     public static func execute(args: [String]) async {
-        guard let modelArg = args.first, !modelArg.isEmpty else {
-            fputs("Missing required <model_id>\n", stderr)
-            fputs("Usage: osaurus show <model_id>\n", stderr)
+        if args.contains("--help") || args.contains("-h") {
+            print(usage)
+            exit(EXIT_SUCCESS)
+        }
+        let rest = AccessKeyResolver.removingAccessKeyOptions(from: args)
+        guard let modelArg = rest.first, !modelArg.isEmpty, !modelArg.hasPrefix("-") else {
+            fputs("Missing required <model_id>\n\n\(usage)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        if rest.count > 1 {
+            fputs("osaurus show: unknown argument `\(rest[1])`\n\n\(usage)\n", stderr)
             exit(EXIT_FAILURE)
         }
 
-        let port = await ServerControl.ensureServerReadyOrExit()
-
-        guard let url = URL(string: "http://127.0.0.1:\(port)/api/show") else {
-            fputs("Invalid URL for show endpoint\n", stderr)
-            exit(EXIT_FAILURE)
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 10.0
-
-        // Build request body
-        let body: [String: String] = ["name": modelArg]
-        do {
-            request.httpBody = try JSONEncoder().encode(body)
-        } catch {
-            fputs("Failed to encode request: \(error.localizedDescription)\n", stderr)
-            exit(EXIT_FAILURE)
-        }
+        let client = await LocalServerClient.connect(command: "show", args: args)
+        let request = client.jsonRequest("/api/show", body: ["name": modelArg], timeout: 10)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                fputs("Invalid response from server\n", stderr)
-                exit(EXIT_FAILURE)
-            }
+            let (data, http) = try await client.data(for: request)
+            if http.statusCode == 401 { client.exitUnauthorized() }
 
             if http.statusCode != 200 {
                 // Try to parse error message

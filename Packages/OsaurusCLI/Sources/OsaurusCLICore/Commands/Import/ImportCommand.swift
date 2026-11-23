@@ -121,9 +121,9 @@ public struct ImportEnvironment: Sendable {
 
     public static let live = live(accessKey: nil)
 
-    /// `accessKey` is sent as a Bearer token, for when Require Access Key
-    /// for Local Admin Routes is on.
-    public static func live(accessKey: String?) -> ImportEnvironment {
+    /// Requests go through `LocalServerClient`: `accessKey` when given,
+    /// otherwise the token from approving this CLI in the app.
+    public static func live(accessKey: AccessKeyCredential?) -> ImportEnvironment {
         ImportEnvironment(
             userId: { getuid() },
             appVersion: { CLIVersionResolver.resolve().version },
@@ -134,18 +134,23 @@ public struct ImportEnvironment: Sendable {
                 return ImportCommand.keychainItemExists(ref)
             },
             port: { Configuration.resolveConfiguredPort() ?? 1337 },
-            isAppRunning: { await ServerControl.checkHealth(port: $0) },
+            isAppRunning: { port in
+                // A busy app gets time to answer rather than having the
+                // import queued behind its back.
+                switch await ServerControl.probe(port: port) {
+                case .healthy: return true
+                case .appRunningNotAnswering: return await ServerControl.waitForHealth(port: port, seconds: 8)
+                case .appNotRunning: return false
+                }
+            },
             post: { port, path, body in
-                guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                if let accessKey { request.setValue("Bearer \(accessKey)", forHTTPHeaderField: "Authorization") }
-                request.httpBody = body
+                let client = LocalServerClient(port: port, accessKey: accessKey, commandLabel: "import")
                 // Applying waits for new MCP servers to connect.
-                request.timeoutInterval = 600
-                guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
-                return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
+                var request = client.request(path, method: "POST", timeout: 600)
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = body
+                guard let (data, response) = try? await client.data(for: request) else { return nil }
+                return (response.statusCode, data)
             },
             executableOnPath: { ImportCommand.executableOnPath($0) }
         )
@@ -171,7 +176,7 @@ public struct ImportCommand: Command {
             printUsage()
             exit(EXIT_SUCCESS)
         }
-        let report = await run(invocation, environment: .live(accessKey: credential?.token))
+        let report = await run(invocation, environment: .live(accessKey: credential))
         if invocation.json {
             print(renderJSON(report))
         } else {
@@ -438,8 +443,9 @@ public struct ImportCommand: Command {
             let response = await environment.post(port, "/admin/import/plan", data)
             if let response, let refusal = keyRefusal(response) {
                 report.warnings.append(
-                    "\(refusal) Agent and server entries were only checked for shape; pass --access-key KEY "
-                        + "or set OSAURUS_API_KEY for the full check.")
+                    "\(refusal) Agent and server entries were only checked for shape. For the full check, "
+                        + "run `osaurus list` in Terminal once and click Allow in Osaurus, or pass "
+                        + "--access-key KEY (or set OSAURUS_API_KEY).")
             } else if let response,
                 let object = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
             {
@@ -657,8 +663,9 @@ public struct ImportCommand: Command {
             report.state = "queued"
             report.exitCode = 0
             report.warnings.append(
-                "\(refusal) The import applies the next time Osaurus opens; to apply it now, pass "
-                    + "--access-key KEY or set OSAURUS_API_KEY.")
+                "\(refusal) The import applies the next time Osaurus opens. To apply it now, run "
+                    + "`osaurus list` in Terminal once and click Allow in Osaurus, or pass --access-key KEY "
+                    + "(or set OSAURUS_API_KEY).")
             return report
         }
         let object = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
@@ -673,13 +680,13 @@ public struct ImportCommand: Command {
 
     // MARK: Helpers
 
-    /// The running app turned the call away for want of an accepted access
-    /// key (Require Access Key for Local Admin Routes is on).
+    /// The running app turned the call away for want of an accepted
+    /// credential (an access key, or approval of this CLI).
     static func keyRefusal(_ response: (status: Int, body: Data)) -> String? {
         guard response.status == 401 || response.status == 403 else { return nil }
         let object = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
         let message = (object?["error"] as? [String: Any])?["message"] as? String
-        return "Osaurus did not accept the access key for /admin/import (HTTP \(response.status)"
+        return "Osaurus did not accept this command-line tool for /admin/import (HTTP \(response.status)"
             + (message.map { ": \($0)" } ?? "") + ")."
     }
 
@@ -829,9 +836,10 @@ public struct ImportCommand: Command {
                                       or all. Existing teammates are never removed.
 
             Options:
-              --access-key <key>      Access key for a running Osaurus that has Require Access
-                                      Key for Local Admin Routes on (or set OSAURUS_API_KEY).
-                                      Without one the import is queued for the next launch.
+              --access-key <key>      Access key for a running Osaurus that asks for one (or
+                                      set OSAURUS_API_KEY). Not needed once this command-line
+                                      tool is approved in Osaurus; without either, the import
+                                      is queued for the next launch.
 
             A bundle is a folder with osaurus-bundle.json. Changes are queued in
             ~/.osaurus/import/ and applied the next time Osaurus opens, or right away

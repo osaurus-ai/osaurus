@@ -11,54 +11,32 @@ import OsaurusCLICore
 @main
 struct OsaurusCLI {
     private enum CommandType {
-        case status
-        case doctor([String])
-        case serve([String])
-        case stop
-        case list
-        case show(String)
-        case run(String)
-        case pull(String)
-        case bench([String])
-        case mcp([String])
-        case ui
-        case tools([String])
-        case manifest([String])
-        case bundle([String])
-        case coord([String])
-        case config([String])
-        case importCmd([String])
-        case version
+        case status, doctor, serve, stop, list, show, run, pull, bench, mcp, ui
+        case bundle, coord, config, importCmd, version, workflow, agent
+        case removed(String)
         case help
     }
 
-    private static func parseCommand(_ args: ArraySlice<String>) -> CommandType? {
-        guard let command = args.first else { return nil }
-        let rest = Array(args.dropFirst())
+    private static func parseCommand(_ command: String) -> CommandType? {
         switch command {
         case "status": return .status
-        case "doctor": return .doctor(rest)
-        case "serve": return .serve(rest)
+        case "doctor": return .doctor
+        case "serve": return .serve
         case "stop": return .stop
         case "list": return .list
-        case "show":
-            if let modelId = rest.first, !modelId.isEmpty { return .show(modelId) }
-            return nil
-        case "run":
-            if let modelId = rest.first, !modelId.isEmpty { return .run(modelId) }
-            return nil
-        case "pull":
-            if let modelId = rest.first, !modelId.isEmpty { return .pull(modelId) }
-            return nil
-        case "bench": return .bench(rest)
-        case "mcp": return .mcp(rest)
+        case "show": return .show
+        case "run": return .run
+        case "pull": return .pull
+        case "bench": return .bench
+        case "mcp": return .mcp
         case "ui": return .ui
-        case "tools": return .tools(rest)
-        case "manifest": return .manifest(rest)
-        case "bundle": return .bundle(rest)
-        case "coord": return .coord(rest)
-        case "config": return .config(rest)
-        case "import": return .importCmd(rest)
+        case "tools", "manifest": return .removed(command)
+        case "bundle": return .bundle
+        case "coord": return .coord
+        case "config": return .config
+        case "import": return .importCmd
+        case "workflow", "workflows": return .workflow
+        case "agent", "agents": return .agent
         case "version", "--version", "-v": return .version
         case "help", "-h", "--help": return .help
         default: return nil
@@ -66,50 +44,36 @@ struct OsaurusCLI {
     }
 
     static func main() async {
-        let arguments = CommandLine.arguments.dropFirst()
-        guard let cmd = parseCommand(arguments) else {
-            if let first = arguments.first { fputs("Unknown or invalid command: \(first)\n\n", stderr) }
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        guard let first = arguments.first, let cmd = parseCommand(first) else {
+            if let first = arguments.first { fputs("Unknown command: \(first)\n\n", stderr) }
             printUsage()
             exit(EXIT_FAILURE)
         }
+        let args = Array(arguments.dropFirst())
 
         switch cmd {
-        case .status:
-            await StatusCommand.execute(args: [])
-        case .doctor(let args):
-            await DoctorCommand.execute(args: args)
-        case .serve(let args):
-            await ServeCommand.execute(args: args)
-        case .stop:
-            await StopCommand.execute(args: [])
-        case .list:
-            await ListCommand.execute(args: [])
-        case .show(let modelId):
-            await ShowCommand.execute(args: [modelId])
-        case .run(let modelId):
-            await RunCommand.execute(args: [modelId])
-        case .pull(let modelId):
-            await PullCommand.execute(args: [modelId])
-        case .bench(let args):
-            await BenchCommand.execute(args: args)
-        case .mcp(let args):
-            await MCPCommand.execute(args: args)
-        case .ui:
-            await UICommand.execute(args: [])
-        case .tools(let args):
-            await ToolsCommand.execute(args: args)
-        case .manifest(let args):
-            await ManifestCommand.execute(args: args)
-        case .bundle(let args):
-            await BundleCommand.execute(args: args)
-        case .coord(let args):
-            await CoordCommand.execute(args: args)
-        case .config(let args):
-            await ConfigCommand.execute(args: args)
-        case .importCmd(let args):
-            await ImportCommand.execute(args: args)
-        case .version:
-            await VersionCommand.execute(args: [])
+        case .status: await StatusCommand.execute(args: args)
+        case .doctor: await DoctorCommand.execute(args: args)
+        case .serve: await ServeCommand.execute(args: args)
+        case .stop: await StopCommand.execute(args: args)
+        case .list: await ListCommand.execute(args: args)
+        case .show: await ShowCommand.execute(args: args)
+        case .run: await RunCommand.execute(args: args)
+        case .pull: await PullCommand.execute(args: args)
+        case .bench: await BenchCommand.execute(args: args)
+        case .mcp: await MCPCommand.execute(args: args)
+        case .ui: await UICommand.execute(args: args)
+        case .removed(let command):
+            fputs("osaurus \(command): plugin commands were removed; Osaurus no longer supports plugins.\n", stderr)
+            exit(EXIT_FAILURE)
+        case .bundle: await BundleCommand.execute(args: args)
+        case .coord: await CoordCommand.execute(args: args)
+        case .config: await ConfigCommand.execute(args: args)
+        case .importCmd: await ImportCommand.execute(args: args)
+        case .version: await VersionCommand.execute(args: args)
+        case .workflow: await WorkflowCommand.execute(args: args)
+        case .agent: await AgentCommand.execute(args: args)
         case .help:
             printUsage()
             exit(EXIT_SUCCESS)
@@ -121,76 +85,59 @@ struct OsaurusCLI {
             osaurus - CLI for Osaurus
 
             Usage:
-              osaurus serve [--port N] [--expose] [--yes|-y] [--supervise] [--interval N]
-                                      Start the server (default: localhost only). If --expose
-                                      is set, a warning prompt will appear unless --yes is provided.
-                                      With --supervise, run a long-lived keep-alive loop that
-                                      relaunches the server whenever it goes down (probe every
-                                      --interval seconds, default 15) — intended to run under a
-                                      launchd KeepAlive LaunchAgent so the server survives quit.
+              osaurus serve [--port N] [--expose | --no-expose] [--yes|-y] [--supervise] [--interval N]
+                                      Start the server. Exposure stays as saved in Settings
+                                      unless --expose (LAN, asks to confirm unless --yes) or
+                                      --no-expose (this Mac only) is given. --supervise keeps
+                                      it running (probe every --interval seconds, default 15),
+                                      for a launchd KeepAlive LaunchAgent.
               osaurus stop            Stop the server
-              osaurus mcp [--access-key KEY]
-                                      Run MCP stdio server proxying to local HTTP. When
-                                      server network exposure is enabled, provide an
-                                      access key here or via OSAURUS_MCP_ACCESS_KEY.
-              osaurus version         Show version (also: --version or -v)
               osaurus status          Check if the Osaurus server is running
+              osaurus ui              Show the Osaurus menu popover in the menu bar
               osaurus doctor [--port N] [--json] [--redact] [--verify-signatures]
-                                      Diagnose CLI/app version skew, duplicate app
-                                      bundles, server startup, and model storage.
-                                      Signature checks are explicit because they can
-                                      be slow when many app bundles are installed.
+                                      Diagnose CLI/app version skew, duplicate app bundles
+                                      and running copies, server startup and model storage
+              osaurus version         Show version (also: --version or -v)
+
+            Models:
               osaurus list            List available model IDs
               osaurus show <model_id> Show metadata for a model
-              osaurus pull <model_id> Download a model from Hugging Face
-              osaurus run <model_id>  Chat with a downloaded model (interactive)
+              osaurus pull <model_id> Download a model from Hugging Face (HF_TOKEN for gated models)
+              osaurus run <model_id>  Chat with a model (interactive)
               osaurus bench [--model <id>] [--prompt-tokens 1024,8192] [--runs 3] [--json <path>]
-                                      Benchmark TTFT / prefill / decode against the
-                                      running server; emits JSON tagged with hardware info
-              osaurus ui              Show the Osaurus menu popover in the menu bar
-              osaurus tools list      List installed tools
-              osaurus tools install <plugin_id|url-or-path>
-                                      Install a tool from registry or local/URL
-              osaurus tools search <query>
-                                      Search for tools in the registry
-              osaurus tools outdated  Check for outdated tools
-              osaurus tools upgrade   Upgrade installed tools
-              osaurus tools uninstall <tool_name>
-                                      Uninstall a tool
-              osaurus tools verify    Verify dylib integrity of installed tools
-              osaurus tools create <name> [--language swift|rust]
-                                      Scaffold a v2 plugin project
-              osaurus tools package <plugin_id> <version> [dylib_path]
-                                      Package plugin into a zip (includes web/, docs)
-              osaurus tools reload    Ask the app to rescan tools
-              osaurus tools rollback <plugin_id>
-                                      Roll back a tool to its previous version
-              osaurus tools dev <plugin_id> [--web-proxy <url>]
-                                      Dev mode with hot reload and optional web proxy
-              osaurus manifest extract <dylib>
-                                      Extract manifest JSON from built plugin
-              osaurus manifest validate <manifest.json>
-                                      Validate a plugin manifest's structure (run before packaging)
-              osaurus bundle load <path.mcpb> [--name "Display Name"]
-                                      Load and run an MCP Bundle (.mcpb file)
-              osaurus coord <subcommand>
-                                      Local coordinator orchestration foundation
-              osaurus config export [-o file.yaml]
-                                      Export the current Osaurus configuration as YAML
-              osaurus config plan <file.yaml> [--prune]
-                                      Dry-run a declarative YAML document (show the diff)
-              osaurus config apply <file.yaml> [--prune] [--yes]
-                                      Apply a declarative YAML document (--yes confirms
-                                      high-risk changes)
-              osaurus import validate|install|update --from <bundle> [agent|skill|mcp] [name ...]
+                                      Benchmark TTFT / prefill / decode against the server
+
+            Agents and workflows:
+              osaurus agent list      List your agents
+              osaurus agent run <name|id|default> [-p PROMPT] [--session ID] [--json]
+                                      Run an agent headlessly; piped stdin is added to the prompt
+              osaurus workflow list   List workflows
+              osaurus workflow run <name|id> [--input key=value ...] [--no-wait] [--json]
+                                      Run a workflow; forms are answered in the terminal
+              osaurus workflow status|runs|cancel
+                                      Inspect or cancel workflow runs
+
+            MCP:
+              osaurus mcp [--tools PATTERNS] [--workflows PATTERNS]
+                                      Run an MCP stdio server proxying Osaurus tools (and
+                                      workflows) to another AI app
+              osaurus mcp install --client cursor|claude-code|claude-desktop|codex
+                                      Add Osaurus to an MCP client's config (also: uninstall)
+
+            Configuration:
+              osaurus config export|schema|plan|apply
+                                      Export, inspect, dry-run or apply a declarative YAML
+                                      configuration (see `osaurus config help`)
+              osaurus import validate|install|update|remove|list
                                       Install agents, skills and MCP servers from an Osaurus
                                       bundle folder (see `osaurus import help`)
-              osaurus import remove --bundle <id> [name ...] / osaurus import list
-                                      Remove or list what a bundle installed
-              osaurus help            Show this help
 
+            Access: when Expose to Network or Require Access Key for Local Admin
+            Routes is on, the first command run in Terminal asks you to allow it in
+            Osaurus. Scripts can pass --access-key KEY or set OSAURUS_API_KEY.
+
+            Run `osaurus <command> --help` for a command's options.
             Bundle author guide: docs/OSAURUS_BUNDLES.md
-
             """
         print(usage)
     }

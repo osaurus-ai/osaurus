@@ -113,6 +113,103 @@ struct WorkflowHTTPEndpointTests {
         #expect(malformed.0 == 400)
     }
 
+    @Test func localRunRouteAcceptsTheApprovedCLI() async throws {
+        let store = CLIAccessStore(
+            fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("cli-access-\(UUID().uuidString).json"))
+        let token = store.mint(label: "workflow run")
+        let server = try await startWorkflowTestServer(trustLoopback: false, cliAccessStore: store)
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/workflows/\(UUID().uuidString)/run")!)
+        request.httpMethod = "POST"
+        request.httpBody = Data(#"{"text":"hi"}"#.utf8)
+        request.setValue(token, forHTTPHeaderField: CLIAccessStore.headerName)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        #expect((response as? HTTPURLResponse)?.statusCode == 404, "the CLI reaches the route")
+        #expect(String(decoding: data, as: UTF8.self).contains("workflow_not_found"))
+
+        store.revokeAll()
+        let (_, revoked) = try await URLSession.shared.data(for: request)
+        #expect((revoked as? HTTPURLResponse)?.statusCode == 401)
+    }
+
+    // MARK: GET /workflows, GET /workflows/runs, POST /workflows/runs/{id}/cancel
+
+    @Test func workflowListAndRunsAreOwnerOnly() async throws {
+        let exposed = try await startWorkflowTestServer(trustLoopback: false)
+        for path in ["/workflows", "/workflows/runs"] {
+            var request = URLRequest(url: URL(string: "http://\(exposed.host):\(exposed.port)\(path)")!)
+            let (_, anonymous) = try await URLSession.shared.data(for: request)
+            #expect((anonymous as? HTTPURLResponse)?.statusCode == 401, Comment(rawValue: path))
+            request.authenticate()
+            let (_, plaintext) = try await URLSession.shared.data(for: request)
+            #expect((plaintext as? HTTPURLResponse)?.statusCode == 426, Comment(rawValue: path))
+        }
+        await exposed.shutdown()
+
+        let server = try await startWorkflowTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        let (listData, listResponse) = try await URLSession.shared.data(
+            from: URL(string: "http://\(server.host):\(server.port)/workflows")!)
+        #expect((listResponse as? HTTPURLResponse)?.statusCode == 200)
+        let list = try #require(JSONSerialization.jsonObject(with: listData) as? [String: Any])
+        #expect(list["workflows"] is [Any])
+
+        let (missingData, missing) = try await URLSession.shared.data(
+            from: URL(string: "http://\(server.host):\(server.port)/workflows/runs?workflow=nobody-\(UUID().uuidString)")!)
+        #expect((missing as? HTTPURLResponse)?.statusCode == 404)
+        #expect(String(decoding: missingData, as: UTF8.self).contains("workflow_not_found"))
+    }
+
+    @Test func listDescribesHowToStartEachWorkflow() throws {
+        let ready = InstalledWorkflow(template: WF.template(WF.intake(), name: "Ready One"), bindings: InstallBindings())
+        let blocked = InstalledWorkflow(template: WF.template(WF.intake(), name: "Blocked One"), bindings: InstallBindings())
+        let json = WorkflowLocalAPI.listJSON(workflows: [ready, blocked]) { workflow in
+            workflow.id == blocked.id
+                ? SetupReport(
+                    subjectId: workflow.id,
+                    items: [SetupItem(kind: .folder, severity: .blocking, title: "Output", detail: "Pick a folder.", value: "out")])
+                : SetupReport(subjectId: workflow.id, items: [])
+        }
+        let object = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let items = try #require(object["workflows"] as? [[String: Any]])
+        #expect(items.map { $0["name"] as? String } == ["Blocked One", "Ready One"])
+        #expect(items[0]["needs_setup"] as? Bool == true)
+        #expect((items[0]["setup_summary"] as? String)?.contains("Pick a folder.") == true)
+        #expect(items[1]["needs_setup"] as? Bool == false)
+        #expect(items[1]["tool_name"] as? String == ready.toolName)
+        #expect(items[1]["id"] as? String == ready.id.uuidString)
+        #expect(items[1]["input_schema"] is [String: Any])
+    }
+
+    @Test func cancelStopsOnlyALiveRun() async throws {
+        let live = UUID()
+        var run = WorkflowRun(
+            workflowID: UUID(), workflowName: "Cancel Probe", templateID: UUID(), templateVersion: 1,
+            caller: WorkflowCaller(kind: .user), input: .object([:]), nodeIDs: ["a"])
+        var cancelled: [UUID] = []
+        func outcome(_ id: UUID, active: Bool) -> WorkflowLocalAPI.CancelOutcome {
+            WorkflowLocalAPI.cancel(
+                runID: id, run: { $0 == live ? run : nil }, isActive: { _ in active }, cancel: { cancelled.append($0) })
+        }
+        #expect(outcome(UUID(), active: true) == .notFound)
+        #expect(outcome(live, active: true) == .cancelled)
+        #expect(cancelled == [live])
+        run.status = .completed
+        #expect(outcome(live, active: false) == .alreadyFinished(.completed))
+        #expect(cancelled == [live])
+
+        let server = try await startWorkflowTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/workflows/runs/\(UUID().uuidString)/cancel")!)
+        request.httpMethod = "POST"
+        let (data, response) = try await URLSession.shared.data(for: request)
+        #expect((response as? HTTPURLResponse)?.statusCode == 404)
+        #expect(String(decoding: data, as: UTF8.self).contains("run_not_found"))
+    }
+
     // MARK: /mcp hides agent-bound tools (review #22)
 
     @Test func mcpHidesWorkflowToolsFromCallersWithoutAnAgent() async throws {
@@ -242,7 +339,11 @@ private struct WorkflowTestServer {
     }
 }
 
-private func startWorkflowTestServer(trustLoopback: Bool) async throws -> WorkflowTestServer {
+private func startWorkflowTestServer(
+    trustLoopback: Bool,
+    cliAccessStore: CLIAccessStore = CLIAccessStore(
+        fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("cli-access-\(UUID().uuidString).json"))
+) async throws -> WorkflowTestServer {
     let lease = await HTTPServerTestLock.shared.acquire()
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     do {
@@ -256,7 +357,8 @@ private func startWorkflowTestServer(trustLoopback: Bool) async throws -> Workfl
                             configuration: .default,
                             apiKeyValidator: TestAuth.validator,
                             eventLoop: channel.eventLoop,
-                            trustLoopback: trustLoopback
+                            trustLoopback: trustLoopback,
+                            cliAccessStore: cliAccessStore
                         )
                     )
                 }

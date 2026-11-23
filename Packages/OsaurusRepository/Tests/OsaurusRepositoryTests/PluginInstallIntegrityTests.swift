@@ -3,7 +3,7 @@
 //  OsaurusRepository
 //
 //  Regression coverage for registry-install integrity:
-//    - web/ assets survive the install (PACKAGING.md contract)
+//    - web/ assets survive the install
 //    - exactly-one-dylib layout enforcement
 //    - host / macOS minimum-version filtering during resolution
 //    - fail-closed TOFU pinned-signing-key mismatch

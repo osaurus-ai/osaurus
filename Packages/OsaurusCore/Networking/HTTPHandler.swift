@@ -228,6 +228,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private var apiKeyValidator: APIKeyValidator { apiKeyValidatorProvider() }
     private let chatEngine: ChatEngineProtocol
     private let trustLoopback: Bool
+    private let cliAccessStore: CLIAccessStore
+    private let cliAccessPrompter: CLIAccessPrompter
     private let _isChannelActive = SendableBool(false)
     private let requestTasks = HTTPRequestTaskRegistry()
     private let channelCloseFuture = ChannelCloseFutureBox()
@@ -318,6 +320,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// caller present an agent-scoped key: that caller is held to the
         /// remote contract, so `isLoopbackConnection` reports `false`.
         var loopbackTrustWithdrawn: Bool = false
+        /// Set by the auth gate when a physical-loopback caller with no
+        /// browser `Origin` presented an approved `osaurus` CLI token
+        /// (`CLIAccessStore`). Such a caller counts as loopback-trusted
+        /// even while Expose to Network turns loopback trust off, and the
+        /// token stands in for a key on `LocalAPIKeyPolicy` routes.
+        var cliAccessGranted: Bool = false
     }
     let stateRef: NIOLoopBound<RequestState>
 
@@ -361,11 +369,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         peerInferenceSharingProvider: @escaping @Sendable () -> Bool = { PeerInferenceSharing.isEnabled() },
         localKeyRequiredProvider: @escaping @Sendable () -> Bool = { LocalAPIKeyPolicy.isEnabled() },
         pairingRetiredProvider: @escaping @Sendable () -> Bool = { false },
+        cliAccessStore: CLIAccessStore = .shared,
+        cliAccessPrompter: CLIAccessPrompter = .live,
         agentAddressProvider: @escaping @Sendable (UUID) -> String? = {
             AgentIdentityRegistry.shared.address(forAgentId: $0)
         }
     ) {
         self.configuration = configuration
+        self.cliAccessStore = cliAccessStore
+        self.cliAccessPrompter = cliAccessPrompter
         self.apiKeyValidatorProvider = apiKeyValidatorProvider ?? { apiKeyValidator }
         self.chatEngine = chatEngine
         self.trustLoopback = trustLoopback
@@ -519,6 +531,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.callerAccessKeyIsMaster = false
             stateRef.value.harnessGrant = nil
             stateRef.value.loopbackTrustWithdrawn = false
+            stateRef.value.cliAccessGranted = false
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -671,6 +684,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 _isSecureChannel.value = true
             }
 
+            // An approved `osaurus` CLI token: this Mac only, never a browser
+            // page (which could otherwise ride a token it never saw), never
+            // the relay.
+            if !stateRef.value.isSecureChannel,
+                isPhysicalLoopbackConnection(context),
+                outerHead.headers.first(name: "Origin") == nil,
+                head.headers.first(name: "Origin") == nil,
+                let cliToken = head.headers.first(name: CLIAccessStore.headerName),
+                cliAccessStore.isValid(cliToken)
+            {
+                stateRef.value.cliAccessGranted = true
+            }
+
             // `LocalAPIKeyPolicy`: on a protected route, a browser origin not
             // listed by name is refused outright (key or not), and the
             // in-process app token stands in for a key over physical loopback.
@@ -724,10 +750,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Loopback connections (CLI / local tools) are trusted without a token.
             // The 6-digit pairing routes stay public beside Sync; they answer 410
             // only when pairing is closed (`pairingRetiredProvider`, open by default).
+            // `/cli/access` is how a CLI without a token asks for one; the
+            // handler admits only physical loopback with no `Origin`.
             let publicPaths =
                 pairingRetiredProvider()
-                ? Set(["/", "/health", "/pair-invite", "/secure/session"]).union(Self.retiredPhonePairingPaths)
-                : ["/", "/health", "/pair/hello", "/pair/code", "/pair/confirm", "/pair-invite", "/secure/session"]
+                ? Set(["/", "/health", "/pair-invite", "/secure/session", "/cli/access"]).union(
+                    Self.retiredPhonePairingPaths)
+                : [
+                    "/", "/health", "/pair/hello", "/pair/code", "/pair/confirm", "/pair-invite", "/secure/session",
+                    "/cli/access",
+                ]
             let isPluginRoute = path.hasPrefix("/plugins/")
             // Agent Channel webhook routes are authenticated by the connection's
             // provider secret (shared header or HMAC) inside the ingress, not by
@@ -779,7 +811,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             if !publicPaths.contains(path) && !isPluginRoute && !isChannelRoute && !isEventRoute
-                && (!isLoopback || (localKeyRequired && !presentedAppToken))
+                && (!isLoopback || (localKeyRequired && !presentedAppToken && !stateRef.value.cliAccessGranted))
                 && stateRef.value.harnessGrant == nil
             {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
@@ -1208,6 +1240,30 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .POST, path.hasPrefix("/config/approvals/") {
                 handleAnswerConfigApprovalEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path == "/cli/access" {
+                handleCLIAccessEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path == "/workflows" || path == "/workflows/runs" {
+                handleOwnerWorkflowReadEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, Self.workflowRunCancelID(path) != nil {
+                handleWorkflowRunCancelEndpoint(
                     head: head,
                     context: context,
                     path: path,
@@ -4157,7 +4213,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // local caller, so they remain subject to the auth gate, CORS origin
         // rules, and the built-in-agent remote block.
         guard !stateRef.value.isRelayOrigin, !stateRef.value.loopbackTrustWithdrawn else { return false }
-        return trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
+        return (trustLoopback || stateRef.value.cliAccessGranted)
+            && (context.channel.remoteAddress?.isLoopback ?? false)
     }
 
     /// Whether the inbound connection physically arrived over 127.0.0.1 / ::1,
@@ -7229,6 +7286,120 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// GET /workflows — the owner's installed workflows (id, name, tool
+    /// name, summary, input schema, whether setup blocks a run).
+    /// GET /workflows/runs?workflow=&limit= — recent runs, newest first.
+    /// Owner-only, and the secure channel for remote callers: both carry
+    /// what the owner's workflows do and returned.
+    private func handleOwnerWorkflowReadEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if sendSecureChannelUpgradeRequiredIfNeeded(
+            head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let workflowFilter = Self.queryParameter("workflow", in: head.uri)
+        let limit = Self.queryParameter("limit", in: head.uri).flatMap(Int.init)
+        runRequestTask(priority: .userInitiated) {
+            let status: HTTPResponseStatus
+            let json: String
+            if path == "/workflows" {
+                status = .ok
+                json = await MainActor.run { WorkflowLocalAPI.listJSON() }
+            } else {
+                switch await WorkflowLocalAPI.runsJSON(workflow: workflowFilter, limit: limit) {
+                case .success(let body):
+                    status = .ok
+                    json = body
+                case .failure(.workflowNotFound):
+                    status = .notFound
+                    json = #"{"error":"workflow_not_found","message":"No installed workflow has that name or id."}"#
+                }
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET", path: path, userAgent: userAgent, requestBody: nil, responseBody: json,
+                    responseStatus: Int(status.code), startTime: startTime)
+            }
+        }
+    }
+
+    /// The run id in `/workflows/runs/{id}/cancel`, or nil for any other path.
+    static func workflowRunCancelID(_ path: String) -> UUID? {
+        let components = path.split(separator: "/").map(String.init)
+        guard components.count == 4, components[0] == "workflows", components[1] == "runs",
+            components[3] == "cancel"
+        else { return nil }
+        return UUID(uuidString: components[2])
+    }
+
+    /// POST /workflows/runs/{id}/cancel — stops one of the owner's runs.
+    /// 404 when there is no such run, 409 when it already finished.
+    private func handleWorkflowRunCancelEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        guard let runID = Self.workflowRunCancelID(path) else { return }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome = await MainActor.run { WorkflowLocalAPI.cancel(runID: runID) }
+            let status: HTTPResponseStatus
+            let json: String
+            switch outcome {
+            case .cancelled:
+                status = .ok
+                json = #"{"ok":true}"#
+            case .notFound:
+                status = .notFound
+                json = #"{"error":"run_not_found","message":"No workflow run has that id."}"#
+            case .alreadyFinished(let runStatus):
+                status = .conflict
+                json = Self.jsonObjectString([
+                    "error": .string("run_finished"),
+                    "message": .string("The run already ended."),
+                    "status": .string(runStatus.rawValue),
+                ])
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: json)
+                self.logRequest(
+                    method: "POST", path: path, userAgent: userAgent, requestBody: nil, responseBody: json,
+                    responseStatus: Int(status.code), startTime: startTime)
+            }
+        }
+    }
+
     /// `/agents/{id}/workflows/{workflowId}/run` (POST),
     /// `/agents/{id}/workflows/runs/{ticket}` (GET) and
     /// `/agents/{id}/workflows/runs/{ticket}/cancel` (POST).
@@ -7400,8 +7571,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// POST /workflows/{id}/run — `{"input": {...}}` or `{"text": "..."}`
     /// starts one of the owner's workflows in the background and answers
     /// 202 `{"run_id": ...}`; 409 `needs_setup` while its setup is not
-    /// done. Only the app's own intents call it: physical loopback with the
-    /// per-launch app session token, never a key or a relay.
+    /// done. Only the app's own intents and the approved `osaurus` CLI call
+    /// it: physical loopback with the per-launch app session token or a CLI
+    /// token, never a key, a relay or plain loopback.
     private func handleLocalWorkflowRunEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -7429,8 +7601,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
         guard isPhysicalLoopbackConnection(context),
             LocalAPIKeyPolicy.isAppSessionToken(head.headers.first(name: LocalAPIKeyPolicy.appTokenHeaderName))
+                || stateRef.value.cliAccessGranted
         else {
-            reply(.forbidden, #"{"error":"app_only","message":"Only Osaurus's own Shortcuts actions can start this."}"#)
+            reply(
+                .forbidden,
+                #"{"error":"app_only","message":"Only Osaurus's own Shortcuts actions and the approved osaurus command can start this."}"#
+            )
             return
         }
         guard let workflowID = Self.localWorkflowRunID(path) else {
@@ -7453,6 +7629,94 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 reply(
                     HTTPResponseStatus(statusCode: failure.status),
                     Self.jsonObjectString(["error": .string(failure.code), "message": .string(failure.message)]))
+            }
+        }
+    }
+
+    private struct CLIAccessRequestBody: Decodable {
+        let command: String?
+    }
+
+    /// How long the Allow / Don't Allow prompt stays up.
+    static let cliAccessPromptTimeout: TimeInterval = 120
+
+    /// POST /cli/access — the `osaurus` CLI asks the owner for a token
+    /// (`{"command": "list"}`, shown on the prompt as a hint). The request is
+    /// held open while the prompt is up: 200 `{"token"}` on Allow, 403
+    /// `cli_access_denied` on Don't Allow, 408 when nobody answered, 409
+    /// while another prompt is open, 429 during the cooldown after a denial.
+    /// Physical loopback only and never from a browser page.
+    private func handleCLIAccessEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let reply: (HTTPResponseStatus, String) -> Void = { status, body in
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: body)
+                self.logRequest(
+                    method: "POST", path: path, userAgent: userAgent, requestBody: nil, responseBody: body,
+                    responseStatus: Int(status.code), startTime: startTime)
+            }
+        }
+        func refuse(_ status: HTTPResponseStatus, _ code: String, _ message: String) {
+            reply(status, Self.jsonObjectString(["error": .string(code), "message": .string(message)]))
+        }
+        guard !stateRef.value.isSecureChannel, isPhysicalLoopbackConnection(context),
+            head.headers.first(name: "Origin") == nil
+        else {
+            refuse(.forbidden, "cli_access_local_only", "Only the osaurus command-line tool on this Mac can ask for access.")
+            return
+        }
+        if stateRef.value.cliAccessGranted {
+            reply(.ok, Self.jsonObjectString(["ok": .bool(true), "already_approved": .bool(true)]))
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        let label = CLIAccessStore.sanitizedLabel(
+            (try? JSONDecoder().decode(CLIAccessRequestBody.self, from: data))?.command ?? ""
+        )
+        let store = cliAccessStore
+        switch store.beginPrompt() {
+        case .promptAlreadyOpen:
+            refuse(.conflict, "cli_access_prompt_open", "An approval prompt is already open in Osaurus.")
+            return
+        case .coolingDown(let retryAfter):
+            refuse(
+                .tooManyRequests, "cli_access_cooldown",
+                "Access was just denied. Try again in \(Int(retryAfter)) seconds.")
+            return
+        case .open:
+            break
+        }
+        let prompter = cliAccessPrompter
+        let disconnected = SendableBool(false)
+        runRequestTask(priority: .userInitiated) {
+            let outcome = await withTaskCancellationHandler {
+                await prompter.ask(label, Self.cliAccessPromptTimeout) { disconnected.value }
+            } onCancel: {
+                disconnected.value = true
+            }
+            store.endPrompt(denied: outcome == .denied)
+            switch outcome {
+            case .allowed:
+                let token = store.mint(label: label)
+                reply(.ok, Self.jsonObjectString(["ok": .bool(true), "token": .string(token)]))
+            case .denied:
+                refuse(.forbidden, "cli_access_denied", "Access was denied in Osaurus.")
+            case .closed:
+                refuse(.requestTimeout, "cli_access_timeout", "Nobody answered the approval prompt in Osaurus.")
             }
         }
     }
@@ -7877,6 +8141,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let offers_run_lease: Bool
         /// True for the card on screen; the rest are queued behind it.
         let presented: Bool
+        /// The terminal approval session whose run raised the card, on
+        /// `GET /approvals?session=`; absent for the phone's cards.
+        var session_id: String? = nil
     }
 
     private struct ApprovalsResponse: Encodable {
@@ -7885,6 +8152,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private struct ApprovalDecisionRequest: Decodable {
         let decision: String
+        /// Set by `osaurus agent run` to answer its own run's card.
+        var session: String? = nil
+    }
+
+    /// Header `osaurus agent run` sends with its run when a terminal can
+    /// answer tool approvals. Honored only with a valid CLI token.
+    static let terminalApprovalSessionHeader = "X-Osaurus-CLI-Approval-Session"
+
+    /// A well-formed terminal approval session id, or nil.
+    static func terminalApprovalSession(_ raw: String?) -> String? {
+        guard let value = raw?.trimmingCharacters(in: .whitespaces), (8...64).contains(value.count),
+            value.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
+        else { return nil }
+        return value
+    }
+
+    private func sendTerminalApprovalForbidden(head: HTTPRequestHead, context: ChannelHandlerContext, path: String, startTime: Date, userAgent: String?) {
+        let body =
+            #"{"error":"cli_only","message":"Only the approved osaurus command can answer its own run's approvals."}"#
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        sendResponse(context: context, version: head.version, status: .forbidden, headers: headers, body: body)
+        logRequest(
+            method: head.method.rawValue, path: path, userAgent: userAgent, requestBody: nil, responseBody: body,
+            responseStatus: 403, startTime: startTime)
     }
 
     /// GET /approvals — the cards this Mac is waiting on
@@ -7906,13 +8198,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        // `?session=` is a terminal asking for its own run's cards.
+        let rawSession = Self.queryParameter("session", in: head.uri)
+        let session = Self.terminalApprovalSession(rawSession)
+        if rawSession != nil {
+            guard stateRef.value.cliAccessGranted, session != nil else {
+                sendTerminalApprovalForbidden(
+                    head: head, context: context, path: "/approvals", startTime: startTime, userAgent: userAgent)
+                return
+            }
+        }
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
             let approvals: [ApprovalDTO] = await MainActor.run {
-                ToolPermissionPromptService.remotePrompts.map { prompt in
+                let prompts =
+                    session.map { ToolPermissionPromptService.terminalPrompts(session: $0) }
+                    ?? ToolPermissionPromptService.remotePrompts
+                return prompts.map { prompt in
                     ApprovalDTO(
                         id: prompt.id.uuidString,
                         tool: prompt.toolName,
@@ -7920,7 +8225,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         arguments: prompt.argumentsJSON,
                         surface: prompt.surface,
                         offers_run_lease: prompt.offersRunLease,
-                        presented: prompt.isPresented
+                        presented: prompt.isPresented,
+                        session_id: session
                     )
                 }
             }
@@ -7994,12 +8300,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        var terminalSession: String?
+        if let raw = request.session {
+            guard stateRef.value.cliAccessGranted, let session = Self.terminalApprovalSession(raw) else {
+                sendTerminalApprovalForbidden(
+                    head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+                return
+            }
+            terminalSession = session
+        }
+
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
-        runRequestTask(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) { [terminalSession] in
             let answered = await MainActor.run {
-                ToolPermissionPromptService.resolveRemotely(id: promptId, outcome: outcome)
+                if let terminalSession {
+                    return ToolPermissionPromptService.resolveFromTerminal(
+                        id: promptId, session: terminalSession, outcome: outcome)
+                }
+                return ToolPermissionPromptService.resolveRemotely(id: promptId, outcome: outcome)
             }
             // A card that is gone was already answered on the Mac, or its run
             // ended — say so rather than pretending the decision landed.
@@ -10725,6 +11045,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // local process can open its own session and must not gain the
         // phone's powers (`osaurus_privacy`, run ids, model options).
         let remoteReviewer = stateRef.value.authedScopeIsMaster && stateRef.value.isSecureChannel
+        // An approved `osaurus agent run` with a terminal attached: its Ask
+        // cards show on this Mac and that terminal may answer them too.
+        let terminalReviewerSession: String? =
+            remoteReviewer || !stateRef.value.cliAccessGranted
+            ? nil : Self.terminalApprovalSession(head.headers.first(name: Self.terminalApprovalSessionHeader))
         if !ownerRun,
             let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run")
         {
@@ -12169,6 +12494,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     .withValue(callPrivacy) {
                     try await ChatExecutionContext.$hasRemoteReviewer
                     .withValue(remoteReviewer) {
+                    try await ChatExecutionContext.$terminalReviewerSession
+                    .withValue(terminalReviewerSession) {
                     try await ChatExecutionContext.$workspaceBillingContext
                     .withValue(workspaceBilling) {
                         try await ChatExecutionContext.$currentFolderRoot
@@ -12187,6 +12514,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                         )
                                     }
                             }
+                    }
                     }
                     }
                     }

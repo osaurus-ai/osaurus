@@ -11,7 +11,7 @@ import XCTest
 final class OsaurusCLITests: XCTestCase {
     func testConfiguration() {
         // Just a smoke test to ensure things link
-        let root = Configuration.toolsRootDirectory()
+        let root = Configuration.root()
         XCTAssertFalse(root.path.isEmpty)
     }
 }
