@@ -340,7 +340,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
                 field: "format", tool: name)
         }
 
-        let document = await MainActor.run { ConfigExporter.export(sections: filter) }
+        let document = await ConfigExporter.exportOffMain(sections: filter)
         var result: [String: Any] = [:]
         let yaml: String
         do {

@@ -58,7 +58,7 @@ enum ConfigHistoryRecorder {
     ) async -> ConfigSnapshot? {
         let yaml: String
         do {
-            yaml = try await MainActor.run { try ConfigYAML.canonical(ConfigExporter.export()) }
+            yaml = try ConfigYAML.canonical(await ConfigExporter.exportOffMain())
         } catch {
             print("[Osaurus][ConfigHistory] export failed: \(error.localizedDescription)")
             return nil

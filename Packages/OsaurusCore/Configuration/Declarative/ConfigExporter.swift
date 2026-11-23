@@ -31,7 +31,23 @@ import Foundation
 @MainActor
 enum ConfigExporter {
 
-    static func export(sections: Set<ConfigSectionID>? = nil) -> OsaurusConfigDocument {
+    /// The same document as `export`, with the installed-models probe run off
+    /// the main actor: on a cold download cache it lists every candidate's
+    /// bundle directory.
+    nonisolated static func exportOffMain(sections: Set<ConfigSectionID>? = nil) async -> OsaurusConfigDocument {
+        guard sections?.contains(.models) ?? true else {
+            return await MainActor.run { export(sections: sections) }
+        }
+        let candidates = await MainActor.run { ModelManager.shared.deduplicatedModels() }
+        let installed = await Task.detached(priority: .utility) {
+            ModelManager.installedModels(among: candidates).map(\.id)
+        }.value
+        return await MainActor.run { export(sections: sections, installedModelIds: installed) }
+    }
+
+    static func export(
+        sections: Set<ConfigSectionID>? = nil, installedModelIds: [String]? = nil
+    ) -> OsaurusConfigDocument {
         var doc = OsaurusConfigDocument()
         doc.version = 1
         doc.memory = exportMemory()
@@ -49,7 +65,9 @@ enum ConfigExporter {
         doc.knowledgeCollections = exportKnowledgeCollections()
         doc.channels = exportChannels()
         doc.mcpServers = exportMCPServers()
-        doc.models = exportModels()
+        if sections?.contains(.models) ?? true {
+            doc.models = (installedModelIds ?? ModelManager.shared.installedModels().map(\.id)).sorted()
+        }
         doc.plugins = exportPlugins()
         doc.providers = exportProviders()
         doc.searchProviders = exportSearchProviders()
@@ -457,12 +475,6 @@ enum ConfigExporter {
     }
 
     // MARK: - Models / Plugins
-
-    private static func exportModels() -> [String] {
-        ModelManager.shared.installedModels()
-            .map { $0.id }
-            .sorted()
-    }
 
     private static func exportPlugins() -> [String] {
         PluginManager.shared.plugins
