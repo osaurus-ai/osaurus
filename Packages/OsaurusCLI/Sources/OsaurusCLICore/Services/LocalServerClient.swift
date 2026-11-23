@@ -75,6 +75,12 @@ public final class LocalServerClient: @unchecked Sendable {
     /// is it raised; scripts and MCP hosts fail fast with a hint instead.
     let interactive: Bool
     let session: URLSession
+    /// How long `/cli/access` must stay open before "Click Allow" is shown.
+    /// A cooldown or an already-open prompt is answered at once, and the
+    /// instruction would contradict it.
+    let approvalNoticeDelay: Duration
+    /// Where approval progress and refusals are written (stderr).
+    let log: @Sendable (String) -> Void
     private let lock = NSLock()
     private var token: String?
     private var refusalShown = false
@@ -85,7 +91,9 @@ public final class LocalServerClient: @unchecked Sendable {
         commandLabel: String,
         tokenStore: CLITokenStore = .live,
         interactive: Bool = isatty(STDERR_FILENO) != 0,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        approvalNoticeDelay: Duration = .milliseconds(500),
+        log: @escaping @Sendable (String) -> Void = { fputs($0 + "\n", stderr) }
     ) {
         self.port = port
         self.accessKey = accessKey
@@ -93,6 +101,8 @@ public final class LocalServerClient: @unchecked Sendable {
         self.tokenStore = tokenStore
         self.interactive = interactive
         self.session = session
+        self.approvalNoticeDelay = approvalNoticeDelay
+        self.log = log
         self.token = tokenStore.load()
     }
 
@@ -213,16 +223,19 @@ public final class LocalServerClient: @unchecked Sendable {
         case .approved:
             return true
         case .refused(let message):
-            fputs(message + "\n", stderr)
+            log(message)
             lock.withLock { refusalShown = true }
             return false
         }
     }
 
     func requestApproval() async -> ApprovalResult {
-        fputs("Osaurus needs to approve this command-line tool. Click Allow in Osaurus on this Mac…\n", stderr)
         var request = jsonRequest("/cli/access", body: ["command": commandLabel], timeout: 150)
         request.setValue(nil, forHTTPHeaderField: Self.tokenHeaderName)
+        let notice = Task { [log, approvalNoticeDelay] in
+            try await Task.sleep(for: approvalNoticeDelay)
+            log("Osaurus needs to approve this command-line tool. Click Allow in Osaurus on this Mac…")
+        }
         let data: Data
         let status: Int
         do {
@@ -230,8 +243,12 @@ public final class LocalServerClient: @unchecked Sendable {
             data = body
             status = (response as? HTTPURLResponse)?.statusCode ?? -1
         } catch {
+            notice.cancel()
+            _ = await notice.result
             return .refused("Could not ask Osaurus for approval: \(error.localizedDescription)")
         }
+        notice.cancel()
+        _ = await notice.result
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let serverMessage = object["message"] as? String
         switch status {
@@ -242,10 +259,10 @@ public final class LocalServerClient: @unchecked Sendable {
             do {
                 try tokenStore.save(token)
             } catch {
-                fputs("Approved, but the token could not be saved: \(error.localizedDescription)\n", stderr)
+                log("Approved, but the token could not be saved: \(error.localizedDescription)")
             }
             lock.withLock { self.token = token }
-            fputs("Approved.\n", stderr)
+            log("Approved.")
             return .approved
         case 404:
             return .refused(
@@ -264,7 +281,7 @@ public final class LocalServerClient: @unchecked Sendable {
         if hasToken { return true }
         guard interactive else { return false }
         if case .refused(let message) = await requestApproval() {
-            fputs(message + "\n", stderr)
+            log(message)
             lock.withLock { refusalShown = true }
             return false
         }

@@ -29,6 +29,15 @@ final class StubURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+/// Collects what the client writes to stderr.
+final class LogLines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [String] = []
+
+    func append(_ line: String) { lock.withLock { stored.append(line) } }
+    var lines: [String] { lock.withLock { stored } }
+}
+
 final class LocalServerClientTests: XCTestCase {
     private var directory: URL!
     private var store: CLITokenStore!
@@ -48,14 +57,21 @@ final class LocalServerClientTests: XCTestCase {
         super.tearDown()
     }
 
-    private func client(accessKey: AccessKeyCredential? = nil, interactive: Bool) -> LocalServerClient {
+    private func client(
+        accessKey: AccessKeyCredential? = nil,
+        interactive: Bool,
+        noticeDelay: Duration = .milliseconds(500),
+        log: LogLines = LogLines()
+    ) -> LocalServerClient {
         LocalServerClient(
             port: 1337,
             accessKey: accessKey,
             commandLabel: "list",
             tokenStore: store,
             interactive: interactive,
-            session: StubURLProtocol.session()
+            session: StubURLProtocol.session(),
+            approvalNoticeDelay: noticeDelay,
+            log: { log.append($0) }
         )
     }
 
@@ -193,6 +209,30 @@ final class LocalServerClientTests: XCTestCase {
         let asked = await client(interactive: true).requireToken()
         XCTAssertTrue(asked)
         XCTAssertEqual(store.load(), "osc_fresh")
+    }
+
+    func testCooldownIsNotPrecededByClickAllow() async {
+        StubURLProtocol.handler = { _ in
+            (429, self.json(["ok": false, "message": "Access was just denied. Try again in 30 seconds."]))
+        }
+        let log = LogLines()
+        let approved = await client(interactive: true, noticeDelay: .seconds(5), log: log).requireToken()
+        XCTAssertFalse(approved)
+        XCTAssertEqual(log.lines, ["Access was just denied. Try again in 30 seconds."])
+    }
+
+    func testAPromptLeftOpenTellsTheOwnerToClickAllow() async {
+        StubURLProtocol.handler = { _ in
+            Thread.sleep(forTimeInterval: 0.5)
+            return (200, self.json(["ok": true, "token": "osc_slow"]))
+        }
+        let log = LogLines()
+        let approved = await client(interactive: true, noticeDelay: .milliseconds(50), log: log).requireToken()
+        XCTAssertTrue(approved)
+        XCTAssertEqual(
+            log.lines,
+            ["Osaurus needs to approve this command-line tool. Click Allow in Osaurus on this Mac…", "Approved."]
+        )
     }
 
     func testHeaderNameMatchesTheServer() {
