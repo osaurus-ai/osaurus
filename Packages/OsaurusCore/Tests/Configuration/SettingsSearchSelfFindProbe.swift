@@ -805,8 +805,6 @@ struct SettingsSearchSelfFindProbe {
             ("Sign Out and Remove Chats", "settings.sync.signOutRemove"),
             ("Keep Mac Awake for iPhone", "settings.devices.keepAwake"),
             ("Continue iPhone Chats on This Mac", "settings.devices.continuePhoneChats"),
-            ("Generate 6-Digit Code", "settings.connect.pairing"),
-            ("6 digit", "settings.connect.pairing"),
             ("Remote Access for This iPhone", "settings.connect.reachAnywhere"),
             ("Keep Mac Awake for This iPhone", "settings.connect.keepAwake"),
             ("unpair", "settings.connect.pairedDevice"),

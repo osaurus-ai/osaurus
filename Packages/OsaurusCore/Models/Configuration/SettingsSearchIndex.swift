@@ -664,17 +664,6 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
-            id: "settings.connect.pairing",
-            tab: .connect,
-            section: "Pair an iPhone",
-            title: "Generate 6-Digit Code",
-            keywords: [
-                "iphone", "ios", "mobile", "phone", "pair", "pairing code", "6 digit", "six digit",
-                "iosaurus", "osaurus connect", "legacy pairing", "old iphone app",
-            ],
-            disambiguation: "The 6-digit code for an Osaurus iPhone app that doesn't offer Sync yet, kept for one release. It turns off once an iPhone joins in Devices ▸ Add a Device, which is the way to add an iPhone that has Sync."
-        ),
-        .init(
             id: "settings.connect.pairedDevice",
             tab: .connect,
             section: "Your iPhone",

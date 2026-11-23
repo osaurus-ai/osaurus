@@ -2,9 +2,9 @@
 //  OsaurusConnectView.swift
 //  osaurus
 //
-//  Sharing → Devices → Mobile: pair an Osaurus iPhone app that hasn't moved
-//  to Sync yet with a 6-digit code, see / revoke the paired phone, and keep
-//  the Mac awake and reachable for it. Kept for one release beside Sync;
+//  Sharing → Devices → Mobile: the Osaurus iPhone app paired without Sync
+//  (its 6-digit code is in Devices ▸ Add iPhone or iPad), revoked here, and
+//  the Mac kept awake and reachable for it. Kept for one release beside Sync;
 //  once an iPhone joins in Devices the pairing retires
 //  (`MobileConnectMigration`) and this page says so. All state lives in
 //  `MobilePairingService`; this view only renders it.
@@ -26,11 +26,9 @@ struct OsaurusConnectView: View {
         SettingsPage {
             SettingsPageHeader(
                 title: "Mobile",
-                subtitle: "Pair the Osaurus iPhone app with a 6-digit code"
+                subtitle: "The iPhone paired with a 6-digit code, and keeping this Mac reachable for it"
             )
         } content: {
-            // Also once an iPhone uses Sync: another still on Classic pairs here.
-            pairingSection
             pairedDeviceSection
             powerSection
         }
@@ -42,37 +40,6 @@ struct OsaurusConnectView: View {
         } message: {
             Text("Its access key stops working immediately. You can pair again with a new code.", bundle: .module)
         }
-    }
-
-    // MARK: Pairing
-
-    /// The pairing intro, "Osaurus" linking to the iPhone app's TestFlight
-    /// for anyone who has yet to install it, underlined like a web link.
-    private var pairingIntro: AttributedString {
-        var text = AttributedString(
-            localized:
-                "For an [Osaurus](https://testflight.apple.com/join/yTF86bVb) iPhone app that doesn't offer Sync yet. Generate a code here and type it in on your iPhone, on the same network as this Mac.",
-            bundle: .module
-        )
-        for run in text.runs where run.link != nil {
-            text[run.range].underlineStyle = .single
-            text[run.range].foregroundColor = theme.action.primary.default.background
-        }
-        return text
-    }
-
-    @ViewBuilder private var pairingSection: some View {
-        SettingsSection(title: "Pair an iPhone") {
-            VStack(alignment: .leading, spacing: theme.space.s12) {
-                Text(pairingIntro)
-                    .font(SettingsFont.caption)
-                    .foregroundColor(theme.text.secondary)
-
-                MobilePairingCodePanel()
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .settingsLandingAnchor("settings.connect.pairing")
     }
 
     // MARK: Paired device
