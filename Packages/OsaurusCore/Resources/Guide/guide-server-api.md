@@ -58,7 +58,7 @@ OpenAI's Codex CLI can run against your local models. Settings → Server → Ov
 
 - `POST /v1/chat/completions` is strict OpenAI semantics: Osaurus returns `tool_calls` and your client executes them. No Osaurus memory or skills are injected.
 - `POST /agents/{id}/run` runs a full server-side agent loop (what in-app chat uses): the agent executes its own tools, with memory and context. Tool iterations follow Settings → Chat → Advanced → Max Tool Attempts (30 by default, up to 120).
-- Tools set to Ask are declined on an HTTP run, since nobody can click the card, except for the owner's paired phone and the approved `osaurus agent run` in a terminal, which answer it.
+- Tools set to Ask are declined on an HTTP run, since nobody can click the card, except for your iPhone and the approved `osaurus agent run` in a terminal, which answer it.
 - Dangerous tools (`file_write`, `file_edit`, `shell_run`, `git_commit`, …) are denied to external HTTP callers by default. An authenticated remote run (Secure Channel, agent-scoped key) of an agent with a working folder gets `file_read`, `file_write` and `file_edit` confined to that folder.
 
 ## Sessions and caching

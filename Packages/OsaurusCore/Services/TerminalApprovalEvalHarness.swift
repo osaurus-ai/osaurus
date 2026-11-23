@@ -126,7 +126,7 @@ public enum TerminalApprovalEvalHarness {
         recorder.check(
             ToolPermissionPromptService.terminalPrompts(session: "cli-another-session").isEmpty,
             "another terminal session sees no card")
-        recorder.check(ToolPermissionPromptService.remotePrompts.isEmpty, "the paired phone sees no card")
+        recorder.check(ToolPermissionPromptService.remotePrompts.isEmpty, "your iPhone sees no card")
         recorder.check(
             !ToolPermissionPromptService.resolveFromTerminal(
                 id: card.id, session: "cli-another-session", outcome: .allowOnce),
