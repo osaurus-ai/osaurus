@@ -38,7 +38,6 @@ public struct ArchivedIdentity: Sendable, Equatable, Identifiable {
 }
 
 public enum MasterKeyArchive {
-    static let baseService = OsaurusKeychainServices.accountArchive
     static let label = "Osaurus Previous Identity"
 
     /// Test seam: tests point the archive at a throwaway service. Without it,
@@ -46,8 +45,10 @@ public enum MasterKeyArchive {
     /// `MasterKey` never land in the developer's real archive.
     nonisolated(unsafe) static var serviceOverrideForTesting: String?
 
-    static var service: String {
-        serviceOverrideForTesting ?? SpaceKeychainScope.service(baseService)
+    /// Unscoped service name; every query passes it through
+    /// `SpaceKeychainScope.service(_:)`.
+    static var baseService: String {
+        serviceOverrideForTesting ?? OsaurusKeychainServices.accountArchive
     }
 
     private static var isDisabled: Bool {
@@ -93,7 +94,7 @@ public enum MasterKeyArchive {
         guard let generic = try? JSONEncoder().encode(metadata) else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(baseService),
             kSecAttrAccount as String: account,
             kSecAttrLabel as String: label,
             kSecAttrGeneric as String: generic,
@@ -111,7 +112,7 @@ public enum MasterKeyArchive {
         guard !isDisabled else { return [] }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(baseService),
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
@@ -143,7 +144,7 @@ public enum MasterKeyArchive {
         guard !isDisabled else { throw OsaurusIdentityError.keychainReadFailed }
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(baseService),
             kSecAttrAccount as String: address.lowercased(),
             kSecReturnData as String: true,
             kSecUseAuthenticationContext as String: context,
@@ -169,7 +170,7 @@ public enum MasterKeyArchive {
         let account = address.lowercased()
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(baseService),
             kSecAttrAccount as String: account,
         ]
         let status = SpaceKeychainScope.deleteAllItems(matching: query)
@@ -191,7 +192,7 @@ public enum MasterKeyArchive {
     private static func metadata(account: String) -> Metadata? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(baseService),
             kSecAttrAccount as String: account,
             kSecReturnAttributes as String: true,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
@@ -208,7 +209,7 @@ public enum MasterKeyArchive {
         guard let generic = try? JSONEncoder().encode(metadata) else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(baseService),
             kSecAttrAccount as String: account,
         ]
         let attributes: [String: Any] = [kSecAttrGeneric as String: generic]
