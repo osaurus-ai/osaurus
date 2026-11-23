@@ -779,6 +779,8 @@ struct SettingsSearchSelfFindProbe {
             ("Keep File History", "storage.fileHistory.retention"),
             ("file history retention", "storage.fileHistory.retention"),
             ("File History Size Limit", "storage.fileHistory.sizeLimit"),
+            ("Switch to a Previous Identity", "identity.previousIdentities"),
+            ("Previous Identities", "identity.previousIdentities"),
             ("Sign In with Osaurus", "identity.signInWithOsaurus"),
             ("Recent Sign-ins", "identity.signInWithOsaurus"),
             ("log in with osaurus", "identity.signInWithOsaurus"),
