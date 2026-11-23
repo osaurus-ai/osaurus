@@ -205,12 +205,10 @@ public enum MCPInstall {
                 stderr)
             return true
         }
-        fputs("Asking Osaurus to approve this command-line tool. Click Allow in Osaurus.\n", stderr)
         guard await server.requireToken() else {
             fputs("Nothing was installed.\n", stderr)
             return false
         }
-        fputs("Approved.\n", stderr)
         return true
     }
 

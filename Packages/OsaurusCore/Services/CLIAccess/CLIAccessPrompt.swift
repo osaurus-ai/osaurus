@@ -41,7 +41,7 @@ enum CLIAccessPrompt {
         alert.alertStyle = .warning
         alert.messageText = L("Allow the osaurus command-line tool?")
         alert.informativeText = L(
-            "A Terminal command on this Mac (\(command)) is asking to use Osaurus. If you allow it, osaurus commands can reach this server while Expose to Network or Require Access Key for Local Admin Routes is on, start your workflows, and answer tool approvals for agent runs they start. You can revoke this in Settings → Server → Command-Line Tool Access."
+            "A Terminal command on this Mac (\(command)) is asking to use Osaurus. If you allow it, osaurus commands can reach this server while Expose to Network or Require Access Key for Local Admin Routes is on, start your workflows, and answer tool approvals for agent runs they start. You can revoke this in Settings → Server → Overview → Command-Line Tool Access."
         )
         alert.addButton(withTitle: L("Allow"))
         alert.addButton(withTitle: L("Don't Allow"))

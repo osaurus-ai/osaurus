@@ -111,7 +111,7 @@ final class CLIAccessStore: @unchecked Sendable {
         return approvals
     }
 
-    /// Settings → Server → Command-Line Tool Access → Revoke.
+    /// Settings → Server → Overview → Command-Line Tool Access → Revoke.
     func revokeAll() {
         lock.lock()
         loadIfNeeded()

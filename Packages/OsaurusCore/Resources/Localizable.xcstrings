@@ -1,6 +1,46 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "A Terminal command on this Mac (%@) is asking to use Osaurus. If you allow it, osaurus commands can reach this server while Expose to Network or Require Access Key for Local Admin Routes is on, start your workflows, and answer tool approvals for agent runs they start. You can revoke this in Settings → Server → Overview → Command-Line Tool Access." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Terminal-Befehl auf diesem Mac (%@) möchte Osaurus verwenden. Wenn du es erlaubst, können osaurus-Befehle diesen Server erreichen, während „Expose to Network“ oder „Require Access Key for Local Admin Routes“ aktiviert ist, deine Workflows starten und Werkzeugfreigaben für von ihnen gestartete Agent-Läufe beantworten. Du kannst das unter Einstellungen → Server → Übersicht → Command-Line Tool Access widerrufen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "A Terminal command on this Mac (%@) is asking to use Osaurus. If you allow it, osaurus commands can reach this server while Expose to Network or Require Access Key for Local Admin Routes is on, start your workflows, and answer tool approvals for agent runs they start. You can revoke this in Settings → Server → Overview → Command-Line Tool Access."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac의 터미널 명령(%@)이 Osaurus 사용을 요청하고 있습니다. 허용하면 Expose to Network 또는 Require Access Key for Local Admin Routes가 켜져 있어도 osaurus 명령이 이 서버에 접근하고, 워크플로를 시작하고, 직접 시작한 에이전트 실행의 도구 승인에 응답할 수 있습니다. 설정 → Server → 개요 → Command-Line Tool Access에서 취소할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Команда в Терминале на этом Mac (%@) запрашивает доступ к Osaurus. Если разрешить, команды osaurus смогут обращаться к этому серверу, пока включены Expose to Network или Require Access Key for Local Admin Routes, запускать ваши рабочие процессы и отвечать на запросы разрешений инструментов в запущенных ими агентах. Отозвать разрешение можно в Настройки → Server → Обзор → Command-Line Tool Access."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 Mac 上的一个终端命令（%@）请求使用 Osaurus。如果允许，在开启 Expose to Network 或 Require Access Key for Local Admin Routes 时，osaurus 命令也能访问此服务器、启动你的工作流，并回应它们启动的代理运行中的工具审批。你可以在设置 → Server → 概览 → Command-Line Tool Access 中撤销。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 Mac 上的一個終端命令（%@）請求使用 Osaurus。如果允許，在開啓 Expose to Network 或 Require Access Key for Local Admin Routes 時，osaurus 命令也能訪問此服務器、啓動你的工作流，並回應它們啓動的代理運行中的工具審批。你可以在設定 → Server → 概覽 → Command-Line Tool Access 中撤銷。"
+          }
+        }
+      }
+    },
     "List tool approvals waiting for an answer" : {
       "localizations" : {
         "de" : {
@@ -477,46 +517,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "允許 osaurus 命令行工具嗎？"
-          }
-        }
-      }
-    },
-    "A Terminal command on this Mac (%@) is asking to use Osaurus. If you allow it, osaurus commands can reach this server while Expose to Network or Require Access Key for Local Admin Routes is on, start your workflows, and answer tool approvals for agent runs they start. You can revoke this in Settings → Server → Command-Line Tool Access." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ein Terminal-Befehl auf diesem Mac (%@) möchte Osaurus verwenden. Wenn du es erlaubst, können osaurus-Befehle diesen Server erreichen, während „Expose to Network“ oder „Require Access Key for Local Admin Routes“ aktiviert ist, deine Workflows starten und Werkzeugfreigaben für von ihnen gestartete Agent-Läufe beantworten. Du kannst das unter Einstellungen → Server → Command-Line Tool Access widerrufen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "A Terminal command on this Mac (%@) is asking to use Osaurus. If you allow it, osaurus commands can reach this server while Expose to Network or Require Access Key for Local Admin Routes is on, start your workflows, and answer tool approvals for agent runs they start. You can revoke this in Settings → Server → Command-Line Tool Access."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 Mac의 터미널 명령(%@)이 Osaurus 사용을 요청하고 있습니다. 허용하면 Expose to Network 또는 Require Access Key for Local Admin Routes가 켜져 있어도 osaurus 명령이 이 서버에 접근하고, 워크플로를 시작하고, 직접 시작한 에이전트 실행의 도구 승인에 응답할 수 있습니다. 설정 → Server → Command-Line Tool Access에서 취소할 수 있습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Команда в Терминале на этом Mac (%@) запрашивает доступ к Osaurus. Если разрешить, команды osaurus смогут обращаться к этому серверу, пока включены Expose to Network или Require Access Key for Local Admin Routes, запускать ваши рабочие процессы и отвечать на запросы разрешений инструментов в запущенных ими агентах. Отозвать разрешение можно в Настройки → Server → Command-Line Tool Access."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此 Mac 上的一个终端命令（%@）请求使用 Osaurus。如果允许，在开启 Expose to Network 或 Require Access Key for Local Admin Routes 时，osaurus 命令也能访问此服务器、启动你的工作流，并回应它们启动的代理运行中的工具审批。你可以在设置 → Server → Command-Line Tool Access 中撤销。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此 Mac 上的一個終端命令（%@）請求使用 Osaurus。如果允許，在開啓 Expose to Network 或 Require Access Key for Local Admin Routes 時，osaurus 命令也能訪問此服務器、啓動你的工作流，並回應它們啓動的代理運行中的工具審批。你可以在設定 → Server → Command-Line Tool Access 中撤銷。"
           }
         }
       }
