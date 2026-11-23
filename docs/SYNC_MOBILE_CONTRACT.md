@@ -1104,6 +1104,8 @@ then at most 20 that ended, newest first.
   "attempts": [ { "atMs": 1767571260000, "outcome": "busy" } ], "working": true }
 ```
 
+- `id`, `sessionId`, `agentId`, `about`, `expiresMs` and `state` are always present; `createdMs`,
+  `endedMs`, `attempts` and `working` only when they apply.
 - `state` is `waiting`, `ringing`, or how it ended (with `endedMs`):
   - `answered`, `missed` (rang out), `declined`;
   - `calledOff`: the run that placed the call stopped while it rang;

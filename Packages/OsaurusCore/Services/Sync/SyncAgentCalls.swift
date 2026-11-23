@@ -387,7 +387,9 @@ final class SyncAgentCalls {
     /// A call no device has said ended counts as over after this.
     nonisolated static let liveCallLimitMs: Int64 = 2 * 3600 * 1000
     /// ...or once nothing has been said on it for this long: a phone that died mid-call never writes "ended",
-    /// and the agent would answer "on a call" instead of ringing until the 2 hours ran out.
+    /// and the agent would answer "on a call" instead of ringing until the 2 hours ran out. Said means a voice
+    /// turn started, ran or finished; a user silent for this long after the reply ended counts as gone, on
+    /// purpose, since an open call never stays that quiet and a missed ring costs less than one that never comes.
     nonisolated static let liveCallIdleMs: Int64 = 10 * 60 * 1000
     /// The last voice turn in each chat with a call on.
     private var lastVoiceTurnMs: [UUID: Int64] = [:]
@@ -403,6 +405,7 @@ final class SyncAgentCalls {
     func isOnCall(sessionId: UUID) -> Bool {
         guard let call = liveCalls[sessionId] else { return false }
         let nowMs = SyncHostedRunContract.nowMs()
+        if SyncHostRunner.shared.hasVoiceRun(sessionId: sessionId) { return true }
         let lastHeard = max(call.sinceMs, lastVoiceTurnMs[sessionId] ?? 0)
         if nowMs - call.sinceMs > Self.liveCallLimitMs || nowMs - lastHeard > Self.liveCallIdleMs {
             liveCalls[sessionId] = nil

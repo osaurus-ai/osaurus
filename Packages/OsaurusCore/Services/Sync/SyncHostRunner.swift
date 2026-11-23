@@ -589,6 +589,11 @@ final class SyncHostRunner: ObservableObject {
         return .started
     }
 
+    /// Whether a voice-call turn is running in `sessionId` now.
+    func hasVoiceRun(sessionId: UUID) -> Bool {
+        active.values.contains { $0.isVoiceCall && $0.sessionId == sessionId }
+    }
+
     /// `finish`, for a run with no request turn: nothing to record.
     private func finishHostText(scope: String) {
         let hadApprovals = !(active[scope]?.published.isEmpty ?? true)
@@ -765,6 +770,8 @@ final class SyncHostRunner: ObservableObject {
         let hadPrompts = !(active[scope]?.publishedPrompts.isEmpty ?? true)
         if let run = active[scope] {
             runningFor[run.sessionId] = nil
+            // A long reply is talking too: the idle clock starts when it ends, not when it began.
+            if run.isVoiceCall { SyncAgentCalls.shared.noteVoiceTurn(sessionId: run.sessionId) }
             if SyncPhoneDevices.isPhone(deviceKey: run.requester) {
                 PhoneChatHandoff.shared.notePhoneActivity(sessionId: run.sessionId)
             }
