@@ -489,6 +489,7 @@ final class SyncHostRunner: ObservableObject {
         )
         dispatch.hostedRun = choices.run
         active[scope]?.isVoiceCall = choices.run?.voiceCall ?? false
+        if choices.run?.voiceCall == true { SyncAgentCalls.shared.noteVoiceTurn(sessionId: session.id) }
         guard let handle = await BackgroundTaskManager.shared.dispatchChat(dispatch) else {
             active[scope] = nil
             runningFor[session.id] = nil

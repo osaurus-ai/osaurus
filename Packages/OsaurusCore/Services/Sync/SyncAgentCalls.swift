@@ -374,6 +374,7 @@ final class SyncAgentCalls {
             }.value
             for sessionId in ended {
                 SyncAgentCalls.shared.liveCalls[sessionId] = nil
+                SyncAgentCalls.shared.lastVoiceTurnMs[sessionId] = nil
                 Self.trace("call on \(sessionId.uuidString.prefix(8)) ended")
             }
         }
@@ -385,13 +386,28 @@ final class SyncAgentCalls {
     private var liveCalls: [UUID: (id: String, device: String, sinceMs: Int64)] = [:]
     /// A call no device has said ended counts as over after this.
     nonisolated static let liveCallLimitMs: Int64 = 2 * 3600 * 1000
+    /// ...or once nothing has been said on it for this long: a phone that died mid-call never writes "ended",
+    /// and the agent would answer "on a call" instead of ringing until the 2 hours ran out.
+    nonisolated static let liveCallIdleMs: Int64 = 10 * 60 * 1000
+    /// The last voice turn in each chat with a call on.
+    private var lastVoiceTurnMs: [UUID: Int64] = [:]
+
+    /// A voice turn ran in `sessionId`: a call there is still being talked on.
+    func noteVoiceTurn(sessionId: UUID) {
+        guard liveCalls[sessionId] != nil else { return }
+        lastVoiceTurnMs[sessionId] = SyncHostedRunContract.nowMs()
+    }
 
     /// Whether the user is on a call placed from `sessionId` now: the agent tells them in the call,
     /// and a ring would come through it as a second call the phone turns down as busy.
     func isOnCall(sessionId: UUID) -> Bool {
         guard let call = liveCalls[sessionId] else { return false }
-        if SyncHostedRunContract.nowMs() - call.sinceMs > Self.liveCallLimitMs {
+        let nowMs = SyncHostedRunContract.nowMs()
+        let lastHeard = max(call.sinceMs, lastVoiceTurnMs[sessionId] ?? 0)
+        if nowMs - call.sinceMs > Self.liveCallLimitMs || nowMs - lastHeard > Self.liveCallIdleMs {
             liveCalls[sessionId] = nil
+            lastVoiceTurnMs[sessionId] = nil
+            Self.trace("call on \(sessionId.uuidString.prefix(8)) taken as over: nothing said on it for a while")
             return false
         }
         return true
