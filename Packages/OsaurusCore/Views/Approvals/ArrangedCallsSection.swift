@@ -33,20 +33,18 @@ struct ArrangedCallsSection: View {
                     hint: "When you ask an agent to call you back on your iPhone, the call shows here until it's made."
                 )
             } else {
-                // Relative times ("in 3 hours") move on their own.
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    let working = SyncAgentCalls.workingSessions()
-                    ForEach(waiting, id: \.grant.id) { item in
-                        ArrangedCallRow(
-                            grant: item.grant,
-                            status: item.ringing
-                                ? .ringing : .waiting(working: working.contains(item.grant.sessionId)),
-                            now: context.date
-                        )
-                    }
-                    ForEach(showsAllEnded ? ended : Array(ended.prefix(Self.endedShown))) { grant in
-                        ArrangedCallRow(grant: grant, status: .ended(grant.end ?? .expired), now: context.date)
-                    }
+                // One subview per row, so the section's group spaces and divides them as it does other
+                // lists; a single TimelineView around them all made them one block with no gaps between.
+                let working = SyncAgentCalls.workingSessions()
+                ForEach(waiting, id: \.grant.id) { item in
+                    ArrangedCallRow(
+                        grant: item.grant,
+                        status: item.ringing
+                            ? .ringing : .waiting(working: working.contains(item.grant.sessionId))
+                    )
+                }
+                ForEach(showsAllEnded ? ended : Array(ended.prefix(Self.endedShown))) { grant in
+                    ArrangedCallRow(grant: grant, status: .ended(grant.end ?? .expired))
                 }
                 if ended.count > Self.endedShown {
                     SettingsButton(.tertiary, showsAllEnded ? "Show Fewer" : "Show All", size: .compact) {
@@ -126,7 +124,6 @@ enum ArrangedCallPresentation {
 private struct ArrangedCallRow: View {
     let grant: AgentCallPolicy.Grant
     let status: ArrangedCallPresentation.Status
-    let now: Date
 
     @Environment(\.theme) private var theme
     @State private var confirmingCancel = false
@@ -141,8 +138,15 @@ private struct ArrangedCallRow: View {
     }
 
     var body: some View {
+        // Relative times ("in 3 hours") move on their own.
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            row(now: context.date)
+        }
+    }
+
+    private func row(now: Date) -> some View {
         let chip = ArrangedCallPresentation.chip(status)
-        LibraryRow(
+        return LibraryRow(
             title: ArrangedCallPresentation.title(agentName: agentName, about: grant.about),
             subtitle: ArrangedCallPresentation.subtitle(grant, status: status, now: now),
             leading: {
