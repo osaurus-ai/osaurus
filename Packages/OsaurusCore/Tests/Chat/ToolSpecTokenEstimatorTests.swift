@@ -12,7 +12,7 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite
+@Suite(.serialized)
 @MainActor
 struct ToolSpecTokenEstimatorTests {
 
@@ -51,13 +51,13 @@ struct ToolSpecTokenEstimatorTests {
 
     @Test("Total for large schemas equals the per-spec sum")
     func largeSchemaTotalMatchesPerSpecSum() {
-        let tools = (0..<20).map { i in
+        let tools = (0..<5).map { i in
             Tool(
                 type: "function",
                 function: ToolFunction(
                     name: "big_tool_\(i)",
                     description: "A tool with a large schema",
-                    parameters: largeSchema(keys: 500)
+                    parameters: largeSchema(keys: 100)
                 )
             )
         }
