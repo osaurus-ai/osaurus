@@ -89,13 +89,19 @@ enum SessionStateExtraction {
 
     /// Generate on `model`, which just served the turn, so nothing loads or
     /// is evicted. Nil on any failure.
-    static func extract(previous: SessionState, turn: [Line], model: String) async -> SessionState? {
+    static func extract(
+        previous: SessionState,
+        turn: [Line],
+        model: String,
+        speculativeDecoding: Bool? = nil,
+        using modelService: CoreModelService = .shared
+    ) async -> SessionState? {
         var options: [String: ModelOptionValue] = [:]
         if let stored = ModelProfileRegistry.thinkingOffStoredOption(for: model) {
             options[stored.id] = stored.value
         }
         do {
-            let answer = try await CoreModelService.shared.generate(
+            let answer = try await modelService.generate(
                 prompt: prompt(previous: previous, turn: turn),
                 systemPrompt: systemPrompt,
                 maxTokens: maxTokens,
@@ -104,6 +110,7 @@ enum SessionStateExtraction {
                 intent: .background,
                 modelOverride: model,
                 modelOptions: options,
+                speculativeDecoding: speculativeDecoding,
                 purpose: "session_state")
             let state = parse(answer)
             if state == nil { print("[Osaurus][State] extraction answered without a state object") }

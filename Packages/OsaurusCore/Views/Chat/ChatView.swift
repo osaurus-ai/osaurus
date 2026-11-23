@@ -5391,7 +5391,9 @@ final class ChatSession: ObservableObject {
         return resolved
     }
 
-    private func completeRunCleanup() {
+    private func completeRunCleanup(
+        settledInference: (model: String, speculativeDecoding: Bool?)? = nil
+    ) {
         // `stop()` also lands here when idle (every session switch / reset).
         let hadLiveRun = isStreaming || currentTask != nil
         currentTask = nil
@@ -5418,7 +5420,10 @@ final class ChatSession: ObservableObject {
         trimTrailingEmptyAssistantTurn()
         consolidateAssistantTurns()
         markUnfinishedToolCallsInterrupted()
-        finishOrchestratorTurn(turnRan: hadLiveRun)
+        finishOrchestratorTurn(
+            turnRan: hadLiveRun,
+            model: settledInference?.model ?? selectedModel,
+            speculativeDecoding: settledInference?.speculativeDecoding)
         rebuildVisibleBlocks()
         save()
         OnboardingFirstRun.shared.runEnded(in: self)
@@ -5461,7 +5466,7 @@ final class ChatSession: ObservableObject {
     /// Without `turnRan` nothing is committed: marking the session dirty
     /// would make the next save re-stamp `updatedAt` on a chat the user only
     /// navigated away from.
-    private func finishOrchestratorTurn(turnRan: Bool) {
+    private func finishOrchestratorTurn(turnRan: Bool, model: String?, speculativeDecoding: Bool?) {
         let ending = orchestratorTurnEnding
         orchestratorTurnEnding = nil
         stateExtractionToken = nil
@@ -5476,18 +5481,25 @@ final class ChatSession: ObservableObject {
         isDirty = true
         guard
             SessionStateExtraction.applies(interrupted: interrupted, lastStepEndedOn: ending),
-            let model = selectedModel
+            let model
         else { return }
-        extractSessionState(previous: finished, turn: orchestratorTurnLines(), model: model)
+        extractSessionState(
+            previous: finished, turn: orchestratorTurnLines(), model: model, speculativeDecoding: speculativeDecoding)
     }
 
     /// `SessionStateExtraction` after a settled turn. Its object lands only
     /// while that turn is still the latest finished one.
-    private func extractSessionState(previous: SessionState, turn: [SessionStateExtraction.Line], model: String) {
+    private func extractSessionState(
+        previous: SessionState,
+        turn: [SessionStateExtraction.Line],
+        model: String,
+        speculativeDecoding: Bool?
+    ) {
         let token = UUID()
         stateExtractionToken = token
         Task { @MainActor [weak self] in
-            let extracted = await SessionStateExtraction.extract(previous: previous, turn: turn, model: model)
+            let extracted = await SessionStateExtraction.extract(
+                previous: previous, turn: turn, model: model, speculativeDecoding: speculativeDecoding)
             guard let self, self.stateExtractionToken == token else { return }
             self.stateExtractionToken = nil
             guard let extracted,
@@ -6067,7 +6079,11 @@ final class ChatSession: ObservableObject {
         return formatter
     }()
 
-    private func finalizeRun(runId: UUID?, persistConversationArtifacts: Bool) {
+    private func finalizeRun(
+        runId: UUID?,
+        persistConversationArtifacts: Bool,
+        settledInference: (model: String, speculativeDecoding: Bool?)? = nil
+    ) {
         guard let runId, activeRunId == runId else {
             if activeRunId == nil, isStreaming {
                 completeRunCleanup()
@@ -6099,7 +6115,7 @@ final class ChatSession: ObservableObject {
 
         activeRunId = nil
         activeRunContext = nil
-        completeRunCleanup()
+        completeRunCleanup(settledInference: settledInference)
 
         guard persistConversationArtifacts, let context else { return }
 
@@ -8063,7 +8079,10 @@ final class ChatSession: ObservableObject {
                 defer {
                     finalizeRun(
                         runId: runId,
-                        persistConversationArtifacts: shouldPersistConversationArtifacts
+                        persistConversationArtifacts: shouldPersistConversationArtifacts,
+                        settledInference: turnModelId.map {
+                            (model: $0, speculativeDecoding: turnGenerationControls.agentSettings?.speculativeDecoding)
+                        }
                     )
                 }
 
