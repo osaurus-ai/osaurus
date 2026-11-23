@@ -2979,6 +2979,12 @@
             "value" : "Verschlüsselt"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "暗号化済み"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -37983,6 +37989,12 @@
             "value" : "Konto verknüpft"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アカウント連携済み"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -41072,6 +41084,12 @@
             "value" : "Credits hinzufügen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "クレジットを追加"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -42120,6 +42138,12 @@
             "value" : "Anbieter hinzufügen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プロバイダーを追加"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -42837,6 +42861,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zu %@ hinzufügen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@に追加"
           }
         },
         "ko" : {
@@ -47921,6 +47951,12 @@
             "value" : "Alle Agenten"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "すべてのエージェント"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -50094,6 +50130,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Einmal erlauben"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "一度だけ許可"
           }
         },
         "ko" : {
@@ -56931,6 +56973,12 @@
             "value" : "API-Referenz"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "APIリファレンス"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -57388,6 +57436,12 @@
             "value" : "App-Passwort"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アプリパスワード"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -57420,6 +57474,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "App Token"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アプリトークン"
           }
         },
         "ko" : {
@@ -59299,6 +59359,12 @@
             "value" : "Archivieren"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アーカイブ"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -59331,6 +59397,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Archiviert"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アーカイブ済み"
           }
         },
         "ko" : {
@@ -62142,6 +62214,12 @@
             "value" : "Audioeingang"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "音声入力"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -63641,6 +63719,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Automatisch verbinden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自動接続"
           }
         },
         "ko" : {
@@ -71024,6 +71108,12 @@
             "value" : "Bot Token"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Botトークン"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -75135,6 +75225,12 @@
             "value" : "Cache"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "キャッシュ"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -75989,6 +76085,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bearbeitung abbrechen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "編集をキャンセル"
           }
         },
         "ko" : {
@@ -78117,6 +78219,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ändern…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "変更…"
           }
         },
         "ko" : {
@@ -81890,6 +81998,12 @@
             "value" : "Jetzt prüfen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "今すぐ確認"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -82862,6 +82976,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Checking..."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "確認中…"
           }
         },
         "ko" : {
@@ -88870,6 +88990,12 @@
             "value" : "Schließen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "閉じる"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -89056,6 +89182,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tab schließen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "タブを閉じる"
           }
         },
         "ko" : {
@@ -90328,6 +90460,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Alle einklappen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "すべて折りたたむ"
           }
         },
         "ko" : {
@@ -100473,6 +100611,12 @@
             "value" : "Kopieren"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コピー"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -100615,6 +100759,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Adresse kopieren"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アドレスをコピー"
           }
         },
         "ko" : {
@@ -101191,6 +101341,12 @@
             "value" : "Pfad kopieren"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "パスをコピー"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -101537,6 +101693,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Antwort kopieren"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "レスポンスをコピー"
           }
         },
         "ko" : {
@@ -114984,6 +115146,12 @@
             "value" : "Space löschen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スペースを削除"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -117196,6 +117364,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Details"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "詳細"
           }
         },
         "ko" : {
@@ -120007,6 +120181,12 @@
             "value" : "Festplatten-Cache"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ディスクキャッシュ"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -122299,6 +122479,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Herunterladen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ダウンロード"
           }
         },
         "ko" : {
@@ -127507,6 +127693,12 @@
             "value" : "Edit message"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "メッセージを編集"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -130126,6 +130318,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Relay aktivieren"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "リレーを有効にする"
           }
         },
         "ko" : {
@@ -137968,6 +138166,12 @@
             "value" : "Alle ausklappen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "すべて展開"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -139759,6 +139963,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Export…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "書き出す…"
           }
         },
         "ko" : {
@@ -143489,6 +143699,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Files"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ファイル"
           }
         },
         "ko" : {
@@ -153608,6 +153824,12 @@
             "value" : "Global Proxy"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "グローバルプロキシ"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -154571,6 +154793,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Verstanden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "了解"
           }
         },
         "ko" : {
@@ -156936,6 +157164,12 @@
             "value" : "Headers"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ヘッダー"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -158179,6 +158413,12 @@
             "value" : "Agenten ausblenden"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントを非表示"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -158205,6 +158445,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Alle ausblenden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "すべて非表示"
           }
         },
         "ko" : {
@@ -166114,6 +166360,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Importiere deinen Chatverlauf"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "チャット履歴をインポート"
           }
         },
         "ko" : {
@@ -175908,6 +176160,12 @@
             "value" : "just now"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "たった今"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -182514,6 +182772,12 @@
             "value" : "Mit QR verknüpfen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "QRコードで連携"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -183233,6 +183497,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Live Activity"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ライブアクティビティ"
           }
         },
         "ko" : {
@@ -186021,6 +186291,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Laden…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "読み込み中…"
           }
         },
         "ko" : {
@@ -205973,6 +206249,12 @@
             "value" : "Never used"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未使用"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -206118,6 +206400,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Neuer Chat"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新規チャット"
           }
         },
         "ko" : {
@@ -207383,6 +207671,12 @@
             "value" : "Neuer Space …"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新規スペース…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -208257,6 +208551,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Nein"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "いいえ"
           }
         },
         "ko" : {
@@ -213278,6 +213578,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kein Limit"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無制限"
           }
         },
         "ko" : {
@@ -222030,6 +222336,12 @@
             "value" : "Nicht jetzt"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "今はしない"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -222109,6 +222421,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Nicht gekoppelt"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未ペアリング"
           }
         },
         "ko" : {
@@ -238039,6 +238357,12 @@
             "value" : "Osaurus Server"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurusサーバー"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -242227,6 +242551,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Paste here"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ここに貼り付け"
           }
         },
         "ko" : {
@@ -248117,6 +248447,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Pin"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ピン留め"
           }
         },
         "ko" : {
@@ -268030,6 +268366,12 @@
             "value" : "Beenden"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "終了"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -269976,6 +270318,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Read aloud"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "読み上げ"
           }
         },
         "ko" : {
@@ -274439,6 +274787,12 @@
             "value" : "Wird erneut verbunden …"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再接続中…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -276477,6 +276831,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Neu generieren"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再生成"
           }
         },
         "ko" : {
@@ -279164,6 +279524,12 @@
             "value" : "Chats entfernen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "チャットを削除"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -281274,6 +281640,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Diesen Space umbenennen …"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このスペースの名前を変更…"
           }
         },
         "ko" : {
@@ -287742,6 +288114,12 @@
             "value" : "Diesen Space zurücksetzen …"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このスペースをリセット…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -288818,6 +289196,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wiederherstellen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "復元"
           }
         },
         "ko" : {
@@ -291438,6 +291822,12 @@
             "value" : "Alles zurücksetzen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "すべて元に戻す"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -292340,6 +292730,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prüfen …"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "確認…"
           }
         },
         "ko" : {
@@ -301457,6 +301853,12 @@
             "value" : "Speichern"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保存"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -302049,6 +302451,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bild speichern"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "画像を保存"
           }
         },
         "ko" : {
@@ -303818,6 +304226,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Saving..."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保存中…"
           }
         },
         "ko" : {
@@ -311787,6 +312201,12 @@
             "value" : "Erneut senden"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再送信"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -312294,6 +312714,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Jetzt senden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "今すぐ送信"
           }
         },
         "ko" : {
@@ -313508,6 +313934,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wird gesendet…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "送信中…"
           }
         },
         "ko" : {
@@ -316510,6 +316942,12 @@
             "value" : "Einrichtung"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "セットアップ"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -317234,6 +317672,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Anonyme Daten teilen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "匿名データを共有"
           }
         },
         "ko" : {
@@ -320102,6 +320546,12 @@
             "value" : "Agenten einblenden"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントを表示"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -320882,6 +321332,12 @@
             "value" : "Weniger anzeigen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "表示を減らす"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -321275,6 +321731,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Space im Finder zeigen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スペースをFinderで表示"
           }
         },
         "ko" : {
@@ -326058,6 +326520,12 @@
             "value" : "Überspringen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スキップ"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -326343,6 +326811,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Einrichtung überspringen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "セットアップをスキップ"
           }
         },
         "ko" : {
@@ -329368,6 +329842,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Space: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スペース: %@"
           }
         },
         "ko" : {
@@ -332872,6 +333352,12 @@
             "value" : "Starte…"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "開始中…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -334100,6 +334586,12 @@
             "value" : "Stopp"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "停止"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -335098,6 +335590,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wird gestoppt…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "停止中…"
           }
         },
         "ko" : {
@@ -343203,6 +343701,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Teste…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "テスト中…"
           }
         },
         "ko" : {
@@ -357116,6 +357620,12 @@
             "value" : "Denkt nach"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "思考中"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -365949,6 +366459,12 @@
             "value" : "Zeitueberschreitung"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "タイムアウト"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -371514,6 +372030,12 @@
             "value" : "Erneut versuchen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再試行"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -372470,6 +372992,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Turn On"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "オンにする"
           }
         },
         "ko" : {
@@ -373957,6 +374485,12 @@
             "value" : "Aus Archiv holen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アーカイブを解除"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -375078,6 +375612,12 @@
             "value" : "Trennen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "連携を解除"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -375688,6 +376228,12 @@
             "value" : "Entkoppeln"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ペアリングを解除"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -375760,6 +376306,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Unpin"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ピン留めを外す"
           }
         },
         "ko" : {
@@ -396835,6 +397387,12 @@
             "value" : "Arbeitet …"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "処理中…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -399363,6 +399921,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Ja"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "はい"
           }
         },
         "ko" : {
@@ -413266,34 +413830,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "为记忆、知识、技能和工具搜索提供支持。更改将在 Osaurus 重启后生效。"
-          }
-        }
-      }
-    },
-    "Encrypted" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Verschlüsselt"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "암호화됨"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Зашифровано"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已加密"
           }
         }
       }
