@@ -13,7 +13,7 @@
 //  summary didn't reclaim.
 //
 //  Model resolution (`effectiveModelIdentifier`): the user-configured
-//  compaction model (Settings → Chat → Compaction Model) wins; when none is
+//  compaction model (Models → Model Defaults → Compaction Model) wins; when none is
 //  set, the chat's CURRENT model summarizes. Falling back to the resident
 //  chat model means auto compaction never has to interrupt a send with a
 //  model picker, and — because the target is the invoking parent —
@@ -626,7 +626,7 @@ final class ContextCompactionService {
         }
 
         for turn in covered {
-            if previouslyCovered.contains(turn.id) { continue }
+            if previouslyCovered.contains(turn.id) || !ChatSession.isModelVisible(turn) { continue }
             switch turn.role {
             case .user:
                 // The send path prepends attached-document text to the user

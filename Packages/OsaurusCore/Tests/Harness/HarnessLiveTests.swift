@@ -39,7 +39,7 @@ struct HarnessLiveTests {
     }
 
     private func tokensPerSecond(_ events: [HarnessEvent]) -> Double? {
-        for case .stats(_, let tps, _) in events { return tps }
+        for case .stats(_, let tps, _, _) in events { return tps }
         return nil
     }
 

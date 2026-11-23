@@ -400,6 +400,9 @@ struct AgentChannelDispatchRoute: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// Legacy per-platform inbound routing (`inboundDispatch` in the provider
+/// JSON). Decoded only by `EventMigration`, which turns it into
+/// channel-message events; nothing reads it at run time.
 struct AgentChannelInboundDispatchConfiguration: Codable, Equatable, Sendable {
     var enabled: Bool
     /// Default target for messages no route claims (a local agent or a

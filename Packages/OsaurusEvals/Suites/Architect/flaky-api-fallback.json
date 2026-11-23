@@ -1,0 +1,39 @@
+{
+  "id": "architect.flaky-api-fallback",
+  "domain": "architect",
+  "label": "architect \u2022 flaky API retried, a down API falls back",
+  "query": "Every morning I want a short currency note. Today's rates come from {{fixture.base_url}}/v1/rates, which returns JSON like {\"base\": \"USD\", \"rates\": {\"EUR\": 0.92}}. That server is flaky: it usually errors a couple of times before it answers, so it needs to keep trying. Market headlines come from {{fixture.base_url}}/v1/headlines ({\"headlines\": [\"...\"]}), which is often down for maintenance; when it is, the note should still go out and just say the headlines are unavailable today. The workflow's output is the note text. Test it and offer to save it.",
+  "notes": "Hard case. /v1/rates fails twice with 500 before it answers; /v1/headlines always returns 503. Pins a retry on the rates step, `on_error: continue` (or an error edge) for the headlines step, and a completed run whose note carries the real rates.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 30,
+      "fixtureAPI": {
+        "routes": [
+          {
+            "path": "/v1/rates",
+            "failFirst": 2,
+            "failStatus": 500,
+            "body": { "base": "USD", "rates": { "EUR": 0.92, "GBP": 0.79, "JPY": 151.3 } }
+          },
+          {
+            "path": "/v1/headlines",
+            "status": 503,
+            "body": { "error": "down for maintenance" }
+          }
+        ]
+      },
+      "fixtureRequests": { "/v1/rates": 3, "/v1/headlines": 1 },
+      "nodeKinds": ["http"],
+      "structure": {
+        "retries": true,
+        "errorHandling": true
+      },
+      "testOutputContains": { "*": ["0.92"] },
+      "requireTestRun": true,
+      "requireProposeSave": true,
+      "maxToolCalls": 20,
+      "maxPromptTokens": 400000
+    }
+  }
+}

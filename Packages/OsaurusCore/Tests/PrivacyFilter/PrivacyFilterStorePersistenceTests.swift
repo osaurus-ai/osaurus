@@ -79,7 +79,7 @@ struct PrivacyFilterStorePersistenceTests {
         var config = PrivacyFilterConfiguration()
         config.enabled = true
         config.skipCodeBlocks = false
-        config.alwaysApproveByDefault = true
+        config.defaultReviewPolicy = .autoRedact
         config.builtinPatternEnabled[.url] = false
         PrivacyFilterStore.save(config)
 
@@ -87,7 +87,7 @@ struct PrivacyFilterStorePersistenceTests {
         let reloaded = PrivacyFilterStore.snapshot()
         #expect(reloaded.enabled == true)
         #expect(reloaded.skipCodeBlocks == false)
-        #expect(reloaded.alwaysApproveByDefault == true)
+        #expect(reloaded.defaultReviewPolicy == .autoRedact)
         #expect(reloaded.isBuiltinPatternEnabled(.url) == false)
     }
 

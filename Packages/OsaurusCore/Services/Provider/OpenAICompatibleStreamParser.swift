@@ -119,6 +119,15 @@ struct OpenAICompatibleStreamFramer {
             }
             carriageReturnLast = false
         }
+
+        /// Bytes of the line still waiting for its terminator.
+        var pendingByteCount: Int { lineBuffer.count }
+
+        /// Drops the bytes of the unterminated line received so far; the
+        /// rest of that line still arrives as one (truncated) line.
+        mutating func discardPending() {
+            lineBuffer = Data()
+        }
     }
 
     @inline(__always)

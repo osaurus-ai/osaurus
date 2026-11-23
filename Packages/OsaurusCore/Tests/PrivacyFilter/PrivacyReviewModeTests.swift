@@ -22,7 +22,7 @@ struct PrivacyReviewModeTests {
         var config = PrivacyFilterConfiguration()
         config.enabled = true
         config.aiDetectionEnabled = false
-        config.alwaysApproveByDefault = false
+        config.defaultReviewPolicy = .ask
         return config
     }
 

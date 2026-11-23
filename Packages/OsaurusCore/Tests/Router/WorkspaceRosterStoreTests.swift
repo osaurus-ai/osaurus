@@ -376,6 +376,8 @@ struct WorkspaceRosterStoreTests {
         OsaurusRouter.setEnabled(true)
         let store = WorkspaceRosterStore(client: client, observeAppActivation: false)
         store.hasIdentity = { true }
+        store.awaitsFirstCredit = { false }
+        store.prunesPairingsOnRefresh = false
         let restore: () -> Void = {
             if let previous {
                 UserDefaults.standard.set(previous, forKey: OsaurusRouter.enabledDefaultsKey)
@@ -462,6 +464,98 @@ struct WorkspaceRosterStoreTests {
         OsaurusRouter.setEnabled(false)
         await store.refresh(reason: .manual)
         #expect(log.paths.isEmpty)
+    }
+
+    /// A first-run wallet still choosing its credit can't sign the list
+    /// request, so the roster waits quietly and loads once the credit settles.
+    @Test func refresh_beforeTheFirstCreditSettles_waitsWithoutAnError() async throws {
+        let (store, log, restore) = try makeNetworkedStore()
+        defer { restore() }
+
+        store.awaitsFirstCredit = { true }
+        await store.refresh(reason: .launch)
+        #expect(log.paths.isEmpty)
+        #expect(store.lastError == nil)
+
+        store.awaitsFirstCredit = { false }
+        await store.refresh(reason: .manual)
+        #expect(log.count(of: "/workspaces") == 1)
+        #expect(store.rosters.map(\.id) == ["ws-1"])
+    }
+
+    /// A share or unshare that asks for a refresh while one is in flight
+    /// gets exactly one follow-up fetch, never a dropped request and never
+    /// one fetch per caller.
+    @Test func refresh_duringInFlightRunsOneTrailingRefresh() async throws {
+        let (store, log, restore) = try makeNetworkedStore()
+        defer { restore() }
+
+        async let first: Void = store.refresh(reason: .manual)
+        async let second: Void = store.refresh(reason: .manual)
+        async let third: Void = store.refresh(reason: .poll)
+        _ = await (first, second, third)
+        #expect(log.count(of: "/workspaces") == 2)
+        #expect(store.rosters.map(\.id) == ["ws-1"])
+    }
+
+    // MARK: - Stale pairings
+
+    private static func pairing(address: String, workspaceId: String?) -> RemoteAgent {
+        RemoteAgent(
+            agentAddress: address, name: "Agent", description: "",
+            relayBaseURL: "https://\(address).agent.osaurus.ai", providerId: UUID(),
+            workspaceId: workspaceId
+        )
+    }
+
+    @Test func stalePairings_followTheAuthoritativeRoster() throws {
+        let rosters = [
+            WorkspaceRosterStore.WorkspaceRoster(
+                workspace: try Self.workspace(id: "ws-1", name: "Acme"),
+                agents: [try Self.agent(address: "0xaa", online: "true")]),
+            WorkspaceRosterStore.WorkspaceRoster(
+                workspace: try Self.workspace(id: "ws-2", name: "Beta"), agents: []),
+        ]
+        let listed = Self.pairing(address: "0xAA", workspaceId: "ws-1")
+        let unshared = Self.pairing(address: "0xbb", workspaceId: "ws-1")
+        let fetchFailed = Self.pairing(address: "0xcc", workspaceId: "ws-2")
+        let leftWorkspace = Self.pairing(address: "0xdd", workspaceId: "ws-gone")
+        let direct = Self.pairing(address: "0xee", workspaceId: nil)
+
+        let stale = WorkspaceRosterStore.stalePairingIds(
+            remoteAgents: [listed, unshared, fetchFailed, leftWorkspace, direct],
+            rosters: rosters,
+            loadedWorkspaceIds: ["ws-1"]
+        )
+        #expect(Set(stale) == [unshared.id, leftWorkspace.id])
+
+        // Once ws-2's agents load, its unlisted pairing goes too.
+        let afterLoad = WorkspaceRosterStore.stalePairingIds(
+            remoteAgents: [fetchFailed], rosters: rosters, loadedWorkspaceIds: ["ws-1", "ws-2"])
+        #expect(afterLoad == [fetchFailed.id])
+    }
+
+    @Test func verifiedRosterOmits_onlyWithinTheLease() throws {
+        let store = makeStore()
+        var clock = Date(timeIntervalSince1970: 1_790_000_000)
+        store.now = { clock }
+        let listed = WorkspaceAgentRef(workspaceId: "ws-1", agentAddress: "0xaa")
+        let unshared = WorkspaceAgentRef(workspaceId: "ws-1", agentAddress: "0xbb")
+        let otherWorkspace = WorkspaceAgentRef(workspaceId: "ws-9", agentAddress: "0xbb")
+
+        #expect(!store.verifiedRosterOmits(unshared), "a never-loaded roster proves nothing")
+
+        store.apply(rosters: [
+            .init(
+                workspace: try Self.workspace(id: "ws-1", name: "Acme"),
+                agents: [try Self.agent(address: "0xAA", online: "true")])
+        ])
+        #expect(!store.verifiedRosterOmits(listed))
+        #expect(store.verifiedRosterOmits(unshared))
+        #expect(!store.verifiedRosterOmits(otherWorkspace))
+
+        clock = clock.addingTimeInterval(WorkspaceRosterStore.verificationLifetime + 1)
+        #expect(!store.verifiedRosterOmits(unshared), "an expired lease proves nothing")
     }
 }
 

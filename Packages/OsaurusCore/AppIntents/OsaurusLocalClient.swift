@@ -157,6 +157,36 @@ public final class OsaurusLocalClient: Sendable {
         }
     }
 
+    /// Fire-and-confirm. `POST /workflows/{id}/run` starts one of the
+    /// owner's workflows in the background, `input` going to the field an
+    /// automation's `{{text}}` would; its forms and result surface in the
+    /// app. Returns the run id once the server accepts it (HTTP 202).
+    @discardableResult
+    public func startWorkflow(id: String, input: String?) async throws -> String {
+        let base = try await ensureServerReachable()
+
+        var request = URLRequest(url: base.appendingPathComponent("workflows/\(id)/run"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(LocalAPIKeyPolicy.appSessionToken, forHTTPHeaderField: LocalAPIKeyPolicy.appTokenHeaderName)
+        var body: [String: Any] = [:]
+        if let input, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { body["text"] = input }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw OsaurusLocalClientError.serverUnreachable
+        }
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard http.statusCode == 202, let runID = json?["run_id"] as? String else {
+            throw OsaurusLocalClientError.badResponse(
+                status: http.statusCode,
+                body: json?["message"] as? String ?? String(decoding: data, as: UTF8.self)
+            )
+        }
+        return runID
+    }
+
     // MARK: - Server reachability
 
     /// Returns the base URL once the local server answers `/health`. If it is

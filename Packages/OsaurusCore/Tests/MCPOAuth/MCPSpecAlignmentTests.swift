@@ -255,40 +255,86 @@ struct MCPSpecAlignmentTests {
         )
     }
 
+    /// No hint makes an MCP tool per-call: every one can be pre-granted.
+    private func expectPreGrantable(_ t: MCPProviderTool) {
+        let tool: Any = t
+        #expect(!(tool is PerCallApprovalTool))
+        #expect(!(tool is ArgumentAwarePerCallApprovalTool))
+    }
+
     @Test func readOnlyClosedWorldToolRunsWithoutPrompt() {
         let t = tool(.init(readOnlyHint: true, openWorldHint: false))
         #expect(t.defaultPermissionPolicy == .auto)
-        #expect(!t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(!t.isExemptFromBlanketApproval)
+        expectPreGrantable(t)
     }
 
     @Test func readOnlyToolWithoutOpenWorldHintRunsWithoutPrompt() {
         let t = tool(.init(readOnlyHint: true))
         #expect(t.defaultPermissionPolicy == .auto)
-        #expect(!t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(!t.isExemptFromBlanketApproval)
     }
 
     @Test func readOnlyOpenWorldToolStillAsks() {
         let t = tool(.init(readOnlyHint: true, openWorldHint: true))
         #expect(t.defaultPermissionPolicy == .ask)
-        #expect(!t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(!t.isExemptFromBlanketApproval)
     }
 
-    @Test func unannotatedToolIsConfirmedEveryCall() {
+    /// Most servers publish no annotations. Treating that as destructive put
+    /// every tool on Run once / Deny, a click per call.
+    @Test func unannotatedToolIsAnOrdinaryAskTool() {
         let t = tool(.init())
         #expect(t.defaultPermissionPolicy == .ask)
-        #expect(t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(!t.isExemptFromBlanketApproval)
+        expectPreGrantable(t)
     }
 
-    @Test func explicitlyNonDestructiveWriteToolAllowsALease() {
+    @Test func explicitlyNonDestructiveWriteToolIsAnOrdinaryAskTool() {
         let t = tool(.init(readOnlyHint: false, destructiveHint: false))
         #expect(t.defaultPermissionPolicy == .ask)
-        #expect(!t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(!t.isExemptFromBlanketApproval)
     }
 
-    @Test func destructiveToolIsConfirmedEveryCall() {
+    @Test func declaredDestructiveToolIsPreGrantableButBlanketExempt() {
         let t = tool(.init(destructiveHint: true, openWorldHint: false))
         #expect(t.defaultPermissionPolicy == .ask)
-        #expect(t.requiresApprovalEveryCall(argumentsJSON: "{}"))
+        #expect(t.isExemptFromBlanketApproval)
+        expectPreGrantable(t)
+    }
+
+    /// `destructiveHint` only applies when the tool is not read-only.
+    @Test func readOnlyToolIgnoresDestructiveHint() {
+        let t = tool(.init(readOnlyHint: true, destructiveHint: true))
+        #expect(t.defaultPermissionPolicy == .auto)
+        #expect(!t.isExemptFromBlanketApproval)
+    }
+
+    /// The catalog menu and pill read the registry, not the tool: Auto is
+    /// offered for every MCP tool and a stored Auto is what the pill shows.
+    @Test @MainActor func registryOffersAutoForMCPTools() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            let suffix = UUID().uuidString.prefix(8).lowercased()
+            let tools = [
+                MCPProviderTool(
+                    mcpTool: MCP.Tool(name: "plain_\(suffix)", description: nil, inputSchema: .object([:])),
+                    providerId: UUID(), providerName: "Hintless"),
+                MCPProviderTool(
+                    mcpTool: MCP.Tool(
+                        name: "wipe_\(suffix)", description: nil, inputSchema: .object([:]),
+                        annotations: .init(destructiveHint: true)),
+                    providerId: UUID(), providerName: "Hinted"),
+            ]
+            for t in tools {
+                try fixture.register(t)
+                let registry = ToolRegistry.shared
+                #expect(!registry.requiresPerCallApproval(t.name), "\(t.name)")
+                #expect(!registry.mayRequirePerCallApproval(t.name), "\(t.name)")
+                #expect(registry.policyInfo(for: t.name)?.effectivePolicy == .ask, "\(t.name)")
+                registry.setPolicy(.auto, for: t.name)
+                #expect(registry.policyInfo(for: t.name)?.effectivePolicy == .auto, "\(t.name)")
+            }
+        }
     }
 
     @Test func resourceLinkIsKept() throws {

@@ -347,6 +347,7 @@ extension FileChangeJournal {
         redoScope: RevertScope,
         restoredKeys: Set<FilePathKey>
     ) {
+        loadIfNeeded(sessionId)
         guard var sets = cache[sessionId] else { return }
         // A file-scoped revert has no anchor: every earlier agent set is in range.
         var redoRange: ClosedRange<Date>?

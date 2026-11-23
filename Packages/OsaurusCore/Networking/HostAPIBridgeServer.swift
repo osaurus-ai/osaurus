@@ -5,7 +5,8 @@
 //  Lightweight HTTP server exposed to the container via a Unix domain socket
 //  relayed through vsock. The osaurus-host CLI inside the container talks to
 //  this server using `curl --unix-socket`.
-//  Each request includes the calling Linux username for identity verification.
+//  Identity comes from the bearer token; each container's socket is bound
+//  to its own agent, so a token only works from that agent's container.
 //
 
 import Foundation
@@ -16,52 +17,97 @@ import NIOPosix
 public actor HostAPIBridgeServer {
     public static let shared = HostAPIBridgeServer()
 
-    private var channel: Channel?
-    private var boundSocketPath: String?
+    /// One host socket relayed into one sandbox container. `linuxName`
+    /// binds the socket to that container's agent: a token belonging to
+    /// any other agent is refused on it, so a token copied out of one
+    /// container is useless from another.
+    public struct SocketBinding: Sendable, Equatable {
+        public let path: String
+        public let linuxName: String?
 
-    public var isRunning: Bool { channel != nil }
+        public init(path: String, linuxName: String?) {
+            self.path = path
+            self.linuxName = linuxName
+        }
+    }
 
-    /// Start the bridge server on a Unix domain socket.
-    /// The socket is relayed into the container via vsock by the Containerization framework.
-    /// If already running, stops the existing server first to ensure a clean socket.
+    private var channels: [Channel] = []
+    private var boundSocketPaths: [String] = []
+
+    public var isRunning: Bool { !channels.isEmpty }
+
+    /// Start the bridge server on a single Unix domain socket that accepts
+    /// any registered agent's token.
+    public func start(socketPath: String) async throws {
+        try await start(bindings: [SocketBinding(path: socketPath, linuxName: nil)])
+    }
+
+    /// Start the bridge server on one Unix domain socket per binding.
+    /// Each socket is relayed into its container via vsock by the
+    /// Containerization framework. If already running, stops the existing
+    /// listeners first to ensure clean sockets.
     ///
     /// Runs on the process-shared utility event-loop group — sandbox
     /// start/stop cycles previously allocated a fresh 2-thread group each
     /// time, contributing to descriptor build-up (APPLE-MACOS-19T).
-    public func start(socketPath: String) async throws {
-        if channel != nil {
+    public func start(bindings: [SocketBinding]) async throws {
+        if isRunning || !boundSocketPaths.isEmpty {
             await stop()
         }
-
-        try? FileManager.default.removeItem(atPath: socketPath)
-
-        let bootstrap = ServerBootstrap(group: SharedEventLoopGroups.utility)
-            .serverChannelOption(ChannelOptions.backlog, value: 64)
-            .childChannelInitializer { channel in
-                channel.pipeline.configureHTTPServerPipeline().flatMap {
-                    channel.pipeline.addHandler(HostAPIBridgeHandler())
-                }
+        do {
+            for binding in bindings {
+                try? FileManager.default.removeItem(atPath: binding.path)
+                try? FileManager.default.createDirectory(
+                    atPath: (binding.path as NSString).deletingLastPathComponent,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700]
+                )
+                let boundLinuxName = binding.linuxName
+                let bootstrap = ServerBootstrap(group: SharedEventLoopGroups.utility)
+                    .serverChannelOption(ChannelOptions.backlog, value: 64)
+                    .childChannelInitializer { channel in
+                        channel.pipeline.configureHTTPServerPipeline().flatMap {
+                            channel.pipeline.addHandler(HostAPIBridgeHandler(boundLinuxName: boundLinuxName))
+                        }
+                    }
+                let ch = try await bootstrap.bind(unixDomainSocketPath: binding.path).get()
+                channels.append(ch)
+                boundSocketPaths.append(binding.path)
             }
-
-        let ch = try await bootstrap.bind(unixDomainSocketPath: socketPath).get()
-        self.channel = ch
-        self.boundSocketPath = socketPath
-        NSLog("[HostAPIBridge] Started on unix:\(socketPath)")
+        } catch {
+            await stop()
+            throw error
+        }
+        NSLog("[HostAPIBridge] Started on \(bindings.count) socket(s)")
     }
 
     public func stop() async {
-        let hadResources = channel != nil || boundSocketPath != nil
-        if let ch = channel {
+        let hadResources = !channels.isEmpty || !boundSocketPaths.isEmpty
+        for ch in channels {
             _ = try? await ch.close()
-            channel = nil
         }
-        if let path = boundSocketPath {
+        channels = []
+        for path in boundSocketPaths {
             try? FileManager.default.removeItem(atPath: path)
-            boundSocketPath = nil
         }
+        boundSocketPaths = []
         if hadResources {
             NSLog("[HostAPIBridge] Stopped")
         }
+    }
+
+    /// A socket bound to an agent serves only that agent's token; an
+    /// unbound socket serves any registered token.
+    nonisolated static func identityMatchesSocket(_ linuxName: String, boundLinuxName: String?) -> Bool {
+        boundLinuxName.map { $0 == linuxName } ?? true
+    }
+
+    /// `GET /api/secrets/{name}`: the agent's shell environment, nothing more.
+    static func bridgeSecret(_ name: String, agentId: UUID) -> String? {
+        guard let value = CredentialResolver.sandboxEnvironment(agentId: agentId)[name], !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 }
 
@@ -149,6 +195,11 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
     private var bodyBuffer: ByteBuffer = ByteBuffer()
     private var bodyBytesSeen = 0
     private var rejectedTooLarge = false
+    private let boundLinuxName: String?
+
+    init(boundLinuxName: String?) {
+        self.boundLinuxName = boundLinuxName
+    }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let part = unwrapInboundIn(data)
@@ -233,19 +284,24 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         let method = head.method
         let box = UnsafeSendableBox(value: context)
         let handler = UnsafeSendableBox(value: self)
+        let boundLinuxName = self.boundLinuxName
 
         let task = Task {
             let response: BridgeResponse
             if let token = bearerToken,
                 let identity = await SandboxBridgeTokenStore.shared.resolve(token: token)
             {
-                response = await handler.value.routeRequest(
-                    method: method,
-                    path: path,
-                    body: body,
-                    identity: identity,
-                    pluginName: pluginName
-                )
+                if !HostAPIBridgeServer.identityMatchesSocket(identity.linuxName, boundLinuxName: boundLinuxName) {
+                    response = .error(403, "Bridge token does not belong to this sandbox container")
+                } else {
+                    response = await handler.value.routeRequest(
+                        method: method,
+                        path: path,
+                        body: body,
+                        identity: identity,
+                        pluginName: pluginName
+                    )
+                }
             } else {
                 // Fail closed: no token, or token does not resolve to any
                 // known agent. We never fall back to a default identity.
@@ -327,12 +383,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
 
         switch service {
         case "secrets":
-            return await handleSecrets(
-                method: method,
-                remaining: remaining,
-                identity: identity,
-                pluginName: pluginName
-            )
+            return handleSecrets(method: method, remaining: remaining, identity: identity)
         case "config":
             return await handleConfig(
                 method: method,
@@ -350,7 +401,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         case "plugin":
             return await handlePlugin(method: method, remaining: remaining, body: body, identity: identity)
         case "log":
-            return handleLog(method: method, body: body, identity: identity)
+            return await handleLog(method: method, body: body, identity: identity)
         default:
             return .error(404, "Unknown service: \(service)")
         }
@@ -358,23 +409,19 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
 
     // MARK: - Service Handlers
 
+    /// Serves only what the agent's shell already sees: keys marked "Agents
+    /// Can Use This When Running Code". The `X-Osaurus-Plugin` header is
+    /// set by whatever runs in the sandbox, so it can't unlock a plugin's
+    /// declared keys; those reach a plugin only through its exec env.
     private func handleSecrets(
         method: HTTPMethod,
         remaining: [String],
-        identity: SandboxBridgeTokenStore.Identity,
-        pluginName: String?
-    ) async -> BridgeResponse {
+        identity: SandboxBridgeTokenStore.Identity
+    ) -> BridgeResponse {
         guard method == .GET, let name = remaining.first else {
             return .error(400, "GET /api/secrets/{name} expected")
         }
-        guard let pluginName = pluginName else {
-            return .error(400, "X-Osaurus-Plugin header required")
-        }
-
-        let value =
-            ToolSecretsKeychain.getSecret(id: name, for: pluginName, agentId: identity.agentId)
-            ?? AgentSecretsKeychain.getSecret(id: name, agentId: identity.agentId)
-        if let value = value {
+        if let value = HostAPIBridgeServer.bridgeSecret(name, agentId: identity.agentId) {
             return .ok("{\"value\":\(jsonEscape(value))}")
         }
         return .error(404, "Secret not found")
@@ -423,6 +470,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         guard method == .POST, remaining.first == "chat" else {
             return .error(400, "POST /api/inference/chat expected")
         }
+        if let refusal = await Self.hostServicesRefusal(agentId: identity.agentId) { return refusal }
         guard SandboxRateLimiter.shared.checkLimit(agent: identity.linuxName, service: "inference") else {
             return .error(429, "Rate limit exceeded for inference")
         }
@@ -484,6 +532,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         body: String,
         identity: SandboxBridgeTokenStore.Identity
     ) async -> BridgeResponse {
+        if let refusal = await Self.hostServicesRefusal(agentId: identity.agentId) { return refusal }
         guard SandboxRateLimiter.shared.checkLimit(agent: identity.linuxName, service: "dispatch") else {
             return .error(429, "Rate limit exceeded for dispatch")
         }
@@ -510,13 +559,8 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             return .error(400, "task is empty")
         }
 
-        let request = DispatchRequest(
-            prompt: task,
-            agentId: identity.agentId,
-            sourcePluginId: "sandbox:\(identity.linuxName)",
-            source: .plugin,
-            externalSessionKey: parsed["external_session_key"] as? String
-        )
+        let request = HostBridgeRequests.dispatchRequest(
+            task: task, identity: identity, externalSessionKey: parsed["external_session_key"] as? String)
 
         let manager = await MainActor.run { BackgroundTaskManager.shared }
         let handle = await manager.dispatchChat(request)
@@ -654,6 +698,9 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         guard execConfig?.enabled == true, execConfig?.pluginCreate == true else {
             return .error(403, "Plugin creation is disabled for this agent")
         }
+        // The in-app tool asks before registering; from guest code there is
+        // no one to ask, so it needs the agent's explicit opt-in.
+        if let refusal = await Self.hostServicesRefusal(agentId: agentUUID) { return refusal }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -704,17 +751,22 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         method: HTTPMethod,
         body: String,
         identity: SandboxBridgeTokenStore.Identity
-    ) -> BridgeResponse {
+    ) async -> BridgeResponse {
         guard method == .POST else {
             return .error(405, "POST expected")
         }
         guard let parsed = parseJSON(body),
             let level = parsed["level"] as? String,
-            let message = parsed["message"] as? String
+            let rawMessage = parsed["message"] as? String
         else {
             return .error(400, "Body must contain level and message")
         }
 
+        // A plugin can log its own environment; the bridge token and the
+        // agent's secrets never reach the app log or the Sandbox log view.
+        let token = await SandboxBridgeTokenStore.shared.token(forLinuxName: identity.linuxName)
+        let message = SecretScrubber.scrub(
+            rawMessage, secrets: HostBridgeRequests.logScrubSecrets(agentId: identity.agentId, bridgeToken: token))
         NSLog("[Sandbox:\(identity.linuxName)] [\(level)] \(message)")
         let user = identity.linuxName
         Task { @MainActor in
@@ -724,6 +776,20 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
     }
 
     // MARK: - Helpers
+
+    /// Inference, dispatch, and plugin registration act as the agent on the
+    /// host, so they follow the agent's own Code Can Use Osaurus setting,
+    /// not anything the guest claims (the plugin header is self-reported).
+    private static func hostServicesRefusal(agentId: UUID) async -> BridgeResponse? {
+        let allowed = await MainActor.run {
+            AgentManager.shared.effectiveAutonomousExec(for: agentId)?.hostServicesEnabled == true
+        }
+        guard !allowed else { return nil }
+        return .error(
+            403,
+            "Code in this agent's sandbox may not call Osaurus inference, start agent tasks, or register plugins. Turn on Code Can Use Osaurus in the agent's Sandbox settings."
+        )
+    }
 
     private func parseJSON(_ string: String) -> [String: Any]? {
         guard let data = string.data(using: .utf8),
@@ -737,5 +803,34 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             let escaped = String(data: data, encoding: .utf8)
         else { return "\"\(string)\"" }
         return escaped
+    }
+}
+
+/// What the bridge hands the host for one guest request.
+enum HostBridgeRequests {
+    /// A task guest code starts. Nobody at the Mac asked for it, so it runs
+    /// as an external surface: tools that would ask first are refused
+    /// rather than shown as a card the user might approve as their own,
+    /// externally denied tools stay denied, and with no folder of its own
+    /// it never takes a host folder over the agent's sandbox.
+    static func dispatchRequest(
+        task: String, identity: SandboxBridgeTokenStore.Identity, externalSessionKey: String?
+    ) -> DispatchRequest {
+        DispatchRequest(
+            prompt: task,
+            agentId: identity.agentId,
+            sourcePluginId: "sandbox:\(identity.linuxName)",
+            source: .plugin,
+            externalSessionKey: externalSessionKey,
+            externalSurface: true
+        )
+    }
+
+    static func logScrubSecrets(agentId: UUID, bridgeToken: String?) -> [String: String] {
+        let agent = CredentialResolver.credentialAgent(fallback: agentId)
+        var secrets = CredentialResolver.scrubValues(
+            from: CredentialResolver.sandboxEnvironment(agentId: agent), agentId: agent)
+        if let bridgeToken { secrets["OSAURUS_BRIDGE_TOKEN"] = bridgeToken }
+        return secrets
     }
 }

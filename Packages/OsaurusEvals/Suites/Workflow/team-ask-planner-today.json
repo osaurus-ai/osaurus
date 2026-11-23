@@ -1,0 +1,55 @@
+{
+  "id": "workflow.team-ask-planner-today",
+  "domain": "workflow",
+  "label": "workflow • prepared ask: what is on my calendar today",
+  "query": "prepared ask: what is on my calendar today",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-planner-today",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "events": [
+            {
+              "id": "event-read-1",
+              "title": "Standup",
+              "start": "{{date:today_start+960m}}",
+              "end": "{{date:today_start+975m}}"
+            },
+            {
+              "id": "event-read-2",
+              "title": "1:1 with Jordan",
+              "start": "{{date:today_start+1260m}}",
+              "end": "{{date:today_start+1290m}}"
+            }
+          ],
+          "count": 2
+        }
+      },
+      "toolArguments": {
+        "read": {
+          "start": "{{date:today_start}}",
+          "end": "{{date:today_end}}"
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "Jordan"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

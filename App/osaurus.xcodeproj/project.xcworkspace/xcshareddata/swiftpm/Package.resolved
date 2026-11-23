@@ -1,5 +1,5 @@
 {
-  "originHash": "78bf1831237aba77bd64606b67d185ed63b4df4735104f9b5a157d27501977b1",
+  "originHash": "fd9f633e736c8b959405c2c0ea96d21d1963f415cf4f2462440d018682ad6499",
   "pins": [
     {
       "identity": "aachartkit-swift",
@@ -32,8 +32,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/apple/containerization.git",
       "state": {
-        "revision": "5427fd21ded4b84034126caef5b3182900b4776d",
-        "version": "0.41.0"
+        "revision": "baf212e5a8e432e539beee325050aa26443a154d",
+        "version": "0.54.0"
       }
     },
     {
@@ -50,8 +50,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/FluidInference/FluidAudio.git",
       "state": {
-        "revision": "d302273d49ef4d8914b27f20d342be482e8810f1",
-        "version": "0.14.1"
+        "revision": "c8b41f98eae668794dd0083bbe028fe7e6585051",
+        "version": "0.18.3"
       }
     },
     {
@@ -97,6 +97,15 @@
       "state": {
         "revision": "766c72235ba795717f57ce5c6b755768a9420dd7",
         "version": "2.5.2"
+      }
+    },
+    {
+      "identity": "rive-ios",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/rive-app/rive-ios",
+      "state": {
+        "revision": "ec9ae3662d260ce92ac31b471d500d323d3d2bcf",
+        "version": "6.29.0"
       }
     },
     {
@@ -373,7 +382,7 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/osaurus-ai/vmlx-swift",
       "state": {
-        "revision": "1bcd74ad182103a3b83941f61e57ee0bac23b330"
+        "revision": "22ecedd3a4e0b5a820e99b213a54bfa0f1fc1b6d"
       }
     },
     {

@@ -315,6 +315,20 @@ struct CalculatorToolTests {
         return try #require(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }
 
+    /// Raptor 0.7 filled the optional unit with "percent" and "cents" on a
+    /// tip calculation; the description says when to leave it out.
+    @Test func angleUnitSaysToOmitItOutsideTrig() throws {
+        guard case .object(let root) = CalculatorTool().parameters,
+            case .object(let properties) = root["properties"],
+            case .object(let unit) = properties["angle_unit"],
+            case .string(let description) = unit["description"]
+        else {
+            Issue.record("angle_unit schema missing")
+            return
+        }
+        #expect(description.contains("trig functions only; omit it for any other math"))
+    }
+
     @Test func successEnvelope() async throws {
         let dict = try await run(["expression": "(1250 * 1.08) / 12"])
         #expect(dict["tool"] as? String == "calculate")
@@ -382,10 +396,11 @@ struct CalculatorToolTests {
     }
 
     @MainActor
-    @Test func registeredAsBuiltInAndInEveryBaseline() {
+    @Test func registeredAsBuiltInAndInTheWorkerBaseline() {
         #expect(ToolRegistry.shared.builtInToolNames.contains("calculate"))
         #expect(ToolRegistry.spawnedWorkerBaselineToolNames.contains("calculate"))
-        #expect(ToolRegistry.orchestratorAllowedToolNames.contains("calculate"))
+        #expect(ToolRegistry.orchestratorLegacyToolNames.contains("calculate"))
+        #expect(!ToolRegistry.orchestratorAllowedToolNames.contains("calculate"))
         #expect(!ToolRegistry.orchestratorExcludedToolNames.contains("calculate"))
     }
 }

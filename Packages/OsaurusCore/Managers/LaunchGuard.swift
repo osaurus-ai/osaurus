@@ -56,6 +56,13 @@ enum LaunchGuard {
     /// launch. Empty when not in safe mode.
     private(set) static var disabledFeatures: Feature = []
 
+    /// `true` once this session has persisted the "healthy" crash state
+    /// (`startupInProgress = false`, `consecutiveCrashCount = 0`). Lets
+    /// `noteHealthyHealthCheck()` — called on every `/health` request — skip
+    /// redundant UserDefaults writes, which can block on cfprefsd IPC and
+    /// hang the main thread (APPLE-MACOS-178).
+    private static var crashStateCleared = false
+
     /// `true` when any subsystem is disabled (back-compat with the old flag).
     static var isSafeMode: Bool { !disabledFeatures.isEmpty }
 
@@ -96,6 +103,7 @@ enum LaunchGuard {
 
         defaults.set(true, forKey: startupInProgressKey)
         defaults.synchronize()
+        crashStateCleared = false
         return isSafeMode
     }
 
@@ -104,6 +112,7 @@ enum LaunchGuard {
         let defaults = UserDefaults.standard
         defaults.set(false, forKey: startupInProgressKey)
         defaults.set(0, forKey: crashCountKey)
+        crashStateCleared = true
     }
 
     /// Called when the running app serves a clean `/health`. Treats the
@@ -111,10 +120,21 @@ enum LaunchGuard {
     /// later force-quit can't re-trigger safe mode, and — if we launched
     /// degraded — clears in-session safe mode and asks the AppDelegate to
     /// bring the skipped subsystems online. Idempotent.
+    ///
+    /// This runs on every `/health` request, so the persisted state is
+    /// written at most once per session, and off the main thread:
+    /// UserDefaults writes can block on cfprefsd and stall the UI.
     static func noteHealthyHealthCheck() {
-        let defaults = UserDefaults.standard
-        defaults.set(false, forKey: startupInProgressKey)
-        defaults.set(0, forKey: crashCountKey)
+        if !crashStateCleared {
+            crashStateCleared = true
+            let inProgressKey = startupInProgressKey
+            let countKey = crashCountKey
+            DispatchQueue.global(qos: .utility).async {
+                let defaults = UserDefaults.standard
+                defaults.set(false, forKey: inProgressKey)
+                defaults.set(0, forKey: countKey)
+            }
+        }
 
         guard !disabledFeatures.isEmpty else { return }
         let recovered = disabledFeatures

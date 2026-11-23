@@ -37,6 +37,11 @@ enum LocalVisionEvidence {
     private static let lock = NSLock()
     private nonisolated(unsafe) static var cache: [String: (processorVersion: UInt64, result: Result)] = [:]
     private nonisolated(unsafe) static var generation: UInt64 = 0
+    /// Last `VLMProcessorTypeRegistry.shared.registrationVersion` seen by
+    /// `inspect`. `cachedOrWarm` compares against this snapshot instead of
+    /// touching the registry, whose lazy global initialization (swift_once)
+    /// can block the main thread for seconds on first access (APPLE-MACOS-41J).
+    private nonisolated(unsafe) static var lastProcessorVersion: UInt64?
     private nonisolated(unsafe) static let observer: NSObjectProtocol = NotificationCenter.default.addObserver(
         forName: .localModelsChanged, object: nil, queue: nil
     ) { _ in invalidate() }
@@ -53,6 +58,7 @@ enum LocalVisionEvidence {
         let key = directory.path
         let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
         lock.lock()
+        lastProcessorVersion = processorVersion
         let version = generation
         let cached = cache[key]
         lock.unlock()
@@ -84,12 +90,20 @@ enum LocalVisionEvidence {
     /// cache through `inspect`, which keeps the generation check, then posts
     /// `evidenceReady`. Send and load paths keep calling `inspect`, so the
     /// authoritative gate never sees a pending nil.
+    ///
+    /// Must not touch `VLMProcessorTypeRegistry.shared` (or any other lazily
+    /// initialized registry): its first access runs the global initializer
+    /// synchronously on the caller, which hung the main thread. The processor
+    /// version is compared against the snapshot `inspect` records off-main;
+    /// before the first background read there is no snapshot, so this misses
+    /// and the warm read initializes the registry on `warmQueue`.
     static func cachedOrWarm(_ directory: URL) -> Result? {
         _ = observer
         let key = directory.path
-        let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
         lock.lock()
-        if let cached = cache[key], cached.processorVersion == processorVersion {
+        if let processorVersion = lastProcessorVersion,
+            let cached = cache[key], cached.processorVersion == processorVersion
+        {
             lock.unlock()
             return cached.result
         }
@@ -123,6 +137,13 @@ enum LocalVisionEvidence {
     /// through `ModalityBearing` (the load-time tower check reads it). Otherwise an M3.1 bundle stays text-only.
     static var miniMaxM3VisionRuntimeAvailable: Bool {
         let type: Any.Type = MiniMaxM3Model.self
+        return type is ModalityBearing.Type
+    }
+
+    /// True when the linked vMLX builds the Inkling-2 vision tower: its `Inkling2LoopModel` reports
+    /// its lanes through `ModalityBearing`. Otherwise an Inkling-2 bundle stays text-only.
+    static var inkling2VisionRuntimeAvailable: Bool {
+        let type: Any.Type = Inkling2LoopModel.self
         return type is ModalityBearing.Type
     }
 
@@ -185,6 +206,49 @@ enum LocalVisionEvidence {
                 return result(false, "The DeepSeek-V4.1 vision tower is missing encoder, aligner or delimiter weights.")
             }
             return result(true, "Image input is backed by the DeepSeek-V4.1 vision tower, aligner and delimiter weights in the bundle.")
+        }
+        if modelType == "inkling2_loop" {
+            guard inkling2VisionRuntimeAvailable else {
+                return result(false, "The linked vMLX runtime has no Inkling-2 vision lane.")
+            }
+            // Inkling-2 loads through vMLX's LLM factory (`Inkling2LoopModel`), which builds the vision
+            // tower from `vision_config` and prepares images itself (40 px tiles, one placeholder per
+            // tile). Bundles store the tower under one of four layouts; require the patch embedding,
+            // both projector layers and every block's attention and MLP in one of them.
+            guard let vision = config["vision_config"] as? [String: Any],
+                let depth = (vision["num_hidden_layers"] as? NSNumber)?.intValue, (1...1024).contains(depth)
+            else {
+                return result(false, "The Inkling-2 bundle has no vision configuration.")
+            }
+            do {
+                names = try tensorNames(directory)
+            } catch {
+                return result(false, "Cannot verify the installed vision weights: \(error.localizedDescription)")
+            }
+            guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
+                return result(false, "The installed weight format is rejected by the local runtime preflight.")
+            }
+            let layouts: [(tower: String, projIn: String, projOut: String)] = [
+                ("model.visual.backbone.", "model.visual.proj_in.weight", "model.visual.proj_out.weight"),
+                ("model.vision_tower.", "model.vision_tower.merger.linear_1.weight",
+                 "model.vision_tower.merger.linear_2.weight"),
+                ("vision_tower.backbone.", "vision_tower.proj_in.weight", "vision_tower.proj_out.weight"),
+                ("vision_tower.", "vision_tower.proj_in.weight", "vision_tower.proj_out.weight"),
+                ("vision_tower.", "vision_tower.merger.linear_1.weight", "vision_tower.merger.linear_2.weight"),
+            ]
+            let complete = layouts.contains { l in
+                names.contains(l.tower + "embeddings.patch_embedding.weight")
+                    && names.contains(l.projIn) && names.contains(l.projOut)
+                    && (0..<depth).allSatisfy { i in
+                        let layer = l.tower + "layers.\(i)."
+                        return names.contains(layer + "self_attn.q_proj.weight")
+                            && (names.contains(layer + "mlp.c_fc.weight") || names.contains(layer + "mlp.fc1.weight"))
+                    }
+            }
+            guard complete else {
+                return result(false, "The Inkling-2 vision tower is missing patch-embedding, encoder or projector weights.")
+            }
+            return result(true, "Image input is backed by the Inkling-2 vision tower and projector in the bundle.")
         }
         if modelType == "minimax_m3_vl" {
             guard miniMaxM3VisionRuntimeAvailable else {

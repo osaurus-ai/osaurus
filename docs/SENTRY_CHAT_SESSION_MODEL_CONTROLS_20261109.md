@@ -24,11 +24,13 @@ changing saved generation defaults.
 ## Implementation
 
 ChatModelControls stores explicit reasoning/speculation choices per full model
-ID in the owning ChatSession. A nullable session column, added by the existing
-idempotent migration ladder, preserves them when reopening that conversation.
-Missing legacy values inherit defaults. Empty chats remain unsaved until their
-first turn. Reset removes a conversation override and reveals current saved
-defaults; new/reset chats begin without overrides.
+ID in the owning ChatSession. Current Osaurus persists the optional field in
+the conversation's sync app data. The sync mapper owns the field so a reset
+clears it while preserving other writers' metadata. The original candidate used
+a nullable SQLite column before the move to the sync conversation store.
+Missing values inherit defaults. Empty chats remain unsaved until their first
+turn. Reset removes a conversation override and reveals current saved defaults.
+New chats begin without overrides.
 
 Capture composes a copy of the saved agent settings with these choices before
 the existing frozen-turn pipeline. Per-submission overrides retain their higher

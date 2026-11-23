@@ -58,7 +58,7 @@ enum AppleToolError: Error, Sendable, Equatable {
         case .permissionDenied(let permission, let detail):
             var text =
                 "\(permission.displayName) access is not granted to Osaurus. "
-                + "Ask the user to allow it in System Settings → Privacy & Security → \(permission.displayName)"
+                + "Ask the user to allow it in System Settings → Privacy & Security → \(permission.systemSettingsPath)"
             if let pane = permission.systemSettingsURL?.absoluteString { text += " (\(pane))" }
             text += ", then try again."
             if let detail, !detail.isEmpty { text += " \(detail)" }
@@ -133,6 +133,8 @@ class AppleToolBase: OsaurusTool, PermissionedTool, CapabilityToolGroupDeclaring
         self.isWrite = isWrite
         self.requirementOverride = requirements
     }
+
+    var outputSchema: JSONValue? { AppleToolOutputSchemas.byTool[name] }
 
     /// The `SystemPermission`s this tool needs at execution time.
     var systemPermissions: [SystemPermission] { requirementOverride ?? app.systemPermissions }

@@ -167,7 +167,7 @@ struct AuxiliaryModelHandoffTests {
         #expect(!service.contains("loadIntent: .interactive"))
         let view = try String(contentsOf: root.appendingPathComponent("Views/Chat/ChatView.swift"), encoding: .utf8)
         let capture = try #require(
-            view.range(of: "let invocation = ModelJobInvocation(parentModelName: selectedModel, source: source)")
+            view.range(of: "let invocation = ModelJobInvocation(parentModelName: selectedModel, source: runtimeSource)")
         )
         let task = try #require(view.range(of: "compactionTask = Task {"))
         #expect(capture.lowerBound < task.lowerBound)

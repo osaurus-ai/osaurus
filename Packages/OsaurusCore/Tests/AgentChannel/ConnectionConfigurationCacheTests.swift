@@ -45,6 +45,25 @@ struct ConnectionConfigurationCacheTests {
         #expect(cache.value(for: url) { 9 } == 5)
     }
 
+    /// A write that lands while a load is reading disk wins: the load's
+    /// (possibly pre-write) value is not cached (Sentry APPLE-MACOS-40H).
+    @Test func aLoadRacingAWriteDoesNotCacheItsRead() {
+        let cache = ConnectionConfigurationCache<[String]>()
+        let url = URL(fileURLWithPath: "/tmp/config", isDirectory: true)
+
+        let raced = cache.value(for: url) {
+            // Not cached yet, so this update is a no-op on the value...
+            cache.update(for: url) { $0 + ["slack-t0acme"] }
+            return []
+        }
+        #expect(raced.isEmpty)
+        // ...but the stale read was not cached: the next read reloads.
+        #expect(cache.value(for: url) { ["slack-t0acme"] } == ["slack-t0acme"])
+
+        cache.update(for: url) { $0 + ["slack-t0beta"] }
+        #expect(cache.value(for: url) { [] } == ["slack-t0acme", "slack-t0beta"])
+    }
+
     @Test func iMessageStoreServesSavedValueAndHonorsOverrideSwitch() async throws {
         try await AgentChannelConfigurationTestLock.shared.run {
             let previous = IMessageConnectionConfigurationStore.overrideDirectory
@@ -87,6 +106,59 @@ struct ConnectionConfigurationCacheTests {
             let fresh = IMessageConnectionConfigurationStore.load()
             #expect(!fresh.writeEnabled)
             #expect(fresh.defaultReadLimit == 50)
+        }
+    }
+    // MARK: - AgentChannelConfigurationStore (Sentry APPLE-MACOS-37Q)
+
+    @Test func agentChannelStoreServesCacheUntilFileChanges() async throws {
+        try await AgentChannelConfigurationTestLock.shared.run {
+            let previous = AgentChannelConfigurationStore.overrideDirectory
+            let first = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-agent-channels-cache-\(UUID().uuidString)", isDirectory: true)
+            let second = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-agent-channels-cache-\(UUID().uuidString)", isDirectory: true)
+            defer {
+                AgentChannelConfigurationStore.overrideDirectory = previous
+                try? FileManager.default.removeItem(at: first)
+                try? FileManager.default.removeItem(at: second)
+            }
+
+            AgentChannelConfigurationStore.overrideDirectory = first
+            #expect(AgentChannelConfigurationStore.load() == AgentChannelConfiguration())
+
+            // save() primes the cache with the persisted value.
+            try AgentChannelConfigurationStore.save(AgentChannelConfiguration(schemaVersion: 7))
+            #expect(AgentChannelConfigurationStore.load().schemaVersion == 7)
+
+            // Pin the file's mtime to a whole-second value so restoring it
+            // after a rewrite round-trips exactly (setAttributes/utimes does
+            // not preserve the filesystem's nanosecond precision).
+            let url = AgentChannelConfigurationStore.configurationFileURL()
+            let originalDate = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) - 60)
+            try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: url.path)
+            // New mtime -> one re-read of the (unchanged) saved file primes the cache.
+            #expect(AgentChannelConfigurationStore.load().schemaVersion == 7)
+
+            // Rewrite the file but keep its mtime: load() must not re-read it.
+            try #"{"schemaVersion": 9}"#.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: url.path)
+            #expect(AgentChannelConfigurationStore.load().schemaVersion == 7)
+
+            // A hand edit (new mtime) is picked up on the next load.
+            try FileManager.default.setAttributes(
+                [.modificationDate: originalDate.addingTimeInterval(5)],
+                ofItemAtPath: url.path
+            )
+            #expect(AgentChannelConfigurationStore.load().schemaVersion == 9)
+
+            // Deleting the file falls back to defaults.
+            try FileManager.default.removeItem(at: url)
+            #expect(AgentChannelConfigurationStore.load() == AgentChannelConfiguration())
+
+            // Switching directories never leaks the previous directory's value.
+            try AgentChannelConfigurationStore.save(AgentChannelConfiguration(schemaVersion: 7))
+            AgentChannelConfigurationStore.overrideDirectory = second
+            #expect(AgentChannelConfigurationStore.load() == AgentChannelConfiguration())
         }
     }
 }

@@ -36,6 +36,14 @@ struct ChatHarnessPickerOption: Identifiable, Equatable, Hashable, Sendable {
         }
     }
 
+    /// Picking a row on a Claude Code runtime that isn't signed in (or whose
+    /// CLI went missing) goes through sign-in first. An unchecked runtime
+    /// applies at once; the chat reports a sign-in problem itself.
+    static func needsSetup(_ runtime: HarnessRuntime?, state: HarnessRuntimeAvailability.State?) -> Bool {
+        guard runtime?.kind == .claudeCode else { return false }
+        return state == .needsSignIn || state == .notInstalled
+    }
+
     /// Rows for one runtime. Claude Code lists its model aliases, plus the
     /// agent's own full model id when that is what it runs, so the current
     /// choice always shows as selected.

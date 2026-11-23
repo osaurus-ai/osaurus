@@ -83,6 +83,8 @@ struct ChatSessionCompactionTests {
             // Small window so a modest transcript sits past the 85% auto gate.
             clearCompactionModel(contextCap: 8_192)
             let session = makeSession(pairs: 4, charsPerTurn: 4_000)
+            // A custom agent's chat: the Orchestrator's never auto-compacts.
+            session.agentId = UUID()
             let engine = ImmediateAnswerChatEngine()
             session.chatEngineFactory = { _ in engine }
             let turnCountBefore = session.turns.count
@@ -113,6 +115,31 @@ struct ChatSessionCompactionTests {
             #expect(session.hasPendingSendAfterCompaction == false)
             #expect(session.compactionState == .idle)
             #expect(session.turns[turnCountBefore].role == .user)
+            #expect(session.turns[turnCountBefore].content == "one more question")
+            try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
+        }
+    }
+
+    @Test("the Orchestrator's chat sends past the auto gate without compacting")
+    func orchestratorChatNeverAutoCompacts() async throws {
+        try await ChatHistoryTestStorage.run {
+            clearCompactionModel(contextCap: 8_192)
+            let session = makeSession(pairs: 4, charsPerTurn: 4_000)
+            #expect(session.usesOrchestratorContextPolicy)
+            let engine = ImmediateAnswerChatEngine()
+            session.chatEngineFactory = { _ in engine }
+            let turnCountBefore = session.turns.count
+
+            session.input = "one more question"
+            session.sendCurrent()
+
+            try await waitUntil(timeout: Self.asyncTimeout) {
+                session.turns.count > turnCountBefore
+            }
+            #expect(session.showCompactionDialog == false)
+            #expect(session.hasPendingSendAfterCompaction == false)
+            #expect(session.compactionState == .idle)
+            #expect(session.conversationSummary == nil)
             #expect(session.turns[turnCountBefore].content == "one more question")
             try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
         }

@@ -16,6 +16,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 
 enum ModelFormatDetection {
     // MARK: - Memoization
@@ -81,6 +82,8 @@ enum ModelFormatDetection {
     static func isMLXFormat(at directory: URL, refresh: Bool = false) -> Bool {
         cachedVerdict("dir:\(directory.path)", refresh: refresh) {
             if configHasMLXQuantization(at: directory) { return true }
+            // Architectures vmlx loads in their upstream (pt-tagged) format, converting at load.
+            if NativeCheckpointFormats.loadsUpstreamCheckpoint(at: directory) { return true }
 
             let formats = safetensorsFormatTags(at: directory)
             if formats.contains("mlx") { return true }

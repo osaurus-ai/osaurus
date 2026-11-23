@@ -1,0 +1,26 @@
+{
+  "id": "orchestrator.route-settings-question",
+  "domain": "orchestrator",
+  "label": "orchestrator • a question about Osaurus goes to the Configurator",
+  "query": "Where do I change the port the Osaurus server listens on?",
+  "notes": "Rule 1 and the first route: anything about Osaurus itself goes through configurator_handoff. The Orchestrator has no osaurus_help, so a direct answer here is from memory.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "configurator_handoff"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "spawn_agent",
+        "web_search",
+        "search_and_extract",
+        "run_workflow"
+      ],
+      "rubric": [
+        "Tells the user where the server port is set in Osaurus (a Settings location), without claiming it was changed."
+      ],
+      "maxIterations": 4
+    }
+  }
+}

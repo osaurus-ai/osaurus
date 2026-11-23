@@ -252,6 +252,17 @@ public final class OsaurusDatabaseHandle: @unchecked Sendable {
         handles.removeValue(forKey: name)
     }
 
+    /// Frees each open connection's page cache (`PRAGMA shrink_memory`).
+    /// Pages refill from disk on demand. Each handle runs on its own queue,
+    /// so a busy database delays only its own release.
+    public static func releaseCachedPages() {
+        for handle in allOpenHandles {
+            DispatchQueue.global(qos: .utility).async {
+                handle.exec("PRAGMA shrink_memory")
+            }
+        }
+    }
+
     /// Briefly close every registered DB handle while `body` runs,
     /// then reopen them. Used by key rotation so SQLCipher can take
     /// exclusive access for `PRAGMA rekey` without fighting the

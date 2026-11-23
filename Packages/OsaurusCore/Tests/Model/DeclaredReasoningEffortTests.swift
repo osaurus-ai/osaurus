@@ -442,6 +442,25 @@ struct DeclaredReasoningEffortTests {
         #expect(declared?.preserveThinking != nil)
     }
 
+    @Test("an effort_map template (Inkling-2) derives its levels, default and an explicit Off")
+    func effortMapTemplateDerivesModes() {
+        let template = """
+            {%- set effort_map = {"none": 0.0, "minimal": 0.1, "low": 0.2, "medium": 0.7, "high": 0.9, "xhigh": 0.99, "max": 0.99} -%}
+            {%- macro emit_thinking_effort() -%}
+                {%- set eff = reasoning_effort if reasoning_effort is defined and reasoning_effort is not none else 0.9 -%}
+                {%- if eff is string -%}{%- set key = eff | trim -%}{%- if key not in effort_map -%}{{- raise_exception("Unknown reasoning_effort: " ~ eff) -}}{%- endif -%}{%- endif -%}
+            {%- endmacro -%}
+            """
+        let declared = DeclaredReasoningEffort.templateDerivedDeclaration(template: template)
+        let levels = ["minimal", "low", "medium", "high", "xhigh", "max"]
+        var kwargs: [String: [String: DeclaredReasoningEffort.ReasoningModeValue]] = [
+            "none": ["reasoning_effort": .string("none")]
+        ]
+        for level in levels { kwargs[level] = ["reasoning_effort": .string(level)] }
+        #expect(declared?.control == .modeKwargs(levels, defaultLevel: "high", kwargs: kwargs))
+        #expect(declared?.preserveThinking == nil)
+    }
+
     @Test("templates that never read the kwarg derive nothing")
     func templateWithoutEffortDerivesNil() {
         let qwen36ish = """
@@ -696,5 +715,67 @@ extension DeclaredReasoningEffortTests {
             // No request: nothing is synthesized; the template default applies.
             #expect(context([:]).isEmpty)
         }
+    }
+
+    // MARK: - Background calls turn reasoning off through the declared rail
+
+    @Test("background thinking-off uses an effort ladder's declared off rail (Inkling effort_map)")
+    func backgroundThinkingOffUsesDeclaredRail() {
+        let model = "thinkingmachines/Inkling-2-Mini-proof"
+        var kwargs: [String: [String: DeclaredReasoningEffort.ReasoningModeValue]] = [
+            "none": ["reasoning_effort": .string("none")]
+        ]
+        for level in ["low", "high"] { kwargs[level] = ["reasoning_effort": .string(level)] }
+        withOverride(
+            .init(control: .modeKwargs(["low", "high"], defaultLevel: "high", kwargs: kwargs), preserveThinking: nil),
+            forModelId: model
+        ) {
+            let off = ModelProfileRegistry.thinkingOffStoredOption(for: model)
+            #expect(off?.id == "reasoningEffort")
+            #expect(off?.value == .string("none"))
+            // and the request it produces renders the bundle's own Off kwargs
+            let context = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil, maxTokens: 256, modelOptions: [off!.id: off!.value]),
+                modelName: model)
+            #expect(context["reasoning_effort"] as? String == "none")
+        }
+    }
+
+    @Test("background thinking-off invents nothing without a declared off rail")
+    func backgroundThinkingOffNeedsDeclaredRail() {
+        let model = "proof/ladder-without-off"
+        withOverride(
+            .init(control: .modeKwargs(["low", "high"], defaultLevel: "high",
+                kwargs: ["low": ["reasoning_effort": .string("low")], "high": ["reasoning_effort": .string("high")]]),
+                preserveThinking: nil),
+            forModelId: model
+        ) {
+            #expect(ModelProfileRegistry.thinkingOffStoredOption(for: model) == nil)
+        }
+        let plain = "proof/levels-with-none"
+        withOverride(
+            .init(control: .levels(["none", "low", "high"], defaultLevel: "high"), preserveThinking: nil),
+            forModelId: plain
+        ) {
+            #expect(ModelProfileRegistry.thinkingOffStoredOption(for: plain)?.value == .string("none"))
+        }
+        let noOff = "proof/levels-without-none"
+        withOverride(
+            .init(control: .levels(["low", "high"], defaultLevel: "high"), preserveThinking: nil),
+            forModelId: noOff
+        ) {
+            #expect(ModelProfileRegistry.thinkingOffStoredOption(for: noOff) == nil)
+        }
+    }
+
+    @Test("background thinking-off keeps a profile toggle first (Qwen disableThinking)")
+    func backgroundThinkingOffPrefersToggle() {
+        let model = "qwen3.5-35b-a3b-4bit"
+        let toggle = ModelProfileRegistry.thinkingStoredOption(for: model, enabled: false)
+        #expect(toggle != nil)
+        let off = ModelProfileRegistry.thinkingOffStoredOption(for: model)
+        #expect(off?.id == toggle?.id)
+        #expect(off?.value == toggle?.value)
     }
 }

@@ -24,6 +24,10 @@ enum ResponsesGenerationEvent: Sendable {
     case billing(RouterBillingSummary)
     case artifacts([RemoteRunArtifact])
     case agentTool(StreamingAgentToolHint.Trace)
+    /// A shared agent's host is waiting on its owner to approve a tool call.
+    case ownerApproval(StreamingOwnerApprovalHint.Status)
+    /// The shared agent's owner said something in the conversation mid-run.
+    case participantMessage(StreamingParticipantMessageHint.Message)
     case remoteToolCompleted(StreamingToolHint.ToolCallDone)
     /// Opaque reserved metadata from an older service extension. Preserve it
     /// for diagnostics; it is never model text or an executable tool call.
@@ -80,6 +84,8 @@ struct ResponsesGenerationCompletion: Sendable {
     let mtp: MTPStatsSummary?
     var inputTokenCount: Int? = nil
     var cachedInputTokenCount: Int? = nil
+    /// Nil when the request carried no thinking budget.
+    var reasoningBudget: ReasoningBudgetReport? = nil
 
     /// Previewed calls are never actionable until the whole response completes.
     /// In particular a length/cancellation boundary cannot execute partial work.
@@ -108,6 +114,7 @@ enum ResponsesGenerationStream {
             var calls: [ResponsesFunctionCall] = []
             var inputTokens: Int?
             var cachedInputTokens: Int?
+            var reasoningBudget: ReasoningBudgetReport?
             var completed = false
             var hasCompletedToolPreview = false
             do {
@@ -124,6 +131,8 @@ enum ResponsesGenerationStream {
                         // Prompt tokens restored from the prefix cache (L1/L2/L3 hit): reported as
                         // usage.prompt_tokens_details.cached_tokens on the completion.
                         cachedInputTokens = count
+                    case .reasoningBudget(let report):
+                        reasoningBudget = report
                     case .tokens(let text):
                         continuation.yield(.outputTextDelta(text))
                     case .reasoning(let text):
@@ -170,7 +179,8 @@ enum ResponsesGenerationStream {
                                     promptTokensPerSecond: prefill,
                                     mtp: mtp,
                                     inputTokenCount: inputTokens,
-                                    cachedInputTokenCount: cachedInputTokens
+                                    cachedInputTokenCount: cachedInputTokens,
+                                    reasoningBudget: reasoningBudget
                                 )
                             )
                         )

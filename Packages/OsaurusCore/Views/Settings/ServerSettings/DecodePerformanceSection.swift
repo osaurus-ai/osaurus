@@ -33,40 +33,32 @@ struct DecodePerformanceSection: View {
             blurb:
                 "Decode-throughput options for local vMLX models. Changes apply on the next model load."
         ) {
-            SettingsField(
-                label: "Tied LM Head Codec",
-                hint:
+            SettingsRow(
+                title: "Tied LM Head Codec",
+                description:
                     "Quantizes a tied output head that ships unquantized inside an otherwise-quantized bundle (e.g. Gemma 4 QAT's fp16 262k-vocab head, ~1 GB read per decoded token on E2B). q6 matches the precision class of llama.cpp's GGUF Q6_K output head. Preserves the model loader’s effective activation dtype. Never alters heads the bundle ships pre-quantized, and never applies to full-precision bundles.",
                 anchorId: "server.decode.tiedHeadCodec"
             ) {
-                Picker("", selection: performanceBinding.tiedHeadCodec) {
+                SettingsMenuPicker(selection: performanceBinding.tiedHeadCodec) {
                     ForEach(VMLXTiedHeadCodec.allCases, id: \.self) { codec in
                         Text(codecTitle(codec)).tag(codec)
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
             }
 
-            SettingsField(
-                label: "Official DSV4 0731 Activation QAT",
-                hint:
-                    "Optionally replays the checkpoint's activation-QAT simulation graph for DeepSeek V4 Flash 0731 (post-RoPE E4M3 KV and Hadamard/E2M1 indexer activations). Off by default because current Release measurements show a throughput cost and do not yet prove a user-visible quality gain. Saving unloads the resident model; QAT-on and QAT-off prefix caches are isolated so state cannot cross modes."
-            ) {
-                Toggle("", isOn: performanceBinding.deepseekV4ActivationQAT)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-            }
+            SettingsToggle(
+                title: "Official DSV4 0731 Activation QAT",
+                description:
+                    "Optionally replays the checkpoint's activation-QAT simulation graph for DeepSeek V4 Flash 0731 (post-RoPE E4M3 KV and Hadamard/E2M1 indexer activations). Off by default because current Release measurements show a throughput cost and do not yet prove a user-visible quality gain. Saving unloads the resident model; QAT-on and QAT-off prefix caches are isolated so state cannot cross modes.",
+                isOn: performanceBinding.deepseekV4ActivationQAT
+            )
 
-            SettingsField(
-                label: "Compiled Decode (Experimental)",
-                hint:
-                    "Fuses the per-token decode graph with MLX compile (+25% measured on Gemma 4 QAT). Takes effect after restarting Osaurus — MLX fixes its compile state at the first model load of the process, so toggling this mid-session cannot turn it on/off live (the setting is saved and applies on next launch). Experimental: kept off by default until the historical model-switch corruption (PR #1173) is root-caused. If model switching misbehaves with this on, turn it off and restart."
-            ) {
-                Toggle("", isOn: performanceBinding.compiledDecode)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-            }
+            SettingsToggle(
+                title: "Compiled Decode (Experimental)",
+                description:
+                    "Fuses the per-token decode graph with MLX compile (+25% measured on Gemma 4 QAT). Takes effect after restarting Osaurus — MLX fixes its compile state at the first model load of the process, so toggling this mid-session cannot turn it on/off live (the setting is saved and applies on next launch). Experimental: kept off by default until the historical model-switch corruption (PR #1173) is root-caused. If model switching misbehaves with this on, turn it off and restart.",
+                isOn: performanceBinding.compiledDecode
+            )
         }
     }
 

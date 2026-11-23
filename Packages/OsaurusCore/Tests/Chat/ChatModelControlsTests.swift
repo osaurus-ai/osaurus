@@ -166,7 +166,7 @@ struct ChatModelControlsTests {
         }
     }
 
-    @Test("conversation controls survive JSON and SQLite reopen; legacy sessions inherit")
+    @Test("conversation controls survive JSON and synced history reopen; legacy sessions inherit")
     func persistence() async throws {
         try await ChatHistoryTestStorage.run {
             let values: [String: ChatModelControls] = [key: .init(enableThinking: false, speculativeDecoding: false),
@@ -175,15 +175,19 @@ struct ChatModelControlsTests {
                 turns: [ChatTurnData(id: UUID(), role: .user, content: "preserved history")], modelControls: values)
             let roundTrip = try JSONDecoder().decode(ChatSessionData.self, from: JSONEncoder().encode(data))
             #expect(roundTrip.modelControls == values)
-            let db = ChatHistoryDatabase()
-            try db.open()
-            try db.saveSession(data)
-            db.close()
-            try db.open()
-            defer { db.close() }
-            let loaded = try #require(db.loadSession(id: data.id))
+            let sync = SyncService.shared
+            let store = SyncConversationStore.shared
+            _ = try sync.open()
+            try store.saveSession(data)
+            sync.close()
+            _ = try sync.open()
+            let loaded = try #require(store.loadSession(id: data.id))
             #expect(loaded.modelControls == values)
             #expect(loaded.turns.first?.content == "preserved history")
+            var reset = loaded
+            reset.modelControls = nil
+            try store.saveSession(reset)
+            #expect(store.loadSession(id: data.id)?.modelControls == nil)
             let chat = ChatSession()
             chat.load(from: loaded)
             #expect(chat.modelControls == values)

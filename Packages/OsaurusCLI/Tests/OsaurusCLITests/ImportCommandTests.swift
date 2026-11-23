@@ -38,7 +38,8 @@ final class ImportCommandTests: XCTestCase {
     }
 
     private func writeBundle(
-        minVersion: String? = nil, stdio: Bool = false, runtime: Bool = false, settings: [String: Any]? = nil
+        minVersion: String? = nil, stdio: Bool = false, runtime: Bool = false, settings: [String: Any]? = nil,
+        onboarding: [String: Any]? = nil
     ) throws {
         var manifest: [String: Any] = [
             "format": "osaurus.bundle", "format_version": 1, "id": "com.example.cli",
@@ -54,6 +55,7 @@ final class ImportCommandTests: XCTestCase {
         ]
         if let minVersion { manifest["min_osaurus_version"] = minVersion }
         if let settings { manifest["settings"] = settings }
+        if let onboarding { manifest["onboarding"] = onboarding }
         if stdio {
             manifest["mcp_servers"] = [
                 ["name": "Tickets", "transport": "stdio", "command": "npx", "args": ["tickets-mcp"]]
@@ -422,6 +424,105 @@ final class ImportCommandTests: XCTestCase {
         XCTAssertEqual(report.installed?.count, 1)
         XCTAssertEqual(report.pendingSecrets, ["keychain:com.example.cli/tickets"])
         XCTAssertEqual(report.queued, [])
+    }
+
+    // MARK: Onboarding
+
+    func testParsesOnboardingFlags() throws {
+        let inv = try ImportCommand.parse([
+            "install", "--from", "/tmp/b", "--skip-onboarding", "--exclude-teammates", "Keeper,planner",
+            "--exclude-teammates=scout",
+        ])
+        XCTAssertEqual(inv.onboarding, BundleOnboarding(skip: true, excludeTeammates: .names(["keeper", "planner", "scout"])))
+
+        let all = try ImportCommand.parse(["update", "--from", "/tmp/b", "--exclude-teammates", "keeper", "--exclude-teammates", "all"])
+        XCTAssertEqual(all.onboarding.excludeTeammates, .all)
+        XCTAssertFalse(all.onboarding.skip)
+
+        XCTAssertTrue(try ImportCommand.parse(["install", "--from", "/tmp/b"]).onboarding.isEmpty)
+    }
+
+    func testOnboardingFlagsAreCheckedAndOnlyForInstallAndUpdate() {
+        for args in [
+            ["install", "--from", "/tmp/b", "--exclude-teammates", "keepr"],
+            ["install", "--from", "/tmp/b", "--exclude-teammates", "all,keeper"],
+            ["install", "--from", "/tmp/b", "--exclude-teammates"],
+            ["install", "--from", "/tmp/b", "--exclude-teammates="],
+            ["validate", "--from", "/tmp/b", "--skip-onboarding"],
+            ["remove", "--bundle", "a.b", "--exclude-teammates", "keeper"],
+            ["list", "--skip-onboarding"],
+        ] {
+            XCTAssertThrowsError(try ImportCommand.parse(args), "\(args)")
+        }
+        XCTAssertThrowsError(try ImportCommand.parse(["install", "--from", "/tmp/b", "--exclude-teammates", "keepr"])) {
+            XCTAssertTrue("\($0)".contains("Did you mean `keeper`?"), "\($0)")
+        }
+    }
+
+    func testOnboardingFlagsMergeOverTheManifestIntoTheRequest() async throws {
+        try writeBundle(onboarding: ["exclude_teammates": ["keeper"]])
+        let inv = try ImportCommand.parse([
+            "install", "--from", bundleURL.path, "skill", "notes", "--skip-onboarding", "--exclude-teammates", "planner",
+            "--json",
+        ])
+        let report = await ImportCommand.run(inv, environment: environment())
+        XCTAssertEqual(report.state, "queued", "\(report.issues)")
+        let expected = BundleOnboarding(skip: true, excludeTeammates: .names(["keeper", "planner"]))
+        XCTAssertEqual(report.onboarding, expected)
+        XCTAssertEqual(ImportQueue.pending().first?.request.onboarding, expected)
+
+        let json = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(ImportCommand.renderJSON(report).utf8)) as? [String: Any])
+        let onboarding = try XCTUnwrap(json["onboarding"] as? [String: Any])
+        XCTAssertEqual(onboarding["skip"] as? Bool, true)
+        XCTAssertEqual(onboarding["exclude_teammates"] as? [String], ["keeper", "planner"])
+
+        let all = try ImportCommand.parse([
+            "update", "--from", bundleURL.path, "skill", "notes", "--exclude-teammates", "all",
+        ])
+        let allReport = await ImportCommand.run(all, environment: environment())
+        XCTAssertEqual(allReport.onboarding, BundleOnboarding(excludeTeammates: .all))
+    }
+
+    func testABundleWithoutOnboardingQueuesNone() async throws {
+        let inv = try ImportCommand.parse(["install", "--from", bundleURL.path, "skill", "notes"])
+        let report = await ImportCommand.run(inv, environment: environment())
+        XCTAssertNil(report.onboarding)
+        XCTAssertNil(ImportQueue.pending().first?.request.onboarding)
+    }
+
+    func testAppWarningsReachTheReport() async throws {
+        let inv = try ImportCommand.parse(["install", "--from", bundleURL.path, "skill", "notes", "--exclude-teammates", "keeper"])
+        let env = environment(running: true) { path, body in
+            guard path == "/admin/import/apply", let id = body["id"] as? String else { return (404, Data()) }
+            let result = ImportResult(
+                requestId: id, bundleId: "com.example.cli",
+                items: [ImportItemResult(kind: .skill, name: "notes", action: .install, status: .done)],
+                warnings: ["Keeper already exists on this Mac; the bundle does not remove it."])
+            return (200, try! ImportQueue.encoder().encode(result))
+        }
+        let report = await ImportCommand.run(inv, environment: env)
+        XCTAssertEqual(report.exitCode, 0)
+        XCTAssertTrue(report.warnings.contains { $0.contains("Keeper already exists") }, "\(report.warnings)")
+    }
+
+    func testWholeBundleRemoveForgetsOnboardingEvenWithNothingInstalled() async throws {
+        try ImportQueue.saveOnboarding(["com.example.cli": BundleOnboarding(excludeTeammates: .all)])
+
+        let named = try ImportCommand.parse(["remove", "--bundle", "com.example.cli", "agent", "Helper"])
+        let refused = await ImportCommand.run(named, environment: environment())
+        XCTAssertEqual(refused.exitCode, 1)
+
+        let inv = try ImportCommand.parse(["remove", "--bundle", "com.example.cli"])
+        let report = await ImportCommand.run(inv, environment: environment())
+        XCTAssertEqual(report.state, "queued", "\(report.issues) \(report.warnings)")
+        let pending = try XCTUnwrap(ImportQueue.pending().first)
+        XCTAssertEqual(pending.request.forgetsOnboarding, true)
+        XCTAssertEqual(pending.request.operations, [])
+
+        let other = try ImportCommand.parse(["remove", "--bundle", "com.example.none"])
+        let nothing = await ImportCommand.run(other, environment: environment())
+        XCTAssertEqual(nothing.state, "nothing_to_do")
     }
 
     func testLenientVersionParsing() {

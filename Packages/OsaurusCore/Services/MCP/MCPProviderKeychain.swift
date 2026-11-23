@@ -2,17 +2,14 @@
 //  MCPProviderKeychain.swift
 //  osaurus
 //
-//  Secure Keychain storage for MCP provider tokens.
-//
-//  All accounts are scoped under the service `ai.osaurus.mcp` and named
-//  `<providerUUID>.<suffix>` so `deleteAllSecrets(for:)` can prefix-match.
-//  Suffixes in use:
-//    - `.token`               (legacy/static bearer token)
+//  Keychain storage for MCP server sign-ins, under service `ai.osaurus.mcp`
+//  with accounts `<providerUUID>.<suffix>`:
 //    - `.oauth.tokens`        (OAuth 2.1 token blob)
 //    - `.oauth.client_secret` (OAuth `client_secret` for confidential-client
-//                              providers without DCR — e.g. HubSpot)
-//    - `.header.<key>`        (per-header secret)
-//    - `.env.<key>`           (per-env-var secret for stdio subprocesses)
+//                              providers without DCR, e.g. HubSpot)
+//  Bearer tokens and secret headers/env vars (`.token`, `.header.<key>`,
+//  `.env.<key>`) are read only as the legacy fallback for the Keys store
+//  (`MCPCredentials`); they are never written or deleted here.
 //
 
 import Foundation
@@ -47,29 +44,16 @@ public struct MCPOAuthTokens: Codable, Sendable, Equatable {
 public enum MCPProviderKeychain {
     private static let service = "ai.osaurus.mcp"
 
-    // MARK: - Static token (legacy / explicit bearer)
-
-    @discardableResult
-    public static func saveToken(_ token: String, for providerId: UUID) -> Bool {
-        setData(Data(token.utf8), account: tokenAccount(for: providerId))
-    }
+    // MARK: - Legacy bearer token (read-only)
 
     public static func getToken(for providerId: UUID) -> String? {
         getData(account: tokenAccount(for: providerId)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
-    @discardableResult
-    public static func deleteToken(for providerId: UUID) -> Bool {
-        deleteItem(account: tokenAccount(for: providerId))
-    }
-
-    public static func hasToken(for providerId: UUID) -> Bool {
-        getToken(for: providerId) != nil
-    }
-
     /// Typed availability of the static bearer token, distinguishing a
     /// definitively missing token from a keychain that can't answer right now.
     public static func tokenAvailability(for providerId: UUID) -> SecretAvailability {
+        if _legacyItemsForTesting != nil { return getToken(for: providerId) == nil ? .absent : .present }
         if KeychainQueryHelpers.disablesKeychainForProcess { return .absent }
         return availability(account: tokenAccount(for: providerId)) {
             String(data: $0, encoding: .utf8) != nil
@@ -115,6 +99,41 @@ public enum MCPProviderKeychain {
         getOAuthTokens(for: providerId) != nil
     }
 
+    // MARK: - Session OAuth tokens
+    //
+    // A nil session is the primary one, in the account above. Other
+    // sessions keep theirs in `<providerUUID>.session.<sessionUUID>.oauth.tokens`.
+
+    @discardableResult
+    public static func saveOAuthTokens(_ tokens: MCPOAuthTokens, for providerId: UUID, session: UUID?) -> Bool {
+        guard let session else { return saveOAuthTokens(tokens, for: providerId) }
+        guard let data = try? JSONEncoder().encode(tokens) else { return false }
+        return SessionKeychainItems.write(
+            service: service, account: SessionKeychainItems.account(providerId, session: session, suffix: "oauth.tokens"),
+            data: data)
+    }
+
+    public static func getOAuthTokens(for providerId: UUID, session: UUID?) -> MCPOAuthTokens? {
+        guard let session else { return getOAuthTokens(for: providerId) }
+        let account = SessionKeychainItems.account(providerId, session: session, suffix: "oauth.tokens")
+        return SessionKeychainItems.read(service: service, account: account)
+            .flatMap { try? JSONDecoder().decode(MCPOAuthTokens.self, from: $0) }
+    }
+
+    public static func oauthTokensAvailability(for providerId: UUID, session: UUID?) -> SecretAvailability {
+        guard let session else { return oauthTokensAvailability(for: providerId) }
+        return SessionKeychainItems.availability(
+            service: service, account: SessionKeychainItems.account(providerId, session: session, suffix: "oauth.tokens")
+        ) { (try? JSONDecoder().decode(MCPOAuthTokens.self, from: $0)) != nil }
+    }
+
+    @discardableResult
+    public static func deleteOAuthTokens(for providerId: UUID, session: UUID?) -> Bool {
+        guard let session else { return deleteOAuthTokens(for: providerId) }
+        return SessionKeychainItems.delete(
+            service: service, account: SessionKeychainItems.account(providerId, session: session, suffix: "oauth.tokens"))
+    }
+
     // MARK: - OAuth client_secret
     //
     // Only used by confidential-client OAuth flows that don't ship RFC 7591
@@ -136,58 +155,16 @@ public enum MCPProviderKeychain {
         deleteItem(account: oauthClientSecretAccount(for: providerId))
     }
 
-    // MARK: - Header secrets
-
-    @discardableResult
-    public static func saveHeaderSecret(_ value: String, key: String, for providerId: UUID) -> Bool {
-        setData(Data(value.utf8), account: headerAccount(key: key, for: providerId))
-    }
+    // MARK: - Legacy header and env secrets (read-only)
 
     public static func getHeaderSecret(key: String, for providerId: UUID) -> String? {
         getData(account: headerAccount(key: key, for: providerId))
             .flatMap { String(data: $0, encoding: .utf8) }
     }
 
-    @discardableResult
-    public static func deleteHeaderSecret(key: String, for providerId: UUID) -> Bool {
-        deleteItem(account: headerAccount(key: key, for: providerId))
-    }
-
-    // MARK: - Env secrets (stdio subprocess)
-
-    @discardableResult
-    public static func saveEnvSecret(_ value: String, key: String, for providerId: UUID) -> Bool {
-        setData(Data(value.utf8), account: envAccount(key: key, for: providerId))
-    }
-
     public static func getEnvSecret(key: String, for providerId: UUID) -> String? {
         getData(account: envAccount(key: key, for: providerId))
             .flatMap { String(data: $0, encoding: .utf8) }
-    }
-
-    @discardableResult
-    public static func deleteEnvSecret(key: String, for providerId: UUID) -> Bool {
-        deleteItem(account: envAccount(key: key, for: providerId))
-    }
-
-    // MARK: - Bulk delete
-
-    /// Delete every Keychain item this enum owns for `providerId` — bearer
-    /// token, OAuth tokens, OAuth `client_secret`, and any number of header
-    /// or env secrets. Used when removing a provider entirely or resetting
-    /// the app.
-    public static func deleteAllSecrets(for providerId: UUID) {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return }
-        // Targeted deletes (cheap, idempotent).
-        deleteToken(for: providerId)
-        deleteOAuthTokens(for: providerId)
-        deleteOAuthClientSecret(for: providerId)
-
-        // Sweep any remaining `<uuid>.header.*` / `<uuid>.env.*` entries.
-        let prefix = "\(providerId.uuidString)."
-        for account in Keychain.allAccounts(service: service) where account.hasPrefix(prefix) {
-            deleteItem(account: account)
-        }
     }
 
     // MARK: - Account naming
@@ -237,7 +214,11 @@ public enum MCPProviderKeychain {
         return Keychain.write(service: service, account: account, data: data)
     }
 
+    /// Tests: legacy items by account, read instead of the Keychain.
+    @TaskLocal static var _legacyItemsForTesting: [String: String]?
+
     private static func getData(account: String) -> Data? {
+        if let items = _legacyItemsForTesting { return items[account].map { Data($0.utf8) } }
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
         return Keychain.read(service: service, account: account)
     }

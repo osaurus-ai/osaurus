@@ -44,7 +44,7 @@ public final class SecretPromptState: ObservableObject {
             completion(nil)
             return
         }
-        AgentSecretsKeychain.saveSecret(value, id: key, agentId: uuid)
+        SandboxCredentials.save(value, key: key, agentId: uuid, description: description)
         completion(value)
     }
 
@@ -85,10 +85,12 @@ private struct SecretPromptCard: View {
     let state: SecretPromptState
     let onCancel: () -> Void
     let onSubmitted: () -> Void
+    var automaticallyFocus = true
 
     @State private var secretValue: String = ""
     @FocusState private var isInputFocused: Bool
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var canSubmit: Bool {
@@ -103,13 +105,15 @@ private struct SecretPromptCard: View {
             descriptionMarkdown: state.instructions,
             footnote: PromptCardFootnote(
                 icon: "shield.lefthalf.filled",
-                text: "Stored securely in Keychain as \(state.key)"
+                text: "Saved in Vault as \(state.key), only for this agent"
             ),
             onCancel: onCancel,
             bodyContent: { EmptyView() },
             inputRow: { inputAndActions }
         )
+        .environment(\.theme, theme)
         .onAppear {
+            guard automaticallyFocus else { return }
             // Auto-focus once the entry animation has had a moment to
             // land — the card is bottom-pinned and immediately accepts
             // typed input, so cursor blink shouldn't precede the slide.
@@ -129,48 +133,62 @@ private struct SecretPromptCard: View {
     // MARK: - Input
 
     private var inputAndActions: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s10, theme))) {
             SecureField("", text: $secretValue)
-                .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
-                .foregroundColor(theme.primaryText)
+                .promptText(.body, fallback: .bodySmall, theme: theme)
+                .foregroundColor(theme.text.primary)
                 .textFieldStyle(.plain)
                 .focused($isInputFocused)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX", inheriting: PromptInspectionStyle.metric("padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY")
+                .frame(minHeight: PromptInspectionStyle.metric("height", 0, theme))
                 .overlay(alignment: .topLeading) {
                     if secretValue.isEmpty {
                         Text("Paste your \(state.key) here...", bundle: .module)
-                            .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
-                            .foregroundColor(theme.placeholderText)
-                            .padding(.leading, 12)
-                            .padding(.top, 9)
+                            .promptText(.body, fallback: .bodySmall, theme: theme)
+                            .foregroundColor(theme.text.placeholder)
+                            .padding(.leading, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX2", inheriting: PromptInspectionStyle.metric("padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX2")
+                            .padding(.top, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY2", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY2")
                             .allowsHitTesting(false)
                     }
                 }
                 .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(theme.tertiaryBackground.opacity(0.4))
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                        .fill(theme.surface.hover)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                        .strokeBorder(theme.border.subtle, lineWidth: theme.stroke.default)
                 )
                 .onSubmit { submitSecret() }
 
             Button(action: submitSecret) {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(canSubmit ? .white : theme.tertiaryText)
-                    .frame(width: 32, height: 32)
+                    .glyphSize(.caption, weight: .bold)
+                    .foregroundColor(canSubmit ? theme.action.primary.default.foreground : theme.assignedColor(PromptInspectionStyle.key + "disabledForeground", fallback: theme.action.primary.disabled.foreground))
+                    .frame(width: PromptInspectionStyle.metric("height", 32, theme), height: PromptInspectionStyle.metric("height", 32, theme))
                     .background(
                         Circle()
-                            .fill(canSubmit ? theme.accentColor : theme.tertiaryBackground)
+                            .fill(canSubmit ? theme.action.primary.default.background : theme.assignedColor(PromptInspectionStyle.key + "disabledBackground", fallback: theme.action.primary.disabled.background))
                     )
             }
             .keyboardShortcut(.defaultAction)
             .buttonStyle(.plain)
+            .accessibilityLabel(L("Save \(state.key)"))
+            .help(L("Save \(state.key)"))
             .disabled(!canSubmit)
             .pointingHandCursor()
-        }
+        }.catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.horizontalGap")
+    }
+}
+
+extension SecretPromptOverlay {
+    @MainActor static func inspectionCard() -> some View {
+        SecretPromptCard(
+            state: SecretPromptState(key: "LOCAL_DISPLAY_ONLY", description: "Local secret prompt",
+                instructions: "Display-only sample. No credential is entered or stored.",
+                agentId: "inspector-display-only", completion: { _ in }),
+            onCancel: {}, onSubmitted: {}, automaticallyFocus: false
+        ).allowsHitTesting(false)
     }
 }

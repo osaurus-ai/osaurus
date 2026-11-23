@@ -2,12 +2,14 @@
 //  ChatHistoryDatabaseTests.swift
 //  osaurusTests
 //
-//  Verifies the SQLite-backed chat history database: schema migration,
-//  session + turn roundtrip, agent / source / external-key lookups,
-//  and cascade delete.
+//  The pre-sync chat-history database as the importer reads it: rows written
+//  the way older builds wrote them decode with every field, metadata lists
+//  most recent first, and deleting a chat removes its turns and legacy
+//  sandbox rows.
 //
 
 import Foundation
+import OsaurusSQLCipher
 import Testing
 
 @testable import OsaurusCore
@@ -50,43 +52,10 @@ struct ChatHistoryDatabaseTests {
         )
     }
 
-    @Test func asyncTransactionFailureReportsUnsavedSnapshotAndRetryCommits() async throws {
-        let db = try openInMemory()
-        defer { db.close() }
-        let session = makeSession(turnCount: 2)
-        try db.executeForTesting(
-            "CREATE TRIGGER reject_save BEFORE INSERT ON sessions BEGIN SELECT RAISE(FAIL, 'test write failure'); END"
-        )
-        let dropped: ChatSessionData = await withCheckedContinuation { continuation in
-            db.saveSessionAsync(
-                session,
-                onSaved: {
-                    Issue.record("failed transaction must not acknowledge a save")
-                },
-                onDropped: { continuation.resume(returning: $0) }
-            )
-        }
-        #expect(dropped.id == session.id)
-        #expect(dropped.turns.count == 2)
-        #expect(db.loadSession(id: session.id) == nil, "failed transaction rolled back")
-        try db.executeForTesting("DROP TRIGGER reject_save")
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            db.saveSessionAsync(
-                dropped,
-                onSaved: { continuation.resume() },
-                onDropped: { _ in
-                    Issue.record("retry should commit")
-                    continuation.resume()
-                }
-            )
-        }
-        #expect(db.loadSession(id: session.id)?.turns.count == 2)
-    }
-
     // MARK: - Tests
 
     @Test
-    func saveAndLoadSession_roundtripsAllFields() throws {
+    func loadSession_decodesEveryField() throws {
         let db = try openInMemory()
         let agentId = UUID()
         var session = makeSession(
@@ -97,8 +66,21 @@ struct ChatHistoryDatabaseTests {
             dispatchTaskId: UUID(),
             turnCount: 3
         )
+        let artifacts = [
+            SharedArtifact(
+                contextId: session.id.uuidString,
+                contextType: .chat,
+                filename: "generated-image.png",
+                mimeType: "image/png",
+                fileSize: 123,
+                hostPath: "/tmp/generated-image.png",
+                description: "Generated image"
+            )
+        ]
         session.turns[1].terminalStopReason = "length"
-        try db.saveSession(session)
+        session.turns[1].modelContextExcluded = true
+        session.turns[1].sharedArtifacts = artifacts
+        try db.seedForTesting(session)
 
         let loaded = db.loadSession(id: session.id)
         #expect(loaded != nil)
@@ -115,159 +97,9 @@ struct ChatHistoryDatabaseTests {
         #expect(loaded?.turns[0].content == "turn 0")
         #expect(loaded?.turns[1].role == .assistant)
         #expect(loaded?.turns[1].terminalStopReason == "length")
+        #expect(loaded?.turns[1].modelContextExcluded == true)
+        #expect(loaded?.turns[1].sharedArtifacts == artifacts)
         #expect(loaded?.turns[2].content == "turn 2")
-    }
-
-    @Test
-    func compactionSummaryRoundTripsUpdatesAndClearsWithoutReplacingTurns() throws {
-        let db = try openInMemory()
-        defer { db.close() }
-        var session = makeSession(turnCount: 4)
-        try db.saveSession(session)
-        #expect(db.loadSession(id: session.id)?.conversationSummary == nil)
-        for text in ["First accepted summary", "Updated accepted summary"] {
-            let summary = ConversationSummary(
-                summaryText: text,
-                coveredTurnIds: Array(session.turns.prefix(2).map(\.id)),
-                modelIdentifier: "summary-model",
-                savedTokensEstimate: 100
-            )
-            session.conversationSummary = summary
-            try db.saveSession(session)
-            let loaded = try #require(db.loadSession(id: session.id))
-            #expect(loaded.conversationSummary == summary)
-            #expect(loaded.turns.map(\.content) == session.turns.map(\.content))
-            #expect(db.loadAllMetadata().first?.conversationSummary == summary)
-        }
-        session.conversationSummary = nil
-        try db.saveSession(session)
-        #expect(db.loadSession(id: session.id)?.conversationSummary == nil)
-        #expect(db.loadSession(id: session.id)?.turns.count == 4)
-    }
-
-    @Test
-    func asynchronousSaveRetainsCompactionSummary() async throws {
-        let db = try openInMemory()
-        defer { db.close() }
-        var session = makeSession(turnCount: 4)
-        session.conversationSummary = ConversationSummary(
-            summaryText: "Accepted facts",
-            coveredTurnIds: Array(session.turns.prefix(2).map(\.id)),
-            modelIdentifier: "summary-model",
-            savedTokensEstimate: 100
-        )
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            db.saveSessionAsync(
-                session,
-                onSaved: { continuation.resume() },
-                onDropped: { _ in
-                    Issue.record("summary save must commit")
-                    continuation.resume()
-                }
-            )
-        }
-        #expect(db.loadSession(id: session.id)?.conversationSummary == session.conversationSummary)
-    }
-
-    @Test
-    func malformedStoredSummaryFallsBackToIntactTranscript() throws {
-        let db = try openInMemory()
-        defer { db.close() }
-        let session = makeSession(turnCount: 4)
-        try db.saveSession(session)
-        try db.executeForTesting("UPDATE sessions SET conversation_summary = 'invalid json'")
-        let loaded = try #require(db.loadSession(id: session.id))
-        #expect(loaded.conversationSummary == nil)
-        #expect(loaded.turns.map(\.content) == session.turns.map(\.content))
-    }
-
-    @Test
-    func terminalStopReasonUpdateInvalidatesContentHash() throws {
-        let db = try openInMemory()
-        let id = UUID()
-        var session = makeSession(id: id, turnCount: 2)
-        try db.saveSession(session)
-
-        session.turns[1].terminalStopReason = "length"
-        try db.saveSession(session)
-
-        #expect(db.loadSession(id: id)?.turns[1].terminalStopReason == "length")
-    }
-
-    @Test
-    func modelContextExclusionRoundTripsAndInvalidatesContentHash() throws {
-        let db = try openInMemory()
-        let id = UUID()
-        var session = makeSession(id: id, turnCount: 2)
-        session.turns[1].modelContextExcluded = true
-        try db.saveSession(session)
-
-        #expect(db.loadSession(id: id)?.turns[1].modelContextExcluded == true)
-
-        // The incremental saver must rewrite the same turn when only the
-        // transcript-only marker changes.
-        session.turns[1].modelContextExcluded = false
-        try db.saveSession(session)
-        #expect(db.loadSession(id: id)?.turns[1].modelContextExcluded == false)
-    }
-
-    @Test
-    func sharedArtifactsRoundTripAndInvalidateContentHash() throws {
-        let db = try openInMemory()
-        let id = UUID()
-        var session = makeSession(id: id, turnCount: 2)
-        try db.saveSession(session)
-
-        let artifacts = [
-            SharedArtifact(
-                contextId: id.uuidString,
-                contextType: .chat,
-                filename: "generated-image.png",
-                mimeType: "image/png",
-                fileSize: 123,
-                hostPath: "/tmp/generated-image.png",
-                description: "Generated image"
-            ),
-            SharedArtifact(
-                contextId: id.uuidString,
-                contextType: .chat,
-                filename: "generated-video.mp4",
-                mimeType: "video/mp4",
-                fileSize: 456,
-                hostPath: "/tmp/generated-video.mp4",
-                description: "Generated video"
-            ),
-        ]
-        session.turns[1].sharedArtifacts = artifacts
-        try db.saveSession(session)
-
-        #expect(db.loadSession(id: id)?.turns[1].sharedArtifacts == artifacts)
-    }
-
-    @Test
-    func saveSession_replacesTurnsOnReSave() throws {
-        let db = try openInMemory()
-        let id = UUID()
-        try db.saveSession(makeSession(id: id, turnCount: 5))
-        try db.saveSession(makeSession(id: id, turnCount: 2))
-
-        let loaded = db.loadSession(id: id)
-        #expect(loaded?.turns.count == 2)
-    }
-
-    @Test
-    func appendTurn_growsTurnCountAndOrdersBySeq() throws {
-        let db = try openInMemory()
-        let session = makeSession(turnCount: 0)
-        try db.saveSession(session)
-
-        try db.appendTurn(sessionId: session.id, turn: ChatTurnData(role: .user, content: "first"))
-        try db.appendTurn(sessionId: session.id, turn: ChatTurnData(role: .assistant, content: "second"))
-        try db.appendTurn(sessionId: session.id, turn: ChatTurnData(role: .user, content: "third"))
-
-        let loaded = db.loadSession(id: session.id)
-        #expect(loaded?.turns.count == 3)
-        #expect(loaded?.turns.map(\.content) == ["first", "second", "third"])
     }
 
     @Test
@@ -286,8 +118,8 @@ struct ChatHistoryDatabaseTests {
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             updatedAt: Date(timeIntervalSince1970: 1_700_001_000)
         )
-        try db.saveSession(older)
-        try db.saveSession(newer)
+        try db.seedForTesting(older)
+        try db.seedForTesting(newer)
 
         let metadata = db.loadAllMetadata()
         #expect(metadata.count == 2)
@@ -297,192 +129,21 @@ struct ChatHistoryDatabaseTests {
     }
 
     @Test
-    func loadMetadata_filtersByAgentAndSource() throws {
-        let db = try openInMemory()
-        let agentA = UUID()
-        let agentB = UUID()
-        try db.saveSession(makeSession(title: "a-chat", agentId: agentA, source: .chat))
-        try db.saveSession(makeSession(title: "a-plugin", agentId: agentA, source: .plugin, sourcePluginId: "p1"))
-        try db.saveSession(makeSession(title: "b-chat", agentId: agentB, source: .chat))
-        try db.saveSession(makeSession(title: "b-http", agentId: agentB, source: .http))
-
-        #expect(db.loadMetadata(forAgent: agentA, source: nil).count == 2)
-        #expect(db.loadMetadata(forAgent: agentA, source: .plugin).count == 1)
-        #expect(db.loadMetadata(forAgent: nil, source: .http).count == 1)
-        #expect(db.loadMetadata(forAgent: agentB, source: .plugin).count == 0)
-    }
-
-    @Test
-    func findSession_byPluginAndExternalKey_returnsMostRecentMatch() throws {
-        let db = try openInMemory()
-        let pluginId = "com.example.telegram"
-        let key = "chat-99"
-
-        let older = ChatSessionData(
-            id: UUID(),
-            title: "older",
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            updatedAt: Date(timeIntervalSince1970: 1_700_000_500),
-            source: .plugin,
-            sourcePluginId: pluginId,
-            externalSessionKey: key
-        )
-        let newer = ChatSessionData(
-            id: UUID(),
-            title: "newer",
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            updatedAt: Date(timeIntervalSince1970: 1_700_001_000),
-            source: .plugin,
-            sourcePluginId: pluginId,
-            externalSessionKey: key
-        )
-        try db.saveSession(older)
-        try db.saveSession(newer)
-
-        let hit = db.findSession(pluginId: pluginId, externalKey: key, agentId: nil)
-        #expect(hit?.id == newer.id)
-
-        // Different external key should miss.
-        #expect(db.findSession(pluginId: pluginId, externalKey: "chat-other", agentId: nil) == nil)
-    }
-
-    @Test
-    func findSession_bySourceAndExternalKey_returnsMostRecentMatch() throws {
-        // Used by the HTTP / schedule / watcher reattach path where there's
-        // no plugin id to scope by — only `source` + `external_session_key`.
-        let db = try openInMemory()
-        let key = "session-key-7"
-
-        let httpOlder = ChatSessionData(
-            id: UUID(),
-            title: "older",
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            updatedAt: Date(timeIntervalSince1970: 1_700_000_500),
-            source: .http,
-            externalSessionKey: key
-        )
-        let httpNewer = ChatSessionData(
-            id: UUID(),
-            title: "newer",
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            updatedAt: Date(timeIntervalSince1970: 1_700_001_000),
-            source: .http,
-            externalSessionKey: key
-        )
-        // A plugin row with the same external key must NOT be returned when
-        // looking up by source `.http` — sources are namespaced.
-        let pluginCollision = ChatSessionData(
-            id: UUID(),
-            title: "plugin-collision",
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            updatedAt: Date(timeIntervalSince1970: 1_700_001_500),
-            source: .plugin,
-            sourcePluginId: "com.example",
-            externalSessionKey: key
-        )
-        try db.saveSession(httpOlder)
-        try db.saveSession(httpNewer)
-        try db.saveSession(pluginCollision)
-
-        let hit = db.findSession(source: .http, externalKey: key, agentId: nil)
-        #expect(hit?.id == httpNewer.id)
-        #expect(hit?.source == .http)
-
-        // Wrong source returns nothing.
-        #expect(db.findSession(source: .schedule, externalKey: key, agentId: nil) == nil)
-
-        // Wrong external key returns nothing even with the right source.
-        #expect(db.findSession(source: .http, externalKey: "other", agentId: nil) == nil)
-    }
-
-    @Test
-    func findSession_bySourceAndExternalKey_respectsAgentScope() throws {
-        let db = try openInMemory()
-        let agentA = UUID()
-        let agentB = UUID()
-        let key = "k"
-
-        try db.saveSession(makeSession(id: UUID(), agentId: agentA, source: .schedule, externalSessionKey: key))
-        try db.saveSession(makeSession(id: UUID(), agentId: agentB, source: .schedule, externalSessionKey: key))
-
-        #expect(db.findSession(source: .schedule, externalKey: key, agentId: agentA)?.agentId == agentA)
-        #expect(db.findSession(source: .schedule, externalKey: key, agentId: agentB)?.agentId == agentB)
-        // nil agent scope only matches rows where agent_id IS NULL.
-        #expect(db.findSession(source: .schedule, externalKey: key, agentId: nil) == nil)
-    }
-
-    @Test
     func deleteSession_cascadesToTurns() throws {
         let db = try openInMemory()
         let session = makeSession(turnCount: 3)
-        try db.saveSession(session)
+        try db.seedForTesting(session)
         #expect(db.loadSession(id: session.id)?.turns.count == 3)
 
         try db.deleteSession(id: session.id)
         #expect(db.loadSession(id: session.id) == nil)
-
-        // Re-saving with the same id should start with no turns from the cascade.
-        try db.saveSession(makeSession(id: session.id, turnCount: 0))
-        #expect(db.loadSession(id: session.id)?.turns.count == 0)
-    }
-
-    // MARK: - Async batch delete
-
-    @Test
-    func deleteSessionsAsync_removesBatchAndCascadesLeavingOthersIntact() async throws {
-        let db = try openInMemory()
-        let a = makeSession(turnCount: 3)
-        let b = makeSession(turnCount: 2)
-        let survivor = makeSession(turnCount: 1)
-        try db.saveSession(a)
-        try db.saveSession(b)
-        try db.saveSession(survivor)
-        try db.upsertSandboxChange(makeSandboxChange(sessionId: a.id.uuidString))
-        try db.upsertSandboxChange(makeSandboxChange(sessionId: survivor.id.uuidString))
-
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            db.deleteSessionsAsync(ids: [a.id, b.id], completion: { continuation.resume() })
+        try db.queueRunForTest { connection in
+            var stmt: OpaquePointer?
+            sqlite3_prepare_v2(connection, "SELECT COUNT(*) FROM turns", -1, &stmt, nil)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_step(stmt)
+            #expect(sqlite3_column_int(stmt, 0) == 0)
         }
-
-        #expect(db.loadSession(id: a.id) == nil)
-        #expect(db.loadSession(id: b.id) == nil)
-        #expect(db.loadSandboxChanges(sessionId: a.id.uuidString).isEmpty)
-        #expect(db.loadSession(id: survivor.id)?.turns.count == 1)
-        #expect(db.loadSandboxChanges(sessionId: survivor.id.uuidString).count == 1)
-
-        // Turn cascade: re-saving a deleted id starts with no leftover turns.
-        try db.saveSession(makeSession(id: a.id, turnCount: 0))
-        #expect(db.loadSession(id: a.id)?.turns.count == 0)
-    }
-
-    @Test
-    func deleteSessionsAsync_emptyBatchFiresCompletionImmediately() async throws {
-        let db = try openInMemory()
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            db.deleteSessionsAsync(ids: [], completion: { continuation.resume() })
-        }
-    }
-
-    @Test
-    func deleteSessionsAsync_reportsDroppedIdsWhenDatabaseClosed() async throws {
-        // The enqueue-time open check races key rotation; a batch that finds
-        // the database closed at dequeue must hand every id back (the
-        // caller's in-memory list is already cleared, and losing the deletes
-        // silently would resurrect the sessions on next launch).
-        let db = try openInMemory()
-        let a = makeSession(turnCount: 1)
-        let b = makeSession(turnCount: 1)
-        try db.saveSession(a)
-        try db.saveSession(b)
-        db.close()
-
-        let dropped = await withCheckedContinuation { (continuation: CheckedContinuation<[UUID], Never>) in
-            db.deleteSessionsAsync(
-                ids: [a.id, b.id],
-                onDropped: { continuation.resume(returning: $0) }
-            )
-        }
-        #expect(Set(dropped) == Set([a.id, b.id]))
     }
 
     // MARK: - Sandbox changes (v9)
@@ -513,43 +174,21 @@ struct ChatHistoryDatabaseTests {
         let db = try openInMemory()
         let sessionId = UUID().uuidString
         let change = makeSandboxChange(sessionId: sessionId)
-        try db.upsertSandboxChange(change)
+        try db.seedSandboxChangeForTesting(change)
 
         let loaded = db.loadSandboxChanges(sessionId: sessionId)
         #expect(loaded.count == 1)
         #expect(loaded.first == change)
+        #expect(db.sandboxChangeSessionIds() == [sessionId])
     }
 
     @Test
-    func sandboxChanges_upsertCoalescesByPathKey() throws {
+    func sandboxChanges_deleteBySession() throws {
         let db = try openInMemory()
         let sessionId = UUID().uuidString
-        try db.upsertSandboxChange(makeSandboxChange(sessionId: sessionId))
-
-        // Same (session, agent, root, path) with a NEW row id must replace,
-        // not duplicate — the unique path key wins over the id.
-        var replacement = makeSandboxChange(sessionId: sessionId, kind: .deleted)
-        replacement.currentSignature = nil
-        try db.upsertSandboxChange(replacement)
-
-        let loaded = db.loadSandboxChanges(sessionId: sessionId)
-        #expect(loaded.count == 1)
-        #expect(loaded.first?.id == replacement.id)
-        #expect(loaded.first?.kind == .deleted)
-        #expect(loaded.first?.currentSignature == nil)
-    }
-
-    @Test
-    func sandboxChanges_deleteByIdAndBySession() throws {
-        let db = try openInMemory()
-        let sessionId = UUID().uuidString
-        let a = makeSandboxChange(sessionId: sessionId, relativePath: "a.txt")
-        let b = makeSandboxChange(sessionId: sessionId, relativePath: "b.txt")
-        try db.upsertSandboxChange(a)
-        try db.upsertSandboxChange(b)
-
-        try db.deleteSandboxChange(id: a.id)
-        #expect(db.loadSandboxChanges(sessionId: sessionId).map(\.relativePath) == ["b.txt"])
+        try db.seedSandboxChangeForTesting(makeSandboxChange(sessionId: sessionId, relativePath: "a.txt"))
+        try db.seedSandboxChangeForTesting(makeSandboxChange(sessionId: sessionId, relativePath: "b.txt"))
+        #expect(db.loadSandboxChanges(sessionId: sessionId).count == 2)
 
         try db.deleteSandboxChanges(sessionId: sessionId)
         #expect(db.loadSandboxChanges(sessionId: sessionId).isEmpty)
@@ -559,11 +198,11 @@ struct ChatHistoryDatabaseTests {
     func deleteSession_cascadesToSandboxChanges() throws {
         let db = try openInMemory()
         let session = makeSession(turnCount: 1)
-        try db.saveSession(session)
-        try db.upsertSandboxChange(makeSandboxChange(sessionId: session.id.uuidString))
+        try db.seedForTesting(session)
+        try db.seedSandboxChangeForTesting(makeSandboxChange(sessionId: session.id.uuidString))
         let other = makeSession(turnCount: 0)
-        try db.saveSession(other)
-        try db.upsertSandboxChange(makeSandboxChange(sessionId: other.id.uuidString))
+        try db.seedForTesting(other)
+        try db.seedSandboxChangeForTesting(makeSandboxChange(sessionId: other.id.uuidString))
 
         try db.deleteSession(id: session.id)
         #expect(db.loadSandboxChanges(sessionId: session.id.uuidString).isEmpty)

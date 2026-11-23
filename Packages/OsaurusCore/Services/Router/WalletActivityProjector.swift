@@ -6,11 +6,10 @@ import Foundation
 /// list for the composer wallet panel. Kept out of the view so agent
 /// transaction row types have one place to land.
 struct WalletActivityProjector {
-    /// Newest-first merged rows, capped at `limit`. Ledger debits with an
-    /// unrecognized `entry_type` are dropped: they mirror per-request spend the
-    /// usage rows already list, and including both double-counts every charge.
-    /// Web `settle` debits are likewise dropped — `webUsageItems` already
-    /// carries every billed web request.
+    /// Newest-first merged rows, capped at `limit`. The router's per-request
+    /// `hold` / `hold_release` / `settle` ledger entries are dropped: the usage
+    /// and web-usage rows already carry each request's real spend, and the
+    /// release would otherwise read as a top-up next to every request.
     func rows(
         usageItems: [OsaurusRouterUsageItem],
         transactions: [OsaurusRouterTransactionItem],
@@ -144,11 +143,18 @@ extension WalletActivityRow {
     }
 
     /// Whether a ledger transaction belongs in the wallet's mini activity list.
-    /// Credits (top-ups, grants, refunds — including future agent purchases,
-    /// which add balance) always show; debits show only for recognized
-    /// balance-adjustment types. Unrecognized debits are the ledger's mirror of
-    /// per-request usage, which the usage rows already cover.
+    /// Request billing (`hold` reserves the max cost, `hold_release` returns
+    /// it, `settle` charges the actual cost) never shows; the usage rows cover
+    /// it. Other credits (top-ups, grants, refunds — including future agent
+    /// purchases, which add balance) always show; other debits show only for
+    /// recognized balance-adjustment types.
     static func isWalletVisible(_ item: OsaurusRouterTransactionItem) -> Bool {
+        switch item.entryType.lowercased() {
+        case "hold", "hold_release", "settle":
+            return false
+        default:
+            break
+        }
         if (Int64(item.amountMicro) ?? 0) >= 0 { return true }
         switch item.entryType.lowercased() {
         case "refund", "adjustment", "promo", "promotion", "grant", "bonus":

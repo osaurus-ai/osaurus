@@ -404,6 +404,45 @@ struct ToolNotFoundLoopDriverTests {
         )
     }
 
+    /// The Architect calling a Mail step tool directly (live report: Raptor
+    /// 0.7 called `mail_mailboxes` from the `workflow_draft` list) gets a
+    /// correctable steer: the run continues and the next step executes.
+    /// The same refusal for a custom agent still ends the run.
+    @Test
+    func architectAppleRefusal_doesNotEndTheRun() async throws {
+        let steps: [AgentLoopModelStep] = [
+            .toolCalls([help("mail_mailboxes", "{}")]),
+            .toolCalls([help("workflow_draft", #"{"action":"get"}"#)]),
+            .finalResponse,
+        ]
+        let architect = ToolNotFoundLoopSurface(
+            steps: steps,
+            results: [
+                ToolRegistry.appleAppOffEnvelope(tool: "mail_mailboxes", app: .mail, agentId: Agent.architectId),
+                Fixture.success(tool: "workflow_draft"),
+            ]
+        )
+        let result = try await AgentToolLoop.run(
+            policy: policy,
+            state: AgentTaskState(),
+            hooks: architect.makeHooks()
+        )
+        #expect(result.exit == .finalResponse)
+        #expect(architect.executions.map(\.tool) == ["mail_mailboxes", "workflow_draft"])
+
+        let custom = ToolNotFoundLoopSurface(
+            steps: steps,
+            results: [ToolRegistry.appleAppOffEnvelope(tool: "mail_mailboxes", app: .mail, agentId: UUID())]
+        )
+        let customResult = try await AgentToolLoop.run(
+            policy: policy,
+            state: AgentTaskState(),
+            hooks: custom.makeHooks()
+        )
+        #expect(customResult.exit == .toolRejected)
+        #expect(custom.executions.map(\.tool) == ["mail_mailboxes"])
+    }
+
     /// The fix for the live case in loop terms: once the scope carries
     /// `osaurus_help` (the agent-switch re-freeze), the same model behaviour
     /// simply works — no refusals, no notice.

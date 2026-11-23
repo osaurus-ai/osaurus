@@ -24,7 +24,7 @@ struct ChatWindowStateMinimumSizeTests {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { window.cleanup() }
             #expect(window.minimumContentSize == ChatWindowState.designMinimumContentSize)
-            #expect(ChatWindowState.designMinimumContentSize == CGSize(width: 800, height: 620))
+            #expect(ChatWindowState.designMinimumContentSize == CGSize(width: 560, height: 480))
         }
     }
 
@@ -43,10 +43,10 @@ struct ChatWindowStateMinimumSizeTests {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { window.cleanup() }
-            // 14" MacBook Pro at "Larger Text": 1024x665 screen, 24pt menu
-            // bar, 52pt unified toolbar chrome -> 589pt of content height.
-            window.updateMinimumContentSize(availableContentSize: CGSize(width: 1024, height: 589.5))
-            #expect(window.minimumContentSize == CGSize(width: 800, height: 589))
+            // A short screen (e.g. a 1024x540 display mode after menu bar
+            // and toolbar chrome leaves 464.5pt) clamps only the height.
+            window.updateMinimumContentSize(availableContentSize: CGSize(width: 1024, height: 464.5))
+            #expect(window.minimumContentSize == CGSize(width: 560, height: 464))
         }
     }
 
@@ -55,8 +55,8 @@ struct ChatWindowStateMinimumSizeTests {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { window.cleanup() }
-            window.updateMinimumContentSize(availableContentSize: CGSize(width: 700, height: 500))
-            #expect(window.minimumContentSize == CGSize(width: 700, height: 500))
+            window.updateMinimumContentSize(availableContentSize: CGSize(width: 520, height: 440))
+            #expect(window.minimumContentSize == CGSize(width: 520, height: 440))
         }
     }
 
@@ -82,7 +82,7 @@ struct ChatWindowStateMinimumSizeTests {
             // collapsing to zero.
             #expect(window.minimumContentSize == ChatWindowState.designMinimumContentSize)
             window.updateMinimumContentSize(availableContentSize: CGSize(width: -10, height: 400))
-            #expect(window.minimumContentSize == CGSize(width: 800, height: 400))
+            #expect(window.minimumContentSize == CGSize(width: 560, height: 400))
         }
     }
 }

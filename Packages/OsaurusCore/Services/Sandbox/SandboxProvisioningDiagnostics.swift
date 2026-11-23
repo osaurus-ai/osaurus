@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 
 public enum SandboxProvisioningReadiness: String, Codable, Sendable {
     case ready
@@ -27,6 +28,7 @@ public enum SandboxProvisioningRootSource: String, Codable, Sendable {
     case defaultHome = "default_home"
     case testOverride = "test_override"
     case environmentOverride = "environment_override"
+    case space
 }
 
 public enum SandboxProvisioningConfigurationSource: String, Codable, Sendable {
@@ -269,7 +271,7 @@ public enum SandboxProvisioningDiagnostics {
         var locations: [SandboxProvisioningLocation] = []
         var findings: [SandboxProvisioningFinding] = []
 
-        if rootSource != .defaultHome {
+        if rootSource == .testOverride || rootSource == .environmentOverride {
             findings.append(
                 finding(
                     code: .rootOverrideActive,
@@ -450,32 +452,25 @@ public enum SandboxProvisioningDiagnostics {
     ) -> [LocationSpec] {
         let containerState = OsaurusPaths.container()
             .appendingPathComponent("containers/osaurus-sandbox", isDirectory: true)
+        // Every pod container boots its own environment clone of the
+        // template. A valid template alone is enough: startup clones
+        // environments from it without another image unpack.
         let rootfs: (title: String, url: URL)
-        if config.perAgentEnvironments {
-            let key = SandboxManager.rootfsTemplateKey
-            if let environment = SandboxRootfsTemplateStore.listEnvironments()
-                .reversed()
-                .first(where: {
-                    SandboxRootfsTemplateStore.environmentIsValid(agentName: $0.name, key: key)
-                })
-            {
-                rootfs = (
-                    L("Per-agent warm restart rootfs"),
-                    SandboxRootfsTemplateStore.environmentRootfs(agentName: environment.name)
-                )
-            } else {
-                // A valid template is sufficient even before the selected
-                // agent has an environment: startup materializes its CoW
-                // rootfs from this file without another image unpack.
-                rootfs = (
-                    L("Per-agent rootfs template"),
-                    SandboxRootfsTemplateStore.templateFile(key: key)
-                )
-            }
+        let key = SandboxManager.rootfsTemplateKey
+        if let environment = SandboxRootfsTemplateStore.listEnvironments()
+            .reversed()
+            .first(where: {
+                SandboxRootfsTemplateStore.environmentIsValid(agentName: $0.name, key: key)
+            })
+        {
+            rootfs = (
+                L("Agent environment rootfs"),
+                SandboxRootfsTemplateStore.environmentRootfs(agentName: environment.name)
+            )
         } else {
             rootfs = (
-                L("Warm restart rootfs"),
-                containerState.appendingPathComponent("rootfs.ext4")
+                L("Rootfs template"),
+                SandboxRootfsTemplateStore.templateFile(key: key)
             )
         }
         let specs: [LocationSpec] = [
@@ -636,7 +631,12 @@ public enum SandboxProvisioningDiagnostics {
             LocationSpec(
                 id: .bridgeSocket,
                 title: L("Host bridge socket"),
-                url: OsaurusPaths.container().appendingPathComponent("bridge.sock"),
+                url: URL(
+                    fileURLWithPath: SandboxPodLayout.bridgeSocketPath(
+                        linuxName: "agent-\(SandboxPodLayout.diagnosticsAgentName)",
+                        containerRoot: OsaurusPaths.container()
+                    )
+                ),
                 kind: .socket,
                 stage: .runtime,
                 missingSeverity: .info,
@@ -1037,6 +1037,9 @@ public enum SandboxProvisioningDiagnostics {
             !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             return .environmentOverride
+        }
+        if !SpaceRegistry.isDefaultActive {
+            return .space
         }
         return .defaultHome
     }

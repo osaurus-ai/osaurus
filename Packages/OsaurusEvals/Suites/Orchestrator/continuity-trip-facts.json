@@ -1,0 +1,28 @@
+{
+  "id": "orchestrator.continuity-trip-facts",
+  "domain": "orchestrator",
+  "label": "orchestrator • five turns: trip facts from turn 1 survive three unrelated turns",
+  "query": "Quick note before I forget: my partner and I are going to Lisbon from May 3 to May 9, and we're both vegetarian. No need to do anything yet.",
+  "notes": "Continuity: the Orchestrator keeps only the 3 latest exchanges, so by turn 5 turn 1 has dropped out of the history it sees. The dates and diet reach turn 5 only through the session state, which extraction writes after each turn. Turns 2-4 are unrelated one-line asks it answers itself.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "followUpTurns": [
+        "What's 15% of 80?",
+        "How do you say thank you in Portuguese?",
+        "Give me one packing tip for a week of city walking.",
+        "Remind me: what are my trip dates, and is there anything about food I told you to keep in mind?"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "rubric": [
+        "Gives the trip dates as May 3 to May 9 (any clear wording of that range).",
+        "Says they are vegetarian (or that the user said they are both vegetarian).",
+        "Does not invent other trip details the user never gave, such as flights or a hotel name."
+      ],
+      "maxIterations": 4
+    }
+  }
+}

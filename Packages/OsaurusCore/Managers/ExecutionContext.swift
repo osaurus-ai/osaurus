@@ -6,7 +6,7 @@
 //  headlessly. Windows are created lazily only when needed for UI.
 //
 //  Used by:
-//  - TaskDispatcher (scheduler / HTTP / plugin / watcher dispatch)
+//  - BackgroundTaskManager.dispatchChat (automation / HTTP / plugin dispatch)
 //  - BackgroundTaskManager.dispatchChat
 //  - Future webhook handlers (headless, no UI)
 //
@@ -40,6 +40,14 @@ public final class ExecutionContext: ObservableObject {
     /// bookmark is present so the run still reaches its target folder.
     let folderPath: String?
 
+    /// Set for a run another of the user's devices asked this Mac for: it
+    /// uses the agent's model even though it continues a window chat, since
+    /// the device the user chats on can't pick this Mac's model.
+    var followsAgentModel = false
+    /// A model the requesting device picked for this run (`hostRun.model`),
+    /// used instead of the agent's. Already checked against the picker.
+    var pinnedModel: String?
+
     /// Whether execution is currently in progress
     public var isExecuting: Bool { chatSession.isStreaming }
 
@@ -52,6 +60,7 @@ public final class ExecutionContext: ObservableObject {
         folderBookmark: Data? = nil,
         folderPath: String? = nil,
         source: SessionSource = .chat,
+        automationKind: EventSourceKind? = nil,
         sourcePluginId: String? = nil,
         externalSessionKey: String? = nil,
         loadIntent: ModelLoadIntent = .interactive,
@@ -75,6 +84,7 @@ public final class ExecutionContext: ObservableObject {
         // actual saved session.
         session.sessionId = id
         session.source = source
+        session.automationKind = automationKind
         session.loadIntent = loadIntent
         session.sourcePluginId = sourcePluginId
         session.externalSessionKey = externalSessionKey
@@ -97,9 +107,11 @@ public final class ExecutionContext: ObservableObject {
         workspace prepared: WorkspaceAgentRunClient.Prepared,
         title: String? = nil,
         source: SessionSource,
+        automationKind: EventSourceKind? = nil,
         externalSessionKey: String? = nil,
         loadIntent: ModelLoadIntent = .interactive,
-        delegationBudget: DelegatedRunContract? = nil
+        delegationBudget: DelegatedRunContract? = nil,
+        callingAgentId: UUID? = nil
     ) {
         self.id = id
         self.agentId = Agent.defaultId
@@ -113,6 +125,7 @@ public final class ExecutionContext: ObservableObject {
         session.agentId = Agent.defaultId
         session.sessionId = id
         session.source = source
+        session.automationKind = automationKind
         session.loadIntent = loadIntent
         session.externalSessionKey = externalSessionKey
         session.dispatchTaskId = id
@@ -122,7 +135,8 @@ public final class ExecutionContext: ObservableObject {
         )
         session.headlessRemoteAgentBinding = .init(
             providerId: prepared.providerId,
-            effectiveModel: prepared.effectiveModel
+            effectiveModel: prepared.effectiveModel,
+            callingAgentId: callingAgentId
         )
         session.title = title ?? prepared.displayName
         self.chatSession = session
@@ -144,7 +158,8 @@ public final class ExecutionContext: ObservableObject {
         workspace prepared: WorkspaceAgentRunClient.Prepared? = nil,
         loadIntent: ModelLoadIntent = .interactive,
         delegationBudget: DelegatedRunContract? = nil,
-        delegationModel: String? = nil
+        delegationModel: String? = nil,
+        callingAgentId: UUID? = nil
     ) {
         self.id = existing.id
         self.agentId = existing.agentId ?? Agent.defaultId
@@ -179,7 +194,8 @@ public final class ExecutionContext: ObservableObject {
             )
             session.headlessRemoteAgentBinding = .init(
                 providerId: prepared.providerId,
-                effectiveModel: prepared.effectiveModel
+                effectiveModel: prepared.effectiveModel,
+                callingAgentId: callingAgentId
             )
         }
         // `load(from:)` may have failed to restore the model if picker
@@ -222,10 +238,15 @@ public final class ExecutionContext: ObservableObject {
         }
         // Headless dispatches follow the agent's current default model on
         // every turn; the persisted session model is only a fallback. No-op
-        // for window chats (see the method doc). A workspace target sends
-        // no model at all (the host picks its own), so leave the pin alone.
+        // for window chats (see the method doc) unless `followsAgentModel`.
+        // A workspace target sends no model at all (the host picks its own),
+        // so leave the pin alone.
         if workspaceTarget == nil {
-            chatSession.applyAgentDefaultModelForDispatch()
+            if let pinnedModel {
+                chatSession.pinModelForRun(pinnedModel)
+            } else {
+                chatSession.applyAgentDefaultModelForDispatch(inWindowChat: followsAgentModel)
+            }
         }
     }
 

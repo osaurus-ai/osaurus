@@ -12,6 +12,9 @@ import os
 /// One live token: which agent it speaks for, and what it may reach.
 struct HarnessGrant: Sendable, Equatable {
     let agentId: UUID
+    /// The Osaurus chat the process serves. Bound as the session on
+    /// `/mcp/call`, so chat-scoped tools (the Architect's draft) find it.
+    var chatId: UUID? = nil
     /// Mutating config tools (`osaurus_config`) are behind their own opt-in.
     /// Fixed at mint time; the child cannot widen it.
     let allowsConfigWrites: Bool
@@ -29,7 +32,12 @@ struct HarnessGrant: Sendable, Equatable {
         {
             return false
         }
-        if name == HarnessGrantStore.configWriteToolName, !allowsConfigWrites { return false }
+        if HarnessGrantStore.architectOnlyToolNames.contains(name) {
+            return allowedToolNames?.contains(name) == true
+        }
+        if name == HarnessGrantStore.configWriteToolName || name == "osaurus_import", !allowsConfigWrites {
+            return false
+        }
         if let allowedToolNames { return allowedToolNames.contains(name) }
         return true
     }
@@ -61,15 +69,21 @@ final class HarnessGrantStore: @unchecked Sendable {
 
     static let configWriteToolName = "osaurus_config"
 
-    /// Never reachable with a harness token. `spawn_agent` would let a harness
-    /// start more agent workers (forbidden by AGENTS.md); the agent-loop tools
-    /// only mean something inside Osaurus's own loop; the folder picker would
-    /// restart the harness inside its own turn.
+    /// Never reachable with a harness token. `spawn_agent` starts a worker on
+    /// the caller's built-in model, which a harness agent does not have (the
+    /// Default agent delegates with `run_workflow` instead); the agent-loop
+    /// tools only mean something inside Osaurus's own loop; the folder picker
+    /// would restart the harness inside its own turn.
     static let deniedToolNames: Set<String> = [
         SubagentCapabilityRegistry.spawnAgentToolName,
-        "todo", "complete", "clarify", "speak",
+        "todo", "complete", "speak",
         PromptWorkingFolderTool.toolName,
     ]
+
+    /// Only a token that lists them by name (the Architect's) may call
+    /// these. `clarify` asks on the open chat's question card
+    /// (`HarnessClarifyBridge`); other agents ask in a plain reply.
+    static let architectOnlyToolNames: Set<String> = [HarnessClarifyBridge.toolName]
 
     /// Tools that run their own Osaurus sub-loop on the agent's built-in
     /// model. A harness agent has no such model, so these are refused with
@@ -78,6 +92,14 @@ final class HarnessGrantStore: @unchecked Sendable {
         ComputerUseTool.toolName, BrowserUseTool.toolName,
         AppleScriptTool.toolName, MacQueryTool.toolName,
     ]
+
+    /// The Architect's fixed surface on any harness: its draft tools, the
+    /// read-only `osaurus_inspect`, and `clarify`. Never widened by the
+    /// runtime's options or the agent's tool policy, exactly as on the
+    /// built-in loop (`ToolRegistry.architectAllowedToolNames`).
+    static let architectToolNames: Set<String> = ToolRegistry.architectToolNames.union([
+        "osaurus_inspect", HarnessClarifyBridge.toolName,
+    ])
 
     /// Normalized paths (the router strips `/v1` and `/api`) a token may call.
     /// Everything else — `/admin/*`, `/agents/*`, pairing, credits — is refused.
@@ -95,6 +117,7 @@ final class HarnessGrantStore: @unchecked Sendable {
     /// Mint a token. The returned string is the only copy; it is never logged.
     func mint(
         agentId: UUID,
+        chatId: UUID? = nil,
         allowsConfigWrites: Bool,
         allowedToolNames: Set<String>? = nil,
         lifetime: TimeInterval? = nil,
@@ -103,6 +126,7 @@ final class HarnessGrantStore: @unchecked Sendable {
         let token = Self.makeToken()
         let grant = HarnessGrant(
             agentId: agentId,
+            chatId: chatId,
             allowsConfigWrites: allowsConfigWrites,
             allowedToolNames: allowedToolNames,
             expiresAt: lifetime.map { now.addingTimeInterval($0) }

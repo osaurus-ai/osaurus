@@ -34,24 +34,47 @@ public enum ConfigurationToolBase {
                 kind: .unavailable,
                 message:
                     "Configuration tools require a chat session context. "
-                    + "They are only available from the Default agent inside Osaurus.",
+                    + "Osaurus settings are changed from the main Osaurus chat inside the app.",
                 tool: tool,
                 retryable: false
             )
         }
-        if agentId != Agent.defaultId {
-            if harnessReadableTools.contains(tool), ChatExecutionContext.harnessTokenAgentId == agentId {
-                return nil
-            }
+        // The Configurator owns these tools. The Default agent reaches them
+        // only through its own external harness (Claude Code over the MCP
+        // bridge, live Default-agent token); its chat turns hand off with
+        // `configurator_handoff` instead.
+        let harnessAgentId = ChatExecutionContext.harnessTokenAgentId
+        switch agentId {
+        case Agent.configuratorId:
+            return nil
+        case Agent.defaultId:
+            if harnessAgentId == Agent.defaultId { return nil }
             return ToolEnvelope.failure(
                 kind: .unavailable,
                 message:
-                    "Configuration tools are only available to the Default agent. "
-                    + "Switch to the Default agent in the sidebar to configure Osaurus.",
+                    "Osaurus settings belong to the Configurator. "
+                    + "Call configurator_handoff with the user's request instead.",
+                tool: tool,
+                retryable: false
+            )
+        default:
+            if harnessReadableTools.contains(tool), harnessAgentId == agentId { return nil }
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message:
+                    "This agent can't change Osaurus settings. Tell the user to ask for the change "
+                    + "in the main Osaurus chat.",
                 tool: tool,
                 retryable: false
             )
         }
-        return nil
+    }
+
+    /// The read-only gate for `osaurus_inspect`: the Default agent and The
+    /// Architect, which reads models, MCP servers, and plugins while it
+    /// designs a workflow.
+    public static func readGateFailure(tool: String) -> String? {
+        if ChatExecutionContext.currentAgentId == Agent.architectId { return nil }
+        return defaultAgentGateFailure(tool: tool)
     }
 }

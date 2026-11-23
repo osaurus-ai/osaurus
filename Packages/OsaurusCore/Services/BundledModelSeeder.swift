@@ -4,7 +4,7 @@
 //
 //  First-launch installer for models shipped inside the app bundle.
 //
-//  The "full" distribution DMG bakes `OsaurusAI/Raptor-0.6-4B-JANG_6M` into
+//  The "full" distribution DMG bakes `OsaurusAI/Raptor-0.7-4B-JANG_6M` into
 //  `Osaurus.app/Contents/Resources/BundledModels/` (staged by
 //  `scripts/build/build_full_app.sh`, described by `manifest.json`). The
 //  model is *seeded* into the user's models directory rather than loaded in

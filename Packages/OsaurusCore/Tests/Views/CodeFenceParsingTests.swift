@@ -85,7 +85,7 @@ struct CodeFenceParsingTests {
         "```ascii\n+--+\n|  |\n+--+\n```",
     ])
     func labeledFenceRendersAsCodeBlock(_ source: String) {
-        let segments = groupBlocksIntoSegments(parseBlocks(source))
+        let segments = groupBlocksIntoSegments(parseBlocks(source), space: ThemeSpaceScale())
         #expect(segments.count == 1)
         guard case .codeBlock = segments.first?.kind else {
             Issue.record("expected a code block, got \(String(describing: segments.first?.kind))")
@@ -95,7 +95,7 @@ struct CodeFenceParsingTests {
 
     @Test(arguments: ["```\n# Title\n```", "````\n# Title\n````"])
     func bareFenceStillRendersAsProse(_ source: String) {
-        let segments = groupBlocksIntoSegments(parseBlocks(source))
+        let segments = groupBlocksIntoSegments(parseBlocks(source), space: ThemeSpaceScale())
         #expect(segments.count == 1)
         guard case .textGroup = segments.first?.kind else {
             Issue.record("expected prose, got \(String(describing: segments.first?.kind))")

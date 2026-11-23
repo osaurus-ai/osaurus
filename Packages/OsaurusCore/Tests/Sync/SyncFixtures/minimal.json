@@ -1,0 +1,45 @@
+{
+  "description": "The least a writer emits: required fields only.",
+  "conversation": {
+    "title": "New Chat",
+    "created_ms": 1767225600000,
+    "pinned": false,
+    "archived": false,
+    "tags": {
+      "osaurus.session": "6f1c2b3a-0d4e-4f5a-8b6c-7d8e9f0a1b2c",
+      "source": "chat"
+    },
+    "app_data": {
+      "ai.osaurus.session/1": {
+        "v": 1,
+        "id": "6f1c2b3a-0d4e-4f5a-8b6c-7d8e9f0a1b2c"
+      }
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the capital of Portugal?",
+      "created_ms": 1767225600000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "a0000000-0000-4000-8000-000000000001",
+          "role": "user"
+        }
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "Lisbon.",
+      "created_ms": 1767225601000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "a0000000-0000-4000-8000-000000000002",
+          "role": "assistant"
+        }
+      }
+    }
+  ]
+}

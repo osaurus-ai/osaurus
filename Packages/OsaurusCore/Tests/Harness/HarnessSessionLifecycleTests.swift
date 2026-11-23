@@ -271,7 +271,7 @@ struct HarnessSessionLifecycleTests {
         let pid = try #require(await session.processId)
 
         #expect(events.visibleText == "working")
-        if case .stats(_, _, let stopReason) = events.last {
+        if case .stats(_, _, let stopReason, _) = events.last {
             #expect(stopReason == "aborted")
         } else {
             Issue.record("expected the aborted turn's stats last, got \(events)")

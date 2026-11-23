@@ -253,7 +253,7 @@ When you want Osaurus to execute tools on your behalf (manage the iteration budg
 
 - Each pending `tool_call` is executed against the registered `ToolRegistry` (sandbox, folder, MCP, plugin tools — everything the agent has access to).
 - Independent tool calls within a single model turn run **in parallel**.
-- The loop is capped at 30 iterations; if the budget is exhausted while still requesting tools, a notice is appended to the stream so the client sees a clear reason rather than a silent stop.
+- The loop runs up to 30 iterations by default (Chat → Advanced → **Max Tool Attempts**, clamped to 120); if the budget is exhausted while still requesting tools, a notice is appended to the stream so the client sees a clear reason rather than a silent stop.
 - Honors client-supplied `tools` (merged with the agent's always-loaded set) and `tool_choice` (defaults to `"auto"` when tools are present).
 - **Authenticated remote callers** (Osaurus [Secure Channel](SECURE_CHANNEL.md), agent-scoped) that drive an agent whose owner granted a **host workspace folder** also get host file tools (`file_read` / `file_write` / `file_edit`) confined to that folder. `shell_run` / `git_commit` / `file_undo` stay denied (see the deny list below), and loopback callers never mount it.
 
@@ -272,7 +272,7 @@ Folder write and shell tools are **denied to external surfaces by default** — 
 
 The same deny list covers the knowledge/skill mutation tools (`write_knowledge`, `edit_knowledge`, `delete_knowledge`, `update_skill`), every `agent_channel_*` tool, and every built-in Apple app tool (`calendar_*`, `reminders_*`, `contacts_*`, `notes_*`, `mail_*`, `messages_*`, `location_*`, `maps_*`, `music_*`, `shortcuts_*`). The Apple tools are per-agent, approval-gated, and backed by the user's TCC grants, none of which an external caller can be shown; drive them through an agent in the app instead. See [APPLE_APPS.md](APPLE_APPS.md).
 
-**One narrow exception — per-agent host workspace.** When an **authenticated remote** caller (Osaurus [Secure Channel](SECURE_CHANNEL.md), agent-scoped key — never loopback, plaintext, `/mcp/call`, or a cross-agent key) drives an agent that has a **working folder** (Agent → Configure → Features → Working Folder, or picked with the chat Folder chip), the `/agents/{id}/run` loop may execute `file_write` and `file_edit`, confined to that folder by the folder tools' own root. `file_read` is always permitted; `shell_run`, `git_commit`, and `file_undo` stay denied even then. The folder root is bound (as a task-local) only after the secure-transport, built-in, and agent-scope gates pass, so the relaxation is unreachable from any untrusted surface.
+**One narrow exception — per-agent host workspace.** When an **authenticated remote** caller (Osaurus [Secure Channel](SECURE_CHANNEL.md), agent-scoped key — never loopback, plaintext, `/mcp/call`, or a cross-agent key) drives an agent that has a **working folder** (Agent → Abilities → Overview → Working Folder, or picked with the chat Folder chip), the `/agents/{id}/run` loop may execute `file_write` and `file_edit`, confined to that folder by the folder tools' own root. `file_read` is always permitted; `shell_run`, `git_commit`, and `file_undo` stay denied even then. The folder root is bound (as a task-local) only after the secure-transport, built-in, and agent-scope gates pass, so the relaxation is unreachable from any untrusted surface.
 
 ### Session Grouping (`session_id`)
 
@@ -307,7 +307,47 @@ For visibility, every response carries a `prefix_hash` field — a stable hash o
 { "prefix_hash": "a1b2c3d4e5f67890..." }
 ```
 
-`prefix_hash` is informational only — passing it back to the server has no effect. Keep `session_id` stable per conversation so chat history and session tool bookkeeping group correctly; cache reuse itself does not depend on it.
+`prefix_hash` is informational only — passing it back to the server has no effect. Keep `session_id` stable per conversation so session tool bookkeeping groups correctly; cache reuse itself does not depend on it.
+
+### Thinking Budget
+
+A reasoning model can spend its whole output allowance thinking. To cap how many tokens one reasoning block may use, send a budget with the request:
+
+| Endpoint | Field |
+|----------|-------|
+| `POST /chat/completions` | `thinking_token_budget` (integer), or `reasoning: {"max_tokens": N}`. When both are sent, `thinking_token_budget` wins. |
+| `POST /responses` | `reasoning: {"max_tokens": N}` |
+| `POST /messages` (Anthropic) | `thinking: {"type": "enabled", "budget_tokens": N}` |
+
+```bash
+curl http://127.0.0.1:1337/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3.6-35b-a3b-mxfp4",
+    "messages": [{"role": "user", "content": "Plan a three-step refactor."}],
+    "thinking_token_budget": 300
+  }'
+```
+
+The budget must be a positive integer; `0` or a negative value returns `400`. When the budget is spent, the runtime requires the model's reasoning close token once and stops the block from reopening. Until then, sampling is untouched. `max_tokens` / `max_output_tokens` remain the total output cap and are never turned into a thinking budget. API requests do not inherit the in-app chat's thinking settings, so no budget applies unless the request sends one.
+
+Every response to a request that carried a budget says whether it was applied:
+
+- Chat Completions: `generation_metrics.reasoning_budget`. When streaming, it arrives in the `generation_metrics` chunk after the finish chunk, even without `stream_options.include_usage`.
+- Responses: `generation_metrics.reasoning_budget` on the response object, including the terminal `response.completed` / `response.incomplete` event when streaming.
+- Anthropic Messages: `usage.reasoning_budget`. When streaming, it is in the final `message_delta` usage.
+
+```json
+"reasoning_budget": { "requested_tokens": 300, "applied": true }
+```
+
+`applied: false` means the request was accepted and ran without a cap. This happens when:
+
+- the model is not a local reasoning-tag model (its tokenizer has no recognized reasoning close tag such as `</think>`);
+- the prompt does not open a reasoning block and the vocabulary has no open tag the model could emit;
+- the request is routed to a remote provider (the budget is not forwarded upstream).
+
+One exception: a streaming `/responses` request served by a remote provider's native Responses stream forwards that provider's events unchanged, so its terminal event has no `reasoning_budget` key. Requests without a budget get no `reasoning_budget` key. While a budget is active, speculative decoding (native MTP, DFlash, and other drafters) falls back to plain autoregressive decode for that request, so tokens per second may drop. A process-level `VMLX_REASONING_BUDGET` environment variable, if set, overrides the request value.
 
 ### Chat Templates
 
@@ -559,6 +599,7 @@ curl http://127.0.0.1:1337/v1/responses \
 | `seed` | integer | Optional Osaurus/compatible-endpoint extension; 0 is explicit |
 | `repetition_penalty` | float | Optional Osaurus extension; finite and greater than 0, independent of additive frequency/presence penalties |
 | `enable_thinking` | boolean | Optional explicit model-template thinking control |
+| `reasoning.max_tokens` | integer | Optional Osaurus extension: positive cap on reasoning tokens. See [Thinking Budget](#thinking-budget) |
 | `chat_template_kwargs` | object | Model-defined JSON variables passed to its own chat template |
 
 Omitted extensions preserve the existing model and request defaults. These extensions are not promises that an upstream Responses provider supports them: compatible routes forward supported values, and routes without a representation reject explicit unsupported controls before inference. Chat Completions also accepts `seed`, `repetition_penalty`, and `chat_template_kwargs`.
@@ -581,7 +622,7 @@ Use these surfaces when you want Osaurus-composed agent context:
 - `POST /agents/{id}/run`: runs a server-side autonomous agent loop with that agent's context and tool execution.
 - Plugin host inference APIs: carry the plugin's active agent context by design.
 
-`X-Osaurus-Agent-Id` on `/chat/completions` may still be used to associate persisted HTTP chat history with an agent/session, but it is not a prompt/context injection switch.
+`/chat/completions` calls are not saved as chats. Insights records each one (request, response, model, tokens). `X-Osaurus-Agent-Id` is only checked against an agent-scoped key's agent; it is not a prompt/context injection switch.
 
 Strict pass-through example:
 
@@ -708,7 +749,7 @@ The balance is cached for 30 seconds and always reflects a value fetched from th
 
 2. **Performance**: The first request to a model loads it; subsequent requests skip this step. Concurrent same-model requests share a single forward pass via vmlx-swift's `BatchEngine` continuous batching. Multi-turn KV cache reuse is automatic and content-addressed via vmlx's `CacheCoordinator` — repeated prefixes (system prompt, tools, prior turns) are matched without any client opt-in. The `prefix_hash` response field is informational; `session_id` groups history but is not a cache key.
 
-3. **Memory Management**: Models are loaded into memory on demand and governed by Settings > Local Inference > Model Management. The eviction policy controls strict one-model versus flexible multi-model residency; "Keep model loaded after use" controls idle unload timing after the final request/window lease drops. Idle unload releases weights and runtime buffers only — downloaded models and disk KV cache entries remain intact. `/health` keeps `loaded`, `current_model`, and `inflight`, and adds `resident_models[]` entries with `idle_unload_at` and `idle_seconds_remaining`. KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for hybrid models) is owned by vmlx-swift's `CacheCoordinator`, which sizes each tier per model.
+3. **Memory Management**: Models are loaded into memory on demand and governed by Server → Server Settings → Model Memory. **Eviction Policy** controls strict one-model versus flexible multi-model residency; **Model Residency** (Keep Model Loaded, or Unload After 30 seconds by default) controls idle unload timing after the final request/window lease drops. Idle unload releases weights and runtime buffers only — downloaded models and disk KV cache entries remain intact. `/health` keeps `loaded`, `current_model`, and `inflight`, and adds `resident_models[]` entries with `idle_unload_at` and `idle_seconds_remaining`. KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for hybrid models) is owned by vmlx-swift's `CacheCoordinator`, which sizes each tier per model.
 
 4. **GPU Acceleration**: MLX uses Apple Silicon unified memory for GPU-accelerated inference.
 

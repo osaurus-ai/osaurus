@@ -276,14 +276,8 @@ final class WorkspaceSyncService: ObservableObject {
             )
             await WorkspaceAgentAccessHost.shared.reconcile(snapshot: snapshot)
             guard !Task.isCancelled, generation == streamGeneration, OsaurusRouter.isEnabled else { return }
-            for remote in RemoteAgentManager.shared.remoteAgents {
-                guard let id = remote.workspaceId else { continue }
-                if snapshot.workspaces.first(where: { $0.workspace.id == id })?.agents.contains(where: {
-                    $0.agentAddress.lowercased() == remote.agentAddress.lowercased()
-                }) != true {
-                    _ = RemoteAgentManager.shared.remove(id: remote.id)
-                }
-            }
+            WorkspaceRosterStore.shared.removeStalePairings(
+                loadedWorkspaceIds: Set(snapshot.workspaces.map(\.workspace.id)))
             // The last workspace is gone: `apply` above cleared the
             // membership flag and `noteMembership` stopped this stream. Do
             // not renew a lease on a stream that is being torn down.

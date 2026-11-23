@@ -30,7 +30,11 @@ public actor LoginShellPath {
 
     /// Start the probe early (app launch) so the first MCP connect doesn't wait for it.
     public nonisolated static func prewarm() {
-        Task.detached(priority: .utility) { _ = await LoginShellPath.shared.entries() }
+        Task.detached(priority: .utility) {
+            // Resolve the home directory off the main thread so later UI-path lookups hit the cache.
+            _ = ExecutableLocator.homePath
+            _ = await LoginShellPath.shared.entries()
+        }
     }
 
     /// The login shell's PATH entries. Runs the probe once; later calls reuse the result.

@@ -1,0 +1,11 @@
+{
+  "id": "architect_inline.draft-latency-unbounded",
+  "domain": "architect_inline",
+  "label": "architect_inline • the same draft with the deadline moved to 120 s, to measure the model",
+  "notes": "Live, diagnostic. Same request as draft-runs-and-offers-keep with no 10 s cut-off, so the row records how long this model takes to reach a running first step and its draft tokens per second. It passes on a completed run within 120 s; the 10 s row is the shipped bar.",
+  "query": "Here are my tasks: file taxes (due Friday), buy milk, call the landlord about the leak, book flights for the wedding next month. Sort them by urgency, then write me a short plan for today.",
+  "fixtures": {},
+  "expect": {
+    "architectInline": { "result": "completed", "deadline": 120, "maxFirstStepSeconds": 120 }
+  }
+}

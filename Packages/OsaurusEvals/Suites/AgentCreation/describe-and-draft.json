@@ -1,0 +1,18 @@
+{
+  "id": "agent_creation.describe-and-draft",
+  "domain": "agent_creation",
+  "label": "agent creation • a one-line description becomes a whole draft with the right abilities",
+  "query": "I want an agent that keeps an eye on tech news every morning and gives me a short summary of what matters.",
+  "notes": "The New Agent chat's main path. The Configurator should draft early (one patch with name, description, instructions and abilities) instead of interviewing, turn on web search for news, leave tools in auto mode, keep specialist tools off, and tell the person to review and click Create rather than claiming the agent exists. One scripted reply covers a question if it asks one.",
+  "fixtures": {},
+  "expect": {
+    "agentCreation": {
+      "maxIterations": 10,
+      "replies": ["Technology and AI news, a few bullet points each morning at 8am is perfect."],
+      "capabilitiesOn": ["web_search_enabled"],
+      "capabilitiesOff": ["calculator_enabled", "redaction_tools_enabled", "computer_use_enabled"],
+      "toolMode": "auto",
+      "maxClarifications": 1
+    }
+  }
+}

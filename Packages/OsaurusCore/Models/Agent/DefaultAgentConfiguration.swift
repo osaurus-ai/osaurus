@@ -30,6 +30,13 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     /// unaffected by the name.
     public var displayName: String?
 
+    /// Mascot id (`AgentMascot`) for the Orchestrator. `nil` keeps the
+    /// stock green dino. Cosmetic only, like `displayName`.
+    public var avatar: String?
+
+    /// Custom avatar image under `agents/avatars/`; wins over `avatar`.
+    public var customAvatarFilename: String?
+
     /// System prompt prepended to every turn with the Default agent.
     /// The configure-agent prompt addendum (rendered by
     /// `DefaultAgentSystemPromptBuilder`) is prepended at compose time
@@ -92,6 +99,8 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
 
     public init(
         displayName: String? = nil,
+        avatar: String? = nil,
+        customAvatarFilename: String? = nil,
         systemPrompt: String = "",
         defaultModel: String? = nil,
         temperature: Float? = nil,
@@ -105,6 +114,8 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         workingFolderPath: String? = nil
     ) {
         self.displayName = displayName
+        self.avatar = avatar
+        self.customAvatarFilename = customAvatarFilename
         self.systemPrompt = systemPrompt
         self.defaultModel = defaultModel
         self.temperature = temperature
@@ -121,6 +132,8 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+        avatar = try c.decodeIfPresent(String.self, forKey: .avatar)
+        customAvatarFilename = try c.decodeIfPresent(String.self, forKey: .customAvatarFilename)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt) ?? ""
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
         temperature = try c.decodeIfPresent(Float.self, forKey: .temperature)

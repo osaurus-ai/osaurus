@@ -86,33 +86,31 @@ struct SubagentRunLogTests {
         #expect(decoded.toolCallLogs == ["call_1": log])
     }
 
-    @Test func database_persistsToolCallLogs() throws {
-        let db = ChatHistoryDatabase()
-        try db.openInMemory()
-        defer { db.close() }
-        #expect(ChatHistoryDatabase.latestSchemaVersion >= 19)
-
+    @MainActor
+    @Test func store_persistsToolCallLogs() async throws {
         let log = try #require(Self.finishedFeed().finishedRunLog())
-        let session = ChatSessionData(
-            id: UUID(),
-            title: "Computer use",
-            createdAt: Date(timeIntervalSince1970: 1),
-            updatedAt: Date(timeIntervalSince1970: 2),
-            selectedModel: "m",
-            turns: [
-                ChatTurnData(role: .user, content: "organize my downloads"),
-                ChatTurnData(role: .assistant, content: "", toolCallLogs: ["call_cu": log]),
-            ],
-            agentId: nil,
-            source: .chat,
-            sourcePluginId: nil,
-            externalSessionKey: nil,
-            dispatchTaskId: nil
-        )
-        try db.saveSession(session)
-        let loaded = try #require(db.loadSession(id: session.id))
-        #expect(loaded.turns.last?.toolCallLogs == ["call_cu": log])
-        #expect(loaded.turns.first?.toolCallLogs.isEmpty == true)
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSessionData(
+                id: UUID(),
+                title: "Computer use",
+                createdAt: Date(timeIntervalSince1970: 1),
+                updatedAt: Date(timeIntervalSince1970: 2),
+                selectedModel: "m",
+                turns: [
+                    ChatTurnData(role: .user, content: "organize my downloads"),
+                    ChatTurnData(role: .assistant, content: "", toolCallLogs: ["call_cu": log]),
+                ],
+                agentId: nil,
+                source: .chat,
+                sourcePluginId: nil,
+                externalSessionKey: nil,
+                dispatchTaskId: nil
+            )
+            ChatSessionStore.save(session)
+            let loaded = try #require(SyncConversationStore.shared.loadSession(id: session.id))
+            #expect(loaded.turns.last?.toolCallLogs == ["call_cu": log])
+            #expect(loaded.turns.first?.toolCallLogs.isEmpty == true)
+        }
     }
 
     @MainActor

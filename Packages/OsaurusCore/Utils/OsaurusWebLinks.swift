@@ -21,6 +21,17 @@ public enum OsaurusWebLinks {
     /// to the page root rather than a section anchor.
     public static let privacy = URL(string: "https://osaurus.ai/privacy")!
 
+    // MARK: - Help
+
+    /// The user guide, from Help's "Other Ways to Get Help".
+    public static let docs = URL(string: "https://docs.osaurus.ai/")!
+
+    /// The community Discord server.
+    public static let discord = URL(string: "https://discord.gg/osaurus")!
+
+    /// Public bug tracker, for reports the user wants others to see.
+    public static let githubIssues = URL(string: "https://github.com/osaurus-ai/osaurus/issues")!
+
     // MARK: - Localized link copy
 
     /// "By continuing, you agree to the Terms and Privacy Policy." with both

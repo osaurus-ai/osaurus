@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.opening",
+  "domain": "onboarding",
+  "label": "onboarding • the opening varies by brain state and names the Mac",
+  "query": "opening",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "opening"
+    }
+  }
+}

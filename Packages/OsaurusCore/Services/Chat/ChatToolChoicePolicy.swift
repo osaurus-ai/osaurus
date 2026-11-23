@@ -147,8 +147,27 @@ enum ChatToolChoicePolicy {
         // require the `complete` tool. Keep punctuation around explicit calls
         // and backticked names valid, including names containing regex syntax.
         let escapedName = NSRegularExpression.escapedPattern(for: name)
-        let pattern = #"(?<![\p{L}\p{N}_-])"# + escapedName + #"(?![\p{L}\p{N}_-])"#
-        return text.range(of: pattern, options: .regularExpression) != nil
+        let bounded = #"(?<![\p{L}\p{N}_-])"# + escapedName + #"(?![\p{L}\p{N}_-])"#
+        // An identifier-shaped name (`file_read`, `run_workflow`) is a call
+        // request wherever it appears as a whole token.
+        if name.contains(where: { $0 == "_" || $0 == "-" || $0.isNumber }) {
+            return text.range(of: bounded, options: .regularExpression) != nil
+        }
+        // A tool named with an ordinary word (`status`, `clarify`, `complete`)
+        // counts only when written as an invocation: backticked, called with
+        // parentheses, after call / use / run / invoke, or followed by "tool".
+        // As a bare word it is prose: "what's the status of my order", or any
+        // pasted document containing the word, must not force a tool call
+        // (observed live: a 10k-token pasted doc mentioning "status" forced
+        // `tool_choice: required`, the model answered correctly in prose,
+        // and the turn was shown as an error).
+        let invocations = [
+            "`" + escapedName + "`",
+            bounded + #"\s*\("#,
+            #"\b(call|use|run|invoke|using|calling)\s+(the\s+)?"# + escapedName + #"(?![\p{L}\p{N}_-])"#,
+            bounded + #"\s+tool\b"#,
+        ]
+        return invocations.contains { text.range(of: $0, options: .regularExpression) != nil }
     }
 
     private static func containsNegatedToolIntent(_ text: String) -> Bool {

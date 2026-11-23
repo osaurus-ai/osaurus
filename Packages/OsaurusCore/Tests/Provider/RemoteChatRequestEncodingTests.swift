@@ -355,6 +355,19 @@ struct RemoteChatRequestEncodingTests {
         )
     }
 
+    @Test func anthropicImplicitMaxTokens_usesTheModelsOwnLimitWhereTheWindowHasRoom() {
+        let cap = { (modelMax: Int?, window: Int?, prompt: Int) in
+            RemoteProviderService.anthropicImplicitMaxTokens(
+                resolved: 16_384, modelMaxTokens: modelMax, contextWindow: window, estimatedPromptTokens: prompt)
+        }
+        #expect(cap(64_000, 200_000, 20_000) == 64_000)
+        #expect(cap(64_000, 200_000, 120_000) == 50_000, "room left in 85% of the window")
+        #expect(cap(64_000, 200_000, 190_000) == 16_384, "never below the chat-wide budget")
+        #expect(cap(8_192, 200_000, 0) == 16_384, "a smaller published limit is not a raise")
+        #expect(cap(nil, 200_000, 0) == 16_384)
+        #expect(cap(64_000, nil, 0) == 16_384, "no window, no way to check the room")
+    }
+
     /// Adaptive-thinking Claude generations return HTTP 400 "`temperature` is
     /// deprecated for this model." — the encoder must omit the sampler knobs
     /// for them (opus-5 included) while older dated snapshots keep them.
@@ -1575,7 +1588,7 @@ struct RemoteChatRequestEncodingTests {
 
         #expect(headers["session-id"] == sessionId)
         #expect(headers["x-session-affinity"] == sessionId)
-        #expect(headers["version"] == OpenAICodexOAuthService.codexClientVersion)
+        #expect(headers["version"] == OpenAICodexOAuthService.activeClientVersion)
         #expect(headers["x-openai-internal-codex-responses-lite"] == "true")
     }
 
@@ -2576,6 +2589,104 @@ struct RemoteChatRequestEncodingTests {
         let anthropic = request.toAnthropicRequest()
 
         #expect(Self.toolUseBlocks(in: anthropic).contains { $0.id == "toolu_last" })
+    }
+
+    // MARK: - Signed thinking replay
+
+    private static func signedThinking(_ text: String) -> JSONValue {
+        .object(["type": .string("thinking"), "thinking": .string(text), "signature": .string("sig-\(text)")])
+    }
+
+    private static func thinkingTexts(in message: AnthropicMessage) -> [String] {
+        guard case .blocks(let blocks) = message.content else { return [] }
+        return blocks.compactMap { if case .thinking(let block) = $0 { return block.thinking }; return nil }
+    }
+
+    /// Earlier user messages are rewritten between turns (the Orchestrator's
+    /// session state rides only the latest one), so a signed block from an
+    /// earlier exchange no longer matches the content before it and Anthropic
+    /// rejects it. Earlier exchanges keep their text and drop their thinking.
+    @Test func toAnthropicRequest_dropsThinkingFromEarlierExchanges() throws {
+        var earlier = ChatMessage(role: "assistant", content: "First answer.")
+        earlier.anthropic_thinking_blocks = [Self.signedThinking("first")]
+        let anthropic = Self.makeRequest(
+            model: "claude-opus-5",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "first question"),
+                earlier,
+                ChatMessage(role: "user", content: "follow-up"),
+            ]
+        ).toAnthropicRequest()
+
+        #expect(anthropic.messages.map(\.role) == ["user", "assistant", "user"])
+        #expect(Self.thinkingTexts(in: anthropic.messages[1]).isEmpty)
+        guard case .blocks(let blocks) = anthropic.messages[1].content,
+            case .text(let text) = blocks.first
+        else {
+            Issue.record("expected the earlier assistant text to survive")
+            return
+        }
+        #expect(blocks.count == 1 && text.text == "First answer.")
+    }
+
+    /// Within the current tool-use loop Anthropic requires the signed block
+    /// back, ahead of the `tool_use` it preceded.
+    @Test func toAnthropicRequest_keepsThinkingInCurrentToolLoop() throws {
+        var earlier = ChatMessage(role: "assistant", content: "First answer.")
+        earlier.anthropic_thinking_blocks = [Self.signedThinking("first")]
+        var current = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: [
+                ToolCall(id: "toolu_1", type: "function", function: ToolCallFunction(name: "read_file", arguments: "{}"))
+            ],
+            tool_call_id: nil
+        )
+        current.anthropic_thinking_blocks = [Self.signedThinking("current")]
+        let anthropic = Self.makeRequest(
+            model: "claude-opus-5",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "first question"),
+                earlier,
+                ChatMessage(role: "user", content: "read the file"),
+                current,
+                ChatMessage(role: "tool", content: "RESULT", tool_calls: nil, tool_call_id: "toolu_1"),
+            ]
+        ).toAnthropicRequest()
+
+        #expect(anthropic.messages.map(\.role) == ["user", "assistant", "user", "assistant", "user"])
+        #expect(Self.thinkingTexts(in: anthropic.messages[1]).isEmpty)
+        #expect(Self.thinkingTexts(in: anthropic.messages[3]) == ["current"])
+        guard case .blocks(let blocks) = anthropic.messages[3].content,
+            case .thinking(let thinking) = blocks.first,
+            case .toolUse(let toolUse) = blocks.last
+        else {
+            Issue.record("expected thinking first and tool_use last")
+            return
+        }
+        #expect(thinking.signature == "sig-current" && toolUse.id == "toolu_1")
+        Self.assertAnthropicToolPairing(anthropic)
+    }
+
+    /// An earlier assistant turn that carried only signed thinking has nothing
+    /// left to send and is omitted; the request still encodes.
+    @Test func toAnthropicRequest_omitsEarlierThinkingOnlyAssistant() throws {
+        var thinkingOnly = ChatMessage(role: "assistant", content: nil, tool_calls: nil, tool_call_id: nil)
+        thinkingOnly.anthropic_thinking_blocks = [Self.signedThinking("only")]
+        let anthropic = Self.makeRequest(
+            model: "claude-opus-5",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "first question"),
+                thinkingOnly,
+                ChatMessage(role: "user", content: "follow-up"),
+            ]
+        ).toAnthropicRequest()
+
+        #expect(anthropic.messages.map(\.role) == ["user", "user"])
+        _ = try JSONEncoder().encode(anthropic)
     }
 
     @Test func routerWireCompatibleMessages_dropsOrphanToolUse() throws {

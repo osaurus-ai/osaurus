@@ -105,7 +105,7 @@ enum ServerSettingsSectionGroup: String, CaseIterable, Hashable {
         case .server: return L("Server")
         case .generation: return L("Generation")
         case .performance: return L("Performance")
-        case .capabilities: return L("Capabilities")
+        case .capabilities: return L("Inputs & Tools")
         case .lifecycle: return L("Lifecycle")
         }
     }

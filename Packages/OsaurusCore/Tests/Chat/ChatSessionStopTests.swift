@@ -146,6 +146,21 @@ struct ChatSessionStopTests {
         AgentManager.shared.refresh()
     }
 
+    /// The Orchestrator holds only the routing tools, so agent-loop tests run
+    /// on a custom agent with `todo` ticked.
+    private func makeTodoAgent(warmModelsOnLoad: Bool) -> Agent {
+        enableDefaultAgentTools(warmModelsOnLoad: warmModelsOnLoad)
+        let agent = Agent(
+            name: "Stop loop agent \(UUID().uuidString.prefix(6))",
+            autonomousExec: AutonomousExecConfig(enabled: false),
+            toolSelectionMode: .manual,
+            manualToolNames: ["todo"]
+        )
+        AgentStore.save(agent)
+        AgentManager.shared.refresh()
+        return agent
+    }
+
     /// Lazy loading: a model selection records the choice only. The next
     /// Send dispatches synchronously (no pre-send handshake, the user turn is
     /// appended inside `send()`), reaches the engine exactly once as a
@@ -429,9 +444,11 @@ struct ChatSessionStopTests {
     @Test
     func send_marksPostToolEmptyExhaustionFailedAndCancelsWarmup() async throws {
         try await ChatHistoryTestStorage.run {
-            enableDefaultAgentTools(warmModelsOnLoad: true)
+            let agent = makeTodoAgent(warmModelsOnLoad: true)
+            defer { AgentStore.delete(id: agent.id); AgentManager.shared.refresh() }
 
             let session = ChatSession()
+            session.agentId = agent.id
             session.toolsDisabledForTestingOverride = false
             session.selectedModel = "chat-session-tool-loop-test-model"
             session.forceChatEngineRouteForTests = true
@@ -463,10 +480,9 @@ struct ChatSessionStopTests {
             #expect(await engine.regularRequestCount == 4)
             #expect(await engine.exposedToolNames.allSatisfy { $0.contains("todo") })
             #expect(session.lastStreamError == AgentToolLoop.emptyToolTaskFallback)
-            #expect(
-                session.turns.last(where: { $0.role == .assistant })?.content
-                    == AgentToolLoop.emptyToolTaskFallback
-            )
+            let closing = session.turns.last(where: { $0.role == .assistant })
+            #expect(closing?.runOutcome?.kind == .emptyResponse)
+            #expect(closing?.content == ChatRunOutcome(kind: .emptyResponse).title)
             // This is the ChatSession completion/indexing marker. Failed runs
             // must never publish one for auto-speak or downstream completion
             // consumers, and the queued completed-transcript warm-up must not run.
@@ -479,9 +495,11 @@ struct ChatSessionStopTests {
     @Test
     func send_retriesReasoningOnlyAgentStepOnceInFreshExcludedTurn() async throws {
         try await ChatHistoryTestStorage.run {
-            enableDefaultAgentTools(warmModelsOnLoad: false)
+            let agent = makeTodoAgent(warmModelsOnLoad: false)
+            defer { AgentStore.delete(id: agent.id); AgentManager.shared.refresh() }
 
             let session = ChatSession()
+            session.agentId = agent.id
             session.toolsDisabledForTestingOverride = false
             session.selectedModel = "chat-session-reasoning-retry-test-model"
             session.forceChatEngineRouteForTests = true

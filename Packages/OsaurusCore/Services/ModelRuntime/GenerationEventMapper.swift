@@ -68,6 +68,7 @@ enum GenerationEventMapper {
         events: AsyncStream<Generation>,
         modelName: String = "",
         promptTokenCount: Int? = nil,
+        reasoningBudget: ReasoningBudgetReport? = nil,
         trace: TTFTTrace? = nil,
         suppressProgressUI: Bool = false,
         /// Whether this generation's completion-time MTP stats should become
@@ -106,6 +107,9 @@ enum GenerationEventMapper {
         let task = Task {
             if let promptTokenCount, promptTokenCount >= 0 {
                 continuation.yield(.inputTokenCount(promptTokenCount))
+            }
+            if let reasoningBudget {
+                continuation.yield(.reasoningBudget(reasoningBudget))
             }
             let interval = mapperSignposter.beginInterval(
                 "generation",
@@ -426,6 +430,9 @@ enum GenerationEventMapper {
             let decodeTps: Double? = finalTokenCount.flatMap { count in
                 guard let decodeMs, decodeMs > 0 else { return nil }
                 return Double(count) / (Double(decodeMs) / 1000.0)
+            }
+            if let decodeTps, let finalTokenCount {
+                ModelThroughputLedger.record(model: modelName, tokensPerSecond: decodeTps, tokens: finalTokenCount)
             }
             let logicalTotalMs = Int((logicalEnd - startedAt) * 1000)
             let cleanupDrainMs = max(0, Int((nowEnd - logicalEnd) * 1000))

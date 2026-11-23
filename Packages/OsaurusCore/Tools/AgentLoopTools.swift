@@ -520,7 +520,7 @@ public final class ClarifyTool: OsaurusTool, @unchecked Sendable {
 
 // MARK: - speak
 
-/// Speak text aloud via PocketTTS. Fire-and-forget: returns the moment
+/// Speak text aloud via the configured TTS engine. Fire-and-forget: returns the moment
 /// playback starts. The row spinner clears when audio drains.
 public final class SpeakTool: OsaurusTool, @unchecked Sendable {
     public let name = "speak"
@@ -575,7 +575,7 @@ public final class SpeakTool: OsaurusTool, @unchecked Sendable {
                 kind: .unavailable,
                 message:
                     "Text-to-speech is disabled in settings. Tell the user to enable it under "
-                    + "Settings → Voice if they want spoken responses.",
+                    + "Settings → Voice → Text to Speech if they want spoken responses.",
                 tool: name,
                 retryable: false
             )

@@ -377,14 +377,18 @@ final class PluginHostContext: @unchecked Sendable {
         // to the Default agent's secret namespace. Warn-once and return nil
         // so the plugin reads no value rather than the Default agent's.
         guard let agentId = resolvedAgentIdOrNil else {
+            // The Default agent has no private namespace here, but it does
+            // use the keys shared by all agents.
+            if Self.activeAgentId() == Agent.defaultId, PluginCredentials.isDeclaredSecret(pluginId: pluginId, key: key) {
+                return PluginCredentials.value(pluginId: pluginId, specId: key, agentId: nil)
+            }
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_get")
             return nil
         }
-        // Shared resolution policy (exact agent, then default-agent
-        // fallback) so `config_get` agrees with tool payload injection —
-        // a `bot_token` saved as a Plugins-tab global default must be
-        // readable here, not only via the injected payload.
-        return ToolSecretsKeychain.resolvedSecret(id: key, for: pluginId, agentId: agentId)
+        // Declared secrets resolve like tool payload injection (the agent's
+        // value, else the one saved for all agents); other keys are plugin
+        // config read from the plugin's own store.
+        return PluginCredentials.configValue(pluginId: pluginId, key: key, agentId: agentId)
     }
 
     /// Maximum config value byte size accepted by `config_set`. The
@@ -414,7 +418,9 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_set")
             return
         }
-        ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
+        if !PluginCredentials.configWrite(pluginId: pluginId, key: key, value: value, agentId: agentId) {
+            ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
+        }
         postConfigChange(key: key, value: value)
     }
 
@@ -423,7 +429,9 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_delete")
             return
         }
-        ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: agentId)
+        if !PluginCredentials.configWrite(pluginId: pluginId, key: key, value: nil, agentId: agentId) {
+            ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: agentId)
+        }
         postConfigChange(key: key, value: nil)
     }
 
@@ -465,7 +473,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Outcome of `planDispatch`: either an error envelope to return
     /// straight to the plugin, or a fully-built `DispatchRequest` ready
-    /// for `TaskDispatcher`. Surfaced to tests so the security boundary
+    /// for `BackgroundTaskManager.dispatchChat`. Surfaced to tests so the security boundary
     /// (agent-scope enforcement, prompt validation, request-id parse,
     /// session_id passthrough) can be pinned without spinning up
     /// `BackgroundTaskManager` or a real chat engine.
@@ -478,7 +486,7 @@ final class PluginHostContext: @unchecked Sendable {
     /// the host-enforced agent scope (`activeAgent`, captured from TLS
     /// before `blockingAsync`). The returned `DispatchPlan` either
     /// carries the error envelope to send back, or the
-    /// `DispatchRequest` to hand to `TaskDispatcher`.
+    /// `DispatchRequest` to hand to `BackgroundTaskManager.dispatchChat`.
     ///
     /// Rate limiting is intentionally *not* in this function: it
     /// requires per-context state (`PluginHostContext.getContext(for:)`
@@ -685,7 +693,7 @@ final class PluginHostContext: @unchecked Sendable {
             // BackgroundTaskManager.dispatchChat now self-holds plugin
             // events between registerTask and trampoline-return, since
             // reattach can resolve a different task id than `requestId`.
-            let handle = await TaskDispatcher.shared.dispatch(request)
+            let handle = await BackgroundTaskManager.shared.dispatchChat(request)
             guard let handle else {
                 return (
                     Self.jsonString([
@@ -1554,6 +1562,11 @@ final class PluginHostContext: @unchecked Sendable {
                 activeAgentId: activeAgent,
                 engineFactory: engineFactory
             )
+            // The plugin is waiting on this completion like an API client,
+            // so queued background work yields to its model meanwhile.
+            let reservation = ForegroundReservationCenter.shared.reserve(
+                owner: "plugin:\(pid)", kind: .api, model: prep.enriched.request.model)
+            defer { ForegroundReservationCenter.shared.release(reservation) }
             var messages = prep.enriched.request.input
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
@@ -1639,8 +1652,7 @@ final class PluginHostContext: @unchecked Sendable {
                     batchHistory.record(callID: callId, result: processed.result)
                     toolCallsExecuted.append(processed.toolCallExecuted)
                     // Agent-loop intercepts: a successful `complete`/`clarify`
-                    // ends the run cleanly. The terminal handler commits this
-                    // result and explicit unstarted outcomes before persistence.
+                    // ends the run cleanly.
                     if AgentToolLoop.isSuccessfulIntercept(
                         toolName: inv.toolName,
                         result: processed.result
@@ -1669,23 +1681,8 @@ final class PluginHostContext: @unchecked Sendable {
                 )
                 exit = runResult.exit
             } catch {
-                if let commit = batchHistory.finish(runExit: "inference_error") { messages += commit.messages }
-                Self.persistInference(
-                    pluginId: pid, agentId: prep.agentId,
-                    externalSessionKey: prep.enriched.request.sessionID,
-                    finalMessages: messages, model: prep.enriched.request.model
-                )
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
             }
-            if let commit = batchHistory.finish(runExit: String(describing: exit)) { messages += commit.messages }
-            if exit != .finalResponse && exit != .endedBySurface {
-                Self.persistInference(
-                    pluginId: pid, agentId: prep.agentId,
-                    externalSessionKey: prep.enriched.request.sessionID,
-                    finalMessages: messages, model: prep.enriched.request.model
-                )
-            }
-
             // Even fully-compacted history can't fit the window — the
             // driver ended the run before sending a doomed request.
             if exit == .overBudget {
@@ -1725,13 +1722,6 @@ final class PluginHostContext: @unchecked Sendable {
             // (`.endedBySurface`): build the matching terminal envelope
             // instead of falling through to `max_iterations_reached`.
             if exit == .endedBySurface, let intercept = interceptedExit {
-                Self.persistInference(
-                    pluginId: pid,
-                    agentId: prep.agentId,
-                    externalSessionKey: prep.enriched.request.sessionID,
-                    finalMessages: messages,
-                    model: prep.enriched.request.model
-                )
                 if intercept.tool == "clarify" {
                     // The headless loop cannot pause for input; surface the
                     // question so the plugin can ask its user and follow up.
@@ -1762,7 +1752,7 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             guard exit == .finalResponse, let response = finalResponse,
-                let assistant = try? response.completedAssistantInput()
+                (try? response.completedAssistantInput()) != nil
             else {
                 // Driver-owned iteration cap (same taxonomy as HTTP): the
                 // final iteration's tool calls executed, but the model
@@ -1775,18 +1765,6 @@ final class PluginHostContext: @unchecked Sendable {
                     "shared_artifacts": sharedArtifacts,
                 ])
             }
-
-            // Persist the final assistant turn into the chat-history
-            // SQLite so this conversation is browsable in the sidebar.
-            var persistedMessages = messages
-            persistedMessages.append(SecretArgumentScrubber.recordedAssistantMessage(assistant))
-            Self.persistInference(
-                pluginId: pid,
-                agentId: prep.agentId,
-                externalSessionKey: prep.enriched.request.sessionID,
-                finalMessages: persistedMessages,
-                model: prep.enriched.request.model
-            )
 
             guard var json = try? PluginResponsesCompatibility.response(
                 response, model: prep.enriched.request.model
@@ -1893,6 +1871,11 @@ final class PluginHostContext: @unchecked Sendable {
                 activeAgentId: activeAgent,
                 engineFactory: engineFactory
             )
+            // The plugin is waiting on this completion like an API client,
+            // so queued background work yields to its model meanwhile.
+            let reservation = ForegroundReservationCenter.shared.reserve(
+                owner: "plugin:\(pid)", kind: .api, model: prep.enriched.request.model)
+            defer { ForegroundReservationCenter.shared.release(reservation) }
             let cid = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
             var messages = prep.enriched.request.input
             var lastContent = ""
@@ -1957,17 +1940,6 @@ final class PluginHostContext: @unchecked Sendable {
             // the driver exits `.finalResponse` and we return it verbatim.
             var terminalEnvelope: String?
 
-            // Persist whatever we have so far — shared by every terminal path.
-            let persistPartial: (String) -> Void = { assistantContent in
-                Self.persistStreamingInference(
-                    pluginId: pid,
-                    agentId: prep.agentId,
-                    externalSessionKey: prep.enriched.request.sessionID,
-                    priorMessages: messages,
-                    assistantContent: assistantContent,
-                    model: prep.enriched.request.model
-                )
-            }
             let maxIterationsEnvelope: () -> String = {
                 Self.jsonString([
                     "error": "max_iterations_reached",
@@ -2053,7 +2025,6 @@ final class PluginHostContext: @unchecked Sendable {
                         ))
                         let finish = response.completion.stopReason ?? "stop"
                         emit(Self.chunkPayload(id: cid, delta: [:], finishReason: finish))
-                        persistPartial("")
                         terminalEnvelope = Self.buildStreamResult(
                             id: cid, model: prep.enriched.request.model, content: lastContent,
                             toolCallsExecuted: toolCallsExecuted, sharedArtifacts: sharedArtifacts,
@@ -2154,7 +2125,6 @@ final class PluginHostContext: @unchecked Sendable {
                 if let envelope = terminalEnvelope { return envelope }
                 if isCancelled(streamId) {
                     emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
-                    persistPartial(lastContent)
                     return Self.cancelledStreamEnvelope(
                         id: cid, streamId: streamId, model: prep.enriched.request.model,
                         partialContent: lastContent, toolCallsExecuted: toolCallsExecuted,
@@ -2162,7 +2132,6 @@ final class PluginHostContext: @unchecked Sendable {
                     )
                 }
                 emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "error"))
-                persistPartial(lastContent)
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
             }
 
@@ -2172,7 +2141,6 @@ final class PluginHostContext: @unchecked Sendable {
                     emit(Self.chunkPayload(id: cid, delta: ["content": terminal.text]))
                 }
                 emit(Self.chunkPayload(id: cid, delta: [:], finishReason: terminal.finishReason))
-                persistPartial(terminal.text)
                 return Self.buildStreamResult(
                     id: cid, model: prep.enriched.request.model, content: terminal.text,
                     toolCallsExecuted: toolCallsExecuted, sharedArtifacts: sharedArtifacts,
@@ -2184,7 +2152,6 @@ final class PluginHostContext: @unchecked Sendable {
                 // Even fully-compacted history can't fit the window — the
                 // driver ended the run before sending a doomed request.
                 emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "context_overflow"))
-                persistPartial(lastContent)
                 return Self.jsonString([
                     "error": "context_overflow",
                     "message": AgentToolLoop.overBudgetMessage,
@@ -2194,7 +2161,6 @@ final class PluginHostContext: @unchecked Sendable {
             }
             if exit == .emptyResponseExhausted {
                 emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "empty_response"))
-                persistPartial(lastContent)
                 return Self.jsonString([
                     "error": "empty_tool_task_completion",
                     "message": AgentToolLoop.emptyToolTaskFallback,
@@ -2204,7 +2170,6 @@ final class PluginHostContext: @unchecked Sendable {
             }
             if exit == .lengthExhausted {
                 emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "length"))
-                persistPartial(lastContent)
                 return Self.jsonString([
                     "error": "output_token_limit",
                     "message": AgentToolLoop.lengthExhaustedFallback,
@@ -2215,7 +2180,6 @@ final class PluginHostContext: @unchecked Sendable {
 
             if exit == .incompleteReasoningExhausted {
                 emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "incomplete"))
-                persistPartial(lastContent)
                 return Self.jsonString([
                     "error": "incomplete_response",
                     "message": "The model did not complete a visible response with closed reasoning.",
@@ -2233,7 +2197,6 @@ final class PluginHostContext: @unchecked Sendable {
                 // tool calls) rather than mid-stream. Emit the same final
                 // chunk and envelope the mid-stream path produces.
                 emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
-                persistPartial(lastContent)
                 return Self.cancelledStreamEnvelope(
                     id: cid,
                     streamId: streamId,
@@ -2247,11 +2210,8 @@ final class PluginHostContext: @unchecked Sendable {
 
             // Iteration budget exhausted while the model was still requesting
             // tools (driver `.iterationCapReached`). Emit a finish chunk
-            // that is honest about why we stopped, persist whatever we have
-            // before returning so the user can still see the partial
-            // conversation.
+            // that is honest about why we stopped.
             emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "max_iterations"))
-            persistPartial(lastContent)
             return maxIterationsEnvelope()
         }
     }
@@ -2558,7 +2518,7 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             do {
-                let vectors = try await MediaActivityLogger.$embeddingPurpose.withValue("plugin_embed") {
+                let vectors = try await MediaActivityLogger.withEmbedding(purpose: "plugin_embed", role: .raw) {
                     try await EmbeddingService.shared.embed(texts: texts)
                 }
                 var embeddings: [[String: Any]] = []
@@ -2571,7 +2531,7 @@ final class PluginHostContext: @unchecked Sendable {
                 }
                 let tokenEstimate = texts.reduce(0) { $0 + TokenEstimator.estimate($1) }
                 let response: [String: Any] = [
-                    "model": json["model"] as? String ?? EmbeddingService.modelName,
+                    "model": EmbeddingService.modelName,
                     "data": embeddings,
                     "usage": ["prompt_tokens": tokenEstimate, "total_tokens": tokenEstimate],
                 ]
@@ -2614,15 +2574,17 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
-            // Local embedding model
-            models.append([
-                "id": EmbeddingService.modelName,
-                "name": "Potion Base 4M",
-                "provider": "local",
-                "type": "embedding",
-                "dimensions": 768,
-                "capabilities": ["embedding"],
-            ])
+            // Local embedding model: the profile this launch resolved.
+            if let profile = EmbeddingService.activeProfile {
+                models.append([
+                    "id": profile.apiName,
+                    "name": EmbeddingModelCatalog.entry(for: profile.modelId)?.name ?? profile.apiName,
+                    "provider": "local",
+                    "type": "embedding",
+                    "dimensions": profile.dimension,
+                    "capabilities": ["embedding"],
+                ])
+            }
 
             // Remote provider models
             let remoteModels = await MainActor.run {

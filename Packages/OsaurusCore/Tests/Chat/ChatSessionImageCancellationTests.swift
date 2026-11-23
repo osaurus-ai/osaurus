@@ -28,9 +28,10 @@ struct ChatSessionImageCancellationTests {
             #expect(turn.content == L("Image generation cancelled."))
             #expect(!session.isStreaming)
             let id = try #require(session.sessionId)
-            // saveAsync publishes this persistence snapshot synchronously;
-            // no sleep or disk-poll race is needed to observe the saved content.
-            let saved = try #require(ChatSessionsManager.shared.session(for: id))
+            // saveAsync queues the full snapshot synchronously and load(id:)
+            // serves it before the write lands; the manager's list keeps
+            // metadata only, so the saved transcript is read from the store.
+            let saved = try #require(ChatSessionStore.load(id: id))
             #expect(saved.turns.last?.content == L("Image generation cancelled."))
         }
     }

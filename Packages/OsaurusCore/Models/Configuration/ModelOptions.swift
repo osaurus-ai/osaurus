@@ -243,10 +243,7 @@ enum ModelProfileRegistry {
         ZayaThinkingProfile.self,
         Gemma4RuntimeProfile.self,
         MuseGlimmerReasoningProfile.self,
-        Gemini31FlashImageProfile.self,
-        GeminiProImageProfile.self,
-        GeminiFlashImageProfile.self,
-    ]
+    ] + GeminiImageModels.profiles
 
     /// Memoized `profile(for:)` results, keyed by model id.
     ///
@@ -430,6 +427,31 @@ enum ModelProfileRegistry {
     ) -> (id: String, value: ModelOptionValue)? {
         guard let option = profile(for: modelId)?.thinkingOption else { return nil }
         return (option.id, .bool(option.inverted ? !enabled : enabled))
+    }
+
+    /// The stored option that turns reasoning OFF for a background request
+    /// (titles, follow-ups, session state, judges): the profile's thinking
+    /// toggle when it has one, else the bundle's declared off rail on its
+    /// `reasoning_effort` ladder (e.g. Inkling-2-Mini's `effort_map` `none`
+    /// level, Nemotron-style `reasoning_modes` off). Without this a
+    /// ladder-only model ran every housekeeping call at its default (high)
+    /// effort, spending most of its budget thinking. Nil when the model
+    /// declares no way to turn reasoning off — nothing is invented.
+    static func thinkingOffStoredOption(
+        for modelId: String
+    ) -> (id: String, value: ModelOptionValue)? {
+        if let toggle = thinkingStoredOption(for: modelId, enabled: false) { return toggle }
+        switch DeclaredReasoningEffort.control(forModelId: modelId) {
+        case .modeKwargs(_, _, let kwargs)? where kwargs["none"] != nil:
+            return ("reasoningEffort", .string("none"))
+        case .levels(let levels, _)?:
+            guard let off = levels.first(where: { DeclaredReasoningEffort.isOffEffort($0) }) else {
+                return nil
+            }
+            return ("reasoningEffort", .string(off))
+        default:
+            return nil
+        }
     }
 
     /// The reasoning state the Thinking control (picker row + model-chip
@@ -1174,14 +1196,114 @@ private let geminiOutputTypeSegments: [ModelOptionSegment] = [
     ModelOptionSegment(id: "imageOnly", label: L("Image Only")),
 ]
 
+// MARK: - Gemini Image Models
+
+/// The Gemini image-generation profiles, most specific first. Matching one
+/// of these is what makes a model an image model on the wire
+/// (`responseModalities`, `imageConfig`, non-streaming `generateContent`),
+/// so a Nano Banana id that matches none of them is sent as plain text chat.
+enum GeminiImageModels {
+    static let profiles: [any ModelProfile.Type] = [
+        GeminiNanoBanana21ImageProfile.self,
+        GeminiFlashLiteImageProfile.self,
+        Gemini31FlashImageProfile.self,
+        GeminiProImageProfile.self,
+        GeminiFlashImageProfile.self,
+    ]
+
+    static func isImageModel(_ modelId: String) -> Bool {
+        profiles.contains { $0.matches(modelId: modelId) }
+    }
+}
+
+// MARK: - Gemini Nano Banana 2.1 Image Profile
+
+/// Gemini Nano Banana 2.1 (`gemini-nano-banana-2.1`) — the extended aspect
+/// ratios (including 1:4/4:1/1:8/8:1) at 1K/2K/4K, per the Gemini image docs
+/// (audited 2026-11). Unlike 3.1 Flash Image it has no 512px tier. Must
+/// precede `GeminiProImageProfile`, whose `nano-banana` match would
+/// otherwise limit it to the standard ratios.
+struct GeminiNanoBanana21ImageProfile: ModelProfile {
+    static let displayName = "Image Generation (Nano Banana 2.1)"
+
+    static func matches(modelId: String) -> Bool {
+        modelId.lowercased().contains("nano-banana-2.1")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "aspectRatio",
+            label: L("Aspect Ratio"),
+            icon: "aspectratio",
+            kind: .segmented(geminiExtendedAspectRatioSegments)
+        ),
+        ModelOptionDefinition(
+            id: "imageSize",
+            label: L("Resolution"),
+            icon: "arrow.up.right.and.arrow.down.left",
+            kind: .segmented([
+                ModelOptionSegment(id: "auto", label: L("Auto")),
+                ModelOptionSegment(id: "1K", label: "1K"),
+                ModelOptionSegment(id: "2K", label: "2K"),
+                ModelOptionSegment(id: "4K", label: "4K"),
+            ])
+        ),
+        ModelOptionDefinition(
+            id: "outputType",
+            label: L("Output"),
+            icon: "photo.on.rectangle",
+            kind: .segmented(geminiOutputTypeSegments)
+        ),
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "aspectRatio": .string("auto"),
+        "imageSize": .string("auto"),
+        "outputType": .string("textAndImage"),
+    ]
+}
+
+// MARK: - Gemini 3.1 Flash Lite Image Profile (Nano Banana 2 Lite)
+
+/// Gemini 3.1 Flash Lite Image (`gemini-3.1-flash-lite-image`) — the
+/// standard aspect ratios and output type only. It renders 1K and rejects
+/// 2K/4K (Gemini image docs, audited 2026-11), so there is no resolution
+/// control.
+struct GeminiFlashLiteImageProfile: ModelProfile {
+    static let displayName = "Image Generation (Flash Lite)"
+
+    static func matches(modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.contains("gemini-3.1-flash-lite") && lower.contains("image")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "aspectRatio",
+            label: L("Aspect Ratio"),
+            icon: "aspectratio",
+            kind: .segmented(geminiAspectRatioSegments)
+        ),
+        ModelOptionDefinition(
+            id: "outputType",
+            label: L("Output"),
+            icon: "photo.on.rectangle",
+            kind: .segmented(geminiOutputTypeSegments)
+        ),
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "aspectRatio": .string("auto"),
+        "outputType": .string("textAndImage"),
+    ]
+}
+
 // MARK: - Gemini 3.1 Flash Image Profile (Nano Banana 2)
 
 /// Gemini 3.1 Flash Image Preview — supports extended aspect ratios
 /// (including 1:4/4:1/1:8/8:1), resolution (512px/1K/2K/4K), and output
-/// type. Excludes the Lite variant: per the Gemini image docs (audited
-/// 2026-07) `gemini-3.1-flash-lite-image` supports only 1K output, so
-/// offering it this resolution set would send values the API rejects; Lite
-/// intentionally matches no profile and runs on API defaults.
+/// type. Excludes the Lite variant, which supports only 1K output and has
+/// its own `GeminiFlashLiteImageProfile`.
 struct Gemini31FlashImageProfile: ModelProfile {
     static let displayName = "Image Generation (3.1 Flash)"
 

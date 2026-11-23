@@ -116,10 +116,7 @@ public actor FollowUpSuggestionService {
             ?? coreModelIdentifier ?? fallbackModel
         var modelOptions: [String: ModelOptionValue] = [:]
         if let servingModelId,
-            let stored = ModelProfileRegistry.thinkingStoredOption(
-                for: servingModelId,
-                enabled: false
-            )
+            let stored = ModelProfileRegistry.thinkingOffStoredOption(for: servingModelId)
         {
             modelOptions[stored.id] = stored.value
         }

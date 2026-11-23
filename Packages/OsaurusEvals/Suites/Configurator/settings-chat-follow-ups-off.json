@@ -1,0 +1,35 @@
+{
+  "id": "configurator.settings-chat-follow-ups-off",
+  "domain": "configurator",
+  "label": "configurator • turn off follow-up suggestions via the chat section",
+  "query": "Stop suggesting follow-up questions after your answers.",
+  "notes": "`chat` section: `follow_up_suggestions: false`. Pins that Chat page switches are declarative now rather than a Settings redirect. The 'false' matcher probes the document text.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "follow_up_suggestions"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "false"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

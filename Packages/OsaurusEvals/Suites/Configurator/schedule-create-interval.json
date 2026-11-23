@@ -1,0 +1,36 @@
+{
+  "id": "configurator.schedule-create-interval",
+  "domain": "configurator",
+  "label": "configurator • create an interval schedule (every N minutes)",
+  "query": "Set up a schedule that runs the agent \"Eval Reporter Agent\" every 15 minutes to check my inbox.",
+  "notes": "osaurus_config apply with frequency 'every_n_minutes' (frequency_value=15). The referenced agent is seeded so create SUCCEEDS (a real interval schedule) — the agent is torn down after the case. The selection assertion pins the every_n_minutes frequency, proving the model maps a minute interval onto the interval mode rather than cron.",
+  "fixtures": {
+    "seedAgents": [
+      {
+        "id": "e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079",
+        "name": "Eval Reporter Agent"
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "every_n_minutes"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

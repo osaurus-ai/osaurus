@@ -67,8 +67,16 @@ app: cli
 	# Killable out-of-process native plugin host (see PluginProcessHost.swift).
 	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-plugin-host" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
+	@echo "Building workflow code-node helper (osaurus-js-host)…"
+	xcodebuild -workspace $(WORKSPACE) -scheme osaurus-js-host -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
+	@echo "Embedding code-node helper into App Bundle (Helpers)…"
+	# JavaScriptCore runner for workflow code nodes (see CodeNodeExecutor.swift).
+	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-js-host" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-js-host"
+	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-js-host"
 	@echo "Bundling sandbox kernel (Resources/SandboxRuntime)…"
 	./scripts/build/fetch_sandbox_kernel.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Resources/SandboxRuntime"
+	@echo "Stripping unused GPL LuxTTS G2P data…"
+	./scripts/build/strip_luxtts_g2p.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app"
 
 install-cli: cli
 	@echo "Installing CLI symlink…"
@@ -166,7 +174,7 @@ computer-use-evidence:
 
 ## ── LOCOMO Benchmark ──────────────────────────────────────────────
 
-BENCH_MODEL ?= openrouter/google/gemini-2.5-flash
+BENCH_MODEL ?= openrouter/google/gemini-3.8-flash
 BENCH_BASE_URL ?= http://localhost:1337
 BENCH_BATCH ?= 20
 EASYLOCOMO_REPO ?= https://github.com/playeriv65/EasyLocomo.git
@@ -242,7 +250,7 @@ EVALS_PR_REPORT_OUT := $(EVALS_PR_REPORT_OUT)
 EVALS_HOST_VERSION ?= $(shell sed -n 's:.*<sparkle\:shortVersionString>\(.*\)</sparkle\:shortVersionString>.*:\1:p' docs/appcast.xml | head -1)
 evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic \
 evals-capture-screen evals-loop evals-matrix evals-diff evals-compat evals-pr-report \
-evals-pr-report-baseline evals-scoreboard: export OSAURUS_HOST_VERSION = $(EVALS_HOST_VERSION)
+evals-pr-report-baseline evals-scoreboard evals-architect evals-architect-claude-code: export OSAURUS_HOST_VERSION = $(EVALS_HOST_VERSION)
 EVALS_WATCHER_CHANNEL ?= main
 EVALS_WATCHER_OUT ?= build/evals/watcher
 EVALS_REPORT_PRESET ?= local-frontier
@@ -277,6 +285,81 @@ evals: evals-prep
 		$(EVALS_FLOOR_FLAG) \
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),)
+
+# The Architect lane on a frontier model, hermetic: workflows talk to the
+# cases' loopback fixture APIs, secrets stay in memory, and every case runs
+# EVALS_REPEAT times with transcripts. Export the provider key (e.g.
+# XAI_API_KEY) in the shell only.
+#   make evals-architect LABEL=baseline
+ARCHITECT_MODEL ?= xai/grok-4.7
+ARCHITECT_LABEL ?= $(if $(LABEL),$(LABEL),$(shell date -u +%Y%m%dT%H%M%SZ))
+.PHONY: evals-architect
+evals-architect:
+	@mkdir -p build/evals/architect
+	swift build --package-path Packages/OsaurusCore --product osaurus-js-host
+	OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 OSAURUS_TEST_ROOT=/tmp/osaurus-test OSU_MODELS_DIR=/tmp/osaurus-test-models \
+	OSAURUS_JS_HOST_PATH=$$(swift build --package-path Packages/OsaurusCore --show-bin-path)/osaurus-js-host \
+	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+		--suite $(EVALS_ROOT)/Architect \
+		--model $(ARCHITECT_MODEL) \
+		--repeat $(if $(EVALS_REPEAT),$(EVALS_REPEAT),3) \
+		--transcripts \
+		$(if $(FILTER),--filter $(FILTER),) \
+		--out build/evals/architect/$(ARCHITECT_LABEL).json
+
+# The same Architect cases with Claude Code designing: the real harness path
+# (agent token, `osaurus mcp` proxy, an in-process server on an ephemeral
+# port). Model steps inside test runs still run on ARCHITECT_MODEL. Needs
+# `claude` installed and signed in; otherwise every row is BLOCKED. Runs on
+# the person's Claude subscription, so EVALS_REPEAT defaults to 1.
+#   make evals-architect-claude-code CLAUDE_MODEL=opus LABEL=baseline
+CLAUDE_MODEL ?= sonnet
+# Point at ~/MLXModels when ARCHITECT_MODEL is a local model.
+ARCHITECT_MODELS_DIR ?= /tmp/osaurus-test-models
+.PHONY: evals-architect-claude-code
+evals-architect-claude-code: evals-prep
+	@mkdir -p build/evals/architect
+	swift build --package-path Packages/OsaurusCore --product osaurus-js-host
+	swift build --package-path Packages/OsaurusCLI --product osaurus-cli
+	OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 OSAURUS_TEST_ROOT=/tmp/osaurus-test OSU_MODELS_DIR=$(ARCHITECT_MODELS_DIR) \
+	OSAURUS_JS_HOST_PATH=$$(swift build --package-path Packages/OsaurusCore --show-bin-path)/osaurus-js-host \
+	OSAURUS_CLI_PATH=$$(swift build --package-path Packages/OsaurusCLI --show-bin-path)/osaurus-cli \
+	OSAURUS_EVALS_HARNESS=claude-code OSAURUS_EVALS_CLAUDE_MODEL=$(CLAUDE_MODEL) \
+	OSAURUS_EVALS_HARNESS_VERSION="$$(claude --version 2>/dev/null | head -1)" \
+	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+		--suite $(EVALS_ROOT)/Architect \
+		--model $(ARCHITECT_MODEL) \
+		--repeat $(if $(EVALS_REPEAT),$(EVALS_REPEAT),1) \
+		--transcripts \
+		$(if $(FILTER),--filter $(FILTER),) \
+		--out build/evals/architect/claude-code-$(CLAUDE_MODEL)-$(ARCHITECT_LABEL).json
+
+# Every walkthrough ask and the common typed first questions, on the local
+# first-run model and on Osaurus Cloud. floors.json#modelSuitePassRates pins
+# FirstRun at 1.0, so one miss on either lane fails the target. The cloud lane
+# needs the Osaurus account signed in; skip it with FIRSTRUN_FRONTIER_MODEL=.
+#   make evals-firstrun LABEL=before-release
+FIRSTRUN_LOCAL_MODEL ?= OsaurusAI/Raptor-0.7-4B-JANG_6M
+FIRSTRUN_FRONTIER_MODEL ?= osaurus/deepseek-v4-1-flash
+FIRSTRUN_LABEL ?= $(if $(LABEL),$(LABEL),$(shell date -u +%Y%m%dT%H%M%SZ))
+.PHONY: evals-firstrun
+evals-firstrun: evals-prep
+	@mkdir -p build/evals/firstrun
+	swift build --package-path Packages/OsaurusCore --product osaurus-js-host
+	@rc=0; for model in $(FIRSTRUN_LOCAL_MODEL) $(FIRSTRUN_FRONTIER_MODEL); do \
+		echo ""; \
+		echo "── FirstRun on $$model ──"; \
+		OSAURUS_JS_HOST_PATH=$$(swift build --package-path Packages/OsaurusCore --show-bin-path)/osaurus-js-host \
+		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+			--suite $(EVALS_ROOT)/FirstRun \
+			--model $$model \
+			--fail-on-floor \
+			--transcripts \
+			$(if $(FILTER),--filter $(FILTER),) \
+			--out build/evals/firstrun/$(FIRSTRUN_LABEL)-$$(echo $$model | tr '/' '_').json \
+			|| rc=$$?; \
+	done; \
+	exit $$rc
 
 # Discover installed bundles using the same Core scanner as the app; each
 # image-capable bundle runs the strict real-media suite in an isolated process.
@@ -425,7 +508,7 @@ evals-capture-screen:
 # scripts/evals/optimization-loop.sh for env overrides (MODELS=, BASELINE=,
 # FILTER=, STRICT=, EVALS_REPEAT=, PARALLEL_REMOTE=).
 #   make evals-loop
-#   make evals-loop MODELS="foundation qwen3-4b xai/grok-4.3" BASELINE=build/evals/loop/<prev>
+#   make evals-loop MODELS="foundation qwen3-4b xai/grok-4.7" BASELINE=build/evals/loop/<prev>
 #   RECORD=1 LABEL="qwen fix" make evals-loop   # also refresh committed reports/SNAPSHOT + history
 #   make evals-loop EVALS_REPEAT=3              # 3 trials per case; flaky rows marked, diff flake-aware
 evals-loop:

@@ -1,11 +1,10 @@
 //
 //  HostPathRedirectTests.swift
 //
-//  Pin `hostPathRedirectHint` — the self-heal that catches a host
-//  filesystem path handed to a `sandbox_*` tool by mistake and redirects
-//  the model to the read-only `file_*` host tools. Two signals: the
-//  combined-mode host workspace root (`hostReadOnlyScope`) and a broad
-//  macOS-distinctive prefix. Must NOT misfire on relative paths or
+//  Pin `hostPathRedirectHint` — the hint for a Mac path handed to a
+//  sandbox-routed path tool. Every workspace tool in sandbox mode runs in
+//  the VM, so the hint must not point at another file tool; it names the
+//  one real fix (attach the folder). Must NOT misfire on relative paths or
 //  legitimate sandbox absolute paths.
 //
 
@@ -17,34 +16,12 @@ import Testing
 @Suite
 struct HostPathRedirectTests {
 
-    @Test func hostWorkspaceRootRedirectsToFileTools() {
-        ChatExecutionContext.$hostReadOnlyScope.withValue(URL(fileURLWithPath: "/Users/tpae/Desktop")) {
-            let hint = hostPathRedirectHint(path: "/Users/tpae/Desktop")
-            #expect(hint?.contains("file_read") == true)
-            #expect(hint?.contains("read-only host workspace") == true)
-        }
-    }
-
-    @Test func fileUnderHostWorkspaceRedirects() {
-        ChatExecutionContext.$hostReadOnlyScope.withValue(URL(fileURLWithPath: "/Users/tpae/Desktop")) {
-            let hint = hostPathRedirectHint(path: "/Users/tpae/Desktop/notes.txt")
-            #expect(hint?.contains("file_read") == true)
-        }
-    }
-
-    @Test func siblingPathOutsideScopeFallsBackToBroadMacHint() {
-        // A macOS path that is NOT under the bound workspace still trips
-        // the broad heuristic, but with the generic (non-workspace) wording.
-        ChatExecutionContext.$hostReadOnlyScope.withValue(URL(fileURLWithPath: "/Users/tpae/Desktop")) {
-            let hint = hostPathRedirectHint(path: "/Users/tpae/Documents/x")
-            #expect(hint?.contains("host path outside the sandbox") == true)
-        }
-    }
-
-    @Test func broadMacPathRedirectsWithoutScope() {
+    @Test func macPathSaysNoToolHereCanReachIt() {
         let hint = hostPathRedirectHint(path: "/Users/tpae/Desktop")
-        #expect(hint?.contains("host path outside the sandbox") == true)
-        #expect(hint?.contains("file_read") == true)
+        #expect(hint?.contains("path on the user's Mac") == true)
+        #expect(hint?.contains("Folder chip") == true)
+        #expect(hint?.contains("file_read") == false)
+        #expect(hint?.contains("file_search") == false)
     }
 
     /// osaurus#2439: `shell_run` cloned a repo into `/tmp/psapp/wiki`, then
@@ -62,10 +39,9 @@ struct HostPathRedirectTests {
         #expect(envelope.contains("cp -r /tmp/psapp/wiki/Home.md \(home)/"))
     }
 
-    /// A host path keeps the existing host-tool redirect; it must not also
-    /// pick up the copy-it-in advice, which does not apply across the
-    /// sandbox boundary.
-    @Test func hostPathKeepsHostRedirectNotTheCopyHint() {
+    /// A Mac path gets the Mac-path hint; it must not also pick up the
+    /// copy-it-in advice, which does not apply across the sandbox boundary.
+    @Test func hostPathKeepsHostHintNotTheCopyHint() {
         let requirement = requirePath(
             "/Users/tpae/Desktop/notes.txt",
             home: "/workspace/agents/abc",
@@ -75,7 +51,7 @@ struct HostPathRedirectTests {
             Issue.record("expected a rejection for a host path")
             return
         }
-        #expect(envelope.contains("file_read"))
+        #expect(envelope.contains("Folder chip"))
         #expect(!envelope.contains("cp -r"))
     }
 
@@ -110,65 +86,11 @@ struct HostPathRedirectTests {
         #expect(hint?.contains("file_read") == true)
         #expect(hint?.contains("file_search") == true)
         #expect(hint?.contains("sandbox_search_files") == false)
-    }
-
-    @Test func directoryReadInCombinedModeAlsoSuggestsFileRead() {
-        ChatExecutionContext.$hostReadOnlyScope.withValue(URL(fileURLWithPath: "/Users/tpae/Desktop")) {
-            let hint = sandboxDirectoryReadHint(stderr: "cat: /workspace/agents/abc/: Is a directory")
-            #expect(hint?.contains("file_read") == true)
-        }
-    }
-
-    @Test func directoryReadOutsideCombinedModeUsesPublicWorkspaceTools() {
-        // Public file tools are available in pure-sandbox sessions too, but
-        // the recovery hint must not imply that a host workspace is mounted.
-        let hint = sandboxDirectoryReadHint(stderr: "cat: /workspace/agents/abc/: Is a directory")
-        #expect(hint?.contains("file_read") == true)
-        #expect(hint?.contains("file_search") == true)
         #expect(hint?.contains("host workspace") == false)
     }
 
     @Test func nonDirectoryReadErrorGetsNoDirectoryHint() {
         #expect(sandboxDirectoryReadHint(stderr: "cat: missing.txt: No such file or directory") == nil)
         #expect(sandboxDirectoryReadHint(stderr: "permission denied") == nil)
-    }
-
-    // MARK: - hostWorkspaceSearchRedirectHint
-    //
-    // Empty `sandbox_search_files` at the sandbox home, in combined mode,
-    // is the "what's in my Desktop?" → sandbox_search_files slip. These
-    // searches succeed emptily (no rejection), so this soft nudge is the
-    // only signal the model gets.
-
-    @Test func emptyHomeRootSearchInCombinedModeRedirects() {
-        ChatExecutionContext.$hostReadOnlyScope.withValue(URL(fileURLWithPath: "/Users/tpae/Desktop")) {
-            // Default `path: "."` resolves to `home + "/."`.
-            let hint = hostWorkspaceSearchRedirectHint(
-                resolvedPath: "/workspace/agents/abc/.",
-                home: "/workspace/agents/abc"
-            )
-            #expect(hint?.contains("file_read") == true)
-            #expect(hint?.contains("file_search") == true)
-        }
-    }
-
-    @Test func emptySubdirectorySearchDoesNotRedirect() {
-        // A real sandbox search of a populated subtree must never be nagged.
-        ChatExecutionContext.$hostReadOnlyScope.withValue(URL(fileURLWithPath: "/Users/tpae/Desktop")) {
-            let hint = hostWorkspaceSearchRedirectHint(
-                resolvedPath: "/workspace/agents/abc/src",
-                home: "/workspace/agents/abc"
-            )
-            #expect(hint == nil)
-        }
-    }
-
-    @Test func homeRootSearchOutsideCombinedModeDoesNotRedirect() {
-        // Pure sandbox session: an empty home search is just an empty search.
-        let hint = hostWorkspaceSearchRedirectHint(
-            resolvedPath: "/workspace/agents/abc/.",
-            home: "/workspace/agents/abc"
-        )
-        #expect(hint == nil)
     }
 }

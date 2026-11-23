@@ -37,6 +37,9 @@ public final class KnowledgeManager: ObservableObject {
     private var initialLoad: Task<Void, Never>?
     private var hasLoadedRegistry = false
 
+    /// Whether `collections` holds the registry yet.
+    public var isRegistryLoaded: Bool { hasLoadedRegistry }
+
     private init() {
         initialLoad = Task.detached(priority: .userInitiated) { [weak self] in
             let loaded = KnowledgeCollectionStore.loadAll()

@@ -46,6 +46,23 @@ public enum EncryptedSQLiteError: Error, LocalizedError {
 }
 
 public enum EncryptedSQLiteOpener {
+    /// Page-cache ceiling per connection. Pages fill on read and stay until
+    /// the connection closes or memory pressure shrinks them, so stores
+    /// that are only appended to or browsed occasionally get a small cap.
+    public enum CacheTier: Sendable {
+        /// Read on most turns (chat history, agents, memory, tools).
+        case hot
+        /// Logs and run history.
+        case cold
+
+        var cacheSizePragma: String {
+            switch self {
+            case .hot: return "PRAGMA cache_size = -20000"
+            case .cold: return "PRAGMA cache_size = -2000"
+            }
+        }
+    }
+
     /// Open a (potentially encrypted) SQLite database at `path` and
     /// return its connection. Caller is responsible for `sqlite3_close`.
     ///
@@ -55,11 +72,13 @@ public enum EncryptedSQLiteOpener {
     ///           is opened plaintext (used by plaintext export + tests).
     ///   - applyPerfPragmas: When true, sets WAL/synchronous/cache/temp PRAGMAs.
     ///   - applyForeignKeys: When true, sets `PRAGMA foreign_keys = ON`.
+    ///   - cacheTier: Page-cache ceiling applied with the perf PRAGMAs.
     public static func open(
         path: String,
         key: SymmetricKey?,
         applyPerfPragmas: Bool = true,
-        applyForeignKeys: Bool = true
+        applyForeignKeys: Bool = true,
+        cacheTier: CacheTier = .hot
     ) throws -> OpaquePointer {
         var dbPointer: OpaquePointer?
         let openResult = sqlite3_open(path, &dbPointer)
@@ -88,7 +107,7 @@ public enum EncryptedSQLiteOpener {
             try executePragma(connection, "PRAGMA journal_mode = WAL")
             try executePragma(connection, "PRAGMA synchronous = NORMAL")
             try executePragma(connection, "PRAGMA temp_store = MEMORY")
-            try executePragma(connection, "PRAGMA cache_size = -20000")
+            try executePragma(connection, cacheTier.cacheSizePragma)
         }
         if applyForeignKeys {
             try executePragma(connection, "PRAGMA foreign_keys = ON")

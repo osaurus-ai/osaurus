@@ -1,0 +1,40 @@
+{
+  "id": "architect.csv-reconcile-approval",
+  "domain": "architect",
+  "label": "architect \u2022 CSV reconcile with a per-row lookup, approval, and a report folder",
+  "query": "Each month I export invoices from our bookkeeping app as a CSV, like the sample at {{fixture.files_dir}}/invoices.csv (columns: invoice_id, customer, amount). Our billing system has the real amounts: GET {{fixture.base_url}}/v1/invoices/<invoice_id> returns {\"id\", \"amount\", \"status\"}.\n\nMake a workflow where I pick the CSV, it checks every row against billing, and when an amount doesn't match it shows me the mismatches so I can approve them before it writes a reconciliation report into a reports folder I choose once. Test it with the sample file and offer to save it.",
+  "notes": "Hard case. A file input, one billing lookup per row (map + http), a form that asks for approval when amounts differ (INV-2 is off by 5.00), and the report written to a declared folder rather than a path from this Mac. The scripted answers approve.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 40,
+      "answers": { "approve": true, "approved": true, "confirm": true },
+      "fixtureFiles": {
+        "invoices.csv": "invoice_id,customer,amount\nINV-1,Acme Corp,120.00\nINV-2,Globex,75.50\nINV-3,Initech,300.00\n"
+      },
+      "fixtureAPI": {
+        "routes": [
+          {
+            "path": "/v1/invoices/*",
+            "byKey": {
+              "INV-1": { "id": "INV-1", "amount": 120.00, "status": "paid" },
+              "INV-2": { "id": "INV-2", "amount": 80.50, "status": "open" },
+              "INV-3": { "id": "INV-3", "amount": 300.00, "status": "paid" }
+            }
+          }
+        ]
+      },
+      "fixtureRequests": { "/v1/invoices/*": 3 },
+      "nodeKinds": ["map", "http", "dialog"],
+      "structure": {
+        "declaresFolder": true,
+        "noAbsolutePaths": true
+      },
+      "testOutputContains": { "*": ["INV-2"] },
+      "requireTestRun": true,
+      "requireProposeSave": true,
+      "maxToolCalls": 30,
+      "maxPromptTokens": 600000
+    }
+  }
+}

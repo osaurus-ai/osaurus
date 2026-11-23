@@ -87,8 +87,18 @@ public enum ConfigScheduleFrequency {
             }
             return .success(.yearly(month: m, day: d, hour: t.0, minute: t.1))
         case "cron":
-            guard let v = value, !v.isEmpty else {
+            guard let v = value?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else {
                 return .failure(.init("frequency `cron` requires frequency_value = cron expression."))
+            }
+            guard let cron = CronParser(v), cron.nextDate(after: Date()) != nil else {
+                return .failure(
+                    .init(
+                        "frequency_value `\(v)` is not a cron expression this scheduler can run: use five "
+                            + "space-separated fields `minute hour day-of-month month day-of-week` with numbers, "
+                            + "`*`, `,`, `-` and `/` (day-of-week 0-6, Sunday = 0), e.g. \"0 8 * * 1-5\" for "
+                            + "8:00 on weekdays. A plain daily or weekly time is simpler as frequency `daily` "
+                            + "or `weekly` with frequency_time_of_day."
+                    ))
             }
             return .success(.cron(expression: v))
         default:

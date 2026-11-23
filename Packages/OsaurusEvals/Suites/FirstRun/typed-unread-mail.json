@@ -1,0 +1,38 @@
+{
+  "id": "firstrun.typed-unread-mail",
+  "domain": "orchestrator",
+  "label": "first run • typed: any unread mail goes to Courier",
+  "query": "Any unread mail?",
+  "notes": "Routing on, with the day-one team (Planner, Courier, Keeper, Scout) created from the bundled templates in a scratch folder, as a fresh install has it. Courier owns Mail, so the Orchestrator calls `run_workflow` with \"Courier\".",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Courier"
+          }
+        }
+      ],
+      "maxIterations": 6,
+      "rubric": [
+        "Answers the request, or names the specific thing the user has to fix (a permission, an account, or a setting). Does NOT say it lacks the tools or connections to help, and shows no raw tool or reasoning markers."
+      ]
+    }
+  }
+}

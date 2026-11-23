@@ -11,9 +11,9 @@ import MCP
 import UniformTypeIdentifiers
 
 /// Server-declared behavior hints from an MCP tool's `annotations`. The spec
-/// treats these as untrusted: they only pick the *default* policy (see
-/// `defaultPolicy` / `requiresApprovalEveryCall`) and never override a policy
-/// the user configured.
+/// treats these as untrusted: they pick the *default* policy (`defaultPolicy`)
+/// and keep a declared-destructive tool out of blanket approvals
+/// (`isDestructive`), and never override a policy the user configured.
 public struct MCPToolHints: Sendable, Equatable, Codable {
     public var readOnly: Bool?
     public var destructive: Bool?
@@ -48,13 +48,6 @@ public struct MCPToolHints: Sendable, Equatable, Codable {
     var defaultPolicy: ToolPermissionPolicy {
         isReadOnly && openWorld != true ? .auto : .ask
     }
-
-    /// Every call is confirmed (no task lease, no Always Allow) unless the
-    /// tool is read-only or explicitly non-destructive. Absent hints fall
-    /// back to the spec defaults: not read-only, destructive.
-    var requiresApprovalEveryCall: Bool {
-        !isReadOnly && destructive != false
-    }
 }
 
 /// Display summary of one discovered MCP tool, published on `MCPProviderState`.
@@ -69,7 +62,7 @@ public struct MCPDiscoveredToolSummary: Sendable, Equatable, Identifiable {
 }
 
 /// A tool provided by a remote MCP server
-final class MCPProviderTool: OsaurusTool, PermissionedTool, ArgumentAwarePerCallApprovalTool, @unchecked Sendable {
+final class MCPProviderTool: OsaurusTool, PermissionedTool, BlanketApprovalExemptTool, @unchecked Sendable {
     let name: String
     let description: String
     let parameters: JSONValue?
@@ -96,9 +89,10 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, ArgumentAwarePerCall
     /// `structuredContent` results.
     let outputSchema: JSONValue?
 
-    func requiresApprovalEveryCall(argumentsJSON: String) -> Bool {
-        hints.requiresApprovalEveryCall
-    }
+    /// Only an explicit `destructiveHint: true` counts. The spec's
+    /// absent-means-destructive default would put almost every connector
+    /// tool here, and Auto-Allow All Tool Calls would stop covering them.
+    var isExemptFromBlanketApproval: Bool { hints.isDestructive }
 
     var summary: MCPDiscoveredToolSummary {
         MCPDiscoveredToolSummary(name: mcpToolName, title: title, hints: hints, hasOutputSchema: outputSchema != nil)

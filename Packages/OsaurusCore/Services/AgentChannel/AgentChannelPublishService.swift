@@ -934,8 +934,12 @@ actor AgentChannelPublishService {
                 attribution: attribution
             )
         }
+        var target = binding
+        if let postingId = ChannelSessions.postingConnectionId(for: binding.connectionId, agentId: binding.agentId) {
+            target.connectionId = postingId
+        }
         do {
-            let providerMessageId = try await sender(binding, content)
+            let providerMessageId = try await sender(target, content)
             logDelivery(outcome: "sent", providerMessageId: providerMessageId, error: nil)
             let recorded = (try? store.transitionOutboundIntent(
                 id: intentId,

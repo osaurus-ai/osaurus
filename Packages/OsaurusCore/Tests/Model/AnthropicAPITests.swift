@@ -435,10 +435,49 @@ struct AnthropicAPITests {
         let disabled = try convert(#""thinking": {"type": "disabled"},"#)
         #expect(disabled.enable_thinking == false)
         #expect(disabled.top_k == 40)
+        #expect(disabled.thinking_token_budget == nil)
         let enabled = try convert(#""thinking": {"type": "enabled", "budget_tokens": 2048},"#)
         #expect(enabled.enable_thinking == true)
-        #expect(try convert(#""thinking": {"type": "adaptive"},"#).enable_thinking == nil)
+        #expect(enabled.thinking_token_budget == 2048)
+        let adaptive = try convert(#""thinking": {"type": "adaptive"},"#)
+        #expect(adaptive.enable_thinking == nil)
+        #expect(adaptive.thinking_token_budget == nil)
         #expect(try convert("").enable_thinking == nil)
+        #expect(try convert("").thinking_token_budget == nil)
+    }
+
+    @Test func enabledThinkingBudgetReachesGenerationOptions() throws {
+        func internalRequest(_ budget: Int) throws -> ResponsesInferenceRequest {
+            let json = """
+                {"model": "m", "max_tokens": 4096, "thinking": {"type": "enabled", "budget_tokens": \(budget)},
+                 "messages": [{"role": "user", "content": "Hi"}]}
+                """
+            return try JSONDecoder().decode(AnthropicMessagesRequest.self, from: Data(json.utf8))
+                .toResponsesInferenceRequest()
+        }
+        #expect(try internalRequest(1024).generation.reasoningBudgetTokens == 1024)
+        #expect(throws: (any Error).self) { try internalRequest(0) }
+        #expect(throws: (any Error).self) { try internalRequest(-5) }
+    }
+
+    @Test func usageReportsReasoningBudgetOnlyWhenSet() throws {
+        var usage = AnthropicUsage(inputTokens: 10, outputTokens: 5)
+        let bare = try JSONSerialization.jsonObject(with: JSONEncoder().encode(usage)) as? [String: Any]
+        #expect(bare?["reasoning_budget"] == nil)
+        usage.reasoning_budget = ReasoningBudgetReport(requestedTokens: 300, applied: false)
+        let reported = try JSONSerialization.jsonObject(with: JSONEncoder().encode(usage)) as? [String: Any]
+        let budget = reported?["reasoning_budget"] as? [String: Any]
+        #expect(budget?["requested_tokens"] as? Int == 300)
+        #expect(budget?["applied"] as? Bool == false)
+
+        let delta = MessageDeltaEvent(stopReason: "end_turn", outputTokens: 5,
+            reasoningBudget: ReasoningBudgetReport(requestedTokens: 300, applied: true))
+        let deltaJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(delta)) as? [String: Any]
+        let deltaUsage = deltaJSON?["usage"] as? [String: Any]
+        #expect((deltaUsage?["reasoning_budget"] as? [String: Any])?["applied"] as? Bool == true)
+        let plainDelta = MessageDeltaEvent(stopReason: "end_turn", outputTokens: 5)
+        let plainJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plainDelta)) as? [String: Any]
+        #expect((plainJSON?["usage"] as? [String: Any])?["reasoning_budget"] == nil)
     }
 
     @Test func convertAnthropicToolsToOpenAI() throws {

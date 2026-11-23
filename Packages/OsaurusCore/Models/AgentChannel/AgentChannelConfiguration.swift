@@ -7,12 +7,13 @@
 
 import Foundation
 
-enum AgentChannelKind: String, Codable, CaseIterable, Sendable {
+public enum AgentChannelKind: String, Codable, CaseIterable, Sendable {
     case discord
     case slack
     case telegram
     case imessage
     case whatsapp
+    case email
     case n8n
     case customHTTP = "custom_http"
 }
@@ -385,6 +386,10 @@ struct AgentChannelSecretReference: Codable, Equatable, Sendable {
     var name: String
     var keychainId: String
 
+    /// The id the value is saved under: the keychain id, or the name when
+    /// the reference has none.
+    var storageName: String { keychainId.isEmpty ? name : keychainId }
+
     var normalized: AgentChannelSecretReference {
         AgentChannelSecretReference(
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -591,6 +596,7 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
     static let nativeTelegramConnectionId = "telegram"
     static let nativeIMessageConnectionId = "imessage"
     static let nativeWhatsAppConnectionId = "whatsapp"
+    static let nativeEmailConnectionId = "email"
 
     var id: String
     var name: String
@@ -761,7 +767,7 @@ enum AgentChannelBindingRunSource: String, Codable, CaseIterable, Sendable {
         case .schedule: self = .schedule
         case .watcher: self = .watcher
         case .selfSchedule: self = .selfSchedule
-        case .plugin, .http, .channel, .imported, .delegation, .workspace: return nil
+        case .plugin, .http, .webhook, .email, .automation, .channel, .imported, .delegation, .workspace: return nil
         }
     }
 }
@@ -1063,13 +1069,41 @@ extension Notification.Name {
 }
 
 enum AgentChannelConfigurationStore {
-    nonisolated(unsafe) static var overrideDirectory: URL?
+    nonisolated(unsafe) static var overrideDirectory: URL? {
+        didSet { cache.reset() }
+    }
 
     private static let fileName = "agent-channels.json"
 
+    /// In-memory copy of the last loaded/saved configuration, validated
+    /// against the file's modification date. `load()` sits on the MainActor
+    /// prompt-preview path (`AgentConfigSnapshot.capture` ->
+    /// `AgentChannelAutoDestinationResolver.effectiveConfiguration`), so
+    /// re-reading and decoding the file on every recompute hung the main
+    /// thread (Sentry APPLE-MACOS-37Q). Unlike the native connector stores,
+    /// this file is user-editable ("Show agent-channels.json in Finder"), so
+    /// the cache is keyed on the file's mtime: a single cheap stat keeps hand
+    /// edits visible without a full read + decode per call.
+    private static let cache = AgentChannelConfigurationCache()
+
+    /// Drop the in-memory copy so the next `load()` reads from disk.
+    static func resetCache() {
+        cache.reset()
+    }
+
     static func load() -> AgentChannelConfiguration {
         let url = configurationFileURL()
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        let modificationDate = fileModificationDate(at: url)
+        if let cached = cache.value(for: url, modificationDate: modificationDate) {
+            return cached
+        }
+        let loaded = loadFromDisk(at: url, exists: modificationDate != nil)
+        cache.store(loaded, for: url, modificationDate: modificationDate)
+        return loaded
+    }
+
+    private static func loadFromDisk(at url: URL, exists: Bool) -> AgentChannelConfiguration {
+        guard exists else {
             return AgentChannelConfiguration()
         }
         do {
@@ -1082,12 +1116,23 @@ enum AgentChannelConfigurationStore {
         }
     }
 
+    /// `nil` when the file does not exist (or cannot be stat'ed).
+    private static func fileModificationDate(at url: URL) -> Date? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return nil
+        }
+        return (attributes[.modificationDate] as? Date) ?? .distantPast
+    }
+
     static func save(_ configuration: AgentChannelConfiguration) throws {
         let url = configurationFileURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(configuration.normalized).write(to: url, options: [.atomic])
+        let normalized = configuration.normalized
+        let data = try encoder.encode(normalized)
+        try LegacyInboundDispatchCarryOver.connectionsFile(data, replacing: url).write(to: url, options: [.atomic])
+        cache.store(normalized, for: url, modificationDate: fileModificationDate(at: url))
         // Deliver on main: subscribers (ChatSession's budget-signal pipeline)
         // attach MainActor-isolated closures that Combine invokes synchronously
         // on the posting thread, and runtime isolation checks SIGTRAP the
@@ -1113,5 +1158,39 @@ enum AgentChannelConfigurationStore {
             return overrideDirectory.appendingPathComponent(fileName, isDirectory: false)
         }
         return OsaurusPaths.config().appendingPathComponent(fileName, isDirectory: false)
+    }
+}
+
+/// Thread-safe single-entry cache for `AgentChannelConfigurationStore`,
+/// valid only while both the file URL and its modification date match.
+final class AgentChannelConfigurationCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var url: URL?
+    private var modificationDate: Date?
+    private var value: AgentChannelConfiguration?
+
+    init() {}
+
+    func value(for url: URL, modificationDate: Date?) -> AgentChannelConfiguration? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard self.url == url, self.modificationDate == modificationDate else { return nil }
+        return value
+    }
+
+    func store(_ value: AgentChannelConfiguration, for url: URL, modificationDate: Date?) {
+        lock.lock()
+        self.url = url
+        self.modificationDate = modificationDate
+        self.value = value
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        url = nil
+        modificationDate = nil
+        value = nil
+        lock.unlock()
     }
 }

@@ -42,8 +42,8 @@ struct RemoteRunArtifact: Codable, Equatable, Sendable {
     let size_bytes: Int
     /// Present for artifacts within the cap; nil when omitted.
     var bytes_base64: String? = nil
-    /// `too_large` | `directory` | `unreadable` when the bytes were left
-    /// on the host.
+    /// `too_large` | `too_many` | `directory` | `unreadable` when the bytes
+    /// were left on the host.
     var omitted_reason: String? = nil
 
     var isOmitted: Bool { bytes_base64 == nil }
@@ -156,14 +156,16 @@ final class RemoteRunArtifactRelay: @unchecked Sendable {
     ) -> [RemoteRunArtifact] {
         var out: [RemoteRunArtifact] = []
         var budget = maxTotalBytes
-        for artifact in artifacts.prefix(maxCount) {
+        for (index, artifact) in artifacts.enumerated() {
             var row = RemoteRunArtifact(
                 name: artifact.filename,
                 mime: artifact.mimeType,
                 description: artifact.description,
                 size_bytes: artifact.fileSize
             )
-            if artifact.isDirectory {
+            if index >= maxCount {
+                row.omitted_reason = "too_many"
+            } else if artifact.isDirectory {
                 row.omitted_reason = "directory"
             } else if artifact.fileSize > budget {
                 row.omitted_reason = "too_large"
@@ -194,16 +196,29 @@ extension SharedArtifact {
     /// Write the artifacts a remote host returned into `contextId`'s store
     /// and return the typed artifacts (omitted rows produce none). The
     /// filename is sanitised and the destination resolved inside the
-    /// context directory exactly like a local `share_artifact`.
+    /// context directory exactly like a local `share_artifact`. The host's
+    /// caps are enforced again here: the host is a teammate's Mac, not a
+    /// trusted party, so rows past `maxCount` or the byte budget are dropped
+    /// before their base64 is decoded.
     static func importRemoteArtifacts(
         _ remote: [RemoteRunArtifact],
-        contextId: String
+        contextId: String,
+        maxTotalBytes: Int = RemoteRunArtifactRelay.maxTotalBytes,
+        maxCount: Int = RemoteRunArtifactRelay.maxCount
     ) -> [SharedArtifact] {
         let contextDir = OsaurusPaths.contextArtifactsDir(contextId: contextId)
         OsaurusPaths.ensureExistsSilent(contextDir)
         var out: [SharedArtifact] = []
-        for row in remote {
-            guard let encoded = row.bytes_base64, let data = Data(base64Encoded: encoded) else { continue }
+        var budget = maxTotalBytes
+        for row in remote.prefix(maxCount) {
+            guard let encoded = row.bytes_base64 else { continue }
+            guard encoded.utf8.count / 4 * 3 <= budget + 2,
+                let data = Data(base64Encoded: encoded), data.count <= budget
+            else {
+                NSLog("[SharedArtifact] remote artifact %@ exceeds the transfer cap; skipped", row.name)
+                continue
+            }
+            budget -= data.count
             let filename = sanitizeArtifactFilename(row.name)
             guard !filename.isEmpty,
                 let dest = resolveDestinationPath(filename: filename, contextDir: contextDir)

@@ -19,15 +19,23 @@ public enum SessionSource: String, Codable, CaseIterable, Sendable {
     case http
     /// Verified inbound message from an Agent Channel provider.
     case channel
-    /// Recurring scheduled task created via `ScheduleManager`.
+    /// Legacy: schedule-started sessions. New ones persist as `.automation`;
+    /// still bound at runtime via `runtimeSource(automationKind:)`.
     case schedule
-    /// File-system watcher trigger (`WatcherManager`).
+    /// Legacy: folder-started sessions (see `schedule`).
     case watcher
+    /// Legacy: webhook-started sessions (see `schedule`).
+    case webhook
+    /// Legacy: email-started sessions (see `schedule`).
+    case email
+    /// Any automation-started session. The trigger kind is persisted beside
+    /// it (`ChatSessionData.automationKind`).
+    case automation
     /// Self-scheduled wake-up (spec §4.2 / §9). The agent itself
-    /// asked to be woken by calling `schedule_next_run`; the
-    /// `NextRunScheduler` is what dispatched this turn. Distinct
-    /// from `.schedule` (user-authored recurring schedules) so the
-    /// audit trail can tell them apart.
+    /// asked to be woken by calling `schedule_next_run`; its owned
+    /// schedule automation (`SelfScheduleAutomations`) dispatched this
+    /// turn. Distinct from automation-started sessions so the audit
+    /// trail can tell them apart.
     case selfSchedule = "self_schedule"
     /// Conversation imported from another assistant's export
     /// (ChatGPT, Claude, generic JSON). Continues as a normal chat;
@@ -43,6 +51,19 @@ public enum SessionSource: String, Codable, CaseIterable, Sendable {
     /// conversation is the teammate's; the host keeps a local, read-only
     /// copy under the shared agent tagged with the caller.
     case workspace
+}
+
+// MARK: - Runtime provenance
+
+extension SessionSource {
+    /// The source a run binds as `ChatExecutionContext.currentSessionSource`.
+    /// Automation sessions persist as `.automation` plus the trigger kind;
+    /// tool and publish gates keep seeing the trigger-specific source
+    /// (`.schedule`, `.watcher`, …) they always keyed on.
+    public func runtimeSource(automationKind: EventSourceKind?) -> SessionSource {
+        guard self == .automation, let automationKind else { return self }
+        return automationKind.sessionSource
+    }
 }
 
 // MARK: - UI Helpers
@@ -76,6 +97,12 @@ extension SessionSource {
             return "scheduled"
         case .watcher:
             return "watcher"
+        case .webhook:
+            return "via webhook"
+        case .email:
+            return "via email"
+        case .automation:
+            return "via automation"
         case .selfSchedule:
             return "self-scheduled"
         case .imported:
@@ -107,6 +134,9 @@ extension SessionSource {
         case .channel: return "bubble.left.and.bubble.right.fill"
         case .schedule: return "clock.fill"
         case .watcher: return "eye.fill"
+        case .webhook: return "link"
+        case .email: return "envelope.fill"
+        case .automation: return "bolt.fill"
         case .selfSchedule: return "alarm.fill"
         case .imported: return "square.and.arrow.down.fill"
         case .delegation: return "arrow.triangle.branch"
@@ -123,6 +153,9 @@ extension SessionSource {
         case .channel: return "Channel"
         case .schedule: return "Schedule"
         case .watcher: return "Watcher"
+        case .webhook: return "Webhook"
+        case .email: return "Email"
+        case .automation: return "Automation"
         case .selfSchedule: return "Self-scheduled"
         case .imported: return "Imported"
         case .delegation: return "Orchestrator"
@@ -188,6 +221,9 @@ extension SessionSource {
         case .channel: return .channel
         case .schedule: return .schedule
         case .watcher: return .watcher
+        case .webhook: return .webhook
+        case .email: return .email
+        case .automation: return .automation
         case .selfSchedule: return .selfSchedule
         }
     }

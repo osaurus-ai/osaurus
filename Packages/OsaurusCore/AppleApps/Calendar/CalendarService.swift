@@ -233,6 +233,15 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
         }
     }
 
+    static let noCalendarsMessage =
+        "Calendar has no calendars on this Mac yet, so there are no events to read. If your calendars are in iCloud or another account, turn on Calendars for it in System Settings → Internet Accounts, or wait for it to finish syncing, then ask again."
+
+    /// An empty event list from a Mac with no calendars at all is not "a
+    /// free day"; say what is missing instead.
+    static func requireSomeCalendar(count: Int) throws {
+        guard count > 0 else { throw AppleToolError.unavailable(noCalendarsMessage, retryable: false) }
+    }
+
     func calendars() async throws -> [CalendarInfo] {
         try await queue.run { [self] in
             try self.requireAccess()
@@ -248,6 +257,7 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
         try await queue.run { [self] in
             try self.requireAccess()
             let store = self.store
+            try Self.requireSomeCalendar(count: store.calendars(for: .event).count)
             let calendars = try self.resolveCalendars(query.calendarIds)
             // EventKit caps a single predicate at four years.
             let maxEnd = Calendar.current.date(byAdding: .year, value: 4, to: query.start) ?? query.end

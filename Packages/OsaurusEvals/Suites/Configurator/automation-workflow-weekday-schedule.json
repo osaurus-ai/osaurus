@@ -1,0 +1,64 @@
+{
+  "id": "configurator.automation-workflow-weekday-schedule",
+  "domain": "configurator",
+  "label": "configurator • bind an installed workflow to a weekday schedule (no agent)",
+  "query": "Run my Daily Digest workflow every weekday at 8am.",
+  "notes": "Workflow-first routing. `Daily Digest` is installed with one required string input `day`. A weekday-at-8 schedule is only expressible as cron `0 8 * * 1-5`. The automation must run the workflow (not an agent), bind `day` (for example to {{schedule.scheduled_for}}), and the case must not create an agent. State is checked against the live automation store, not just the arguments.",
+  "fixtures": {
+    "seedInstalledWorkflows": [
+      {
+        "id": "6f1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c41",
+        "name": "Daily Digest",
+        "summary": "Summarize the day's news and calendar.",
+        "inputs": [
+          "day"
+        ],
+        "required": [
+          "day"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load",
+        "architect_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "Daily Digest"
+          }
+        }
+      ],
+      "argsMustNotContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "agents:"
+          }
+        }
+      ],
+      "expectAutomations": [
+        {
+          "sourceKind": "schedule",
+          "action": "workflow",
+          "workflow": "Daily Digest",
+          "inputKeys": [
+            "day"
+          ],
+          "cron": "0 8 * * 1-5"
+        }
+      ],
+      "expectAutomationCount": 1,
+      "maxIterations": 8
+    }
+  }
+}

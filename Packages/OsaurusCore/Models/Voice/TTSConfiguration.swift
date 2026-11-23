@@ -2,7 +2,7 @@
 //  TTSConfiguration.swift
 //  osaurus
 //
-//  Configuration model for FluidAudio PocketTTS text-to-speech.
+//  Text-to-speech configuration: engine choice plus per-engine settings.
 //
 
 import Foundation
@@ -11,9 +11,34 @@ import Foundation
 public enum TTSProvider: String, Codable, Equatable, Sendable, CaseIterable {
     /// Built-in FluidAudio PocketTTS running on-device.
     case pocketTTS
+    /// Built-in FluidAudio Kokoro-82M running on-device.
+    case kokoro
     /// Any server exposing the OpenAI `/v1/audio/speech` API
     /// (openai-edge-tts, Kokoro-FastAPI, LocalAI, OpenAI itself, …).
     case openAICompatible
+}
+
+/// Language pack Kokoro speaks. Each one is a separate download with its own
+/// voices and text frontend.
+public enum KokoroLanguage: String, Codable, Equatable, Sendable, CaseIterable {
+    case english, mandarin, japanese, spanish, french
+
+    /// Whether the faster v3 runtime ships a pack for this language.
+    public var supportsFastRuntime: Bool {
+        switch self {
+        case .english, .mandarin, .japanese: return true
+        case .spanish, .french: return false
+        }
+    }
+}
+
+/// Which Kokoro runtime runs the model.
+public enum KokoroRuntime: String, Codable, Equatable, Sendable, CaseIterable {
+    /// The 7-stage Core ML chain. Every language, every voice.
+    case standard
+    /// The v3 static-bucket pipeline (macOS 15+): faster, fewer voices, no
+    /// Spanish or French.
+    case fast
 }
 
 /// Configuration settings for text-to-speech.
@@ -27,8 +52,9 @@ public struct TTSConfiguration: Codable, Equatable, Sendable {
     /// PocketTTS voice identifier.
     public var voice: String
 
-    /// Generation temperature (0.1 – 1.2). Higher = more variation. PocketTTS only.
-    public var temperature: Double
+    /// PocketTTS generation temperature (0.1 – 1.2). Higher = more variation.
+    /// `nil` uses the checkpoint's own default (`PocketTTSVoiceCatalog.defaultTemperature`).
+    public var temperature: Double?
 
     /// Base URL of the OpenAI-compatible server, without the `/v1/audio/speech`
     /// path (e.g. `http://localhost:5050`).
@@ -44,20 +70,55 @@ public struct TTSConfiguration: Codable, Equatable, Sendable {
     /// Playback speed multiplier sent to the remote server (0.25 – 4.0).
     public var remoteSpeed: Double
 
+    /// Kokoro language pack.
+    public var kokoroLanguage: KokoroLanguage
+
+    /// Kokoro runtime as chosen. Languages without a fast pack run on
+    /// `.standard` regardless; see `KokoroVoiceCatalog.effectiveRuntime`.
+    public var kokoroRuntime: KokoroRuntime
+
+    /// Kokoro voice id (e.g. `af_heart`). Validated against the language and
+    /// runtime at playback time.
+    public var kokoroVoice: String
+
+    /// Kokoro speaking rate (0.5 – 2.0), 1.0 is the model's natural pace.
+    public var kokoroSpeed: Double
+
     public static let defaultVoice = "alba"
+    public static let defaultKokoroVoice = "af_heart"
+    public static let kokoroSpeedRange: ClosedRange<Double> = 0.5 ... 2.0
     public static let defaultRemoteEndpoint = "http://localhost:5050"
     public static let defaultRemoteModel = "tts-1"
     public static let defaultRemoteVoice = "alloy"
+
+    /// Builds before FluidAudio 0.18 wrote this value whether or not the user
+    /// touched the slider. It was an Osaurus default, not the checkpoint's.
+    static let legacyDefaultTemperature = 0.7
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, provider, voice, remoteEndpoint, remoteModel, remoteVoice, remoteSpeed
+        case kokoroLanguage, kokoroRuntime, kokoroVoice, kokoroSpeed
+        /// Explicit user temperature. Absent means "model default".
+        case temperature = "pocketTemperature"
+        /// Pre-0.18 key, read once for migration and never written.
+        case legacyTemperature = "temperature"
+    }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = TTSConfiguration.default
         self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
-        self.provider =
-            try container.decodeIfPresent(TTSProvider.self, forKey: .provider) ?? defaults.provider
+        // An engine this build doesn't know (written by a newer version) falls
+        // back to the default engine instead of discarding every other field.
+        let rawProvider = try container.decodeIfPresent(String.self, forKey: .provider)
+        self.provider = rawProvider.flatMap(TTSProvider.init(rawValue:)) ?? defaults.provider
         self.voice = try container.decodeIfPresent(String.self, forKey: .voice) ?? defaults.voice
-        self.temperature =
-            try container.decodeIfPresent(Double.self, forKey: .temperature) ?? defaults.temperature
+        if container.contains(.temperature) {
+            self.temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
+        } else {
+            let legacy = try container.decodeIfPresent(Double.self, forKey: .legacyTemperature)
+            self.temperature = legacy == Self.legacyDefaultTemperature ? nil : legacy
+        }
         self.remoteEndpoint =
             try container.decodeIfPresent(String.self, forKey: .remoteEndpoint)
             ?? defaults.remoteEndpoint
@@ -67,18 +128,50 @@ public struct TTSConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(String.self, forKey: .remoteVoice) ?? defaults.remoteVoice
         self.remoteSpeed =
             try container.decodeIfPresent(Double.self, forKey: .remoteSpeed) ?? defaults.remoteSpeed
+        let rawLanguage = try container.decodeIfPresent(String.self, forKey: .kokoroLanguage)
+        self.kokoroLanguage = rawLanguage.flatMap(KokoroLanguage.init(rawValue:)) ?? defaults.kokoroLanguage
+        let rawRuntime = try container.decodeIfPresent(String.self, forKey: .kokoroRuntime)
+        self.kokoroRuntime = rawRuntime.flatMap(KokoroRuntime.init(rawValue:)) ?? defaults.kokoroRuntime
+        self.kokoroVoice =
+            try container.decodeIfPresent(String.self, forKey: .kokoroVoice) ?? defaults.kokoroVoice
+        self.kokoroSpeed =
+            try container.decodeIfPresent(Double.self, forKey: .kokoroSpeed) ?? defaults.kokoroSpeed
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(provider, forKey: .provider)
+        try container.encode(voice, forKey: .voice)
+        try container.encodeIfPresent(temperature, forKey: .temperature)
+        try container.encode(remoteEndpoint, forKey: .remoteEndpoint)
+        try container.encode(remoteModel, forKey: .remoteModel)
+        try container.encode(remoteVoice, forKey: .remoteVoice)
+        try container.encode(remoteSpeed, forKey: .remoteSpeed)
+        try container.encode(kokoroLanguage, forKey: .kokoroLanguage)
+        try container.encode(kokoroRuntime, forKey: .kokoroRuntime)
+        try container.encode(kokoroVoice, forKey: .kokoroVoice)
+        try container.encode(kokoroSpeed, forKey: .kokoroSpeed)
     }
 
     public init(
         enabled: Bool = true,
         provider: TTSProvider = .pocketTTS,
         voice: String = TTSConfiguration.defaultVoice,
-        temperature: Double = 0.7,
+        temperature: Double? = nil,
         remoteEndpoint: String = TTSConfiguration.defaultRemoteEndpoint,
         remoteModel: String = TTSConfiguration.defaultRemoteModel,
         remoteVoice: String = TTSConfiguration.defaultRemoteVoice,
-        remoteSpeed: Double = 1.0
+        remoteSpeed: Double = 1.0,
+        kokoroLanguage: KokoroLanguage = .english,
+        kokoroRuntime: KokoroRuntime = .standard,
+        kokoroVoice: String = TTSConfiguration.defaultKokoroVoice,
+        kokoroSpeed: Double = 1.0
     ) {
+        self.kokoroLanguage = kokoroLanguage
+        self.kokoroRuntime = kokoroRuntime
+        self.kokoroVoice = kokoroVoice
+        self.kokoroSpeed = kokoroSpeed
         self.enabled = enabled
         self.provider = provider
         self.voice = voice

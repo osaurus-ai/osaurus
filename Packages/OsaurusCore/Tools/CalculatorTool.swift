@@ -36,7 +36,9 @@ public final class CalculatorTool: OsaurusTool, @unchecked Sendable {
             "angle_unit": .object([
                 "type": .string("string"),
                 "enum": .array([.string("radians"), .string("degrees")]),
-                "description": .string("Unit for trig functions. Default radians; `30°` is always degrees."),
+                "description": .string(
+                    "Angle unit for trig functions only; omit it for any other math. Default radians; `30°` is always degrees."
+                ),
             ]),
         ]),
         "required": .array([.string("expression")]),

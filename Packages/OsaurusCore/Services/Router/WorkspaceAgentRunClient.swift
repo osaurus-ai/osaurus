@@ -135,6 +135,9 @@ final class WorkspaceAgentRunClient {
     var rosterKnows: (WorkspaceAgentRef) -> Bool = { ref in
         WorkspaceRosterStore.shared.agent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId) != nil
     }
+    var rosterDenies: (WorkspaceAgentRef) -> Bool = { ref in
+        WorkspaceRosterStore.shared.verifiedRosterOmits(ref)
+    }
     /// Hosting check, not ownership: an agent this identity shared from
     /// another device is a legitimate remote target here.
     var isHostedHere: (WorkspaceAgentRef) -> Bool = { ref in
@@ -160,8 +163,9 @@ final class WorkspaceAgentRunClient {
         let workspaceName = AgentTargetResolver.workspaceName(for: ref)
 
         // A pairing we already hold proves the agent WAS shared with us; the
-        // roster is the fresher word when it has loaded. Refuse only when
-        // neither knows the agent.
+        // roster is the fresher word when it has loaded. Refuse when a
+        // verified roster no longer lists the agent, or when neither knows it.
+        guard !rosterDenies(ref) else { throw WorkspaceAgentRunError.notShared }
         var remote = pairedAgent(ref)
         if remote == nil {
             guard rosterKnows(ref) else { throw WorkspaceAgentRunError.notShared }
@@ -218,6 +222,7 @@ final class WorkspaceAgentRunClient {
         }
 
         if let metadata {
+            RemotePeerFeatures.record(metadata.features, providerId: paired.providerId)
             RemoteAgentManager.shared.updateLiveMetadata(
                 forAddress: ref.agentAddress,
                 name: metadata.name,

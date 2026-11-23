@@ -170,10 +170,10 @@ enum ChatSessionExportCoordinator {
 /// Indeterminate spinner used as the themed-alert accessory while an
 /// export is in flight.
 private struct ExportProgressIndicator: View {
+    @Environment(\.theme) private var theme
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .scaleEffect(0.8)
+        HStack(spacing: theme.space.s8) {
+            SettingsSpinner(size: .large)
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity)

@@ -113,7 +113,7 @@ struct ResponsesRunningToolPresentationTests {
         let row = NativeToolCallRowView(frame: .zero)
         func configure(_ command: String, expanded: Bool) {
             row.configure(item: ToolCallItem(call: call(command: command), result: nil),
-                index: 0, totalCount: 1, isExpanded: expanded, width: 640, theme: LightTheme(),
+                index: 0, totalCount: 1, isExpanded: expanded, width: 640, theme: CustomizableTheme(config: .lightDefault, fontScale: 1.0),
                 onToggle: {}, onHeightChanged: {})
         }
         func text() -> String {
@@ -143,7 +143,7 @@ struct ResponsesRunningToolPresentationTests {
         let row = NativeToolCallRowView(frame: .zero)
         func configure(_ item: ToolCallItem) {
             row.configure(item: item, index: 0, totalCount: 1, isExpanded: true, width: 640,
-                theme: LightTheme(), onToggle: {}, onHeightChanged: {})
+                theme: CustomizableTheme(config: .lightDefault, fontScale: 1.0), onToggle: {}, onHeightChanged: {})
         }
         configure(item)
         try await deliverRegistrySnapshots()
@@ -189,10 +189,10 @@ struct ResponsesRunningToolPresentationTests {
         func configure(_ callId: String, expanded: Bool = true) {
             row.configure(item: ToolCallItem(call: call(callId, name: "spawn_agent"), result: nil),
                 index: 0, totalCount: 1, isExpanded: expanded, width: 640,
-                theme: LightTheme(), onToggle: {}, onHeightChanged: {})
+                theme: CustomizableTheme(config: .lightDefault, fontScale: 1.0), onToggle: {}, onHeightChanged: {})
         }
-        func panes() -> [NSHostingView<SubagentFeedView>] {
-            descendants(row, as: NSHostingView<SubagentFeedView>.self)
+        func panes() -> [NSHostingView<HostedSubagentFeedView>] {
+            descendants(row, as: NSHostingView<HostedSubagentFeedView>.self)
         }
         let registry = SubagentFeedRegistry.shared
         defer { registry.removeNow(toolCallId: id); registry.removeNow(toolCallId: replacementId) }

@@ -131,6 +131,35 @@ struct OAuthLoopbackServerTests {
         #expect(threwExpectedError, "expected loopback to reject state-mismatched callback")
     }
 
+    @Test func providerErrorDescriptionDecodesPlusAsSpace() async throws {
+        let server = try OAuthLoopbackServer(
+            expectedState: "state-error",
+            port: .ephemeral,
+            callbackPath: "/callback"
+        )
+        try await server.start()
+        defer { server.stop() }
+
+        let port = try #require(server.boundPort)
+        let task = Task { try await server.waitForCallback() }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        _ = try? await URLSession.shared.data(
+            from: URL(
+                string:
+                    "http://127.0.0.1:\(port)/callback?error=access_denied&error_description=The+user+has+denied+your+application+access.&state=state-error"
+            )!
+        )
+
+        do {
+            _ = try await task.value
+            Issue.record("expected the provider error")
+        } catch OAuthLoopbackError.oauthError(let error, let description) {
+            #expect(error == "access_denied")
+            #expect(description == "The user has denied your application access.")
+        }
+    }
+
     @Test func allowlistedOriginGetsCorsHeader() async throws {
         // xAI/Grok delivers the code via a cross-origin fetch from auth.x.ai, so
         // the callback response must echo Access-Control-Allow-Origin or the

@@ -13,8 +13,10 @@
 //  3. The model prints a tool CALL as answer text (a fenced
 //     `{"tool":"osaurus_config", …}` object) instead of invoking the tool —
 //     the call never executes, so anything it implies is fabricated.
+//  4. The model names a configure tool to the user ("run `osaurus_config`
+//     to …"), which the user has no way to call.
 //
-//  Both checks are pure text/state predicates over what actually executed —
+//  Every check is a pure text/state predicate over what actually executed —
 //  no model output is ever edited, stripped, or synthesized. On a trip the
 //  loop stages a factual `[System Notice]` (the same transient channel every
 //  other typed recovery uses) and lets the model write its own corrected
@@ -28,18 +30,32 @@ enum GroundedConfigClaimCheck {
     /// The declarative write tool whose apply results ground change claims.
     static let configToolName = "osaurus_config"
 
+    /// Tools whose results can ground a change claim: the Configurator's
+    /// `osaurus_config`, and the Orchestrator's `configurator_handoff`.
+    static let groundingToolNames: Set<String> = [configToolName, ConfiguratorHandoffTool.toolName]
+
+    /// Whether a turn whose schema is `toolNames` gets the check at all.
+    static func applies(toToolNames toolNames: some Sequence<String>) -> Bool {
+        toolNames.contains { groundingToolNames.contains($0) }
+    }
+
     // MARK: - Apply-outcome grounding
 
     /// True when this tool outcome is an `osaurus_config` apply whose
     /// envelope reports that at least one change actually landed (a
     /// `done`/`started` row, or an aggregate applied status when rows are
-    /// absent). Dry-run plans, denials, all-failed/cancelled applies, and
-    /// every other tool return false.
+    /// absent), or a `configurator_handoff` that returned `applied`.
+    /// Dry-run plans, denials, all-failed/cancelled applies, and every other
+    /// tool return false.
     static func isGroundedApplyOutcome(
         toolName: String,
         argumentsJSON: String,
         result: String
     ) -> Bool {
+        if toolName == ConfiguratorHandoffTool.toolName {
+            if case .applied = HandoffResult.parse(envelope: result) { return true }
+            return false
+        }
         guard toolName == configToolName else { return false }
         guard let argsData = argumentsJSON.data(using: .utf8),
             let args = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any],
@@ -71,18 +87,29 @@ enum GroundedConfigClaimCheck {
     /// Corrective notice when the final text is ungrounded, or nil when the
     /// answer passes. `hasGroundedApply` is whether any apply landed a
     /// change THIS run (one logical user turn).
-    static func notice(finalText: String, hasGroundedApply: Bool) -> String? {
+    /// `viaHandoff` is true for the Orchestrator, whose changes go through
+    /// `configurator_handoff` rather than `osaurus_config`.
+    static func notice(finalText: String, hasGroundedApply: Bool, viaHandoff: Bool = false) -> String? {
         if isFabricatedEnvelopeAnswer(finalText) {
             return fabricatedEnvelopeNotice
         }
         if containsFabricatedToolCall(finalText) {
             return fabricatedToolCallNotice
         }
+        if namesConfigureTool(finalText) {
+            return namedToolNotice
+        }
         if !hasGroundedApply, containsUngroundedChangeClaim(finalText) {
-            return ungroundedChangeClaimNotice
+            return viaHandoff ? ungroundedHandoffClaimNotice : ungroundedChangeClaimNotice
         }
         return nil
     }
+
+    static let ungroundedHandoffClaimNotice =
+        "[System Notice] Your previous reply claims a configuration change was made, but no "
+        + "`configurator_handoff` returned `applied` this turn — nothing has actually changed. "
+        + "Either call `configurator_handoff` with the user's message now, or rewrite your answer "
+        + "to state accurately that no change was made."
 
     static let fabricatedEnvelopeNotice =
         "[System Notice] Your previous reply was a raw tool-result envelope, which is never a "
@@ -100,6 +127,25 @@ enum GroundedConfigClaimCheck {
         "[System Notice] Your previous reply printed a tool call as text — a printed tool call "
         + "never executes, so nothing happened. To run the tool, invoke it through the normal "
         + "tool-calling channel now, then answer the user in plain language with the real result."
+
+    static let namedToolNotice =
+        "[System Notice] Your previous reply named an internal tool to the user. The user cannot "
+        + "call tools. Rewrite the answer in plain language: say what changed, or where in "
+        + "Settings they can do it, without any tool name."
+
+    /// Configure-surface tool identifiers: `osaurus_config`, `osaurus_inspect`,
+    /// `osaurus_help`, the `osaurus_<domain>_<verb>` write tools, and the
+    /// Orchestrator's `configurator_handoff`. Case-sensitive, so prose such as
+    /// "Osaurus" or an `OSAURUS_*` environment variable never matches.
+    private static let configureToolNamePattern: NSRegularExpression? = try? NSRegularExpression(
+        pattern: "(?<![A-Za-z0-9_])(?:osaurus_[a-z][a-z0-9_]*|configurator_handoff)(?![A-Za-z0-9_])")
+
+    /// True when the final text names a configure tool anywhere, prose or
+    /// code span alike: no answer to the user has a reason to.
+    static func namesConfigureTool(_ text: String) -> Bool {
+        guard let pattern = configureToolNamePattern else { return false }
+        return pattern.firstMatch(in: text, options: [], range: NSRange(text.startIndex..., in: text)) != nil
+    }
 
     /// A final answer that IS a tool-result envelope: after stripping an
     /// optional code fence, the text is a JSON object carrying the envelope's

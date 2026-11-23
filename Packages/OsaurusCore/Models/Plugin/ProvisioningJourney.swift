@@ -161,27 +161,57 @@ import Foundation
             return max(0, end.timeIntervalSince(start))
         }
 
-        /// Sum of remaining-step ETAs. For the active step we use its
-        /// live `etaSeconds`; for pending steps we fall back to the
-        /// per-step `etaSeconds` seed (populated by `beginJourney` from
-        /// the persisted `lastBootDurations`). Returns `nil` if there are
-        /// no remaining ETAs to sum, so callers can show "—" rather than
-        /// a misleading "0s".
+        /// Remaining time: the longest live ETA among in-progress steps
+        /// (they run concurrently, so their ETAs overlap rather than add)
+        /// plus the per-step `etaSeconds` seeds of pending steps (populated
+        /// by `beginJourney` from the persisted `lastBootDurations`).
+        /// Returns `nil` if there are no remaining ETAs, so callers can
+        /// show "—" rather than a misleading "0s".
         public var remainingTotalSeconds: Double? {
-            var total: Double = 0
-            var anyHit = false
+            var longestRunning: Double?
+            var pendingTotal: Double = 0
+            var anyPending = false
             for step in steps {
+                guard let eta = step.etaSeconds else { continue }
                 switch step.status {
                 case .completed, .skipped, .failed:
                     continue
-                case .inProgress, .pending:
-                    if let eta = step.etaSeconds {
-                        total += eta
-                        anyHit = true
-                    }
+                case .inProgress:
+                    longestRunning = max(longestRunning ?? 0, eta)
+                case .pending:
+                    pendingTotal += eta
+                    anyPending = true
                 }
             }
-            return anyHit ? total : nil
+            guard longestRunning != nil || anyPending else { return nil }
+            return (longestRunning ?? 0) + pendingTotal
+        }
+
+        /// One line for the chat turn that is waiting on the sandbox:
+        /// the active step, its bytes or percent, and the time left.
+        public func inlineSummary(byteActivity: (Int64, Int64, Double?) -> String) -> String? {
+            guard let id = currentStepID, let step = step(id) else { return nil }
+            var parts = [step.label]
+            if let total = step.bytesTotal, total > 0 {
+                parts.append(byteActivity(step.bytesProcessed ?? 0, total, step.bytesPerSecond))
+            } else if let progress = step.progress {
+                parts.append("\(Int((min(max(progress, 0), 1) * 100).rounded()))%")
+            }
+            if let remaining = remainingTotalSeconds, remaining >= 5 {
+                parts.append(L("about \(Self.formatEta(remaining)) left"))
+            }
+            return parts.joined(separator: " · ")
+        }
+
+        /// "<1s", "Xs", "Xm Ys", or "Xm" past five minutes.
+        public static func formatEta(_ seconds: Double) -> String {
+            let s = max(seconds, 0)
+            if s < 1 { return "<1s" }
+            if s < 60 { return "\(Int(s.rounded()))s" }
+            let minutes = Int(s / 60)
+            let remSeconds = Int(s.truncatingRemainder(dividingBy: 60))
+            if minutes >= 5 { return "\(minutes)m" }
+            return "\(minutes)m \(remSeconds)s"
         }
     }
 

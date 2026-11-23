@@ -5,9 +5,9 @@
 //  Modal sheets for the Workspaces tab: create a workspace, activate a
 //  web-purchased workspace from a deep-linked code, join through an invite
 //  link, create an invite link, and share an agent (with agent-key proof).
-//  Every sheet is `AgentSheetHeader` + scrolling body + `AgentSheetFooter`
-//  in a `fittedSheetFrame`, with `StyledTextField`s and `SettingsField`-style
-//  hint rows — the same chrome as the Agents tab's sheets.
+//  Every sheet is `SettingsSheetHeader` + scrolling body + `SettingsSheetFooter`
+//  in a `fittedSheetFrame`, with `SettingsTextField`s and hint rows — the
+//  same chrome as the Agents tab's sheets.
 //
 
 import AppKit
@@ -18,7 +18,9 @@ import SwiftUI
 /// Header · scrolling body · pinned footer, sized with `fittedSheetFrame`
 /// so the confirm button stays reachable on small displays.
 struct WorkspaceSheetShell<Content: View>: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Environment(\.dismiss) private var dismiss
 
     let icon: String
@@ -38,8 +40,8 @@ struct WorkspaceSheetShell<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(spacing: 0) {
-            AgentSheetHeader(
+        VStack(spacing: theme.space.s0) {
+            SettingsSheetHeader(
                 icon: icon,
                 title: title,
                 subtitleText: subtitle,
@@ -47,14 +49,14 @@ struct WorkspaceSheetShell<Content: View>: View {
             )
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     content
                 }
-                .padding(20)
+                .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
 
-            AgentSheetFooter(
+            SettingsSheetFooter(
                 primary: .init(
                     label: confirmTitle,
                     isEnabled: isValid,
@@ -68,13 +70,15 @@ struct WorkspaceSheetShell<Content: View>: View {
             )
         }
         .fittedSheetFrame(width: width, height: height)
-        .background(theme.primaryBackground)
+        .settingsSheetSurface()
     }
 }
 
-/// Inline check/warn/info line under a field (`SettingsField` hint style).
+/// Inline check/warn/info line under a field.
 struct SheetHintRow: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     enum Kind {
         case ok
@@ -89,12 +93,12 @@ struct SheetHintRow: View {
     var body: some View {
         Label {
             Text(message)
-                .font(.system(size: 11.5))
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                 .foregroundColor(textColor)
                 .fixedSize(horizontal: false, vertical: true)
         } icon: {
             Image(systemName: iconName)
-                .font(.system(size: 11, weight: .semibold))
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(iconColor)
         }
     }
@@ -110,18 +114,18 @@ struct SheetHintRow: View {
 
     private var iconColor: Color {
         switch kind {
-        case .ok: return theme.successColor
-        case .warning: return theme.warningColor
-        case .info: return theme.tertiaryText
-        case .error: return theme.errorColor
+        case .ok: return theme.status.success.foreground
+        case .warning: return theme.status.warning.foreground
+        case .info: return theme.text.tertiary
+        case .error: return theme.status.error.foreground
         }
     }
 
     private var textColor: Color {
         switch kind {
-        case .warning: return theme.warningColor
-        case .error: return theme.errorColor
-        case .ok, .info: return theme.secondaryText
+        case .warning: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
+        case .ok, .info: return theme.text.secondary
         }
     }
 }
@@ -129,33 +133,28 @@ struct SheetHintRow: View {
 /// Read-only monospaced value row (a deep-linked code the user shouldn't
 /// retype).
 private struct SheetReadOnlyValue: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     let icon: String
     let value: String
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.text.tertiary)
             Text(value)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                .foregroundColor(theme.text.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.control)
     }
 }
 
@@ -181,9 +180,14 @@ enum WorkspaceNameValidation {
 ///   to a "finish in your browser" state while the service polls for the
 ///   webhook-created workspace.
 struct CreateWorkspaceSheet: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
 
     var onCreated: (OsaurusRouterWorkspaceDetail) -> Void = { _ in }
 
@@ -202,7 +206,15 @@ struct CreateWorkspaceSheet: View {
     /// subscription) — decides the interval picker and the CTA copy.
     private var needsCheckout: Bool { !service.hasLiveSubscription }
     private var plan: OsaurusRouterWorkspacePlan? { service.prices?.plan }
-    private var livePrices: [OsaurusRouterWorkspacePrice] { service.prices?.livePrices ?? [] }
+    #if OSAURUS_DESIGN_INSPECTOR
+    var inspectionPrices: [OsaurusRouterWorkspacePrice] = []
+    #endif
+    private var livePrices: [OsaurusRouterWorkspacePrice] {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return inspectionPrices }
+        #endif
+        return service.prices?.livePrices ?? []
+    }
     private var selectedPrice: OsaurusRouterWorkspacePrice? {
         livePrices.first { $0.id == selectedPriceId } ?? service.prices?.monthly ?? livePrices.first
     }
@@ -210,7 +222,7 @@ struct CreateWorkspaceSheet: View {
     private var confirmTitle: LocalizedStringKey {
         if checkoutOpened { return "Done" }
         if !needsCheckout { return "Create" }
-        return service.trialEligible ? "Start free trial" : "Continue to checkout"
+        return service.trialEligible ? "Start Free Trial" : "Continue to Checkout"
     }
 
     private var subtitle: String {
@@ -232,7 +244,7 @@ struct CreateWorkspaceSheet: View {
     var body: some View {
         WorkspaceSheetShell(
             icon: checkoutOpened ? "creditcard.fill" : "rectangle.3.group.fill",
-            title: checkoutOpened ? "Finish in your browser" : "New workspace",
+            title: checkoutOpened ? "Finish in your browser" : "New Workspace",
             subtitle: subtitle,
             confirmTitle: confirmTitle,
             isBusy: service.isBusy("workspace.create"),
@@ -249,6 +261,9 @@ struct CreateWorkspaceSheet: View {
             }
         }
         .onAppear {
+            #if OSAURUS_DESIGN_INSPECTOR
+            if inspectionDisplayOnly { return }
+            #endif
             name = WorkspacesService.defaultActivationName
             if selectedPriceId == nil { selectedPriceId = service.prices?.monthly?.id ?? livePrices.first?.id }
             // Prices/billing may be stale or missing on first open.
@@ -273,8 +288,8 @@ struct CreateWorkspaceSheet: View {
 
     @ViewBuilder
     private var composeBody: some View {
-        AgentSheetSectionLabel("Workspace name")
-        StyledTextField(
+        SettingsFieldLabel("Workspace name")
+        SettingsTextField(
             placeholder: L("Workspace name"),
             text: $name,
             icon: "rectangle.3.group",
@@ -283,16 +298,8 @@ struct CreateWorkspaceSheet: View {
         .onSubmit { if nameIsValid && !hitTrialLimit { submit() } }
 
         if needsCheckout, livePrices.count > 1 {
-            AgentSheetSectionLabel("Billing")
-            Picker(selection: $selectedPriceId) {
-                ForEach(livePrices) { price in
-                    Text(price.displayLabel ?? price.billingInterval ?? price.id).tag(Optional(price.id))
-                }
-            } label: {
-                EmptyView()
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            SettingsFieldLabel("Billing")
+            AssignedBaseSegmentedPicker(selection: $selectedPriceId, options: livePrices.map { .init(Optional($0.id), $0.displayLabel ?? $0.billingInterval ?? $0.id, verbatim: true) })
         }
 
         planSummary
@@ -326,7 +333,7 @@ struct CreateWorkspaceSheet: View {
     @ViewBuilder
     private var planSummary: some View {
         if let plan {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 if let monthly = plan.monthlyCreditMicro, monthly != "0" {
                     planLine(
                         icon: "creditcard.fill",
@@ -346,23 +353,20 @@ struct CreateWorkspaceSheet: View {
                         ?? L("Unlimited shared agents")
                 )
             }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground.opacity(0.5))
-            )
+            .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+            .settingsChrome(.inset)
         }
     }
 
     private func planLine(icon: String, text: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundColor(theme.text.link)
                 .frame(width: 14)
             Text(text)
-                .font(.system(size: 11.5))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
         }
     }
 
@@ -396,28 +400,24 @@ struct CreateWorkspaceSheet: View {
 
     @ViewBuilder
     private var checkoutOpenedBody: some View {
-        HStack(alignment: .top, spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
+            SettingsSpinner()
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(String(format: L("Waiting for Stripe to confirm “%@”"), trimmedName))
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     L(
                         "Nothing is charged until you complete the checkout. Osaurus checks for the new workspace each time you come back to it; you can also close this and refresh the list."
                     )
                 )
-                .font(.system(size: 11.5))
-                .foregroundColor(theme.secondaryText)
+                .componentInspectionText(49, role: .caption, fallback: .footnote, theme: theme)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground.opacity(0.5))
-        )
+        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+        .settingsChrome(.inset)
         SheetHintRow(
             kind: .info,
             message: L("Closed the browser tab without paying? Just close this — nothing was created or charged.")
@@ -425,6 +425,9 @@ struct CreateWorkspaceSheet: View {
     }
 
     private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
         guard !checkoutOpened, nameIsValid else { return }
         let priceId = needsCheckout ? selectedPrice?.id : nil
         idsBeforeCheckout = Set(service.workspaces.map(\.id))
@@ -435,7 +438,7 @@ struct CreateWorkspaceSheet: View {
                     dismiss()
                     onCreated(detail)
                 case .checkoutOpened:
-                    withAnimation(.easeOut(duration: 0.2)) { checkoutOpened = true }
+                    withAnimation(theme.motion.quick) { checkoutOpened = true }
                 }
             } else {
                 // Scope the failure to this sheet: the page banner behind it
@@ -462,9 +465,14 @@ struct CreateWorkspaceSheet: View {
 ///   machine, etc.).
 /// On success the router has created the workspace; the caller navigates to it.
 struct ActivateWorkspaceSheet: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
 
     let pending: PendingWorkspaceActivation?
     var onActivated: (OsaurusRouterWorkspaceDetail) -> Void = { _ in }
@@ -493,24 +501,24 @@ struct ActivateWorkspaceSheet: View {
             height: 400
         ) {
             if let plan = pending?.planLabel, !plan.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(.footnote, weight: .semibold)
+                        .foregroundColor(theme.text.link)
                     Text(String(format: L("Plan: %@"), plan))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.secondary)
                     Spacer(minLength: 0)
                 }
             }
 
-            AgentSheetSectionLabel("Activation code")
+            SettingsFieldLabel("Activation code")
             if isDeeplink {
                 // Read-only code row: the deeplink fixed it; retyping would
                 // only invite typos.
                 SheetReadOnlyValue(icon: "key.fill", value: code)
             } else {
-                StyledTextField(
+                SettingsTextField(
                     placeholder: L("Activation code"),
                     text: $code,
                     icon: "key.fill",
@@ -519,8 +527,8 @@ struct ActivateWorkspaceSheet: View {
                 )
             }
 
-            AgentSheetSectionLabel("Workspace name")
-            StyledTextField(
+            SettingsFieldLabel("Workspace name")
+            SettingsTextField(
                 placeholder: L("Workspace name"),
                 text: $name,
                 icon: "rectangle.3.group",
@@ -552,6 +560,9 @@ struct ActivateWorkspaceSheet: View {
             }
         }
         .onAppear {
+            #if OSAURUS_DESIGN_INSPECTOR
+            if inspectionDisplayOnly { return }
+            #endif
             if let pending {
                 code = pending.code
                 name = pending.suggestedName ?? WorkspacesService.defaultActivationName
@@ -562,6 +573,9 @@ struct ActivateWorkspaceSheet: View {
     }
 
     private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
         guard codeLooksValid, nameIsValid else { return }
         Task {
             if let detail = await service.activate(code: code, name: name) {
@@ -585,9 +599,14 @@ struct ActivateWorkspaceSheet: View {
 /// - Manual (`pending == nil`): the user pastes the code from a link that
 ///   didn't open.
 struct JoinWorkspaceSheet: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
 
     let pending: PendingWorkspaceJoin?
     var onJoined: (OsaurusRouterWorkspaceDetail) -> Void = { _ in }
@@ -612,11 +631,11 @@ struct JoinWorkspaceSheet: View {
             onConfirm: { submit() },
             height: 300
         ) {
-            AgentSheetSectionLabel("Invite code")
+            SettingsFieldLabel("Invite code")
             if isDeeplink {
                 SheetReadOnlyValue(icon: "link", value: code)
             } else {
-                StyledTextField(
+                SettingsTextField(
                     placeholder: L("Invite code or link"),
                     text: $code,
                     icon: "link",
@@ -646,11 +665,17 @@ struct JoinWorkspaceSheet: View {
             }
         }
         .onAppear {
+            #if OSAURUS_DESIGN_INSPECTOR
+            if inspectionDisplayOnly { return }
+            #endif
             if let pending { code = pending.code }
         }
     }
 
     private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
         guard codeLooksValid else { return }
         Task {
             if let detail = await service.join(code: trimmedCode) {
@@ -669,9 +694,14 @@ struct JoinWorkspaceSheet: View {
 /// Mints an invite link, then flips to a result state with the link and a
 /// Copy button — the owner shares it however they like (chat, email).
 struct CreateInviteLinkSheet: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
 
     let workspaceId: String
     /// Only owners can mint admin links.
@@ -694,7 +724,7 @@ struct CreateInviteLinkSheet: View {
         case .admin:
             return L("Admins can invite and remove members and manage shared agents.")
         case .member, .owner:
-            return L("Members can use shared agents, share their own, and spend from the pool.")
+            return L("Members can use shared agents, share their own, and spend workspace credits.")
         }
     }
 
@@ -720,35 +750,25 @@ struct CreateInviteLinkSheet: View {
             onConfirm: { submit() },
             height: 360
         ) {
-            AgentSheetSectionLabel("Role")
-            Picker(selection: $role) {
-                Text("Viewer", bundle: .module).tag(OsaurusRouterWorkspaceRole.viewer)
-                Text("Member", bundle: .module).tag(OsaurusRouterWorkspaceRole.member)
-                if isOwner {
-                    Text("Admin", bundle: .module).tag(OsaurusRouterWorkspaceRole.admin)
-                }
-            } label: {
-                EmptyView()
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            SettingsFieldLabel("Role")
+            let roles: [OsaurusRouterWorkspaceRole] = isOwner ? [.viewer, .member, .admin] : [.viewer, .member]
+            AssignedBaseSegmentedPicker(selection: $role, options: roles.map { .init($0, $0.displayName, verbatim: true) })
             Text(roleExplainer)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            AgentSheetSectionLabel("Uses")
-            HStack(spacing: 10) {
-                Stepper(value: $maxUses, in: Self.usesRange) {
-                    Text(
-                        maxUses == 1
-                            ? L("1 person")
-                            : String(format: L("Up to %d people"), maxUses)
-                    )
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .monospacedDigit()
-                }
+            SettingsFieldLabel("Uses")
+            HStack(spacing: theme.space.s8) {
+                SettingsStepper(value: $maxUses, range: Self.usesRange)
+                    .settingsFieldAccessibility(L("Uses"))
+                Text(
+                    maxUses == 1
+                        ? L("1 person")
+                        : String(format: L("Up to %d people"), maxUses)
+                )
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 Spacer(minLength: 0)
             }
 
@@ -796,6 +816,9 @@ struct CreateInviteLinkSheet: View {
             SheetHintRow(kind: .info, message: inviteFooter(invite))
         }
         .onAppear {
+            #if OSAURUS_DESIGN_INSPECTOR
+            if inspectionDisplayOnly { return }
+            #endif
             // Copying is what the user opened this sheet to do; save a click.
             copyLink(invite)
         }
@@ -819,10 +842,13 @@ struct CreateInviteLinkSheet: View {
     }
 
     private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
         Task {
             if let invite = await service.mintInvite(workspaceId: workspaceId, role: role, maxUses: maxUses) {
                 onCreated(invite)
-                withAnimation(.easeOut(duration: 0.2)) { minted = invite }
+                withAnimation(theme.motion.quick) { minted = invite }
             } else {
                 errorMessage = service.lastError
                 service.lastError = nil
@@ -834,9 +860,14 @@ struct CreateInviteLinkSheet: View {
 // MARK: - Share agent
 
 struct WorkspaceShareAgentSheet: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
     @ObservedObject private var agentManager = AgentManager.shared
 
     let workspaceId: String
@@ -854,6 +885,9 @@ struct WorkspaceShareAgentSheet: View {
     @State private var descriptionText = ""
     @State private var errorMessage: String?
     @State private var isPreparing = false
+    /// Follows `WorkspacesService.shareBillingDefault` for the selected
+    /// agent until the user flips it.
+    @State private var billWorkspaceCredits = true
 
     static let displayNameMaxLength = 120
 
@@ -891,8 +925,14 @@ struct WorkspaceShareAgentSheet: View {
     /// reach the agent through it); both are turned on as part of sharing
     /// when missing, so a share is one click rather than a detour through
     /// the Agents tab. Built-in agents have no key and can't be shared.
+    #if OSAURUS_DESIGN_INSPECTOR
+    var inspectionAgents: [Agent] = []
+    #endif
     private var shareableAgents: [Agent] {
-        agentManager.agents.filter { !$0.isBuiltIn }
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return inspectionAgents }
+        #endif
+        return agentManager.agents.filter { !$0.isBuiltIn }
     }
 
     private var alreadyShared: Set<String> {
@@ -930,7 +970,7 @@ struct WorkspaceShareAgentSheet: View {
             icon: "person.2.fill",
             title: "Share agent",
             subtitle: L(
-                "Teammates chat with it from their own Osaurus while it keeps running on this Mac. Its billing stays yours unless you enable workspace billing."
+                "Teammates chat with it from their own Osaurus while it keeps running on this Mac. Their chats always use workspace credits."
             ),
             confirmTitle: "Share agent",
             isBusy: service.isBusy("agent.share") || isPreparing,
@@ -939,15 +979,15 @@ struct WorkspaceShareAgentSheet: View {
             height: 560
         ) {
             if shareableAgents.isEmpty {
-                AgentSectionEmptyState(
-                    icon: "theatermasks",
+                SettingsEmptyState(
+                    inline: "theatermasks",
                     title: "No agents to share yet",
                     hint: "Create one in the Agents tab, then share it here."
                 )
             } else {
-                AgentSheetSectionLabel("Agent")
+                SettingsFieldLabel("Agent")
                 ScrollView {
-                    VStack(spacing: 6) {
+                    VStack(spacing: theme.space.s6) {
                         ForEach(shareableAgents, id: \.id) { agent in
                             agentRow(agent)
                         }
@@ -955,12 +995,15 @@ struct WorkspaceShareAgentSheet: View {
                 }
                 .frame(maxHeight: 220)
 
-                if let setup = setupNeeded {
-                    SheetHintRow(kind: .info, message: setupMessage(setup))
+                if let setup = setupNeeded, let agent = selectedAgent {
+                    SheetHintRow(
+                        kind: setup.relay ? .warning : .info,
+                        message: setupMessage(setup, agentName: agent.name)
+                    )
                 }
 
-                AgentSheetSectionLabel("Shown to teammates as")
-                StyledTextField(
+                SettingsFieldLabel("Shown to teammates as")
+                SettingsTextField(
                     placeholder: L("Display name for the workspace"),
                     text: $displayName,
                     icon: "textformat"
@@ -977,12 +1020,19 @@ struct WorkspaceShareAgentSheet: View {
                     SheetHintRow(kind: .info, message: L("Teammates see this name in their sidebar."))
                 }
 
-                AgentSheetSectionLabel("Description (optional)")
-                StyledTextField(
+                SettingsFieldLabel("Description (optional)")
+                SettingsTextField(
                     placeholder: L("What this agent is good at"),
                     text: $descriptionText,
                     icon: "text.alignleft"
                 )
+
+                SettingsToggle(
+                    title: "Bill Workspace Credits",
+                    description: billingDescription,
+                    isOn: $billWorkspaceCredits
+                )
+                .disabled(selectedAgent == nil)
             }
 
             if let errorMessage {
@@ -990,6 +1040,9 @@ struct WorkspaceShareAgentSheet: View {
             }
         }
         .onAppear {
+            #if OSAURUS_DESIGN_INSPECTOR
+            if inspectionDisplayOnly { return }
+            #endif
             guard selectedAgentId == nil, let preselectedAgentId,
                 let agent = shareableAgents.first(where: { $0.id == preselectedAgentId })
             else { return }
@@ -997,21 +1050,31 @@ struct WorkspaceShareAgentSheet: View {
         }
     }
 
-    /// Same consent copy the Agents tab's relay toggle uses: the relay
-    /// exposes the agent to the internet (through Osaurus' relay), not just
-    /// to the workspace.
-    private func setupMessage(_ setup: (identity: Bool, relay: Bool)) -> String {
+    private var billingDescription: String {
+        if let agent = selectedAgent, let address = agent.agentAddress,
+            let current = service.billingWorkspaceId(forAgentAddress: address), current != workspaceId
+        {
+            let name = service.workspaces.first { $0.id == current }?.name ?? L("another workspace")
+            return String(
+                format: L("Your own chats with this agent bill %@ today. On moves them to this workspace's credits."),
+                name
+            )
+        }
+        return L(
+            "On, your own chats with this agent also use this workspace's credits. Off, they bill your personal balance."
+        )
+    }
+
+    /// Sharing switches remote access on, so the sheet shows the same
+    /// consent copy as every other remote-access switch; pressing Share
+    /// agent is the consent.
+    private func setupMessage(_ setup: (identity: Bool, relay: Bool), agentName: String) -> String {
+        let identityLine = L("Sharing gives this agent its own identity key, which signs the ownership proof.")
+        let remoteLine = RemoteAccessConsent.message(agentName: agentName)
         switch (setup.identity, setup.relay) {
-        case (true, true):
-            return L(
-                "Sharing gives this agent its own identity key and turns on its relay tunnel. The relay makes the agent reachable over the internet; only workspace members can authenticate to it. It keeps running on this Mac."
-            )
-        case (true, false):
-            return L("Sharing gives this agent its own identity key, which signs the ownership proof.")
-        default:
-            return L(
-                "Sharing turns on this agent's relay tunnel. The relay makes the agent reachable over the internet; only workspace members can authenticate to it. It keeps running on this Mac."
-            )
+        case (true, true): return identityLine + " " + remoteLine
+        case (true, false): return identityLine
+        default: return remoteLine
         }
     }
 
@@ -1035,12 +1098,15 @@ struct WorkspaceShareAgentSheet: View {
     }
 
     private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
         guard let agent = selectedAgent, isValid else { return }
         isPreparing = true
         guard let signer = prepareForSharing(agent) else {
             isPreparing = false
             errorMessage = L(
-                "Couldn't give this agent an identity key. Set up your Osaurus Identity in the Identity tab, then try again."
+                "Couldn't give this agent an identity key. Set up your Osaurus ID, then try again."
             )
             return
         }
@@ -1051,7 +1117,8 @@ struct WorkspaceShareAgentSheet: View {
                 agentAddress: signer.address,
                 agentKeyPath: signer.keyPath,
                 displayName: displayName,
-                description: descriptionText.isEmpty ? nil : descriptionText
+                description: descriptionText.isEmpty ? nil : descriptionText,
+                billWorkspaceCredits: billWorkspaceCredits
             )
             if ok {
                 onSuccess()
@@ -1068,6 +1135,7 @@ struct WorkspaceShareAgentSheet: View {
     private func select(_ agent: Agent) {
         guard !isAlreadyShared(agent) else { return }
         selectedAgentId = agent.id
+        billWorkspaceCredits = WorkspacesService.shareBillingDefault(agentId: agent.id)
         let next = Self.nextDisplayName(
             current: displayName,
             prefilled: prefilledName,
@@ -1083,59 +1151,45 @@ struct WorkspaceShareAgentSheet: View {
         let isSelected = selectedAgentId == agent.id
         let shared = isAlreadyShared(agent)
         return Button(action: { select(agent) }) {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 13))
-                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                    .glyphSize(.label)
+                    .foregroundColor(isSelected ? theme.text.link : theme.text.tertiary)
                 AgentAvatarView(
                     mascotId: agent.avatar,
                     name: agent.name,
-                    tint: agentColorFor(agent.name),
+                    tint: theme.dataInk(seed: agent.name),
                     diameter: 26,
                     customImageURL: agent.customAvatarURL,
                     monogramFontSize: 11,
                     borderWidth: 1.5
                 )
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(agent.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                     if let address = agent.agentAddress {
                         Text(SharedAgentIdentity.shortAddress(address))
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                             .help(address)
                     } else {
-                        Text("Identity key and relay are set up when you share", bundle: .module)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
+                        Text("Identity key and remote access are set up when you share", bundle: .module)
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                     }
                 }
                 Spacer()
                 if shared {
-                    CapsuleBadge(L("Already shared"), tint: theme.successColor, icon: "checkmark")
+                    StatusChip(L("Already shared"), tint: theme.status.success.foreground, icon: "checkmark")
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(
-                        isSelected
-                            ? theme.accentColor.opacity(0.08)
-                            : theme.inputBackground.opacity(0.5)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                isSelected ? theme.accentColor.opacity(0.5) : Color.clear,
-                                lineWidth: 1
-                            )
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
+            .settingsChrome(isSelected ? .selected : .inset)
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
             .opacity(shared ? 0.55 : 1)
         }
         .buttonStyle(.plain)
@@ -1143,3 +1197,49 @@ struct WorkspaceShareAgentSheet: View {
         .help(shared ? L("This agent is already shared with the workspace.") : "")
     }
 }
+
+#if OSAURUS_DESIGN_INSPECTOR
+extension CreateWorkspaceSheet {
+    static func inspectionSample() -> Self {
+        var view = Self(); view._name = State(initialValue: "Local display workspace")
+        let data = Data(#"[{"id":"local-monthly","billing_interval":"month","price_usd":"20","active":true},{"id":"local-yearly","billing_interval":"year","price_usd":"200","active":true}]"#.utf8)
+        view.inspectionPrices = (try? JSONDecoder().decode([OsaurusRouterWorkspacePrice].self, from: data)) ?? []
+        view._selectedPriceId = State(initialValue: "local-monthly")
+        view._errorMessage = State(initialValue: "Local error display; no account request was made."); return view
+    }
+}
+extension ActivateWorkspaceSheet {
+    static func inspectionSample() -> Self {
+        var view = Self(pending: nil); view._name = State(initialValue: "Local display workspace")
+        view._code = State(initialValue: "local-display-code")
+        view._errorMessage = State(initialValue: "Local activation error display."); return view
+    }
+}
+extension JoinWorkspaceSheet {
+    static func inspectionSample() -> Self {
+        var view = Self(pending: nil); view._code = State(initialValue: "local-display-code")
+        view._errorMessage = State(initialValue: "Local join error display."); return view
+    }
+}
+extension CreateInviteLinkSheet {
+    static func inspectionSample(result: Bool) -> Self {
+        var view = Self(workspaceId: "local-display", isOwner: true, seatsRemaining: 3)
+        if result {
+            let data = Data(#"{"id":"local-invite","code":"local-display-code","url":"osaurus://workspaces/join?code=local-display-code","role":"member","status":"pending","max_uses":3,"uses":0}"#.utf8)
+            view._minted = State(initialValue: try? JSONDecoder().decode(OsaurusRouterWorkspaceInvite.self, from: data))
+        }
+        return view
+    }
+}
+extension WorkspaceShareAgentSheet {
+    static func inspectionSample() -> Self {
+        var view = Self(workspaceId: "local-display")
+        let agent = Agent(id: UUID(uuidString: "ABC00000-0000-4000-8000-000000000049")!, name: "Local display agent", description: "Display only", avatar: "green")
+        view.inspectionAgents = [agent]
+        view._selectedAgentId = State(initialValue: agent.id)
+        view._displayName = State(initialValue: "Local shared agent")
+        view._descriptionText = State(initialValue: "Local display only. No identity, relay or sharing operation is created.")
+        view._errorMessage = State(initialValue: "Local sharing error display."); return view
+    }
+}
+#endif

@@ -1,0 +1,140 @@
+{
+  "description": "A Mac's attention feed with the detail Computer Use, configuration and Privacy Filter items carry, and the answers two iPhones wrote in their own namespaces plus one in the shared namespace older iPhone builds write (SYNC_MOBILE_CONTRACT.md v2 §4).",
+  "conversation": {
+    "title": "Needs You on Studio Mac",
+    "created_ms": 1767572000000,
+    "pinned": false,
+    "archived": false,
+    "tags": {
+      "ai.osaurus.kind": "attention",
+      "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
+    },
+    "app_data": {
+      "ai.osaurus.attention/1": {
+        "v": 1,
+        "items": [
+          {
+            "id": "A1000000-0000-4000-8000-000000000001",
+            "kind": "computer_use",
+            "title": "Click Send in Mail?",
+            "body": "Writer wants to click a button in Mail.",
+            "actions": ["approve", "approve_rest", "deny", "open"],
+            "priority": 2,
+            "blocking": true,
+            "created_at": "2026-01-05T00:20:00Z",
+            "session_id": "8B9C0D1E-2F3A-4B4C-8D5E-6F7A8B9C0D1E",
+            "agent_id": "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D",
+            "detail": {
+              "action": "Click",
+              "effect": "consequential",
+              "app": "Mail",
+              "target": "Send",
+              "typedText": "Thanks, see you Friday.",
+              "truncated": true
+            },
+            "state": "pending"
+          },
+          {
+            "id": "A1000000-0000-4000-8000-000000000002",
+            "kind": "config_approval",
+            "title": "Apply 1 configuration change?",
+            "body": "Writer wants to change a setting.",
+            "actions": ["approve", "deny", "open"],
+            "priority": 1,
+            "blocking": true,
+            "created_at": "2026-01-05T00:21:00Z",
+            "detail": {
+              "change_count": 1,
+              "actions": [
+                {
+                  "section": "agents",
+                  "target": "Writer",
+                  "kind": "update",
+                  "changes": ["temperature: 0.7 → 0.4"]
+                }
+              ],
+              "prune": false
+            },
+            "state": "pending"
+          },
+          {
+            "id": "A1000000-0000-4000-8000-000000000003",
+            "kind": "privacy_review",
+            "title": "Review what's sent to the model?",
+            "body": "The Privacy Filter found 2 items.",
+            "actions": ["approve", "deny", "open"],
+            "priority": 1,
+            "blocking": true,
+            "created_at": "2026-01-05T00:22:00Z",
+            "session_id": "8B9C0D1E-2F3A-4B4C-8D5E-6F7A8B9C0D1E",
+            "detail": {
+              "items": [
+                {
+                  "id": "B1000000-0000-4000-8000-000000000001",
+                  "category": "email",
+                  "original": "sam@example.com",
+                  "placeholder": "[EMAIL_1]"
+                },
+                {
+                  "id": "B1000000-0000-4000-8000-000000000002",
+                  "category": "phone",
+                  "original": "+1 415 555 0100",
+                  "placeholder": "[PHONE_1]"
+                }
+              ]
+            },
+            "state": "pending"
+          }
+        ],
+        "recent": [
+          {
+            "id": "A1000000-0000-4000-8000-000000000000",
+            "kind": "tool_approval",
+            "title": "Allow web_fetch?",
+            "body": "Writer wants to fetch a page.",
+            "actions": ["approve", "allow_for_conversation", "deny", "open"],
+            "priority": 1,
+            "blocking": true,
+            "created_at": "2026-01-05T00:10:00Z",
+            "tool": "web_fetch",
+            "state": "resolved",
+            "outcome": "approved",
+            "surface": "phone",
+            "decided_by": { "kind": "owner_device", "label": "You · Sam's iPhone" },
+            "insights_id": "A1000000-0000-4000-8000-000000000000",
+            "settled_at": "2026-01-05T00:10:30Z"
+          }
+        ]
+      },
+      "ai.osaurus.attention-answer/1/3b9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f": {
+        "v": 1,
+        "answers": {
+          "A1000000-0000-4000-8000-000000000003": {
+            "action": "approve",
+            "redact": ["B1000000-0000-4000-8000-000000000001"],
+            "answeredMs": 1767572530000
+          }
+        }
+      },
+      "ai.osaurus.attention-answer/1/4c0e5f6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f80": {
+        "v": 1,
+        "answers": {
+          "A1000000-0000-4000-8000-000000000001": {
+            "action": "approve_rest",
+            "answeredMs": 1767572410000
+          }
+        }
+      },
+      "ai.osaurus.attention-answer/1": {
+        "v": 1,
+        "answers": {
+          "A1000000-0000-4000-8000-000000000002": {
+            "action": "deny",
+            "answeredMs": 1767572470000
+          }
+        }
+      }
+    }
+  },
+  "messages": []
+}

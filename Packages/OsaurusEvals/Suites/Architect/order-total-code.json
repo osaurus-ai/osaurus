@@ -1,0 +1,18 @@
+{
+  "id": "architect.order-total-code",
+  "domain": "architect",
+  "label": "architect \u2022 order total code",
+  "query": "Build a workflow whose input is a list of order line items (each with qty and price) and that computes the order total and item count with a code step. No model needed. Test it with two items, then offer to save it.",
+  "notes": "Code-only workflow. Pins that the Architect uses a code node rather than an inference node for deterministic arithmetic and that the test run completes in osaurus-js-host.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 16,
+      "nodeKinds": [
+        "code"
+      ],
+      "requireTestRun": true,
+      "requireProposeSave": true
+    }
+  }
+}

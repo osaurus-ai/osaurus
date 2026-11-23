@@ -1,0 +1,226 @@
+{
+  "id": "workflow.starter-email-reply",
+  "domain": "workflow",
+  "label": "workflow • built-in starter 'Email Reply' runs its own example",
+  "query": "built-in starter Email Reply runs its example",
+  "notes": "Definition and input are copied from Resources/Templates/workflow-template-email-reply.json (the example a new user runs from the starter preview). Pins every step finishing and every titled output field being filled.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string",
+              "title": "Email you received",
+              "description": "Paste the whole message.",
+              "maxLength": 20000
+            },
+            "goal": {
+              "type": "string",
+              "title": "What you want to say",
+              "description": "For example: yes to Tuesday, but no later than 3pm."
+            },
+            "tone": {
+              "type": "string",
+              "title": "Tone",
+              "enum": [
+                "Warm",
+                "Neutral",
+                "Formal"
+              ],
+              "default": "Warm"
+            },
+            "sign_off": {
+              "type": "string",
+              "title": "Sign as",
+              "description": "Your name for the sign-off. Leave empty to skip it."
+            }
+          },
+          "required": [
+            "email",
+            "goal",
+            "tone"
+          ],
+          "x-order": [
+            "email",
+            "goal",
+            "tone",
+            "sign_off"
+          ]
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "subject": {
+              "type": "string",
+              "title": "Subject"
+            },
+            "reply": {
+              "type": "string",
+              "title": "Reply"
+            },
+            "gist": {
+              "type": "string",
+              "title": "What they asked"
+            }
+          },
+          "required": [
+            "subject",
+            "reply",
+            "gist"
+          ]
+        },
+        "nodes": [
+          {
+            "id": "read",
+            "name": "Read the email",
+            "kind": "inference",
+            "inference": {
+              "model_slot": "writer",
+              "mode": "generate",
+              "temperature": 0.2,
+              "instructions": "Read the email. In one sentence, say what the sender wants. List each question or request in it that a reply should address."
+            },
+            "input": {
+              "email": "{{input.email}}"
+            },
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "gist": {
+                  "type": "string",
+                  "title": "What they're asking"
+                },
+                "questions": {
+                  "type": "array",
+                  "title": "Questions to answer",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "gist",
+                "questions"
+              ]
+            },
+            "timeout": 120,
+            "retry": {
+              "max_attempts": 2,
+              "backoff_seconds": 1
+            }
+          },
+          {
+            "id": "reply",
+            "name": "Write the reply",
+            "kind": "inference",
+            "inference": {
+              "model_slot": "writer",
+              "mode": "generate",
+              "temperature": 0.2,
+              "instructions": "Write a reply email in the given tone that says what the user wants to say and addresses every listed question. Keep it brief. Do not promise anything the user did not say. End with the sign-off name when one is given. Return a subject line starting with 'Re: ' and the reply body."
+            },
+            "input": {
+              "email": "{{input.email}}",
+              "what_to_say": "{{input.goal}}",
+              "tone": "{{input.tone}}",
+              "sign_off": "{{input.sign_off}}",
+              "questions": "{{nodes.read.output.questions}}"
+            },
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "subject": {
+                  "type": "string",
+                  "title": "Subject"
+                },
+                "reply": {
+                  "type": "string",
+                  "title": "Reply"
+                }
+              },
+              "required": [
+                "subject",
+                "reply"
+              ]
+            },
+            "timeout": 120,
+            "retry": {
+              "max_attempts": 2,
+              "backoff_seconds": 1
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "read",
+            "to": "reply"
+          }
+        ],
+        "output": {
+          "subject": "{{nodes.reply.output.subject}}",
+          "reply": "{{nodes.reply.output.reply}}",
+          "gist": "{{nodes.read.output.gist}}"
+        },
+        "model_slots": [
+          {
+            "slot": "writer",
+            "preferred": "foundation",
+            "strictness": "preferred",
+            "locality": "cloud_allowed"
+          }
+        ],
+        "secrets": [],
+        "requirement_notes": {},
+        "examples": [
+          {
+            "name": "Scheduling",
+            "input": {
+              "email": "Hi! Could we move our call to next week? Tuesday or Wednesday afternoon would work for me. Also, could you send the deck beforehand? Thanks, Sam",
+              "goal": "Tuesday at 2pm works; I'll send the deck Monday.",
+              "tone": "Warm",
+              "sign_off": "Alex"
+            }
+          }
+        ]
+      },
+      "input": {
+        "email": "Hi! Could we move our call to next week? Tuesday or Wednesday afternoon would work for me. Also, could you send the deck beforehand? Thanks, Sam",
+        "goal": "Tuesday at 2pm works; I'll send the deck Monday.",
+        "tone": "Warm",
+        "sign_off": "Alex"
+      },
+      "nodeStatuses": {
+        "read": "done",
+        "reply": "done"
+      },
+      "outputKeys": [
+        "subject",
+        "reply",
+        "gist"
+      ],
+      "outputExcludes": {
+        "subject": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ],
+        "reply": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ],
+        "gist": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

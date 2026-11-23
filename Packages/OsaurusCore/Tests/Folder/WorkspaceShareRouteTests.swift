@@ -67,21 +67,22 @@ struct WorkspaceShareRouteTests {
         #expect(!WorkspaceShareRoute.servesWrite(extension: "md"))
     }
 
-    @Test func hostURLStaysInsideTheShare() async throws {
-        try await withHome { _ in
-            let root = WorkspaceShareRoute.shareRoot.standardizedFileURL.path
-            let ok = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace/agents/x/report.pdf")
-            #expect(ok.standardizedFileURL.path.hasPrefix(root))
+    @Test func hostURLStaysInsideTheAgentsScope() async throws {
+        try await withHome { host in
+            let home = Self.home
+            let ok = try WorkspaceShareRoute.hostURL(forSandboxPath: "\(home)/report.pdf", home: home)
+            #expect(ok.standardizedFileURL.path.hasPrefix(host.standardizedFileURL.path + "/"))
             #expect(ok.lastPathComponent == "report.pdf")
+            _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace/shared/a.pdf", home: home)
 
-            #expect(throws: (any Error).self) {
-                _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace/../../etc/passwd")
-            }
-            #expect(throws: (any Error).self) {
-                _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace")
-            }
-            #expect(throws: (any Error).self) {
-                _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/etc/passwd")
+            for outside in [
+                "/workspace/../../etc/passwd", "/workspace", "/etc/passwd",
+                // Another agent's home, a sibling-prefix home, and the share root.
+                "/workspace/agents/other/secret.pdf", "\(home)x/secret.pdf", "/workspace/root.pdf",
+            ] {
+                #expect(throws: (any Error).self, "\(outside)") {
+                    _ = try WorkspaceShareRoute.hostURL(forSandboxPath: outside, home: home)
+                }
             }
             #expect(WorkspaceShareRoute.shareRelativePath(forSandboxPath: "/workspaces/x") == nil)
             #expect(

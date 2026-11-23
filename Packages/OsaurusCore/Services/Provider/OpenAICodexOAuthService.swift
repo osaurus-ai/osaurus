@@ -208,8 +208,13 @@ public enum OpenAICodexOAuthService {
     /// available, but this list keeps the UI usable before sign-in and when the
     /// `/models` endpoint cannot be reached.
     public static let supportedModels: [String] = [
+        "gpt-6.2-sol",
+        "gpt-6.2-astra",
         "gpt-6.1-sol",
         "gpt-6-astra",
+        "gpt-6.1-terra",
+        "gpt-6-sol",
+        "gpt-6-luna",
         "gpt-5.6",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -221,10 +226,6 @@ public enum OpenAICodexOAuthService {
         "gpt-5.3-codex",
         "gpt-5.3-codex-spark",
         "gpt-5.2",
-        "gpt-5.2-codex",
-        "gpt-5.1-codex-max",
-        "gpt-5.1-codex",
-        "gpt-5.1-codex-mini",
         "gpt-5.1",
     ]
 
@@ -330,12 +331,9 @@ public enum OpenAICodexOAuthService {
     public static func fetchAvailableModels(
         tokens: RemoteProviderOAuthTokens
     ) async throws -> [String] {
-        var components = URLComponents(url: modelsURL, resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "client_version", value: codexClientVersion)
-        ]
-
-        var request = URLRequest(url: components.url!)
+        // A day-old copy of the published version is re-read in the background; this read uses the one in hand.
+        CodexClientVersionStore.shared.refreshInBackgroundIfStale()
+        var request = URLRequest(url: modelsCatalogURL())
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(tokens.accessToken)", forHTTPHeaderField: "Authorization")
@@ -543,12 +541,26 @@ public enum OpenAICodexOAuthService {
 
     // MARK: - Internals
 
-    /// `client_version` query parameter sent to the Codex `/models` endpoint.
-    /// Tracks the openai/codex CLI release: the backend silently filters the
-    /// catalog for older or unrecognized versions (non-semver values like
-    /// "osaurus-1.2.3" get the wrong subset entirely). Bump this to the
-    /// current Codex CLI release when new models stop appearing in discovery.
-    public static let codexClientVersion = "0.155.1"
+    /// The built-in Codex client version: the floor for `activeClientVersion`, and the
+    /// version used until osaurus.ai's published one has been read (and whenever it
+    /// cannot be). Tracks the openai/codex CLI release: the backend silently filters
+    /// the catalog for older or unrecognized versions (non-semver values like
+    /// "osaurus-1.2.3" get the wrong subset entirely). A new model no longer needs a
+    /// bump here: Osaurus publishes a newer version at osaurus.ai/clients/codex.json
+    /// (`CodexClientVersionStore`). Still bump it with Codex CLI releases.
+    public static let codexClientVersion = "0.170.0"
+
+    /// The Codex client version every request names (the catalog's `client_version`,
+    /// the User-Agent and the Responses Lite `version` header): the published one when
+    /// it raises the built-in version, else the built-in version.
+    public static var activeClientVersion: String { CodexClientVersionStore.shared.version }
+
+    /// The `/models` URL with the active `client_version`.
+    static func modelsCatalogURL() -> URL {
+        var components = URLComponents(url: modelsURL, resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "client_version", value: activeClientVersion)]
+        return components.url!
+    }
 
     /// Codex CLI-style `User-Agent`, mirroring codex-rs's
     /// `get_codex_user_agent()` format:
@@ -568,7 +580,7 @@ public enum OpenAICodexOAuthService {
             let arch = "unknown"
         #endif
         return
-            "codex_cli_rs/\(codexClientVersion) (Mac OS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion); \(arch)) unknown"
+            "codex_cli_rs/\(activeClientVersion) (Mac OS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion); \(arch)) unknown"
     }
 
     // MARK: Wire types

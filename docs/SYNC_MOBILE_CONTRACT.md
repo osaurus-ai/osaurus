@@ -1,0 +1,1167 @@
+# Sync Mobile Contract (v2)
+
+How the Osaurus iPhone app (iOSaurus) works with the user's Macs. The iPhone is an ordinary
+osaurus-sync device in the user's account. Everything it does with a Mac goes through synced
+conversations and their app data: no HTTP route, relay tunnel or Secure Channel is involved.
+
+Nothing in the records is specific to iOS. "The iPhone" below means any companion client: a
+device whose `Device.platform` isn't macOS. A Mac publishes its attention, manage and detail
+feeds while any such device is in the account. It reads `windows` (or `win`) as a Windows PC
+and anything else unknown as a generic device; both get the same feeds as an iPhone. Only the
+Mac's keep-awake and reachability prompts are iPhone-specific. A Windows client SHOULD report
+`Device.platform` as `windows`, read the same fixtures, and use the same feature flags.
+
+Every client MUST open with the Osaurus relays and discovery server: relays
+`https://relay-us.sync.osaurus.ai`, `https://relay-eu.sync.osaurus.ai` and
+`https://relay-ap.sync.osaurus.ai`, discovery server `https://dns.sync.osaurus.ai/pkarr`, origin
+`dns.sync.osaurus.ai`, and `publish` left at `relayOnly`. A client on another discovery server
+can't find the Mac over the internet. Clients SHOULD read `https://osaurus.ai/sync/network.json`
+(the same shape as `SyncNetworkDirectory`) and apply a new list at the next open.
+
+Read [`SYNC.md`](SYNC.md) first: it covers the store, hosted runs and served chats this contract
+builds on. The record types are in `Packages/OsaurusCore/Services/Sync/`:
+`SyncHostedRunContract.swift`, `SyncDeviceFeedContract.swift`, `SyncRunProgress.swift`,
+`SyncContextUsage.swift`, `SyncManageDetail.swift` and `Models/Chat/HostRunRequest.swift`. Test
+vectors for every v2 record are in `Packages/OsaurusCore/Tests/Sync/SyncFixtures/mobile-*.json`.
+`SyncAppDataFixtureTests` reads them against the Mac's own encoders. The iPhone SHOULD test
+against the same bytes. Normative words: **MUST**, **SHOULD**, **MAY**.
+
+The old 6-digit pairing over HTTP ([`MOBILE_PROTOCOL.md`](MOBILE_PROTOCOL.md)) still works for one
+release, beside this contract (§8). The iOS work plan is
+[`SYNC_MOBILE_IOS_HANDOFF.md`](SYNC_MOBILE_IOS_HANDOFF.md).
+
+## 0. Versions and feature flags
+
+v1 was the first Sync contract: the directory, hosted runs with `hostRun {device, requestedMs}`,
+approvals, secrets, the attention feed and the five agent ops. v2 adds the rest of what the
+iPhone did over HTTP. A Mac's build says what it supports in its directory's `features` (§2):
+
+| Flag | What it adds |
+| --- | --- |
+| `per_device_answers` | `attention-answer/1/<device>`, `manage-request/1/<device>`, `manage-result/1/<device>` (§4, §5) |
+| `presence` | `presence` in the directory (§2) |
+| `host_run_options` | `hostRun.model`, `options`, `voiceCall`, `privacy` (§3.1) |
+| `run_progress` | `ai.osaurus.run-progress/1` (§3.2) |
+| `artifact_blobs` | `ai.osaurus.turn-detail/1`: tool labels, generated images and shared files as blobs (§3.3) |
+| `image_runs` | `hostRun.image` and image models in hosted runs (§3.4) |
+| `workspace_agents` | `workspaceAgents` in the manage state, hosted workspace-agent chats (§3.5) |
+| `context_usage` | `ai.osaurus.context-usage/1` and the `contextUsage` op (§3.6) |
+| `attention_detail` | `detail` on `computer_use` and `config_approval` items, the `approve_rest` answer (§4) |
+| `privacy_review` | the `privacy_review` attention kind and the `redact` answer (§4) |
+| `manage_models` | the models message, `setFavorite`, `getModelOptions`, `setModelOption` (§5.2) |
+| `agent_detail` | one detail message per agent: system prompt, avatar, tools (§5.3) |
+| `set_tool` | the `setTool` op (§5.1) |
+| `warm` | the `warm` op (§5.1) |
+| `history_filters` | `projects`, `plugins` and `workspaces` in the manage state (§5) |
+| `continue_own_chats` | Answering `hostRun` turns in the Mac's own chats, which carry no `hostDevice` (§3.10) |
+| `workflow_forms` | `detail` on `workflow_dialog` items (the form's fields) and the `submit` answer (§4) |
+| `workflow_runs` | `workflow` on a `run_progress` tool and in `toolCallDisplay`: the run the call started, its steps and how it ended (§3.2, §3.3) |
+| `workflow_library` | `workflows` in the manage state, the `runWorkflow` op and `ai.osaurus.workflow-runs/1` (§5.4) |
+| `workflow_outputs` | the `workflowOutput` op and its `ai.osaurus.workflow-output/1` message (§5.5) |
+| `workflow_details` | `facts` and `steps` on each manage-state workflow: the Mac page's chips and step badges (§5.4) |
+| `workflow_push` | Workflow notifications on the iPhone through the push service: push registrations on the manage conversation, `pushRegistered` in the manage state (§5.6) |
+| `agent_calls` | Agents calling the user back: PushKit grants in push registrations, `call-answer/1`, `call` in the manage state (§5.7) |
+| `workflow_step_details` | `steps` on every `workflow_outputs` message, an empty list for a run without any (§5.5) |
+| `manage_workflows` | the workflow library is a message in the manage conversation, not in the manage state, which a large library took past 64 KiB (§5.4) |
+| `workflow_live_steps` | `workflowOutput` with `partial` answers for a run still going, with its finished steps' details (§5.5) |
+| `workflow_run_approvals` | `run_id` on attention items a workflow run raises: a step's `tool_approval` (a tool node, or an agent step's tool), `config_approval`, `computer_use`, as well as its `workflow_dialog` (§4) |
+| `workflow_file_fetch` | `fetchable` on a run's `tooLarge` files and the `workflowFile` op that sends one on asking (§5.5) |
+| `workflow_file_inputs` | `runWorkflow` takes `files` the phone attached, and fills file and folder fields from the last run (`lastUsed`) (§5.4) |
+| `directory_models` | each directory entry carries the agent's `model`, and the agent directory conversation carries the models message (§5.2) too, so a new iPhone has both before the manage conversation arrives |
+
+- The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
+  NOT expect a v2 record from a Mac whose directory doesn't list its flag. A directory without
+  `features` is a v1 Mac.
+- A Mac ignores fields and records it doesn't know. An op it doesn't know gets
+  `unsupported_op` (§5.1).
+- `build` is the Mac's version, as `0.25.31 (1234)`, for the iPhone's "Update Osaurus on your
+  Mac" wording. The iPhone MUST NOT gate on it: flags are the contract.
+- Over a live connection a write reaches the Mac at once: over loopback a manage request was
+  answered in 0.25 s. With no connection up, a write waits for the next dial, up to the
+  30-second retry interval; over loopback the first write from a just-opened core took 30 s.
+  The iPhone SHOULD call `syncNow()` ("dial known devices now") when it comes to the foreground
+  and before a write the user waits on: a message with `hostRun`, a stop, an approval or
+  attention answer, a manage request, a secret. Whether `syncNow()` shortens that first dial
+  over mDNS or relays is unproven; to a manually added peer address it didn't.
+- Ids (sessions, turns, agents, approvals) are UUID strings. The Mac writes them lowercase, and
+  the iPhone SHOULD too: Swift's `uuidString` is uppercase, so lowercase it. Compare ids as
+  UUIDs or case-insensitively, never as raw strings. A Mac from before this note finds a chat
+  only by its lowercase `osaurus.session` tag and ignores an uppercase one without a reply.
+
+## 1. Joining the account
+
+- On a Mac, the user opens **Sharing → Devices → Add a Device**. The Mac shows a pairing offer
+  (`SyncCore.pairingOffer(ttlMs:)`) as a QR code and an `osaurus-pair:` link.
+- The iPhone scans or pastes it and calls `SyncCore.pairWithOffer(payload:)`. When pairing
+  finishes, the iPhone is a device of the same user, and the Mac's Devices list shows it as
+  **iPhone**.
+- Every client MUST use osaurus-sync 0.1.0-beta.6 or later: a current Mac doesn't add a device
+  on an older core. Offers are `osaurus-pair:2:`; a client that builds one from a typed code
+  MUST use `PairingOffer.payload(device:code:)`.
+- After the code checks out, both devices get `CoreEvent.pairingConfirmation(device, name,
+  platform, code)`. The client MUST show the six digits next to the Mac's name, ask whether the
+  Mac shows the same number, and call `confirmPairing(device:)` only when the user says yes;
+  otherwise `rejectPairing(device:)`. It MUST dismiss the prompt on `pairingFailed`. The Mac
+  asks the same question, and hands over the account only after both confirmed.
+- Conversation app data a client writes is signed by its device. The Mac counts run control,
+  tool approval answers and secret prompt answers only when signed by one of the user's current
+  devices, and drops a value in a per-device namespace (`…/<device>`) signed by any other
+  device, so a client MUST write only its own namespaces.
+- The iPhone MUST join only through a pairing offer. It MUST NOT offer to type the recovery
+  phrase: on Macs linked to the user's wallet, that phrase is derived from the wallet and
+  restores the whole identity.
+- The iPhone MUST open its core with `platform: .ios`, which other devices read as `iOS` in
+  `Device.platform` (the Mac compares case-insensitively). The Mac uses it to name the
+  device, keep itself awake (**Keep Mac Awake for iPhone**), say "Your iPhone" in notices and in
+  the Inbox, and create the attention and management conversations (§4, §5).
+- **Reachability.** When the first iPhone joins and the Mac finds devices only on the same
+  network, the Mac asks once: **Reach this Mac from anywhere?** **Turn On Anywhere** switches
+  Sync to **Anywhere (Beta)** (`SyncReachabilityPrompt`). The Mac never asks again, whatever the
+  answer.
+- Removing the iPhone on the Mac revokes it like any device. Once revoked, it can't read
+  anything new, and the Mac's other devices turn away what it writes. A revoked device keeps the
+  account secret, so **Remove Device…** defaults to **Remove and Change Phrase**, which replaces
+  the account identity (`docs/SYNC.md` → Removing a device).
+- When an `ios` device first joins, the Mac retires the old pairing (§8).
+
+## 2. Finding agents
+
+Each Mac with **Run Agents for My Other Devices** on writes its directory: one conversation
+tagged `ai.osaurus.kind=agent-directory` and `ai.osaurus.device=<mac device key>`, with app data
+`ai.osaurus.directory/1` (fixture `mobile-directory.json`):
+
+```json
+{ "v": 1, "device": "<mac key>", "updatedMs": 1767571000000,
+  "agents": [
+    { "id": "00000000-0000-0000-0000-000000000001", "name": "Osaurus", "isDefault": true },
+    { "id": "a1b2…", "address": "0x5a8d…", "name": "Writer", "description": "…", "avatar": "✍️" } ],
+  "features": ["per_device_answers", "presence", "…"],
+  "build": "0.25.31 (1234)",
+  "presence": { "state": "sleeping", "networkMode": "anywhere", "updatedMs": 1767574600000 } }
+```
+
+- `isDefault: true` marks the Mac's **Default agent**. Every Mac has its own, so other Macs skip
+  it. The iPhone has no agents of its own and SHOULD offer it, labelled with the Mac's name
+  ("Osaurus on Studio").
+- The iPhone MUST skip directories from revoked devices, and MUST ignore any directory whose
+  `device` doesn't match its tag.
+- A Mac with the setting off writes an empty list.
+- `presence.state` is `awake` (written with the directory at launch and wake), `sleeping` (as the
+  Mac goes to sleep) or `quitting` (as Osaurus quits). The writes are best effort, so a crash or
+  power loss leaves the last one. `networkMode` is the Mac's **Find Devices** setting:
+  `localNetworkOnly` (Same Network) or `anywhere`.
+- How the iPhone words a Mac (SHOULD):
+  - connected (`SyncCore` peer state): ready;
+  - not connected, last presence `sleeping`: "Studio is asleep";
+  - not connected, last presence `quitting`: "Osaurus isn't running on Studio";
+  - not connected, `networkMode` `localNetworkOnly`: "Studio is reachable on the same network
+    only", with a hint to turn on **Anywhere (Beta)** on the Mac;
+  - otherwise: "Studio is out of reach".
+
+## 3. Chatting: hosted runs
+
+A chat with a Mac's agent is a hosted run, exactly as between two Macs (SYNC.md, "Hosted
+runs"; fixtures `hosted.json`, `mobile-hosted.json`):
+
+1. The iPhone creates a synced conversation whose `ai.osaurus.session/1` carries
+   `hostDevice=<mac key>` and the agent id, and tags it `hostDevice`.
+2. Each user message carries `hostRun` in its turn app data. The Mac runs the latest unanswered
+   one once and streams the reply as the agent.
+3. The Mac writes `ai.osaurus.host-run/1 {turn, state: running|done, updatedMs}`.
+4. **Stop:** the iPhone writes `ai.osaurus.run/1 {stop: <turn id>, stopMs}`. If `host-run`
+   isn't `done` within 15 seconds, the iPhone SHOULD unlock its composer anyway and say the stop
+   isn't confirmed.
+5. **Declines** come back as an assistant turn with `terminalStopReason` `host_declined`, or
+   `interrupted` (Osaurus quit during the run). The iPhone shows the text as is. The Mac
+   declines when:
+   - the setting is off;
+   - the agent is gone, or a workspace agent is no longer shared (§3.5);
+   - the chat is busy;
+   - the requested model isn't on the Mac;
+   - an option is one the model doesn't take (§3.1).
+
+A request first seen more than an hour after it was made gets a `host_declined` reply instead of a
+run. Its time is the later of `requestedMs` and the message's HLC, so a phone clock running
+behind doesn't make a fresh request look late. The iPhone SHOULD only
+send while the Mac is connected (`SyncCore` peer state), and otherwise word it as in §2.
+
+While a run is going, the Mac's own window for that chat shows **Answering for your iPhone…**,
+and Inbox → Live Now lists it. After backgrounding, the iPhone calls `syncNow` and subscribes
+again. The run goes on on the Mac, and committed turns, `host-run/1` and `approval/1` are
+durable, so nothing else is needed to rejoin.
+
+### 3.1 Run options (`host_run_options`)
+
+```json
+"hostRun": { "device": "<mac key>", "requestedMs": 1767571200000,
+  "model": "OsaurusAI/gemma-4-qat-mxfp4",
+  "options": { "reasoningEffort": "low", "thinking": false },
+  "voiceCall": { "instructions": "Answer in two short spoken sentences." },
+  "privacy": "auto" }
+```
+
+- `model`: the model to run this turn on, as the Mac's picker names it (`id` in the models
+  message, §5.2). Missing or empty runs the agent's model. A model the Mac doesn't have is
+  declined: "<model> isn't on this Mac. Pick another model to continue."
+- `options.reasoningEffort` is one of the model's effort segments (`getModelOptions`).
+  `options.thinking` turns reasoning on or off. A value the model doesn't take is declined with
+  the reason.
+- `voiceCall` marks a turn of a voice call. `instructions` is the call's note for spoken replies
+  (`ChatViewModel.callInstructions`), at most 8,000 characters, applied to this run only and
+  never saved into the chat. The Mac adds no note of its own.
+- `privacy`: `auto` redacts every Privacy Filter detection without a review, `off` sends the
+  message as written. Missing follows the Mac's settings, which may raise a `privacy_review`
+  (§4).
+- The Mac honours these fields only when the turn's author is the Mac itself or another of the
+  user's devices that isn't revoked. Otherwise the turn runs the agent as set up on the Mac.
+- A Mac without the flag ignores them, so the iPhone MUST NOT send them to such a Mac. It
+  SHOULD say the choice isn't available until the Mac updates.
+
+### 3.2 Live progress (`run_progress`)
+
+The device running a synced turn writes `ai.osaurus.run-progress/1` on the conversation:
+
+```json
+{ "v": 1, "turn": "<user turn id>", "phase": "tool",
+  "prefill": { "stage": "prefill", "done": 2048, "total": 2048 },
+  "tools": [ { "id": "call_7", "name": "web_fetch", "label": "Fetched osaurus.ai", "icon": "globe",
+               "state": "done", "durationMs": 840 },
+             { "id": "preparing", "name": "file_write", "label": "Writing a file", "icon": "doc",
+               "state": "preparing", "argumentBytes": 312 } ],
+  "image": { "step": 3, "total": 4 },
+  "artifacts": [ { "id": "…", "filename": "outline.md", "mimeType": "text/markdown", "fileSize": 1180 } ],
+  "thinkingChars": 1420, "startedMs": 1767571260000, "updatedMs": 1767571262500 }
+```
+
+- `phase`: `waiting` (queued or loading the model), `prefill`, `thinking`, `answering`, `tool`,
+  `image` or `done`.
+- `prefill.stage`: `queued`, `cacheLookup`, `cacheRestore` or `prefill`.
+- `tools[].state`: `preparing` (the call is still being written; `id` is `preparing`),
+  `running`, `done` or `failed`. `label` is the Mac chat's text for the call, in its current
+  tense, and `icon` is an SF Symbol name.
+- Every app data write is a durable event, so this record is coarse:
+  - a new shape (phase, tool, step, file) is written at most every 500 ms;
+  - a change only to counters (`thinkingChars`, prefill `done`, `argumentBytes`) is written at
+    most every 2 seconds;
+  - when the run starts with every connected device reached only through a relay, both intervals
+    are four times longer (2 s and 8 s). Clients MUST NOT read a slow update as a stalled run.
+- `tools[].workflow` (`workflow_runs`): when the call started a workflow run, the run as the Mac
+  chat's card shows it:
+
+```json
+{ "runId": "…", "name": "Weekly report", "status": "running",
+  "steps": [ { "id": "fetch", "name": "Fetch the numbers", "status": "done" },
+             { "id": "write", "name": "Write the report", "status": "running" } ] }
+```
+
+  - `status`: `running`, `awaiting_user` (a form waits, §4), `completed`, `failed`, `cancelled`
+    or `needs_setup`. Step `status`: `pending`, `running`, `awaiting_user`, `done`, `skipped`,
+    `failed` or `pinned`. Both are kept open.
+  - At most 40 steps. `error` (at most 300 characters) names the failed step when one did.
+  - A change to a step's status is a new shape.
+- At the end the Mac writes `phase: done` with `prefill` and `image` removed and the finished tool
+  list kept. The committed messages are then the source of truth.
+- The reply's text streams through the core's stream as before. Its reasoning text does not
+  stream: it arrives with the committed turn (§7).
+
+### 3.3 What a committed turn holds (`artifact_blobs`)
+
+The reply is one message per turn. Its `ai.osaurus.turn/1` carries `thinking`, `toolCalls`,
+`toolResults`, `toolCallDurations` and `sharedArtifacts` metadata, and each tool result is also
+its own `tool_result` message.
+
+- Values over 16 KiB move to blobs (`{"$blob": i, "size": n}`). If the turn is still over
+  64 KiB, the largest remaining values move until it fits. A field is dropped only when that
+  isn't enough, in this order: `injectedContextPrefix`, `responsesOutputItems`,
+  `reasoningEncrypted`, `thinking`. Then `truncated: true` is set.
+- Assistant and tool messages written by the device that ran them also carry
+  `ai.osaurus.turn-detail/1`:
+
+```json
+{ "v": 1,
+  "toolCallDisplay": { "call_7": { "label": "Fetched osaurus.ai", "category": "web", "icon": "globe" } },
+  "files": [
+    { "kind": "generatedImage", "link": "file:///…/generated-images/hero.png", "filename": "hero.png",
+      "mimeType": "image/png", "fileSize": 48213, "blob": 0 },
+    { "kind": "artifact", "id": "…", "filename": "launch.mov", "mimeType": "video/quicktime",
+      "fileSize": 52428800, "skipped": "tooLarge" } ] }
+```
+
+- `toolCallDisplay` gives each call's label, category and icon, plus `failed: true` when it
+  failed, so the iPhone needs none of the Mac's tables.
+- `toolCallDisplay[id].workflow` (`workflow_runs`): the card the run ended with, as in §3.2. It is
+  there only when the Mac followed the run in this launch.
+- `files` are the generated images, shared artifacts and images in tool results that the turn
+  made on the Mac:
+  - `blob` is the index into the namespace's blobs;
+  - a file over 10 MiB, or past 32 MiB for the turn, is listed with `skipped: "tooLarge"` and
+    no bytes.
+- The iPhone SHOULD replace a `generatedImage`'s `link` in the reply's markdown with the blob.
+  The `file://` path is only meaningful on the Mac.
+- Only the device that ran the turn writes turn detail. Other devices never rewrite it.
+
+### 3.4 Images (`image_runs`)
+
+An image request is a hosted run whose `hostRun.model` is an image model (`kind: "image"` in
+the models message) and whose `hostRun.image` holds the composer's settings:
+
+```json
+"image": { "width": 1024, "height": 1024, "steps": 4, "guidance": 3.5, "seed": 7, "strength": 0.6,
+           "negativePrompt": "text, watermark", "aspectRatio": "16:9", "resolution": "1K",
+           "quality": "high", "count": 1 }
+```
+
+- Every field is optional. Each one set replaces the model's default, and the Mac clamps it the
+  way its composer does. Which fields apply depends on the model: the models message carries
+  each image model's `image` (local) or `cloud` controls.
+- An edit attaches the source image to the user turn. Models with `edits: true` take one.
+- **Progress:** `phase: image` with `image {step, total}` (§3.2). Preview frames aren't sent
+  (§7).
+- **Output:** the images arrive as `generatedImage` files on the reply (§3.3).
+- **Stop:** `ai.osaurus.run/1 {stop}`, as for chat.
+- **Cloud spend:** a cloud image model asks first through the run's `approval/1` card, with
+  `tool: "image"` (§3.7). Its `arguments` JSON carries:
+  - `prompt`, `resolved_model`, `backend`
+  - `billing_notice`, `estimated_minimum_usd`, `privacy`
+  - `aspect_ratio`, `resolution`, `quality`
+
+  This card replaces HTTP's `allow_remote_media_spend`. The iPhone MUST show the price and
+  notice with the buttons. Denying replies "Remote image generation cancelled before billing."
+
+### 3.5 Workspace agents (`workspace_agents`)
+
+The iPhone has no wallet identity, so it can't join workspaces. The Mac runs a teammate's
+shared agent for it instead. The manage state lists those agents in `workspaceAgents` (§5). A
+chat with one is a hosted run whose `session/1` has no `agentId` and carries:
+
+```json
+"workspace": { "workspaceId": "ws_3f2a", "agentAddress": "0xabab…" }
+```
+
+The Mac sends the run to that agent with the user's identity. Fixture `mobile-workspace.json`.
+
+- The teammate's Mac picks the model, so `hostRun.model` and `hostRun.image` are ignored.
+  `voiceCall` and `privacy` still apply. `options` is declined: "Per-turn controls are not
+  supported for shared workspace agents. The remote agent owns its generation settings."
+- If the agent is no longer shared into one of the user's workspaces, the turn is declined:
+  "This agent is no longer shared with you in that workspace. Pick another agent to continue."
+- `callerWallet` MUST NOT be set. That field marks the chats this Mac served for a teammate,
+  which aren't run toward anyone.
+
+### 3.6 Context usage (`context_usage`)
+
+After each hosted run, the Mac writes `ai.osaurus.context-usage/1` on the conversation:
+
+```json
+{ "v": 1, "agentId": "a1b2…", "model": "OsaurusAI/gemma-4-qat-mxfp4", "updatedMs": 1767571250000,
+  "usage": { "tokens": 5310, "usable_tokens": 104857, "max_tokens": 131072, "ratio": 0.0506,
+             "near_limit": false, "hard_overflow": false, "window_source": "model",
+             "context":  [ { "id": "system", "label": "System prompt", "tokens": 1210, "tint": "purple" } ],
+             "messages": [ { "id": "conversation", "label": "Conversation", "tokens": 1210, "tint": "green" } ] } }
+```
+
+- `usage` has the same fields as HTTP's `GET /sessions/{id}/context`:
+  - `near_limit` is at or past 85% of `usable_tokens`;
+  - `auto_disabled` says when the window is too small for tools or memory.
+- To price it for another agent or model before sending (after a model change, say), the iPhone
+  sends the `contextUsage` op (§5.1). The Mac rewrites this record and answers with it.
+
+### 3.7 Tool approvals
+
+The Mac publishes the tool calls the run is waiting on in `ai.osaurus.approval/1`:
+
+```json
+{ "v": 1, "pending": [
+  { "id": "…", "turnId": "…", "tool": "sandbox_exec", "description": "…",
+    "arguments": "{\"cmd\":\"ls\"}", "surface": "sandbox", "offersRunLease": true,
+    "requestedMs": 1761400000000 } ] }
+```
+
+The iPhone answers in `ai.osaurus.approval-answer/1`:
+
+```json
+{ "v": 1, "answers": { "<approval id>": "allowOnce" } }
+```
+
+- The answers are `denied`, `allowOnce`, `allowForRun` (only when `offersRunLease`) and
+  `alwaysAllow`. Show them as **Deny**, **Allow**, **Allow for This Conversation** and **Always
+  Allow**.
+- The iPhone MUST keep answers only for ids still pending, and MUST NOT turn an unknown value
+  into an allow.
+- The Mac denies whatever is still waiting when the run ends.
+- `surface` is missing when the call doesn't run on a named surface.
+
+### 3.8 Secrets
+
+When the agent asks for a secret (`sandbox_secret_set` without a value), the Mac publishes it in
+`ai.osaurus.prompt/1`:
+
+```json
+{ "v": 1, "pending": [
+  { "id": "…", "turnId": "…", "kind": "secret", "key": "OPENAI_API_KEY",
+    "description": "…", "instructions": "…",
+    "sealKey": "<base64url X25519 public key>", "requestedMs": 1761400000000 } ] }
+```
+
+- `sealKey` is a one-use key. Its private half exists only in the Mac's memory, for this prompt.
+- The iPhone seals the value with HPKE (X25519, HKDF-SHA256, ChaCha20-Poly1305: base mode, the
+  `PairingKeyEnvelope` suite) to `sealKey`, with info `osaurus-sync-secret-v1:<prompt id>`
+  (id lowercased). It writes `ai.osaurus.prompt-answer/1`:
+
+```json
+{ "v": 1, "answers": { "<prompt id>": { "sealed": { "enc": "<base64url>", "ct": "<base64url>" } } } }
+```
+
+- To decline: `{ "cancel": true }`.
+- The value MUST NOT be written in any other form, logged or kept on the iPhone. The Mac
+  stores it in its Keychain for that agent and records only that it was sent.
+- An answer that doesn't open with the prompt's key is ignored. The prompt stays until it times
+  out (5 minutes) or the run ends.
+- The prompt's attention item settles as answered from the iPhone, on every surface.
+
+A Mac chatting with another Mac's agent answers the same way (`HostedSecretCard`).
+
+### 3.9 Editing and resending
+
+To edit a sent message, the iPhone:
+
+1. deletes that message and every later one (`SyncCore.deleteMessage`);
+2. sends the edited text as a new user turn with a new id and a new `hostRun`.
+
+The host answers the new turn once (`SyncHostedRunTests.anEditedAndResentTurnIsAnsweredOnce`).
+This replaces `POST /sessions/{id}/truncate`.
+
+### 3.10 Continuing a Mac's own chats (`continue_own_chats`)
+
+A chat started on a Mac syncs to the iPhone like any other, but carries no `hostDevice`: the Mac
+runs it itself. Over HTTP the iPhone could continue any of the Mac's chats, so a Mac with this
+flag also answers its own chats:
+
+- The iPhone sends a user turn with `hostRun`, as in §3, whose `device` is the Mac that ran the
+  chat. That is the `authorDevice` of its assistant messages. The iPhone doesn't tag the
+  conversation or write `session/1`: a Mac rewrites both from its own session on every save.
+- The Mac answers when all of these hold:
+  - the conversation has no `hostDevice` tag and no `ai.osaurus.kind`, and its `source` is `chat`;
+  - the latest user message was written on another device of the user that isn't revoked;
+  - its turn's `hostRun.device` is this Mac.
+- Everything else in §3 applies as for a hosted chat: one run per turn, `host-run/1`,
+  `run-progress/1`, stop, approvals, secrets, declines and the hour-old cutoff. A chat with the
+  Default agent may have no `agentId`; it runs the Default agent.
+- The chat stays the Mac's own. It keeps no `hostDevice`, and the Mac's window for it shows
+  **Answering for your iPhone…** while the run goes.
+- A Mac without the flag ignores the turn. The iPhone MUST check the flag on the chat's Mac
+  before sending to one of its own chats.
+- On launch the Mac reads only chats active within the hour-old cutoff, since older requests
+  aren't started. While running, it reads only the latest message of a changed chat.
+
+Tests: `SyncOwnChatTests`.
+
+## 4. Attention feed
+
+While an iPhone is in the account, each Mac keeps one conversation tagged
+`ai.osaurus.kind=attention` and `ai.osaurus.device=<mac key>`. The Mac writes
+`ai.osaurus.attention/1` whenever something needs the user or is settled (fixture
+`mobile-attention.json`):
+
+```json
+{ "v": 1,
+  "items": [ { "id": "…", "kind": "owner_approval", "title": "…", "body": "…",
+               "actions": ["approve", "allow_for_conversation", "deny", "open"],
+               "priority": 1, "blocking": true, "created_at": "2026-10-26T17:00:00Z",
+               "session_id": "…", "agent_id": "…", "tool": "web_fetch",
+               "requester": { "kind": "teammate", "label": "@alice · 0x9c3e…11aa" },
+               "state": "pending" } ],
+  "recent": [ { "…": "…", "state": "resolved", "outcome": "approved", "surface": "phone",
+                "decided_by": { "kind": "owner_device", "label": "You · Sam's iPhone" },
+                "insights_id": "…", "settled_at": "…" } ] }
+```
+
+- `items` are the pending items the user routed to the iPhone under **General → Notifications**,
+  oldest first. `recent` holds up to 20 settled items, newest first.
+- Kinds:
+  - `tool_approval`, `owner_approval`, `clarification`, `workflow_dialog`;
+  - `config_approval`, `computer_use`, `secret_request`, `elicitation`, `privacy_review`;
+  - `inbound_message`, `inbound_shared_run`, `agent_notice`.
+
+  An unknown kind SHOULD be shown with its title, body and `open`.
+- Labels in `requester`, `agent` and `decided_by` are already formatted. Show them as they are.
+- An item a workflow run raised carries `run_id` (`workflow_run_approvals`): the run, as in
+  `ai.osaurus.workflow-runs/1`. An iPhone that started the run SHOULD show it on the run, as it does
+  the run's forms; it is answered like any other item (§4.1). A sub-workflow's items (a `workflow` step's run) name the
+  outermost run, the one a person started; so does a form's `detail.run_id`.
+- A pending `tool_approval` carries `arguments_preview`: the call's JSON arguments, cut to 512
+  characters. Show it with the Allow buttons, so the user sees what they allow. It may not be
+  valid JSON once cut.
+- **Detail** (`attention_detail`, `privacy_review`). A pending item MAY carry `detail`:
+  - `computer_use`: `{action, effect: read|navigate|edit|consequential, app?, target?, note?,
+    typedText?, script?}`.
+  - `config_approval`: `ConfigPlan.payload`, which is `{change_count, actions: [{section, target,
+    kind: create|update|delete|needsUserInput, changes?, risks?, long_running?}], notes?,
+    high_risk?}`, plus `prune`.
+  - `privacy_review`: `{items: [{id, category, original, placeholder}]}`, the detections the
+    Privacy Filter found in a hosted run's message, before it goes to the provider.
+  - `workflow_dialog` (`workflow_forms`): a form a workflow run waits on.
+    Any run on the Mac, including one started there (its Run button, an agent in an open chat):
+    the Mac shows that form too, and whichever device answers first wins. A form answered on
+    the Mac is retracted from the feed, so the iPhone closes it.
+    `{workflow, run_id, node_id, title, message, message_truncated?, fields: [{key, label, type,
+    required, options?, help?, default?}], prefill?, phone_answerable}`.
+    - `type` is `text | long_text | number | bool | choice | date | file | folder | secret`;
+      `options` lists a `choice`'s values. An unknown type is answered on the Mac.
+    - `prefill` holds the answers the form starts with (remembered or passed in), by key.
+    - `phone_answerable` is false when a required field is a `file`, `folder` or `secret`: those
+      are answered on the Mac (a path there, and a secret never goes into synced data). The iPhone
+      shows the form read-only with `open`. Optional fields of those types are left out.
+    - The item's `session_id` is the chat whose run started the workflow, when one did, so the
+      iPhone can show the form in that chat.
+    - Forms of one workflow are answered in order: answer the oldest first.
+
+  Detail size limits:
+  - one item's `detail` is at most 8 KiB, and the feed's is at most 32 KiB, oldest item first;
+  - a cut list keeps `truncated: true` and `total`;
+  - a cut text says `truncated: true`;
+  - an item past the feed budget carries only `{"truncated": true}`, and the iPhone opens the
+    chat for the rest.
+
+  Settled items carry neither `detail` nor `arguments_preview`.
+
+### 4.1 Answers
+
+Each iPhone answers in its own namespace, `ai.osaurus.attention-answer/1/<its device key>`
+(`per_device_answers`):
+
+```json
+{ "v": 1, "answers": {
+  "<item id>": { "action": "approve", "redact": ["<detection id>"], "answeredMs": 1767572530000 } } }
+```
+
+- `action` MUST be one the item lists:
+  - `approve`, `deny` or `allow_for_conversation`;
+  - `approve_rest` (Computer Use: approve this step and the rest of the task in that app);
+  - `reply`, with non-empty `text`, at most 16,384 characters;
+  - `dismiss`;
+  - `submit`, with `values` (`workflow_forms`): a `workflow_dialog` whose `detail` carries its
+    form and `phone_answerable: true`. `values` maps field keys to answers: a string for `text`,
+    `long_text`, `choice` (one of `options`) and `date` (`YYYY-MM-DD`), a number for `number`, a
+    boolean for `bool`. Leave out an optional field with no answer. The Mac checks the values
+    against the form as its own form does; an answer it can't accept is ignored until the iPhone
+    writes a corrected one under the same id. Once the form takes it, the item is retracted.
+    `submit` isn't listed in `actions`. The Mac enforces the types: a value for a `file`,
+    `folder` or `secret` field, or for a key the form doesn't have, is ignored, and such a field
+    keeps what the Mac would start it with.
+
+  `open` is local: open the chat (`session_id`) or the Mac.
+- `redact` is only for `privacy_review` with `approve`. It lists the detections to replace with
+  their placeholders; the rest go as written, as when the user unticks a row in the Mac's sheet.
+  If `redact` is missing, every detection is redacted. So are detections the item couldn't list
+  because the detail was cut.
+- The Mac applies each answer once, if the item is still pending and offers that action:
+  - it records the answer on the `phone` surface, from that iPhone's name;
+  - it ignores answers older than 24 hours, and answers from devices that aren't in the
+    account.
+- The first answer anywhere wins. If the item was answered on the Mac, or by another iPhone,
+  first, a later answer is ignored, and the iPhone sees the item move to `recent`.
+- A `secret_request` item is answered through §3.8, not here, because its value has to be
+  sealed.
+- An iPhone writes only its own namespace, so answers never overwrite each other. It SHOULD drop
+  answers to ids no longer listed.
+- **Older Macs.** A Mac without `per_device_answers` reads only the shared namespace,
+  `ai.osaurus.attention-answer/1`. There the iPhone MUST read the current answers, add its own
+  and write the merge. New Macs still read the shared namespace for one release and label its
+  answers with the iPhone's name when the account has one iPhone, or **Your iPhone** when it
+  has several.
+
+## 5. Managing agents
+
+While an iPhone is in the account, each Mac keeps one conversation tagged
+`ai.osaurus.kind=manage` and `ai.osaurus.device=<mac key>` (fixture `mobile-manage.json`). The Mac
+writes `ai.osaurus.manage-state/1` when its agents, models, workspaces or filters change:
+
+```json
+{ "v": 1, "device": "<mac key>", "updatedMs": 1767573000000,
+  "agents": [
+    { "id": "00000000-…-000000000001", "name": "Osaurus", "isDefault": true, "model": "qwen3-8b" },
+    { "id": "a1b2…", "name": "Writer", "description": "…", "avatar": "✍️", "model": "gpt-5.1",
+      "settings": { "tools_enabled": true, "memory_enabled": true, "web_search_enabled": false,
+                    "autonomous_exec_enabled": false, "autonomous_exec_available": true } } ],
+  "models": [ { "id": "qwen3-8b", "name": "Qwen3 8B", "provider": "Local" } ],
+  "workspaceAgents": [ { "workspaceId": "ws_3f2a", "workspaceName": "Studio", "address": "0xabab…",
+                         "name": "Researcher", "ownerName": "Sam" } ],
+  "projects": [ { "id": "D4C3…", "name": "Launch" } ],
+  "plugins": [ { "id": "osaurus.time", "name": "Time" } ],
+  "workspaces": [ { "id": "ws_3f2a", "name": "Studio" } ] }
+```
+
+- `models` lists chat models only. The models message (§5.2) has the full picker.
+- `settings.temperature` and `max_tokens` are present only when set.
+- `workspaceAgents` lists teammates' agents shared into the user's workspaces, not the user's
+  own (§3.5).
+- `projects`, `plugins` and `workspaces` are the history's filters (`history_filters`), matched
+  against a chat's `projectId`, `sourcePluginId` and `workspace.workspaceId`, as HTTP's
+  `GET /projects` lists them.
+- The state is written under 56 KiB (the core takes at most 64 KiB a value). Past that, in turn,
+  `workflows` (an older Mac's), `models`, `workspaceAgents` and the history filters are left out;
+  `agents`, `pushRegistered` and `call` stay.
+
+### 5.1 Requests
+
+Each iPhone asks for changes in `ai.osaurus.manage-request/1/<its device key>`. It keeps a list
+and appends to it, and each request has a unique `id`:
+
+```json
+{ "v": 1, "requests": [
+  { "id": "r1", "op": "updateAgent", "agentId": "a1b2…", "name": "Scout",
+    "memoryEnabled": false, "clearTemperature": true, "requestedMs": 1767573100000 } ] }
+```
+
+| `op` | Fields | Answer (`data`) |
+| --- | --- | --- |
+| `createAgent` | `name`, `description?`, `systemPrompt?`, `model?` | — (`agentId`) |
+| `updateAgent` | any of `name`, `description`, `systemPrompt`, `toolsEnabled`, `memoryEnabled`, `webSearchEnabled`, `autonomousExecEnabled`, `temperature` (0–2) or `clearTemperature`, `maxTokens` (1–1,000,000) or `clearMaxTokens` | — |
+| `setModel` | `agentId`, `model` (empty or missing: the default) | — |
+| `setToolPreset` | `agentId`, `preset`: `all`, `essential` or `none` | — |
+| `deleteAgent` | `agentId` | — |
+| `setTool` | `agentId`, `name` (the tool), any of `enabled`, `agentEnabled`, `policy` (`auto`, `ask`, `deny`) | the tool's row (§5.3) |
+| `warm` | `agentId`, `model?` (default: the agent's) | `{loaded, already?}` |
+| `contextUsage` | `scope` (the chat's conversation), `agentId?`, `model?` | the `usage` of §3.6 |
+| `setFavorite` | `key` (a model's `favorite_key`), `favorite` | `{favorites}` |
+| `getModelOptions` | `model` | the model's options |
+| `setModelOption` | `model`, `option`, `value` (a segment id or a bool) or `clearValue: true` | the model's options |
+
+Op notes:
+
+- `createAgent` starts with tools, memory, web search and the sandbox off. `name` is cut to
+  80 characters.
+- `updateAgent` works on user agents only. `setModel` also works for the Default agent.
+- `setToolPreset` applies the Tools window's presets.
+- `deleteAgent` is refused while the agent is shared to a workspace.
+- `warm` loads the model ahead of a voice call, as the Mac's call does. `loaded: false` means
+  the model is remote or there was nothing to load.
+- `contextUsage` also rewrites the chat's `context-usage/1`.
+- `getModelOptions` and `setModelOption` answer with the model's options:
+
+  ```json
+  { "model": "…", "thinking": { "enabled": true, "explicit": false, "tristate": false },
+    "options": [ { "id": "reasoningEffort", "label": "Reasoning", "kind": "segmented",
+                   "segments": [ { "id": "low", "label": "Low" } ], "selected": "low",
+                   "explicit": true } ] }
+  ```
+
+  The same per-model options apply to the Mac's own runs. The option id `thinking` sets the
+  Thinking row.
+
+The Mac applies each request once, through the same calls its own editor makes, and writes
+`ai.osaurus.manage-result/1/<that device key>`:
+
+```json
+{ "v": 1, "results": { "r1": { "ok": true, "agentId": "a1b2…", "doneMs": 1767573100500 } } }
+```
+
+- Errors: `agent_not_found`, `agent_not_editable` (the Default agent, except for `setModel`),
+  `bad_request`, `sandbox_unavailable`, `agent_shared`, `tools_loading`, `tool_not_found`,
+  `chat_not_found`, `unknown_option`, `invalid_value`, `load_failed`, `too_large`,
+  `unsupported_op`, `interrupted`, `failed`.
+- `message` is readable text. Show it as is.
+- `unsupported_op` means the Mac's build doesn't know the op. Check `features` first.
+- `interrupted` means the Mac stopped while applying the request. It may or may not have taken
+  effect, so the iPhone SHOULD refresh `manage-state` before asking again.
+- `data` is at most 16 KiB. A larger answer fails with `too_large`, and the iPhone reads the
+  record the op writes, or the detail messages, instead.
+- `name` is at most 200 characters, `description` 2,000 and `systemPrompt` 100,000. A longer one
+  is refused with `bad_request`.
+- Each applied request is recorded in the Mac's Insights (method `SYNC`, path `/manage/<op>`),
+  attributed to that iPhone by name, without the values it set.
+- Requests older than 24 hours are ignored. The Mac keeps a result for every request still in
+  the list, and drops results for requests the iPhone removed. The iPhone MUST remove requests
+  from its list once their result is in, and MUST NOT reuse an `id`.
+- Each request runs at most once. The Mac records a request id in a local file before applying
+  it, so a request never runs twice: not after the results are lost or trimmed, not after a
+  relaunch, and not if the Mac quits mid-request.
+- **Older Macs.** A Mac without `per_device_answers` reads only `ai.osaurus.manage-request/1`
+  and answers in `ai.osaurus.manage-result/1`. New Macs still read those for one release.
+
+### 5.2 The models message (`manage_models`)
+
+Conversation app data can't hold blobs and is capped at 64 KiB, so the picker goes on a message.
+The manage conversation has one `system` message with content `models` and app data
+`ai.osaurus.manage-models/1`:
+
+```json
+{ "v": 1, "favorites": ["local:OsaurusAI/gemma-4-qat-mxfp4"],
+  "models": [ { "id": "OsaurusAI/gemma-4-qat-mxfp4", "name": "Gemma 4 QAT", "provider": "Local",
+                "source": "local", "vision": true, "thinking": true, "available": true,
+                "tab": "local", "tab_title": "Local", "favorite_key": "local:…",
+                "context_length": 131072, "kind": "chat", "edits": false } ],
+  "digest": "…", "updatedMs": 1767573000100 }
+```
+
+- Each row has HTTP's `GET /models/picker` fields (MOBILE_PROTOCOL.md §12): chat models, the
+  image models the iPhone can run, and cloud image models with their `image` or `cloud`
+  controls and `privacy`.
+- A value over 16 KiB (a long model list) is a blob reference, `{"$blob": i, "size": n}`, into
+  this namespace's blobs.
+- The Mac rewrites the message only when `digest` changes. The iPhone SHOULD keep its copy until
+  then.
+
+### 5.3 Agent detail messages (`agent_detail`)
+
+One `system` message per agent the iPhone can manage, with content `agent` and app data
+`ai.osaurus.agent-detail/1`:
+
+```json
+{ "v": 1, "agentId": "a1b2…", "name": "Writer", "isDefault": false, "toolsEnabled": true,
+  "systemPrompt": { "$blob": 0, "size": 18 },
+  "tools": [ { "name": "web_fetch", "description": "…", "enabled": true, "policy": "ask",
+               "remote_safe": false, "built_in": false, "agent_enabled": true },
+             { "name": "computer_use", "…": "…", "blocked_by": ["accessibility"] } ],
+  "avatarImage": { "$blob": 1, "size": 48213, "mimeType": "image/png" },
+  "digest": "…", "updatedMs": 1767573000200 }
+```
+
+- `systemPrompt` is inline up to 16 KiB and a JSON-string blob above that.
+- `chatQuickActions` is the agent's Action Bar (`{id, icon, text, prompt}` rows), as `GET /agents`
+  sends `chat_quick_actions`. It's missing for an agent on the built-in chat defaults, and the
+  iPhone then shows its own copy of them. An older Mac never writes it, so the iPhone needs no flag.
+- `avatarImage` is the agent's custom avatar, up to 2 MiB, as a raw blob with `mimeType`.
+- `tools` has HTTP's `GET /agents/{id}/tools` rows:
+  - `enabled` is on for this Mac;
+  - `agent_enabled` is on for this agent;
+  - `policy` is `auto`, `ask` or `deny`;
+  - `remote_safe` is false when running the tool raises an approval card, or its surface blocks
+    it outright;
+  - `blocked_by` lists missing permissions;
+  - `built_in` tools follow the agent's own switches.
+- A deleted agent's message is removed. As with the models message, `digest` says when it
+  changed.
+
+### 5.4 Workflows (`workflow_library`)
+
+The Mac's installed workflows, sorted by name (at most 100). A Mac with `manage_workflows` lists
+them on a message: one `system` message in the manage conversation with content `workflows` and
+app data `ai.osaurus.manage-workflows/1`, `{ "v": 1, "workflows": [ … ], "digest", "updatedMs" }`,
+`workflows` a blob reference (`{"$blob": i, "size": n}`) when over 16 KiB, and rewritten only when
+`digest` changes, as the models message is (§5.2). An older Mac lists them in the manage state's
+`workflows`; a Mac with `manage_workflows` leaves that out. Either way, each entry is:
+
+```json
+"workflows": [ { "id": "…", "name": "Weekly Report", "summary": "Sums up the week's notes.",
+                 "fields": [ { "key": "topic", "label": "Topic", "type": "text", "required": true },
+                             { "key": "depth", "label": "Depth", "type": "choice", "required": false,
+                               "options": ["short", "long"], "default": "short" } ],
+                 "prefill": { "topic": "Q3" }, "phoneStartable": true } ]
+```
+
+- `fields` is the input form the Mac's Run page shows, built from the input schema. Field
+  `type`s are the dialog field types of §4 (`text`, `long_text`, `number`, `bool`, `choice`,
+  `date`, `file`, `folder`).
+- `prefill` is the last run's input, without its `file` and `folder` fields: a path stays on the Mac.
+- `lastUsed` (`workflow_file_inputs`), on a required `file` or `folder` field, is the name of what
+  the last run used: the name only, never the path. A start from the phone that sends nothing for the
+  field reuses that same path, if it still exists on the Mac; otherwise the start fails with
+  `invalid_input`. An optional field the phone sends nothing for is left empty. From a run the phone
+  started, only a file the Mac saved for it is reused.
+- `phoneStartable` is false when a required field is a `secret`, or a `file` or `folder` with no
+  `lastUsed`. Those workflows are started on the Mac: `runWorkflow` for one is refused
+  (`invalid_input`). A phone that sees `workflow_file_inputs` can still start one whose only such
+  fields are `file`s, by attaching them (`files` below).
+- The Mac takes `input` values only for the fields of types the phone fills in. A `file` or
+  `folder` field gets only a path the Mac makes: the file the phone attached, else the last run's,
+  else its default. Never a path the phone sends.
+- `blocked`, when present, says what has to be set up on the Mac first.
+- `facts` and `steps` (`workflow_details`) are what the Mac's workflow page shows:
+
+```json
+"facts": [ { "icon": "checkmark.circle.fill", "text": "Ready to run", "tone": "success" },
+           { "icon": "list.number", "text": "4 steps", "tone": "neutral" } ],
+"steps": [ { "name": "Research Company", "kind": "Uses a model and tools", "icon": "wand.and.stars",
+             "badges": [ { "icon": "cloud", "text": "Cloud model", "tone": "caution" },
+                         { "icon": "gauge", "text": "~1.9 min · ~26.4k tokens", "tone": "neutral" } ] } ]
+```
+
+  - `facts` lists, in order:
+    - whether it can run;
+    - its step count;
+    - where its models run;
+    - its version;
+    - whether it's published.
+  - `steps` are in run order (at most 30). Each has the Mac's risk and cost badges: hosts reached, files written, cloud or local model, and time and tokens from past runs.
+  - `icon` is an SF Symbol name.
+  - `tone` is `neutral`, `success`, `warning`, `caution` or `risky`. It is kept open.
+  - The state is written again when a run ends, since the time and token badges come from past runs.
+- `outputs`, `access` and `source` fill the phone's Overview and About tabs. All three are optional; a phone
+  hides what's missing. They come from the installed version alone; nothing is fetched from the registry.
+
+```json
+"outputs": [ "Briefing" ],
+"access": {
+  "files": [ { "icon": "doc.text.magnifyingglass", "title": "Reads", "detail": "nothing" } ],
+  "places": [ "Your Mac" ],
+  "note": "It reads and saves nothing on your Mac.",
+  "needs": [ { "icon": "cube", "title": "Runs on", "detail": "Not chosen yet", "problem": true },
+             { "icon": "network", "title": "Internet access", "detail": "api.example.com" } ]
+},
+"source": { "author": "Ada", "key": "0x…", "version": 3, "changelog": "Shorter briefings.",
+            "hash": "…", "createdMs": 1731400000000, "fromStore": true }
+```
+
+  - `outputs` names what it hands back, as the page's "You get" does.
+  - `access.files`, `places` and `note` are the page's "Your files". `access.needs` is its "Before It
+    Runs" list: models, keys (by name only), internet hosts, workflows it runs, tools, packages, folders
+    and standing folder permissions. `problem` marks what still has to be set up.
+  - `source` is the installed version's file. `key` is present only when the file is signed.
+    `fromStore` is true when it was installed from the registry.
+- `published` is true when the workflow is shared to the registry and still listed there. A phone uses it for its
+  Published tab; from a Mac that doesn't send it, a phone shows no Published workflows.
+
+`runWorkflow` (`workflowId`, `input`) starts one as the Mac's Run button does, as a background
+run. Fields left out keep their defaults, and the input is checked against the schema.
+- The result's `data` is `{ "runId": "…" }`.
+- Errors: `workflow_not_found`, `needs_setup` and `invalid_input`, each with a message to show.
+- `files` (`workflow_file_inputs`) fills `file` fields with files from the phone:
+  `{ "<fieldKey>": { "message": "<messageId>", "blob": "<hash>" } }`.
+  - Send the file first, as an attachment on a message of the manage conversation, then the request
+    naming it. Its `content` is `"workflow input"` and its role `user`.
+  - The Mac takes it only from a message on its manage conversation that the requesting device wrote,
+    with that attachment, at most 10 MB, for a field of type `file`. Otherwise the request fails with
+    `invalid_input`. The Mac waits up to 30 seconds for the message to arrive.
+  - The Mac saves a copy for the run, so the phone may delete its message once the request has a result.
+- The run's forms come through the attention feed (§4) with no `session_id`.
+
+The Mac also writes its recent runs on the manage conversation, whatever started them: each
+workflow's 10 newest, one conversation app data entry per run under
+`ai.osaurus.workflow-run/1/<runId>`. A run is rewritten at most every 500 ms, and only when its
+entry changed; a run no longer listed has its entry removed. Order runs by `startedMs`, newest first.
+
+```json
+{ "workflowId": "…", "caller": "user", "startedMs": 1767571260000,
+  "card": { "runId": "…", "name": "Weekly Report", "status": "running", "steps": [] } }
+```
+
+- One entry per run, not one list: the conversation's history keeps every value written, and a
+  list rewritten on each step change grew it by the whole list each time.
+- Macs before this wrote the whole list as `ai.osaurus.workflow-runs/1`
+  (`{ "v": 1, "runs": [entry, …], "updatedMs": … }`); a Mac writing entries clears it. Read the
+  list only when there are no entries.
+- `card` is the card of §3.2.
+- `finishedMs` is set once the run ends.
+- `caller` is `user`, `agent`, `orchestrator`, `workflow` or `event`. It is kept open.
+
+Pinned workflows are shared by the user's devices on the same manage conversation: one conversation app data
+entry per pinned workflow, `ai.osaurus.workflow-pin/1/<workflowId>` (the id lowercased), written by whichever
+device pinned it, and removed when it's unpinned.
+
+```json
+{ "pinnedMs": 1767571260000 }
+```
+
+- One entry per workflow, so two devices pinning different workflows never overwrite each other.
+- List pinned workflows most recently pinned first. Ignore a pin whose workflow isn't in the list (removed on
+  the Mac); the entry is kept, so the pin comes back if the workflow does.
+- The iPhone pins and unpins today. The Mac doesn't yet, but reads and writes the same entries
+  (`SyncWorkflowPins`) and never removes them, so pinning added there later keeps the phone's pins.
+
+### 5.5 Run outputs (`workflow_outputs`)
+
+`workflowOutput` (`runId`) asks for a finished run's output. Only runs the iPhone opens are sent.
+
+- The Mac writes a message in the manage conversation with content `workflow-output` and
+  `ai.osaurus.workflow-output/1` app data, then answers with `{ "runId": "…" }`:
+
+```json
+{ "v": 1, "runId": "…", "status": "completed", "input": { "topic": "Q3" },
+  "output": { "report": "…" }, "error": "…",
+  "files": [ { "id": "…", "filename": "report.md", "mimeType": "text/markdown", "fileSize": 1180,
+               "blob": 0 },
+             { "id": "…", "filename": "raw.mov", "mimeType": "video/quicktime", "fileSize": 52428800,
+               "skipped": "tooLarge" } ],
+  "steps": [ { "id": "research", "model": "claude-sonnet-4-6", "attempts": 1, "durationMs": 8200,
+               "inputTokens": 1200, "outputTokens": 340, "error": "…",
+               "input": { "company": "Raycast" }, "output": { "notes": "…" }, "logs": [ "…" ],
+               "toolCalls": [ { "name": "web_search", "isError": false, "durationMs": 900, "arguments": "{…}",
+                                "result": "…" } ] } ],
+  "digest": "…" }
+```
+
+- `input` and `output` over 16 KiB move to blobs (`{"$blob": i, "size": n}`).
+- `steps`: what the Mac's run view shows on opening each step, keyed by the card's step `id` (§3.2). Skipped
+  steps are left out; every field but `id` and `attempts` is optional. A step's `input` and `output` over
+  4 KiB move to blobs the same way. A tool call's `arguments` (secrets scrubbed) and `result` are the Mac's
+  previews, at most 4,000 characters each.
+  `logs` is the newest 200 lines, each at most 500 characters; `error` at most 2,000. The message is app data,
+  which the sync core caps at 64 KiB a write (past it the write fails and the output never arrives). Past
+  48 KiB, in turn until it fits: the steps go without `logs` and `toolCalls`; every step `input` and
+  `output` moves to a blob; the oldest steps go with only `{ "id", "trimmed": true }`; and the run's own
+  `input` and `output` move to blobs. The run's `error` is at most 2,000 characters, and at most 100
+  files are listed.
+  Sent on every message by a Mac with `workflow_step_details`, an empty list when no step ran. A message
+  without it was written before: the iPhone asks again, and the Mac rewrites it.
+- A file over 10 MiB, or past 32 MiB for the run, is listed with `skipped: "tooLarge"`. A file that
+  is gone is listed with `skipped: "missing"`.
+- `workflow_file_fetch`: a `tooLarge` file of at most 512 MiB also has `fetchable: true`. The iPhone asks for it with
+  `workflowFile` `{ runId, fileId }` (owner-signed, as `workflowOutput`; ids only, the Mac reads the path from its
+  own record of the run, and sends only a plain file, never a link). It answers `{ runId, fileId }` once a system
+  message is written in the manage conversation with `ai.osaurus.workflow-file/1` `{ "v": 1, "runId", "fileId",
+  "blob": 0 }` and the file as its one attachment, or fails with `file_not_found` or `too_large`. The Mac keeps
+  the newest 2 of these messages.
+- `partial: true` (`workflow_live_steps`) answers for a run still going too, where it would otherwise fail
+  with `running`. The message then has the run's `status` (`running` or `awaiting_user`), no `output` or
+  `files` (they aren't final), and in `steps` the details of finished steps only: one not finished yet is
+  `{ "id": "…", "pending": true }`. Ask again as more steps finish; each answer replaces the message. Once the
+  run has ended, ask without `partial` for its output and files.
+- The same run's message is replaced only when its digest changes, the old one removed only once the new
+  one is written. The Mac keeps the last 10 of these messages.
+- Each file is copied for its blob from the descriptor its checks were made on: a plain file, never a
+  link, at its size then.
+- Errors: `run_not_found`, and `running` (the run hasn't ended).
+
+### 5.6 Workflow notifications (`workflow_push`)
+
+An iPhone that wants notifications about this Mac's workflow runs writes
+`ai.osaurus.push-registration/1/<its device key>` on the manage conversation:
+
+```json
+{ "v": 1, "grant": "<base64>", "grantId": "…", "expiresMs": 1770163260000,
+  "contentKey": "<32 bytes, base64>", "installId": "…",
+  "events": ["started", "awaiting_user", "completed", "failed", "needs_setup"],
+  "onlyOthers": true, "updatedMs": 1767571260000 }
+```
+
+- `grant` comes from osaurus-sync's `pushGrant`, made for this Mac as its `audience`. It is
+  sealed to the Osaurus push service, so the Mac can't read the APNs token in it.
+- `contentKey` is a ChaChaPoly key, new with each registration, for what a notification says.
+- `installId` stays the same across unpairing and pairing again. Of several registrations with
+  the same `installId` (an older identity of the same iPhone), the Mac uses the newest.
+- `events` is which changes the iPhone wants; `cancelled` is also accepted. `onlyOthers` (default
+  true) leaves out `started` for runs an iPhone started with `runWorkflow`.
+- Writing nothing (`nil`) to the namespace turns notifications off.
+- The Mac reads registrations on every manage conversation tagged with its device, and only of
+  devices still in the account. It lists the iPhones it holds one for in the manage state as
+  `pushRegistered` (device keys), so an iPhone can tell its registration arrived.
+
+When one of the Mac's own runs changes (§5.4's list), it sends each registered iPhone a push
+through `https://push.sync.osaurus.ai/v1/send`, with `apns-collapse-id` set to the run id:
+
+```json
+{ "aps": { "alert": { "title": "Workflow update", "body": "Open Osaurus to see it." },
+           "mutable-content": 1, "sound": "default", "thread-id": "<workflowId>" },
+  "o": "<base64 of ChaChaPoly combined: nonce | ciphertext | tag>" }
+```
+
+`o` opens with `contentKey` to:
+
+```json
+{ "v": 1, "event": "failed", "runId": "…", "workflowId": "…", "device": "<Mac device key>",
+  "title": "Weekly Report", "body": "Failed: Draft: timed out" }
+```
+
+- The iPhone's notification service extension replaces the alert's title and body with these.
+  The plain alert is what shows if it can't.
+- `event` is one of the registration's `events`, or `cleared`: the run stopped waiting for an
+  answer (answered on the Mac, or on another iPhone). `cleared` comes as a background push
+  (`content-available`, no alert), so the iPhone can remove the waiting notification.
+- Runs that started or ended before the Mac started aren't announced.
+- When the service answers 403 or 410, the Mac stops using that grant until it would have expired.
+  The iPhone writes a new registration to start again.
+
+### 5.7 Agent calls (`agent_calls`)
+
+An agent can call the user back: the Mac rings each device set to ring through PushKit, and the
+device shows an incoming call. A device that wants these adds, to its registration (§5.6):
+
+```json
+{ "calls": true, "voipGrant": "<base64>", "voipGrantId": "…", "voipExpiresMs": 1770163260000 }
+```
+
+- `voipGrant` comes from `pushGrant` for the device's PushKit token, with the app's topic plus
+  `.voip`, made for this Mac. `calls` false, or no `voipGrant`, means the device doesn't ring.
+- The same rules as §5.6 apply: devices still in the account, the newest registration per
+  `installId`, and a grant the service refuses (403, 410) isn't used again until it would have
+  expired.
+
+A call is a `voip` push (no `aps`, sent now or never) to each device set to ring:
+
+```json
+{ "o": "<base64 of ChaChaPoly combined, with contentKey>" }
+```
+
+`o` opens to a ring or a call-off:
+
+```json
+{ "v": 1, "kind": "ring", "callId": "…", "device": "<Mac device key>", "sentMs": 1767571260000,
+  "agentId": "…", "agentName": "Builder", "sessionId": "…",
+  "opening": "Your build finished: all tests pass.", "reason": "Build finished" }
+{ "v": 1, "kind": "cancel", "callId": "…", "device": "<Mac device key>", "sentMs": 1767571290000 }
+```
+
+- iOS ends an app that receives a VoIP push without reporting a call, so the device reports one
+  for every push. For a `cancel`, a ring older than 40 seconds, or one it can't open, it reports
+  the call and ends it at once.
+- A ring lasts 40 seconds. The device writes its answer in
+  `ai.osaurus.call-answer/1/<its device key>`:
+
+  ```json
+  { "v": 1, "callId": "…", "outcome": "answered", "atMs": 1767571270000 }
+  ```
+
+  `outcome` is `answered`, `declined`, `missed` (it rang out) or `busy` (another call was on).
+  A device that answered writes `ended` for the same call when it hangs up; only that device's
+  `ended` counts. Until then (two hours at most) the Mac takes the user to be on that call: `call_user` from any run in the chat
+  doesn't ring (the agent is told to say it in the call), and its approvals get no notice or call.
+- The first `answered` takes the call: the Mac sends a `cancel` to each device that hasn't
+  answered. When every device has turned it down, or after 45 seconds, the call is over.
+- The manage state carries `call` while a call rings and for a minute after it ends:
+  `{ "callId": "…", "state": "ringing" | "answered" | "ended", "answeredBy": "<device key>" }`.
+  A device still ringing for a call that isn't `ringing` there stops, in case its `cancel` was lost.
+- Answered, the device opens the chat `sessionId`, speaks `opening` as the agent's first line,
+  and goes on as any voice call on that chat.
+- A call that rang out with nobody taking it (`missed`; not `declined`, which the user chose)
+  sends each device that rang a notification on its alert grant, with
+  `apns-collapse-id` `call-<sessionId>`. `o` opens to
+  `{ "v": 1, "event": "missed_call", "device", "agentId", "sessionId", "title": "<agent>",
+  "body": "Missed call: <reason>" }`; the plain alert reads "Missed call".
+- One call at a time per Mac.
+- The agent is offered `call_user` and `arrange_callback` only while a device's calling grant
+  is unexpired. `call_user` counts a call, and uses up an arranged one, only when something
+  rang (`answered`, `declined`, `missed`, or called off while ringing); `busy`,
+  `unavailable` and a call that couldn't be sent give both back.
+
+### 5.8 Approval requests (`approval` in a push registration's `events`)
+
+A chat run for an iPhone publishes the approvals it waits on in the chat (`approval/1`, §3.7),
+which only that iPhone shows. An iPhone that lists `approval` in its registration's `events`
+(§5.6) also gets a notification when one is published, so it hears about it with the app closed:
+
+- An alert push, `apns-collapse-id` `approval-<sessionId>`, generic in the clear ("Approval
+  needed"). `o` opens to `{ "v": 1, "event": "approval", "device", "agentId", "sessionId",
+  "title": "<agent>", "body": "Needs your approval: <what>" }`.
+- When the run's approvals are answered (on any device) or the run ends, a background push whose
+  `o` opens to `{ "event": "approval_cleared", "sessionId" }`; the iPhone removes the notice.
+- It goes to the iPhone that asked for the run, or, for a run the Mac continued itself (a helper's
+  report), to every iPhone that lists `approval`.
+- When a call was arranged from that chat (`arrange_callback`) and a device lists
+  `approval_call` too, the agent also calls about it (§5.7), opening with what it waits on. That
+  call counts toward the agent's calls a day but leaves the arranged call for the result. It is
+  spaced like the agent's own calls (10 minutes), stops after two in a row go unanswered in that
+  chat or while the agent is locked out for missed calls, and is called off when the approvals
+  are answered or go. The spacing and the misses survive a relaunch of the Mac.
+- Nothing new is sent for a run that is a turn of a live call (`hostRun.voiceCall`), or while a
+  call placed from the chat is on: the call reads the card out itself. The clearing push still goes.
+
+### 5.9 Live Activities for workflow runs (`workflow_push`)
+
+An iPhone that shows workflow runs on its Lock Screen writes
+`ai.osaurus.push-activity/1/<its device key>` on the manage conversation, signed by that device
+(the Mac ignores one that isn't, or that another device signed):
+
+```json
+{ "v": 1,
+  "activities": [ { "runId": "…", "grant": "<base64>", "grantId": "…", "expiresMs": 1770163260000 } ],
+  "start": { "grant": "<base64>", "grantId": "…", "expiresMs": 1770163260000 } }
+```
+
+- Each `activities` entry is the grant (from `pushGrant`, as in §5.6) for one activity's push
+  token, for the run `runId`. `start`, when present, is the grant for the iPhone's
+  push-to-start token (iOS 17.2 or later, Live Activities on).
+- The content key is the one in the device's push registration (§5.6); without a registration
+  the Mac sends nothing.
+- For a run begun on this Mac after it launched, the Mac starts an activity on each iPhone with a
+  `start` grant. A run an iPhone started gets its activity from that iPhone.
+- Each change to the run's status or a step's status is an update; a run that ends
+  (`completed`, `failed`, `cancelled`, `needs_setup`) gets a final `end`. A push the service
+  couldn't take (a 5xx, an unreachable service, or a 429, which also holds that device's other
+  pushes for the wait) is sent once more, with the run's state as it is then.
+- The APNs payload, `apns-push-type` `liveactivity`:
+
+  ```json
+  { "aps": { "event": "update", "timestamp": 1767571260,
+             "content-state": { "sealed": "<base64>", "status": "running", "done": 2, "total": 5,
+                                "endedMs": 1767571290000 } } }
+  ```
+
+  `endedMs` only once the run ended. A start adds `"event": "start"`,
+  `"attributes-type": "WorkflowRunAttributes"`, `"attributes": { "device": "<Mac device key>",
+  "runId": "…", "startedMs": … }` and a generic alert ("Workflow running"), which Apple reads.
+- `sealed` is ChaChaPoly (combined) with the content key, over
+  `{ "name": "<run>", "mac": "<Mac name>", "steps": [ { "name": "…", "status": "completed" } ] }`.
+  Step `status` is `completed`, `running`, `failed`, `awaiting_user` or `pending`; skipped steps
+  are left out. Nothing readable is in the clear: only the status, counts and end time.
+- Under APNs' 4 KB: `name` at most 80 characters and `mac` 40; every step's status is kept, but
+  step names (at most 40 characters) only for the six around the current step. A card still
+  too large goes without step names, then without steps.
+
+## 6. HTTP routes and their Sync replacements
+
+Every route the iPhone 1.0(11) calls (`SYNC_MOBILE_IOS_HANDOFF.md` has the full inventory),
+and what replaces it:
+
+| HTTP (MOBILE_PROTOCOL.md) | Sync |
+| --- | --- |
+| `POST /pair/code`, `/pair/confirm` | A pairing offer (§1) |
+| `POST /pair/unpair` | **Remove** on the Mac's Devices list. The iPhone leaves the account locally. |
+| `GET /health` | `SyncCore` peer state, plus `presence` (§2) |
+| `GET /agents`, `GET /agents/{id}` | The directory (§2), the manage state and agent detail (§5) |
+| `GET /agents/{id}/avatar` | `avatarImage` in agent detail (§5.3), or `avatar` (emoji) in the directory |
+| `POST /agents`, `PATCH`/`DELETE /agents/{id}` | `createAgent`, `updateAgent`, `deleteAgent` |
+| `PUT /agents/{id}/model` | `setModel` |
+| `GET /agents/{id}/tools`, `PATCH …/tools/{name}`, `POST …/tools/preset` | Agent detail `tools`, `setTool`, `setToolPreset` |
+| `POST /agents/{id}/warm` | `warm` |
+| `POST /agents/{id}/run` (SSE) | A user turn with `hostRun` (§3), the core's stream, `host-run/1`, `run-progress/1` |
+| SSE `osaurus_agent_tool`, `osaurus_prefill`, `osaurus_artifacts` | `run-progress/1` live, then `turn-detail/1` on the committed turn |
+| `osaurus_voice_call`, `osaurus_privacy`, reasoning options in the run body | `hostRun.voiceCall`, `hostRun.privacy`, `hostRun.options` (§3.1) |
+| `GET /runs/{id}/events`, `POST /runs/{id}/stop` | Not needed: committed turns are durable. Stop with `run/1` |
+| `GET /models/picker` | The models message (§5.2) |
+| `PUT /models/favorites` | `setFavorite` |
+| `POST /models/options` | `getModelOptions`, `setModelOption` |
+| `GET /sessions`, `GET /sessions/{id}` | The synced conversations and their messages |
+| `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | The core's title, pin, archive and delete calls on the conversation |
+| `POST /sessions/{id}/truncate` | Delete the later messages, then send a new `hostRun` turn (§3.9) |
+| `GET /sessions/{id}/context` | `context-usage/1` and `contextUsage` (§3.6) |
+| `GET /sessions/{id}/turns/{t}/images/{n}` | The message's attachments, and `turn-detail/1` blobs (§3.3) |
+| `GET /artifacts/{context}/{file}` | `turn-detail/1` blobs (§3.3) |
+| `GET /projects` | `projects`, `plugins`, `workspaces` in the manage state (§5) |
+| `POST /images/generations`, `/images/edits`, `GET /images/jobs/{id}/events`, `POST /images/cancel` | An image hosted run (§3.4), its progress, and `run/1` stop |
+| `allow_remote_media_spend` | The `image` approval card (§3.4) |
+| `GET /workspaces/agents`, `POST /workspace-agents/{ws}/{address}/run` | `workspaceAgents` (§5), a hosted chat with `workspace` (§3.5) |
+| `GET /approvals`, `POST /approvals/{id}` | `approval/1` and `approval-answer/1` for runs the iPhone started (§3.7). Everything else is in the attention feed (§4) |
+| `GET`/`POST /computer-use/prompts`, `GET`/`POST /config/approvals` | `computer_use` and `config_approval` attention items with `detail` (§4) |
+| `GET`/`POST /privacy/reviews` | `privacy_review` attention items (§4) |
+| `GET`/`POST /secrets/prompts` | `prompt/1` and `prompt-answer/1` (§3.8) |
+| `GET /attention`, `/attention/events`, `POST /attention/{id}` | The attention feed (§4) |
+| `POST`/`DELETE /devices/push-token` | None yet (§7) |
+
+## 7. What isn't here yet
+
+- **Live thinking.** The core's stream carries text only (`StreamUpdate {text, state}`). A
+  reply's reasoning arrives with the committed turn, and `run-progress/1` counts its characters.
+  Streaming it needs a typed stream channel in osaurus-sync.
+- **Image preview frames.** Step progress is in `run-progress/1`, but the frames aren't sent:
+  each one would be a durable blob write. This also waits for that channel.
+- **Push for other attention items.** Workflow runs, Live Activities, approvals a chat run waits
+  on and agent calls go through the push service (§5.6–§5.9). Other attention items aren't
+  pushed: the iPhone learns about them when Sync delivers them.
+
+## 8. The 6-digit pairing, kept for one release
+
+The App Store iPhone 1.0(11) pairs over HTTP with a 6-digit code (MOBILE_PROTOCOL.md). This
+release keeps that path working beside Sync, at parity with upstream `main` `eb0e968c3`
+(`PhoneLegacyRouteParityTests`, fixtures in `Tests/Networking/PhoneLegacyFixtures/`):
+
+- **Sharing → Devices → Mobile** generates the code and shows the paired iPhone, with **Remote
+  Access for This iPhone** (the relay tunnels) and **Keep Mac Awake for This iPhone**.
+- The phone's routes read the same queues as the Mac and the Sync feed. An item answered on
+  one surface settles on the others, and the first answer wins.
+- **Retirement.** When the first `ios` device joins over Sync, the Mac runs
+  `MobileConnectMigration` once:
+  - it turns off the relay tunnels **Remote Access** opened, revokes the "Mobile" access keys and
+    clears the old settings;
+  - from then on, `/pair/hello`, `/pair/code`, `/pair/confirm` and `/pair/unpair` answer
+    `410 {"error":"update_required","message":"…"}` without a key, so an old build can tell the
+    user to update;
+  - the Mobile page says **Your iPhone Uses Sync Now**.
+
+  On a Mac that never pairs an iPhone over Sync, nothing is retired.
+- A Mac that ran the earlier, launch-time migration had already revoked the phone's key, so
+  that phone pairs again with a new code.
+- The owner HTTP API that other clients use (`/agents` list and runs, `/sessions`, `/models`,
+  `/config/approvals`, resumable runs with `osaurus_run_id`) is unchanged and still requires the
+  Secure Channel from relay origins.

@@ -29,6 +29,9 @@ public enum ToolsPaths {
         {
             return URL(fileURLWithPath: envRoot, isDirectory: true)
         }
+        if let spaceRoot = SpaceRegistry.activeDataRoot() {
+            return spaceRoot
+        }
         let fm = FileManager.default
         return fm.homeDirectoryForCurrentUser.appendingPathComponent(".osaurus", isDirectory: true)
     }

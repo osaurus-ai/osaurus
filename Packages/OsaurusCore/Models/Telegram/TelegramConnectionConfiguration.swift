@@ -19,7 +19,6 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
     var longPollingEnabled: Bool
     var longPollingLimit: Int
     var longPollingTimeoutSeconds: Int
-    var inboundDispatch: AgentChannelInboundDispatchConfiguration
 
     enum CodingKeys: String, CodingKey {
         case readableChatIds
@@ -33,7 +32,6 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         case longPollingEnabled
         case longPollingLimit
         case longPollingTimeoutSeconds
-        case inboundDispatch
     }
 
     init(
@@ -47,10 +45,7 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         receiveStorageEnabled: Bool = true,
         longPollingEnabled: Bool = false,
         longPollingLimit: Int = 100,
-        longPollingTimeoutSeconds: Int = 20,
-        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(
-            requireMention: false
-        )
+        longPollingTimeoutSeconds: Int = 20
     ) {
         self.readableChatIds = Self.normalizedIds(readableChatIds)
         self.writableChatIds = Self.normalizedIds(writableChatIds)
@@ -63,7 +58,6 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         self.longPollingEnabled = longPollingEnabled
         self.longPollingLimit = Self.clampLongPollingLimit(longPollingLimit)
         self.longPollingTimeoutSeconds = Self.clampLongPollingTimeoutSeconds(longPollingTimeoutSeconds)
-        self.inboundDispatch = inboundDispatch
     }
 
     init(from decoder: Decoder) throws {
@@ -85,11 +79,7 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
             longPollingTimeoutSeconds: try container.decodeIfPresent(
                 Int.self,
                 forKey: .longPollingTimeoutSeconds
-            ) ?? 20,
-            inboundDispatch: try container.decodeIfPresent(
-                AgentChannelInboundDispatchConfiguration.self,
-                forKey: .inboundDispatch
-            ) ?? AgentChannelInboundDispatchConfiguration(requireMention: false)
+            ) ?? 20
         )
     }
 
@@ -105,8 +95,7 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
             receiveStorageEnabled: receiveStorageEnabled,
             longPollingEnabled: longPollingEnabled,
             longPollingLimit: longPollingLimit,
-            longPollingTimeoutSeconds: longPollingTimeoutSeconds,
-            inboundDispatch: inboundDispatch
+            longPollingTimeoutSeconds: longPollingTimeoutSeconds
         )
     }
 
@@ -192,19 +181,21 @@ enum TelegramConnectionConfigurationStore {
         didSet { cache.reset() }
     }
 
-    private static let fileName = "telegram.json"
-
-    /// In-memory copy of the last loaded/saved configuration. See
+    /// In-memory copy of each bot's last loaded/saved configuration. See
     /// `ConnectionConfigurationCache` (Sentry APPLE-MACOS-3C5).
     private static let cache = ConnectionConfigurationCache<TelegramConnectionConfiguration>()
 
-    /// Drop the in-memory copy so the next `load()` reads from disk.
+    /// Drop the in-memory copies so the next `load()` reads from disk.
     static func resetCache() {
         cache.reset()
     }
 
-    static func load() -> TelegramConnectionConfiguration {
-        let url = configurationFileURL()
+    /// Each bot has its own file: `telegram.json` for the primary one,
+    /// `<connection id>.json` for the others.
+    static func load(
+        connectionId: String = AgentChannelConnection.nativeTelegramConnectionId
+    ) -> TelegramConnectionConfiguration {
+        let url = configurationFileURL(connectionId: connectionId)
         return cache.value(for: url) { loadFromDisk(at: url) }
     }
 
@@ -222,21 +213,34 @@ enum TelegramConnectionConfigurationStore {
         }
     }
 
-    static func save(_ configuration: TelegramConnectionConfiguration) throws {
-        let url = configurationFileURL()
+    static func save(
+        _ configuration: TelegramConnectionConfiguration,
+        connectionId: String = AgentChannelConnection.nativeTelegramConnectionId
+    ) throws {
+        let url = configurationFileURL(connectionId: connectionId)
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let normalized = configuration.normalized
-        try encoder.encode(normalized).write(to: url, options: [.atomic])
+        let data = try encoder.encode(normalized)
+        try LegacyInboundDispatchCarryOver.platformFile(data, replacing: url).write(to: url, options: [.atomic])
         cache.store(normalized, for: url)
+        NotificationCenter.default.post(name: .channelAccountSettingsChanged, object: connectionId)
     }
 
-    static func configurationFileURL() -> URL {
-        if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent(fileName, isDirectory: false)
-        }
-        return OsaurusPaths.config().appendingPathComponent(fileName, isDirectory: false)
+    static func delete(connectionId: String) {
+        guard connectionId != AgentChannelConnection.nativeTelegramConnectionId else { return }
+        let url = configurationFileURL(connectionId: connectionId)
+        try? FileManager.default.removeItem(at: url)
+        cache.remove(for: url)
+        NotificationCenter.default.post(name: .channelAccountSettingsChanged, object: connectionId)
+    }
+
+    static func configurationFileURL(
+        connectionId: String = AgentChannelConnection.nativeTelegramConnectionId
+    ) -> URL {
+        (overrideDirectory ?? OsaurusPaths.config())
+            .appendingPathComponent("\(connectionId).json", isDirectory: false)
     }
 }
 
@@ -249,41 +253,23 @@ enum TelegramCredentialStore {
         saveBotTokenOutcome(token).isSuccess
     }
 
-    static func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .emptyValue }
-        let outcome = ToolSecretsKeychain.saveSecretOutcome(
-            trimmed,
-            id: botTokenKey,
-            for: pluginId,
-            agentId: Agent.defaultId
-        )
-        return outcome == .success ? .success : .keychainFailure(outcome)
+    static func saveBotTokenOutcome(_ token: String) -> CredentialWriteOutcome {
+        ChannelCredentials.save(token, slot: ChannelCredentialSlots.telegramBotToken)
     }
 
     static func botToken() -> String? {
-        ToolSecretsKeychain.getSecret(
-            id: botTokenKey,
-            for: pluginId,
-            agentId: Agent.defaultId
-        )
+        ChannelCredentials.value(
+            ChannelCredentialSlots.telegramBotToken, legacyPluginId: pluginId, legacyKey: botTokenKey)
     }
 
     static func hasBotToken() -> Bool {
-        ToolSecretsKeychain.hasSecret(
-            id: botTokenKey,
-            for: pluginId,
-            agentId: Agent.defaultId
-        )
+        ChannelCredentials.has(ChannelCredentialSlots.telegramBotToken, legacyPluginId: pluginId, legacyKey: botTokenKey)
     }
 
     @discardableResult
     static func deleteBotToken() -> Bool {
-        ToolSecretsKeychain.deleteSecret(
-            id: botTokenKey,
-            for: pluginId,
-            agentId: Agent.defaultId
-        )
+        ChannelCredentials.delete(
+            ChannelCredentialSlots.telegramBotToken, legacyPluginId: pluginId, legacyKey: botTokenKey)
     }
 }
 
@@ -292,14 +278,14 @@ protocol TelegramCredentialStorage: Sendable {
     func botToken() -> String?
     func hasBotToken() -> Bool
     func deleteBotToken() -> Bool
-    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome
+    func saveBotTokenOutcome(_ token: String) -> CredentialWriteOutcome
 }
 
 extension TelegramCredentialStorage {
     // Bool-only stores (test doubles) fall back to an undetailed outcome; the
     // Keychain-backed store overrides this with the real failure reason.
-    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
-        saveBotToken(token) ? .success : .unknownFailure
+    func saveBotTokenOutcome(_ token: String) -> CredentialWriteOutcome {
+        saveBotToken(token) ? .success : .keychainFailure("the save failed")
     }
 }
 
@@ -308,7 +294,7 @@ struct KeychainTelegramCredentialStorage: TelegramCredentialStorage {
         TelegramCredentialStore.saveBotToken(token)
     }
 
-    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+    func saveBotTokenOutcome(_ token: String) -> CredentialWriteOutcome {
         TelegramCredentialStore.saveBotTokenOutcome(token)
     }
 

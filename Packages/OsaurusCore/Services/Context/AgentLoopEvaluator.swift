@@ -103,6 +103,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
         public let spawnCall: SpawnCallObservation?
         /// Complete child digest, extracted before the forensic preview is truncated.
         public let spawnSummary: String?
+        /// Length of the full result the model read, for context-cost reports.
+        public let resultCharacters: Int?
 
         public init(
             name: String,
@@ -112,7 +114,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
             wasError: Bool = false,
             step: Int = 0,
             spawnCall: SpawnCallObservation? = nil,
-            spawnSummary: String? = nil
+            spawnSummary: String? = nil,
+            resultCharacters: Int? = nil
         ) {
             self.name = name
             self.arguments = arguments
@@ -122,6 +125,7 @@ public struct AgentLoopTranscript: Sendable, Codable {
             self.step = step
             self.spawnCall = spawnCall
             self.spawnSummary = spawnSummary
+            self.resultCharacters = resultCharacters
         }
     }
 
@@ -664,6 +668,11 @@ public enum AgentLoopEvaluator {
     ///     production `.cancelled` exit at the next cancellation checkpoint
     ///     — the same path a user's stop button drives. nil (default)
     ///     never cancels.
+    ///   - sessionId: the chat id tools see; nil makes a fresh one. Callers
+    ///     pass one to seed per-chat state (an Architect draft) before the run.
+    ///   - clarifyReplies: scripted user replies. Each successful `clarify`
+    ///     takes the next one as the user's following message instead of
+    ///     ending the run; once they run out, `clarify` ends it as usual.
     public static func run(
         task: String,
         workspace: URL,
@@ -677,7 +686,9 @@ public enum AgentLoopEvaluator {
         stopOnToolRejection: Bool = false,
         sandbox: AgentLoopSandboxMode? = nil,
         useHostFolder: Bool = true,
-        cancelAfterToolCalls: Int? = nil
+        cancelAfterToolCalls: Int? = nil,
+        sessionId: String? = nil,
+        clarifyReplies: [String] = []
     ) async -> AgentLoopTranscript {
         await ChatExecutionContext.$inferenceSourceOverride.withValue(inferenceSource) {
             await runConversation(
@@ -694,6 +705,8 @@ public enum AgentLoopEvaluator {
                 sandbox: sandbox,
                 useHostFolder: useHostFolder,
                 cancelAfterToolCalls: cancelAfterToolCalls,
+                sessionId: sessionId,
+                clarifyReplies: clarifyReplies,
                 engine: ChatEngine(source: inferenceSource)
             )
         }
@@ -713,6 +726,8 @@ public enum AgentLoopEvaluator {
         sandbox: AgentLoopSandboxMode? = nil,
         useHostFolder: Bool = true,
         cancelAfterToolCalls: Int? = nil,
+        sessionId: String? = nil,
+        clarifyReplies: [String] = [],
         engine: any ResponsesEngineProtocol
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
@@ -840,7 +855,9 @@ public enum AgentLoopEvaluator {
         // so the inference layer's paged-KV prefix cache can reuse the
         // prompt across iterations — the production loops all do, and KV
         // reuse is itself behaviour under test.
-        let sessionId = "agent-loop-eval-\(UUID().uuidString)"
+        let sessionId = sessionId ?? "agent-loop-eval-\(UUID().uuidString)"
+        var pendingReplies = clarifyReplies
+        var queuedReply: String?
         let state = AgentTaskState()
         var transcriptCalls: [AgentLoopTranscript.ToolInvocation] = []
         var pendingBatch = ResponsesToolBatchHistory()
@@ -1092,7 +1109,8 @@ public enum AgentLoopEvaluator {
                     step: modelStepCount,
                     spawnCall: AgentLoopTranscript.spawnCallObservation(
                         tool: inv.toolName, arguments: inv.jsonArguments, result: result),
-                    spawnSummary: AgentLoopTranscript.spawnSummary(from: result, tool: inv.toolName)
+                    spawnSummary: AgentLoopTranscript.spawnSummary(from: result, tool: inv.toolName),
+                    resultCharacters: modelVisible.count
                 )
             // Agent-loop intercepts, mirroring the chat surface: a
             // successful `complete` ends the run and a successful `clarify`
@@ -1116,6 +1134,10 @@ public enum AgentLoopEvaluator {
                 return AgentLoopToolExecution(result: result, endRun: true)
             }
             if inv.toolName == "clarify", !isError {
+                if queuedReply == nil, !pendingReplies.isEmpty {
+                    queuedReply = pendingReplies.removeFirst()
+                    return AgentLoopToolExecution(result: result)
+                }
                 clarifiedViaTool = true
                 return AgentLoopToolExecution(result: result, endRun: true)
             }
@@ -1141,6 +1163,12 @@ public enum AgentLoopEvaluator {
                 // are also recorded for the transcript so cases can assert
                 // a nudge/warning actually fired.
                 noticesSeen.append(contentsOf: notices)
+                // A scripted reply joins after the whole tool batch, so tool
+                // results stay contiguous with their assistant turn.
+                if let reply = queuedReply {
+                    history.append(ChatMessage(role: "user", content: reply))
+                    queuedReply = nil
+                }
                 var msgs: [ChatMessage] = [ChatMessage(role: "system", content: systemPrompt)]
                 msgs.append(contentsOf: history)
                 return AgentLoopBudget.composeIterationMessages(

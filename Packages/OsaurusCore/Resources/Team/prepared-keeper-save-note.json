@@ -1,0 +1,41 @@
+{
+  "format": "osaurus.template",
+  "format_version": 5,
+  "id": "0f5c1a4e-6b7d-4c1a-9a01-000000000324",
+  "kind": "workflow",
+  "version": 1,
+  "changelog": "Built-in ask",
+  "name": "Save to Notes",
+  "summary": "Saves a research note to the Notes app.",
+  "author": { "name": "Osaurus" },
+  "created_at": "2026-11-04T00:00:00Z",
+  "workflow": {
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "title": "Title" },
+        "body": { "type": "string", "title": "Body" }
+      },
+      "required": ["title", "body"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": { "title": { "type": "string", "title": "Title" } },
+      "required": ["title"]
+    },
+    "nodes": [
+      {
+        "id": "save",
+        "name": "Save the note",
+        "kind": "tool",
+        "tool": { "name": "notes_create", "agent": "9D56D742-0AD5-4118-9BB8-E13D4F2A9745" },
+        "input": { "title": "{{input.title}}", "body": "{{input.body}}" }
+      }
+    ],
+    "edges": [],
+    "output": { "title": "{{input.title}}" },
+    "model_slots": [],
+    "secrets": [],
+    "requirement_notes": {}
+  }
+}

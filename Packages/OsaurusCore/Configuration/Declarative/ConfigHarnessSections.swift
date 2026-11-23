@@ -40,7 +40,7 @@ public struct AgentClaudeCodeEntry: Codable, Equatable, Sendable {
     public var mode: String?
     public var allowWrites: Bool?
     public var allowShell: Bool?
-    public var allowOsaurusTools: Bool?
+    public var osaurusTools: Bool?
     /// Default agent only: the Osaurus config tools are the Orchestrator's.
     public var allowOsaurusConfigWrites: Bool?
 
@@ -50,8 +50,34 @@ public struct AgentClaudeCodeEntry: Codable, Equatable, Sendable {
         case model, effort, mode
         case allowWrites = "allow_writes"
         case allowShell = "allow_shell"
-        case allowOsaurusTools = "allow_osaurus_tools"
+        case osaurusTools = "osaurus_tools"
         case allowOsaurusConfigWrites = "allow_osaurus_config_writes"
+    }
+
+    /// Spellings accepted on import only; exports write the current key.
+    static let importAliases = ["allow_osaurus_tools": CodingKeys.osaurusTools.stringValue]
+
+    private struct AliasKey: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        effort = try c.decodeIfPresent(String.self, forKey: .effort)
+        mode = try c.decodeIfPresent(String.self, forKey: .mode)
+        allowWrites = try c.decodeIfPresent(Bool.self, forKey: .allowWrites)
+        allowShell = try c.decodeIfPresent(Bool.self, forKey: .allowShell)
+        allowOsaurusConfigWrites = try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusConfigWrites)
+        if let value = try c.decodeIfPresent(Bool.self, forKey: .osaurusTools) {
+            osaurusTools = value
+        } else {
+            let aliases = try decoder.container(keyedBy: AliasKey.self)
+            osaurusTools = try aliases.decodeIfPresent(Bool.self, forKey: AliasKey(stringValue: "allow_osaurus_tools"))
+        }
     }
 }
 
@@ -145,7 +171,7 @@ enum ConfigHarness {
         entry.mode = key(for: config.mode)
         entry.allowWrites = config.allowWrites
         entry.allowShell = config.allowShell
-        entry.allowOsaurusTools = config.allowOsaurusTools
+        entry.osaurusTools = config.osaurusTools
         if includeConfigWrites { entry.allowOsaurusConfigWrites = config.allowOsaurusConfigWrites }
         return entry
     }
@@ -159,7 +185,7 @@ enum ConfigHarness {
         if let raw = entry.mode, let mode = mode(forKey: raw) { config.mode = mode }
         if let v = entry.allowWrites { config.allowWrites = v }
         if let v = entry.allowShell { config.allowShell = v }
-        if let v = entry.allowOsaurusTools { config.allowOsaurusTools = v }
+        if let v = entry.osaurusTools { config.osaurusTools = v }
         if let v = entry.allowOsaurusConfigWrites { config.allowOsaurusConfigWrites = v }
     }
 
@@ -186,7 +212,7 @@ enum ConfigHarness {
         }
         flag("allow_writes", current.allowWrites, desired.allowWrites)
         flag("allow_shell", current.allowShell, desired.allowShell)
-        flag("allow_osaurus_tools", current.allowOsaurusTools, desired.allowOsaurusTools)
+        flag("osaurus_tools", current.osaurusTools, desired.osaurusTools)
         flag(
             "allow_osaurus_config_writes", current.allowOsaurusConfigWrites,
             desired.allowOsaurusConfigWrites)
