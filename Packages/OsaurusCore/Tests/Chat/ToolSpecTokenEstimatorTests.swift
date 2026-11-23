@@ -3,8 +3,7 @@
 //
 //  Regression coverage for APPLE-MACOS-2VT: the preview pipeline prices tool
 //  specs on the main thread for every debounced recompose, so the estimator
-//  counts scalars with a byte loop instead of grapheme segmentation. Its
-//  results must still match `String.count` for the built-in descriptions.
+//  measures strings in UTF-8 bytes instead of grapheme-segmented characters.
 //
 
 import Foundation
@@ -27,11 +26,15 @@ struct ToolSpecTokenEstimatorTests {
         return .object(["type": .string("object"), "properties": .object(properties)])
     }
 
-    @Test("Character count matches String.count for multi-byte punctuation")
-    func characterCountMatchesStringCount() {
-        for sample in ["", "plain ascii", "Settings → Vault — done…", "≤6 short choices", "caf\u{E9}"] {
-            #expect(ToolSpecTokenEstimator.characterCount(sample) == sample.count)
-        }
+    @Test("Non-ASCII text is measured in UTF-8 bytes")
+    func nonASCIIEstimateCountsUTF8Bytes() {
+        // 40 × "→" is 40 characters but 120 UTF-8 bytes; 72 is the JSON wrapper overhead.
+        let tokens = ToolSpecTokenEstimator.estimate(
+            name: String(repeating: "→", count: 40),
+            description: nil,
+            parameters: nil
+        )
+        #expect(tokens == (120 + 72) / TokenEstimator.charsPerToken)
     }
 
     @Test("ASCII estimates are unchanged")
