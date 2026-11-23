@@ -29,7 +29,7 @@ struct ToolSpecTokenEstimatorTests {
 
     @Test("Character count matches String.count for multi-byte punctuation")
     func characterCountMatchesStringCount() {
-        for sample in ["", "plain ascii", "Settings → Vault — done…", "≤6 short choices", "café"] {
+        for sample in ["", "plain ascii", "Settings → Vault — done…", "≤6 short choices", "caf\u{E9}"] {
             #expect(ToolSpecTokenEstimator.characterCount(sample) == sample.count)
         }
     }
