@@ -62,13 +62,22 @@ enum TaskControl {
         openChat(sessionId, agentId: nil)
     }
 
-    /// Brings a chat session's window forward, or reopens it from history.
+    /// Brings a chat session forward: its tab, focused, where it's open; the run still working in it; or the
+    /// chat reopened from history in a tab, as the sidebar's history does. Only bringing a window forward left
+    /// a chat open in a background tab out of sight, and a chat still running with no window couldn't be opened.
     static func openChat(_ sessionId: UUID, agentId: UUID?) {
-        if let existing = ChatWindowManager.shared.findWindow(bySessionId: sessionId) {
-            ChatWindowManager.shared.showWindow(id: existing.id)
-        } else if let data = ChatSessionStore.load(id: sessionId) {
-            ChatWindowManager.shared.createWindow(agentId: agentId ?? data.agentId, sessionData: data)
+        let windows = ChatWindowManager.shared
+        if windows.revealOpenSession(sessionId) != nil { return }
+        if let task = BackgroundTaskManager.shared.liveTask(forSessionId: sessionId) {
+            windows.revealTask(task.id)
+            return
         }
+        if var data = ChatSessionStore.load(id: sessionId) {
+            if data.agentId == nil, let agentId { data.agentId = agentId }
+            windows.openHistorySession(data)
+            return
+        }
+        print("[TaskControl] openChat: chat \(sessionId) is neither open, running nor saved")
     }
 
     /// Opens Tasks → History narrowed by `filter`.
