@@ -296,7 +296,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .credits: L("Osaurus Router, balance, top-ups and search credits.")
         case .permissions: L("macOS access Osaurus has been granted: Accessibility, Microphone, Calendar and more.")
         case .browser: L("Browser sessions agents drive on your behalf.")
-        case .connect: L("Pair an iPhone app that doesn't offer Sync yet with a 6-digit code.")
+        case .connect: L("The iPhone paired with a 6-digit code, and keeping this Mac reachable for it.")
         default: ""
         }
     }

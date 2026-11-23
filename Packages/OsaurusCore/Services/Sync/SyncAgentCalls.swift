@@ -42,6 +42,69 @@ extension SyncDeviceFeedContract {
         /// The device that took it.
         var answeredBy: String?
     }
+
+    /// One call the user arranged (`arrange_callback`), in the manage state's `callbacks` (`callback_inbox`).
+    struct ArrangedCall: Codable, Equatable, Sendable {
+        var id: String
+        var sessionId: String
+        var agentId: String
+        /// When the agent will call, in the user's words.
+        var about: String
+        /// Absent on a call arranged before this Mac kept them.
+        var createdMs: Int64?
+        var expiresMs: Int64
+        /// `waiting`, `ringing`, or how it ended: `answered`, `missed`, `declined`, `calledOff` (the run
+        /// that placed it stopped), `cancelled` (the user), `expired` (no call in time), `replaced`.
+        var state: String
+        var endedMs: Int64?
+        /// Tries that rang nothing: `busy`, `unavailable`, `notSent`.
+        var attempts: [AgentCallPolicy.Attempt]?
+        /// While waiting: background work its chat started is still going on this Mac.
+        var working: Bool?
+    }
+
+    /// Ended calls the manage state carries, newest first.
+    static let callbackHistoryLimit = 20
+}
+
+extension SyncAgentCalls {
+    /// The manage state's `callbacks`: what's still to come, then what ended.
+    nonisolated static func arrangedCalls(
+        waiting: [(grant: AgentCallPolicy.Grant, ringing: Bool)],
+        history: [AgentCallPolicy.Grant],
+        workingSessions: Set<UUID>
+    ) -> [SyncDeviceFeedContract.ArrangedCall] {
+        func listed(
+            _ grant: AgentCallPolicy.Grant, state: String, working: Bool?
+        ) -> SyncDeviceFeedContract.ArrangedCall {
+            SyncDeviceFeedContract.ArrangedCall(
+                id: grant.id.uuidString.lowercased(),
+                sessionId: grant.sessionId.uuidString.lowercased(),
+                agentId: grant.agentId.uuidString.lowercased(),
+                about: grant.about,
+                createdMs: grant.createdMs,
+                expiresMs: grant.expiresMs,
+                state: state,
+                endedMs: grant.endedMs,
+                attempts: grant.attempts?.isEmpty == false ? grant.attempts : nil,
+                working: working
+            )
+        }
+        let coming = waiting.map { item in
+            listed(
+                item.grant, state: item.ringing ? "ringing" : "waiting",
+                working: !item.ringing && workingSessions.contains(item.grant.sessionId) ? true : nil)
+        }
+        let ended = history.prefix(SyncDeviceFeedContract.callbackHistoryLimit).map {
+            listed($0, state: ($0.end ?? .expired).rawValue, working: nil)
+        }
+        return coming + ended
+    }
+
+    /// Chats with background work (a helper, a dispatched agent, a workflow) still going on this Mac.
+    static func workingSessions() -> Set<UUID> {
+        Set(TaskStore.shared.live.values.filter { !$0.state.isTerminal }.compactMap(\.sessionId))
+    }
 }
 
 @MainActor
@@ -311,6 +374,7 @@ final class SyncAgentCalls {
             }.value
             for sessionId in ended {
                 SyncAgentCalls.shared.liveCalls[sessionId] = nil
+                SyncAgentCalls.shared.lastVoiceTurnMs[sessionId] = nil
                 Self.trace("call on \(sessionId.uuidString.prefix(8)) ended")
             }
         }
@@ -322,16 +386,48 @@ final class SyncAgentCalls {
     private var liveCalls: [UUID: (id: String, device: String, sinceMs: Int64)] = [:]
     /// A call no device has said ended counts as over after this.
     nonisolated static let liveCallLimitMs: Int64 = 2 * 3600 * 1000
+    /// ...or once nothing has been said on it for this long: a phone that died mid-call never writes "ended",
+    /// and the agent would answer "on a call" instead of ringing until the 2 hours ran out. Said means a voice
+    /// turn started, ran or finished; a user silent for this long after the reply ended counts as gone, on
+    /// purpose, since an open call never stays that quiet and a missed ring costs less than one that never comes.
+    nonisolated static let liveCallIdleMs: Int64 = 10 * 60 * 1000
+    /// The last voice turn in each chat with a call on.
+    private var lastVoiceTurnMs: [UUID: Int64] = [:]
+
+    /// A voice turn ran in `sessionId`: a call there is still being talked on.
+    func noteVoiceTurn(sessionId: UUID) {
+        guard liveCalls[sessionId] != nil else { return }
+        lastVoiceTurnMs[sessionId] = SyncHostedRunContract.nowMs()
+    }
 
     /// Whether the user is on a call placed from `sessionId` now: the agent tells them in the call,
     /// and a ring would come through it as a second call the phone turns down as busy.
     func isOnCall(sessionId: UUID) -> Bool {
         guard let call = liveCalls[sessionId] else { return false }
-        if SyncHostedRunContract.nowMs() - call.sinceMs > Self.liveCallLimitMs {
+        let stillOn = Self.callStillOn(
+            sinceMs: call.sinceMs,
+            lastVoiceTurnMs: lastVoiceTurnMs[sessionId],
+            voiceRunning: SyncHostRunner.shared.hasVoiceRun(sessionId: sessionId),
+            nowMs: SyncHostedRunContract.nowMs()
+        )
+        if !stillOn {
             liveCalls[sessionId] = nil
+            lastVoiceTurnMs[sessionId] = nil
+            Self.trace("call on \(sessionId.uuidString.prefix(8)) taken as over: nothing said on it for a while")
             return false
         }
         return true
+    }
+
+    /// The rule `isOnCall` keeps a call by, pure for tests: a voice turn running keeps it on; otherwise it's
+    /// over after `liveCallLimitMs` in all, or `liveCallIdleMs` since it was answered or a voice turn last
+    /// started or finished.
+    nonisolated static func callStillOn(sinceMs: Int64, lastVoiceTurnMs: Int64?, voiceRunning: Bool, nowMs: Int64)
+        -> Bool
+    {
+        if voiceRunning { return true }
+        let lastHeard = max(sinceMs, lastVoiceTurnMs ?? 0)
+        return nowMs - sinceMs <= liveCallLimitMs && nowMs - lastHeard <= liveCallIdleMs
     }
 
     /// Each device's answer to `call`, from every manage conversation of this Mac.
@@ -387,6 +483,13 @@ final class SyncAgentCalls {
     }
 
     // MARK: Ending
+
+    /// The user called off the call arranged in this chat: a call ringing from it stops, as when its run stops.
+    func callOff(sessionId: UUID, agentId: UUID) {
+        guard let active = current, active.request.sessionId == sessionId, active.request.agentId == agentId
+        else { return }
+        finish(active.id, outcome: .cancelled)
+    }
 
     private func finish(_ id: String, outcome: Outcome, answeredBy: String? = nil) {
         guard var active = current, active.id == id else { return }

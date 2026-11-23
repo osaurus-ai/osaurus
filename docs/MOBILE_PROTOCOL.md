@@ -843,7 +843,7 @@ sequenceDiagram
 ## 11. Mobile pairing (6-digit code)
 
 The Osaurus iPhone app pairs with **one** Mac by typing a 6-digit code shown in
-Sharing → Devices → Mobile. It needs no master key on the phone and yields a
+Sharing → Devices → **Add Device** → **Add iPhone or iPad** → **A 6-Digit Code to Enter**. It needs no master key on the phone and yields a
 master-scoped `osk-v1` key covering every agent on that Mac, plus each agent's
 crypto address for the Secure Channel (§6.2). One phone per Mac: a new
 pairing revokes the previous phone's key.
@@ -863,7 +863,7 @@ the phone accepts a typed host and port.
 
 ### 11.2 Generating the code (Mac)
 
-"Generate 6-Digit Code" mints the master-scoped key immediately (biometric
+Generating the code (**Add Device** → **Add iPhone or iPad** → **A 6-Digit Code to Enter**) mints the master-scoped key immediately (biometric
 prompt — the user is at the Mac) and shows a uniformly random 6-digit code.
 The code is single-use, valid for 5 minutes, and discarded after 5 wrong
 guesses from any source; an unused code's key is deleted.
@@ -893,7 +893,7 @@ plaintext = {"apiKey":"osk-v1.…","keyExpiresAt":<unix s>|null,
 | `429` | — | Per-IP rate limit (shared with `/pair/confirm` and `/pair-invite`) |
 
 `isSimulator` (optional) only drives a "Simulator" badge next to the paired
-device in Sharing → Devices → Mobile.
+device on the Mobile page (reachable from Settings search).
 
 The phone pins every returned `address` against its agent `id` and uses the
 key as the Bearer inside the Secure Channel. `GET /agents` and
