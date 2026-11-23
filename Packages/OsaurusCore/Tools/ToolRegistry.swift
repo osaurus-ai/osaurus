@@ -143,7 +143,11 @@ private final class ToolBodyRaceState: @unchecked Sendable {
 /// bootstrap schemas and hot-load full ones later.
 enum ToolSpecTokenEstimator {
     static func estimate(name: String, description: String?, parameters: JSONValue?) -> Int {
-        var total = name.count + (description?.count ?? 0)
+        // `utf8.count` is O(1) for native Swift strings, while `count`
+        // walks every grapheme cluster. Walking large tool schemas that way
+        // on each preview recompose hung the main thread (APPLE-MACOS-2VT).
+        // Bytes are also what the serialized `tools[]` payload is made of.
+        var total = name.utf8.count + (description?.utf8.count ?? 0)
         if let parameters {
             total += estimateJSONSize(parameters)
         }
@@ -162,14 +166,14 @@ enum ToolSpecTokenEstimator {
         case .bool(let value):
             return value ? 4 : 5
         case .number(let value):
-            return String(value).count
+            return String(value).utf8.count
         case .string(let value):
-            return value.count + 2
+            return value.utf8.count + 2
         case .array(let array):
             return array.reduce(2) { $0 + estimateJSONSize($1) + 1 }
         case .object(let object):
             return object.reduce(2) { total, pair in
-                total + pair.key.count + 5 + estimateJSONSize(pair.value)
+                total + pair.key.utf8.count + 5 + estimateJSONSize(pair.value)
             }
         }
     }
@@ -189,6 +193,13 @@ public final class ToolRegistry: ObservableObject {
     /// Invalidated from `objectWillChange`, so any `@Published` mutation
     /// (register / unregister / enablement) clears it automatically.
     private var cachedListTools: [ToolEntry]?
+    /// Memoized `ToolSpecTokenEstimator` results per tool spec. The preview
+    /// pipeline prices the same specs on every debounced recompose (once per
+    /// open chat session), on the main thread. Keyed by the full spec, so the
+    /// compact and full schema variants of one tool get separate entries.
+    /// Cleared together with `cachedListTools` and bounded below.
+    private var specTokenEstimateCache: [ToolFunction: Int] = [:]
+    private static let specTokenEstimateCacheLimit = 512
     private var cacheInvalidations = Set<AnyCancellable>()
     /// Names of tools registered via registerBuiltInTools (always loaded).
     private(set) var builtInToolNames: Set<String> = []
@@ -249,7 +260,10 @@ public final class ToolRegistry: ObservableObject {
         // Any mutation to a `@Published` store fires `objectWillChange`; drop
         // the memoized tool list so the next read rebuilds it from fresh state.
         objectWillChange
-            .sink { [weak self] in self?.cachedListTools = nil }
+            .sink { [weak self] in
+                self?.cachedListTools = nil
+                self?.specTokenEstimateCache.removeAll(keepingCapacity: true)
+            }
             .store(in: &cacheInvalidations)
     }
 
@@ -2680,13 +2694,22 @@ public final class ToolRegistry: ObservableObject {
     /// Useful when the active tool list is mode- or session-dependent.
     func totalEstimatedTokens(for tools: [Tool]) -> Int {
         tools.reduce(0) { total, tool in
-            total
-                + ToolSpecTokenEstimator.estimate(
-                    name: tool.function.name,
-                    description: tool.function.description,
-                    parameters: tool.function.parameters
-                )
+            total + cachedSpecTokenEstimate(tool.function)
         }
+    }
+
+    private func cachedSpecTokenEstimate(_ function: ToolFunction) -> Int {
+        if let cached = specTokenEstimateCache[function] { return cached }
+        let tokens = ToolSpecTokenEstimator.estimate(
+            name: function.name,
+            description: function.description,
+            parameters: function.parameters
+        )
+        if specTokenEstimateCache.count >= Self.specTokenEstimateCacheLimit {
+            specTokenEstimateCache.removeAll(keepingCapacity: true)
+        }
+        specTokenEstimateCache[function] = tokens
+        return tokens
     }
 
     // MARK: - Policy / Grants
