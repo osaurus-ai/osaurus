@@ -404,16 +404,30 @@ final class SyncAgentCalls {
     /// and a ring would come through it as a second call the phone turns down as busy.
     func isOnCall(sessionId: UUID) -> Bool {
         guard let call = liveCalls[sessionId] else { return false }
-        let nowMs = SyncHostedRunContract.nowMs()
-        if SyncHostRunner.shared.hasVoiceRun(sessionId: sessionId) { return true }
-        let lastHeard = max(call.sinceMs, lastVoiceTurnMs[sessionId] ?? 0)
-        if nowMs - call.sinceMs > Self.liveCallLimitMs || nowMs - lastHeard > Self.liveCallIdleMs {
+        let stillOn = Self.callStillOn(
+            sinceMs: call.sinceMs,
+            lastVoiceTurnMs: lastVoiceTurnMs[sessionId],
+            voiceRunning: SyncHostRunner.shared.hasVoiceRun(sessionId: sessionId),
+            nowMs: SyncHostedRunContract.nowMs()
+        )
+        if !stillOn {
             liveCalls[sessionId] = nil
             lastVoiceTurnMs[sessionId] = nil
             Self.trace("call on \(sessionId.uuidString.prefix(8)) taken as over: nothing said on it for a while")
             return false
         }
         return true
+    }
+
+    /// The rule `isOnCall` keeps a call by, pure for tests: a voice turn running keeps it on; otherwise it's
+    /// over after `liveCallLimitMs` in all, or `liveCallIdleMs` since it was answered or a voice turn last
+    /// started or finished.
+    nonisolated static func callStillOn(sinceMs: Int64, lastVoiceTurnMs: Int64?, voiceRunning: Bool, nowMs: Int64)
+        -> Bool
+    {
+        if voiceRunning { return true }
+        let lastHeard = max(sinceMs, lastVoiceTurnMs ?? 0)
+        return nowMs - sinceMs <= liveCallLimitMs && nowMs - lastHeard <= liveCallIdleMs
     }
 
     /// Each device's answer to `call`, from every manage conversation of this Mac.

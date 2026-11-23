@@ -1183,7 +1183,7 @@ The App Store iPhone 1.0(11) pairs over HTTP with a 6-digit code (MOBILE_PROTOCO
 release keeps that path working beside Sync, at parity with upstream `main` `eb0e968c3`
 (`PhoneLegacyRouteParityTests`, fixtures in `Tests/Networking/PhoneLegacyFixtures/`):
 
-- **Sharing → Devices → Mobile** generates the code and shows the paired iPhone, with **Remote
+- **Add Device** → **Add iPhone or iPad** → **A 6-Digit Code to Enter** generates the code. The Mobile page (from Settings search) shows the paired iPhone, with **Remote
   Access for This iPhone** (the relay tunnels) and **Keep Mac Awake for This iPhone**.
 - The phone's routes read the same queues as the Mac and the Sync feed. An item answered on
   one surface settles on the others, and the first answer wins.

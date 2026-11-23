@@ -363,7 +363,7 @@ builds, and to be removed once those are gone:
 - Resumable owner runs (`osaurus_run_id`, `GET /runs/{id}/events`, `POST /runs/{id}/stop`,
   `DetachedPhoneRuns`). They were built for the iPhone's HTTP client, which Sync replaced; they
   stay while other owner HTTP clients may name runs.
-- The iPhone's 6-digit pairing and its HTTP routes (**Devices → Mobile**,
+- The iPhone's 6-digit pairing and its HTTP routes (**Add Device** → **Add iPhone or iPad** → **A 6-Digit Code to Enter**,
   `docs/MOBILE_PROTOCOL.md`), for the App Store iPhone 1.0(11). They are kept for one release
   at parity with upstream `main` (`PhoneLegacyRouteParityTests`). `MobileConnectMigration`
   retires them once an iPhone joins over Sync (`SYNC_MOBILE_CONTRACT.md` §8).

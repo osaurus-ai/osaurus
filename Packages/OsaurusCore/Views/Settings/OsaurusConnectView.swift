@@ -154,8 +154,8 @@ struct OsaurusConnectView: View {
 }
 
 /// The 6-digit code an iPhone app without Sync types in: the network note while only this Mac can reach the
-/// server, the code with its countdown, or the button that makes one. On the Mobile page, and in Devices' Add
-/// iPhone or iPad sheet when the phone's pairing screen asks for a code.
+/// server, the code with its countdown, or the button that makes one. In Devices' Add iPhone or iPad sheet,
+/// when the phone's pairing screen asks for a code.
 struct MobilePairingCodePanel: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var pairing = MobilePairingService.shared
