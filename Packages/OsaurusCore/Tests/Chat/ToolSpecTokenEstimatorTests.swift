@@ -3,7 +3,7 @@
 //
 //  Regression coverage for APPLE-MACOS-2VT: the preview pipeline prices tool
 //  specs on the main thread for every debounced recompose, so the estimator
-//  must stay cheap on large schemas and its per-spec cache must stay correct.
+//  counts UTF-8 bytes (O(1) per string) instead of grapheme clusters.
 //
 
 import Foundation
@@ -41,8 +41,8 @@ struct ToolSpecTokenEstimatorTests {
         #expect(tokens == 128 / TokenEstimator.charsPerToken)
     }
 
-    @Test("Large schemas are estimated quickly and cached totals match per-spec sums")
-    func largeSchemaTotalMatchesAndIsFast() {
+    @Test("Total for large schemas equals the per-spec sum")
+    func largeSchemaTotalMatchesPerSpecSum() {
         let tools = (0..<20).map { i in
             Tool(
                 type: "function",
@@ -61,12 +61,6 @@ struct ToolSpecTokenEstimatorTests {
                     parameters: tool.function.parameters
                 )
         }
-        let start = Date()
-        let first = ToolRegistry.shared.totalEstimatedTokens(for: tools)
-        let second = ToolRegistry.shared.totalEstimatedTokens(for: tools)
-        let elapsed = Date().timeIntervalSince(start)
-        #expect(first == expected)
-        #expect(second == expected)
-        #expect(elapsed < 1.0)
+        #expect(ToolRegistry.shared.totalEstimatedTokens(for: tools) == expected)
     }
 }

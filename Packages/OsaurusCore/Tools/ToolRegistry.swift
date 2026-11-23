@@ -193,13 +193,6 @@ public final class ToolRegistry: ObservableObject {
     /// Invalidated from `objectWillChange`, so any `@Published` mutation
     /// (register / unregister / enablement) clears it automatically.
     private var cachedListTools: [ToolEntry]?
-    /// Memoized `ToolSpecTokenEstimator` results per tool spec. The preview
-    /// pipeline prices the same specs on every debounced recompose (once per
-    /// open chat session), on the main thread. Keyed by the full spec, so the
-    /// compact and full schema variants of one tool get separate entries.
-    /// Cleared together with `cachedListTools` and bounded below.
-    private var specTokenEstimateCache: [ToolFunction: Int] = [:]
-    private static let specTokenEstimateCacheLimit = 512
     private var cacheInvalidations = Set<AnyCancellable>()
     /// Names of tools registered via registerBuiltInTools (always loaded).
     private(set) var builtInToolNames: Set<String> = []
@@ -260,10 +253,7 @@ public final class ToolRegistry: ObservableObject {
         // Any mutation to a `@Published` store fires `objectWillChange`; drop
         // the memoized tool list so the next read rebuilds it from fresh state.
         objectWillChange
-            .sink { [weak self] in
-                self?.cachedListTools = nil
-                self?.specTokenEstimateCache.removeAll(keepingCapacity: true)
-            }
+            .sink { [weak self] in self?.cachedListTools = nil }
             .store(in: &cacheInvalidations)
     }
 
@@ -2694,22 +2684,13 @@ public final class ToolRegistry: ObservableObject {
     /// Useful when the active tool list is mode- or session-dependent.
     func totalEstimatedTokens(for tools: [Tool]) -> Int {
         tools.reduce(0) { total, tool in
-            total + cachedSpecTokenEstimate(tool.function)
+            total
+                + ToolSpecTokenEstimator.estimate(
+                    name: tool.function.name,
+                    description: tool.function.description,
+                    parameters: tool.function.parameters
+                )
         }
-    }
-
-    private func cachedSpecTokenEstimate(_ function: ToolFunction) -> Int {
-        if let cached = specTokenEstimateCache[function] { return cached }
-        let tokens = ToolSpecTokenEstimator.estimate(
-            name: function.name,
-            description: function.description,
-            parameters: function.parameters
-        )
-        if specTokenEstimateCache.count >= Self.specTokenEstimateCacheLimit {
-            specTokenEstimateCache.removeAll(keepingCapacity: true)
-        }
-        specTokenEstimateCache[function] = tokens
-        return tokens
     }
 
     // MARK: - Policy / Grants
