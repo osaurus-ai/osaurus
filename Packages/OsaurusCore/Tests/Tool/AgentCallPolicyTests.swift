@@ -298,8 +298,10 @@ struct AgentCallPolicyTests {
 
     @Test("a state saved before arranged calls were kept still reads")
     func oldStateReads() throws {
-        let json = #"{"allowed":[],"grants":[{"id":"#(UUID())","sessionId":"#(UUID())","agentId":"#(UUID())","#
-            + #""about":"build","expiresMs":1}],"calls":[],"missedInRow":[],"lastMissMs":[]}"#
+        let (id, session, agent) = (UUID().uuidString, UUID().uuidString, UUID().uuidString)
+        let json = #"{"allowed":[],"grants":[{"id":""# + id + #"","sessionId":""# + session
+            + #"","agentId":""# + agent + #"","about":"build","expiresMs":1}],"#
+            + #""calls":[],"missedInRow":[],"lastMissMs":[]}"#
         let state = try JSONDecoder().decode(AgentCallPolicy.State.self, from: Data(json.utf8))
         #expect(state.grants.count == 1 && state.grants[0].createdMs == nil && state.history == nil)
     }
