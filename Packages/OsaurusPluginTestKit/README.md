@@ -132,6 +132,3 @@ which auto-uninstalls on scope exit.
 - Implement the real `dispatch` / `complete` / `embed` against an LLM.
 - Verify Apple code signature, receipt, or consent — production load
   gates are host-side concerns.
-
-For end-to-end tests against a live host, run the Osaurus app and use
-`osaurus tools dev` for hot-reload iteration.

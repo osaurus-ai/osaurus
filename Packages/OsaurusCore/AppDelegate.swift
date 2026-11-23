@@ -2492,33 +2492,55 @@ extension AppDelegate {
         }
     }
 
-    @objc private func handleServeCommand(_ note: Notification) {
-        var desiredPort: Int?
-        var exposeFlag: Bool = false
-        if let ui = note.userInfo {
-            if let p = ui["port"] as? Int {
-                desiredPort = p
-            } else if let s = ui["port"] as? String, let p = Int(s) {
-                desiredPort = p
-            }
-            if let e = ui["expose"] as? Bool {
-                exposeFlag = e
-            } else if let es = ui["expose"] as? String {
-                let v = es.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                exposeFlag = (v == "1" || v == "true" || v == "yes" || v == "y")
-            }
+    /// What an `osaurus serve` notification asks for. A missing `expose`
+    /// key means "leave Expose to Network as saved"; only `--expose` and
+    /// `--no-expose` change it.
+    struct CLIServeRequest: Equatable {
+        var port: Int?
+        var expose: Bool?
+
+        init(port: Int? = nil, expose: Bool? = nil) {
+            self.port = port
+            self.expose = expose
         }
 
-        // Apply defaults if not provided
-        let targetPort = desiredPort ?? (ServerConfigurationStore.load()?.port ?? 1337)
+        init(userInfo: [AnyHashable: Any]?) {
+            let info = userInfo ?? [:]
+            if let p = info["port"] as? Int {
+                port = p
+            } else if let s = info["port"] as? String, let p = Int(s) {
+                port = p
+            }
+            if let e = info["expose"] as? Bool {
+                expose = e
+            } else if let s = info["expose"] as? String {
+                switch s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                case "1", "true", "yes", "y": expose = true
+                case "0", "false", "no", "n": expose = false
+                default: expose = nil
+                }
+            }
+        }
+    }
+
+    @objc private func handleServeCommand(_ note: Notification) {
+        let request = CLIServeRequest(userInfo: note.userInfo)
+        let targetPort = request.port ?? serverController.configuration.port
         guard (1 ..< 65536).contains(targetPort) else { return }
 
-        // Apply exposure policy based on request (default localhost-only)
-        serverController.configuration.exposeToNetwork = exposeFlag
-        serverController.port = targetPort
-        serverController.saveConfiguration()
+        var settings = serverController.runtimeSettings
+        settings.network.port = targetPort
+        if let expose = request.expose {
+            settings.network.host = expose ? "0.0.0.0" : "127.0.0.1"
+        }
+        let changed =
+            targetPort != serverController.configuration.port
+            || request.expose.map { $0 != serverController.configuration.exposeToNetwork } == true
 
         Task { @MainActor in
+            // Saves both stores and restarts a running server when the
+            // port or exposure changed.
+            if changed { await serverController.saveRuntimeSettings(settings) }
             await serverController.startServer()
         }
     }

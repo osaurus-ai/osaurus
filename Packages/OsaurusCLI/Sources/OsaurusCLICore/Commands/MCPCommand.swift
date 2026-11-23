@@ -12,33 +12,49 @@ public struct MCPCommand: Command {
     public static let name = "mcp"
 
     public static func execute(args: [String]) async {
+        if let sub = args.first, sub == "install" || sub == "uninstall" {
+            await MCPInstall.execute(args: Array(args.dropFirst()), uninstall: sub == "uninstall")
+            return
+        }
         if args.contains("--help") || args.contains("-h") {
             printUsage()
             exit(EXIT_SUCCESS)
         }
 
         fputs("[MCP] Starting MCP command...\n", stderr)
-        let toolFilter = MCPToolFilter.parse(args: args)
+        let workflowFilter = MCPWorkflowFilter.parse(args: args)
+        // `--workflows` alone serves only workflows; add --tools to proxy
+        // other tools beside them.
+        let toolFilter = MCPToolFilter.parse(args: args) ?? (workflowFilter == nil ? nil : MCPToolFilter(patterns: ""))
         if let toolFilter {
             fputs("[MCP] Tool allow-list: \(toolFilter.summary)\n", stderr)
         }
-        let credential = resolvedAccessKey(args: args)
-        let networkExposed = Configuration.resolveExposeToNetwork()
-        if let credential {
-            fputs("[MCP] Using access key from \(credential.source)\n", stderr)
-        } else if networkExposed {
-            fputs(
-                "[MCP] No access key configured; Server > Network exposure is enabled — provide --access-key or OSAURUS_MCP_ACCESS_KEY\n",
-                stderr
-            )
-        } else {
-            fputs("[MCP] No access key configured; relying on local loopback trust\n", stderr)
+        if let workflowFilter {
+            fputs("[MCP] Workflows: \(workflowFilter.summary)\n", stderr)
         }
+        let credential = resolvedAccessKey(args: args)
 
         // Ensure app server is up; auto-launch only if not already running
-        let port = await ServerControl.ensureServerReadyOrExit(pollSeconds: 5.0)
+        let port = await ServerControl.ensureServerReadyOrExit()
         fputs("[MCP] Server ready on port \(port)\n", stderr)
         let baseURL = "http://127.0.0.1:\(port)"
+        // The MCP host owns stdin/stdout and nobody watches stderr, so this
+        // process never raises the approval prompt itself.
+        let client = LocalServerClient(
+            port: port, accessKey: credential, commandLabel: "mcp", interactive: false)
+        if let credential {
+            fputs("[MCP] Using access key from \(credential.source)\n", stderr)
+        } else if client.hasToken {
+            fputs("[MCP] Using this command-line tool's approval from Osaurus\n", stderr)
+        } else {
+            fputs("[MCP] No access key or approval; relying on local loopback trust\n", stderr)
+            if workflowFilter != nil {
+                fputs("[MCP] Workflow tools need approval: run `osaurus mcp install` in Terminal once\n", stderr)
+            }
+        }
+        let workflowTools = workflowFilter.map {
+            MCPWorkflowTools(filter: $0, client: WorkflowClient(server: client), budget: callTimeout())
+        }
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "cli"
         fputs("[MCP] Creating server with version: \(version)\n", stderr)
@@ -53,15 +69,28 @@ public struct MCPCommand: Command {
         // Register ListTools -> GET /mcp/tools
         await server.withMethodHandler(MCP.ListTools.self) { _ in
             fputs("[MCP] Handling ListTools\n", stderr)
+            var workflowList: [MCP.Tool] = []
+            if let workflowTools {
+                do {
+                    workflowList = try await workflowTools.tools()
+                } catch let error as WorkflowClientError {
+                    throw MCPError.internalError("Failed to list workflows: \(error.message)")
+                } catch {
+                    throw MCPError.internalError("Failed to list workflows: \(error.localizedDescription)")
+                }
+                fputs("[MCP] Workflow tools: \(workflowList.count - 1)\n", stderr)
+            }
+            if toolFilter?.admitsNothing == true { return .init(tools: workflowList) }
+            let workflowNames = Set(workflowList.map(\.name))
             guard let url = URL(string: "\(baseURL)/mcp/tools") else {
                 throw MCPError.internalError("Invalid tools URL")
             }
             fputs("[MCP] Fetching tools from \(url)\n", stderr)
             let request = makeProxyRequest(url: url, method: "GET", timeout: 5.0, credential: credential)
             do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse else {
-                    throw MCPError.internalError("Failed to list tools: non-HTTP response")
+                let (data, http) = try await client.data(for: request)
+                if http.statusCode == 401 {
+                    throw MCPError.internalError("Failed to list tools: \(client.unauthorizedHint)")
                 }
                 guard http.statusCode == 200 else {
                     let body = String(bytes: data, encoding: .utf8) ?? ""
@@ -84,10 +113,11 @@ public struct MCPCommand: Command {
                 } else {
                     throw MCPError.internalError("Failed to list tools: unexpected response shape")
                 }
-                guard let toolFilter else { return .init(tools: tools) }
-                let admitted = tools.filter { toolFilter.admits($0.name) }
+                let proxied = tools.filter { !workflowNames.contains($0.name) }
+                guard let toolFilter else { return .init(tools: proxied + workflowList) }
+                let admitted = proxied.filter { toolFilter.admits($0.name) }
                 fputs("[MCP] Tools: \(admitted.count) of \(tools.count) after allow-list\n", stderr)
-                return .init(tools: admitted)
+                return .init(tools: admitted + workflowList)
             } catch let error as MCPError {
                 throw error
             } catch {
@@ -99,6 +129,11 @@ public struct MCPCommand: Command {
         // Register CallTool -> POST /mcp/call
         await server.withMethodHandler(MCP.CallTool.self) { params in
             fputs("[MCP] Handling CallTool: \(params.name)\n", stderr)
+            if let workflowTools,
+                let result = await workflowTools.call(params.name, arguments: MCPWorkflowTools.plain(params.arguments))
+            {
+                return result
+            }
             // Enforce the allow-list here too. `ListTools` only controls what a
             // well-behaved client is *shown*; nothing stops it calling a name it
             // learned elsewhere, and the excluded set includes dispatch tools.
@@ -133,18 +168,17 @@ public struct MCPCommand: Command {
                 let body = CallBody(name: params.name, arguments: argValue)
                 request.httpBody = try JSONEncoder().encode(body)
 
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                let (data, http) = try await client.data(for: request)
+                if http.statusCode == 401 {
+                    return .init(
+                        content: [.text(text: client.unauthorizedHint, annotations: nil, _meta: nil)],
+                        isError: true
+                    )
+                }
+                guard http.statusCode == 200 else {
                     let message = String(bytes: data, encoding: .utf8) ?? ""
                     return .init(
-                        content: [
-                            .text(
-                                text:
-                                    "HTTP \(String(describing: (response as? HTTPURLResponse)?.statusCode)): \(message)",
-                                annotations: nil,
-                                _meta: nil
-                            )
-                        ],
+                        content: [.text(text: "HTTP \(http.statusCode): \(message)", annotations: nil, _meta: nil)],
                         isError: true
                     )
                 }
@@ -170,12 +204,12 @@ public struct MCPCommand: Command {
             fputs("[MCP] Starting Stdio transport...\n", stderr)
             let transport = MCP.StdioTransport()
             try await server.start(transport: transport)
-            fputs("[MCP] Server started. If 'start' is non-blocking, we are now in the loop.\n", stderr)
+            fputs("[MCP] Server started.\n", stderr)
 
-            // Keep the process alive
-            while true {
-                try await Task.sleep(nanoseconds: 1_000_000_000)
-            }
+            // MCP hosts stop a stdio server by closing its stdin; a process
+            // that outlives that is left behind as an orphan.
+            await server.waitUntilCompleted()
+            exit(EXIT_SUCCESS)
         } catch {
             fputs("MCP server error: \(error.localizedDescription)\n", stderr)
             exit(EXIT_FAILURE)
@@ -251,23 +285,42 @@ public struct MCPCommand: Command {
     private static func printUsage() {
         let usage = """
             Usage:
-              osaurus mcp [--access-key KEY] [--tools PATTERNS]
+              osaurus mcp [--access-key KEY] [--tools PATTERNS] [--workflows [PATTERNS]]
+              osaurus mcp install --client NAME [--tools PATTERNS] [--workflows [PATTERNS]] [--print] [--force]
+              osaurus mcp uninstall --client NAME [--print]
 
             Runs an MCP stdio server that proxies tool discovery and calls to
-            the local Osaurus HTTP server. Local-only servers can rely on
-            loopback trust. If Server > Network exposure or Require Access Key
-            for Local Admin Routes is enabled, provide an access key with
-            --access-key or OSAURUS_MCP_ACCESS_KEY.
+            the local Osaurus HTTP server. When Osaurus asks for a key (Expose
+            to Network, or Require Access Key for Local Admin Routes), approve
+            this command-line tool once: run `osaurus mcp install` or
+            `osaurus list` in Terminal and click Allow in Osaurus. Scripts can
+            pass --access-key or OSAURUS_MCP_ACCESS_KEY instead.
 
             --tools limits which tools are exposed. Comma-separated names, each
             optionally ending in '*' to match by prefix. Omitted, every tool is
-            proxied — which is 170+ definitions once plugins are loaded, so
+            proxied — which is well over a hundred definitions, so
             clients with a narrow purpose should scope this down:
 
               osaurus mcp --tools "osaurus_inspect,osaurus_help"
               osaurus mcp --tools "osaurus_*"
 
             Excluded tools are hidden from tools/list and refused on call.
+
+            --workflows serves your installed workflows as tools (workflow_<name>),
+            plus workflow_run_status. Alone it serves every workflow; or give
+            comma-separated names, ids or tool names ('*' suffix matches by prefix).
+            With --workflows and no --tools, only workflow tools are served.
+            Starting a workflow needs this command-line tool approved, even when
+            Osaurus is not exposed to the network. A run that stops for a form
+            returns status awaiting_user and its run_id; answer the form in
+            Osaurus, then call workflow_run_status.
+
+              osaurus mcp --workflows
+              osaurus mcp --workflows "daily_brief,invoice*"
+
+            install adds this server to an MCP client's config (cursor,
+            claude-code, claude-desktop, codex) and asks Osaurus to approve it.
+            See `osaurus mcp install --help`.
 
             Accepted environment variables:
               OSAURUS_MCP_ACCESS_KEY, OSAURUS_ACCESS_KEY, OSAURUS_API_KEY,

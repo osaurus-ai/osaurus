@@ -4,8 +4,8 @@
 //
 //  Optional allow-list for `osaurus mcp`.
 //
-//  Osaurus proxies its whole tool surface — 170+ tools once plugins, folder
-//  tools, and MCP providers are loaded. That is roughly 31k tokens of tool
+//  Osaurus proxies its whole tool surface — well over a hundred tools once
+//  folder tools and MCP providers are loaded. That is roughly 31k tokens of tool
 //  definitions in *every* turn for a client that only wants the handful of
 //  `osaurus_*` configuration tools, and it hands the client dispatch tools that
 //  can start further agent runs.
@@ -56,6 +56,9 @@ public struct MCPToolFilter: Equatable, Sendable {
         if exact.contains(name) { return true }
         return prefixes.contains { name.hasPrefix($0) }
     }
+
+    /// True for an explicitly empty list.
+    public var admitsNothing: Bool { exact.isEmpty && prefixes.isEmpty }
 
     /// Human-readable summary for the startup log, so a user who mistypes a
     /// pattern can see what was actually parsed.

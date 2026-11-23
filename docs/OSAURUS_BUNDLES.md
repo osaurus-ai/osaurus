@@ -40,7 +40,6 @@ A bundle **can't** contain these. Each has its own path, covered in [section 8](
 
 | Not in a bundle | Use instead |
 | --- | --- |
-| Plugins | `osaurus tools install <plugin-id> --consent` in your script |
 | Models | `strictness: preferred` so the agent falls back to the user's model, or `osaurus pull <model-id>` in your script |
 | Raw secrets | Keychain items your script creates; the bundle holds only `keychain:SERVICE/ACCOUNT` references |
 | Settings not in the [list](#settings) | Not provisioned by bundles. Users change them in Settings. |
@@ -566,13 +565,9 @@ esac
 
 Read `state` with `plutil -extract state raw -o - install.json`. It is built into macOS, so you don't need `jq`.
 
-### 8.7 Plugins and models
+### 8.7 Models
 
-Plugins aren't part of a bundle. Install them in the same script, before the import, so agents that list them under `plugins.enabled` find them:
-
-```bash
-"$CLI" tools install osaurus.fetch --consent
-```
+Plugins aren't part of a bundle, and the CLI no longer installs them. A `plugins.enabled` entry only takes effect for a plugin that is already installed on the Mac.
 
 For models, prefer `strictness: preferred` (or no `model` at all): the agent uses the user's model and works right away. To ship a specific local model, download it in the script. Downloads are large, so tell the user:
 

@@ -69,6 +69,7 @@ enum SyncDeviceFeedContract {
         "workflow_live_steps",
         "workflow_run_approvals",
         "workflow_file_fetch",
+        "callback_inbox",
     ]
 
     /// Each device's record under `prefix`, keyed by device key. With
@@ -225,6 +226,8 @@ enum SyncDeviceFeedContract {
         var pushRegistered: [String]?
         /// The agent call this Mac is placing (`agent_calls`), until a minute after it ends.
         var call: CallState?
+        /// The calls the user arranged (`callback_inbox`, §5.10).
+        var callbacks: [ArrangedCall]?
         var updatedMs: Int64
     }
 
@@ -271,6 +274,8 @@ enum SyncDeviceFeedContract {
             /// `runId`, `fileId` (`workflow_file_fetch`): writes one of a finished run's files too large for its output
             /// as its own message, and answers once it's written.
             case workflowFile
+            /// `callbackId` (`callback_inbox`): calls off an arranged call, ringing or not.
+            case cancelCallback
             /// An op this Mac's build doesn't know.
             case unsupported
 
@@ -322,6 +327,8 @@ enum SyncDeviceFeedContract {
         var partial: Bool?
         /// `workflowFile`: the file's id in the run's output.
         var fileId: String?
+        /// `cancelCallback`: the arranged call's id.
+        var callbackId: String?
         var requestedMs: Int64
 
         init(

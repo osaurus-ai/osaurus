@@ -1,0 +1,13 @@
+{
+  "id": "terminal_approval.terminal-deny",
+  "domain": "terminal_approval",
+  "label": "terminal approval • a denial from the terminal refuses the call",
+  "query": "deterministic policy pin — no model involved",
+  "notes": "Same run; deny from the terminal session refuses the call, the tool never runs, and the answered card cannot be answered again.",
+  "fixtures": {},
+  "expect": {
+    "terminalApproval": {
+      "scenario": "terminal_deny"
+    }
+  }
+}

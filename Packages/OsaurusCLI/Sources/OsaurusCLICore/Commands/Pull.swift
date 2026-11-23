@@ -3,34 +3,28 @@
 //  osaurus
 //
 //  Downloads an MLX model from Hugging Face directly to the local models directory.
-//  Mirrors the file patterns used by ModelDownloadService in the macOS app.
+//  Uses the same file patterns as the app (`ModelFilePatterns`).
 //
 
 import Foundation
+import OsaurusRepository
 
 public struct PullCommand: Command {
     public static let name = "pull"
 
-    // Files to download — mirrors ModelDownloadService.downloadFilePatterns
-    private static let downloadFilePatterns: [String] = [
-        "config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-        "generation_config.json",
-        "chat_template.jinja",
-        "preprocessor_config.json",
-        "processor_config.json",
-        "jang_config.json",
-        "jjqf_config.json",
-        "jang_cfg.json",
-        "mxq_config.json",
-        "*.safetensors",
-    ]
+    static let usage = """
+        Usage: osaurus pull <model_id>
+
+        Downloads a model from Hugging Face into the Osaurus models folder.
+        Example: osaurus pull mlx-community/Llama-3.2-1B-4bit
+
+        Gated and private models need a Hugging Face token: set HF_TOKEN (or
+        HUGGING_FACE_HUB_TOKEN), or sign in with `hf auth login`.
+        """
 
     // MARK: - Decodable helpers
 
-    private struct TreeNode: Decodable {
+    struct TreeNode: Decodable {
         let path: String
         let type: String?
         let size: Int64?
@@ -41,12 +35,19 @@ public struct PullCommand: Command {
     // MARK: - Execute
 
     public static func execute(args: [String]) async {
-        guard let modelId = args.first, !modelId.isEmpty else {
-            fputs("Missing required <model_id>\n", stderr)
-            fputs("Usage: osaurus pull <model_id>\n", stderr)
-            fputs("Example: osaurus pull mlx-community/Llama-3.2-1B-4bit\n", stderr)
+        if args.contains("--help") || args.contains("-h") {
+            print(usage)
+            exit(EXIT_SUCCESS)
+        }
+        guard let modelId = args.first, !modelId.isEmpty, !modelId.hasPrefix("-") else {
+            fputs("Missing required <model_id>\n\n\(usage)\n", stderr)
             exit(EXIT_FAILURE)
         }
+        if args.count > 1 {
+            fputs("osaurus pull: unknown argument `\(args[1])`\n\n\(usage)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        let token = huggingFaceToken()
 
         print("Pulling \(modelId) ...")
 
@@ -67,9 +68,14 @@ public struct PullCommand: Command {
         }
 
         // Fetch file list from Hugging Face tree API
-        guard let files = await fetchMatchingFiles(repoId: modelId, patterns: downloadFilePatterns) else {
-            fputs("Could not retrieve file list from Hugging Face for '\(modelId)'.\n", stderr)
-            fputs("Check that the model exists and is an MLX-compatible repository.\n", stderr)
+        let files: [(path: String, size: Int64)]
+        do {
+            files = try await fetchMatchingFiles(repoId: modelId, token: token)
+        } catch let error as HubError {
+            fputs("\(error.message)\n", stderr)
+            exit(EXIT_FAILURE)
+        } catch {
+            fputs("Could not retrieve the file list from Hugging Face for '\(modelId)': \(error.localizedDescription)\n", stderr)
             exit(EXIT_FAILURE)
         }
 
@@ -129,6 +135,7 @@ public struct PullCommand: Command {
             do {
                 try await downloadFile(
                     from: downloadURL,
+                    token: token,
                     to: fileDest,
                     fileName: file.path,
                     fileSize: file.size,
@@ -136,6 +143,9 @@ public struct PullCommand: Command {
                     totalBytes: totalBytes
                 )
                 completedBytes += file.size
+            } catch let error as HubError {
+                fputs("\nFailed to download '\(file.path)': \(error.message)\n", stderr)
+                exit(EXIT_FAILURE)
             } catch {
                 fputs("\nFailed to download '\(file.path)': \(error.localizedDescription)\n", stderr)
                 exit(EXIT_FAILURE)
@@ -180,7 +190,7 @@ public struct PullCommand: Command {
     static func resolveLocalDirectory(
         for modelId: String,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        appDefaults: UserDefaults? = UserDefaults(suiteName: "com.dinoki.osaurus"),
+        appDefaults: UserDefaults? = UserDefaults(suiteName: AppIdentity.bundleIdentifier),
         sharedDefaults: UserDefaults? = UserDefaults(suiteName: "group.com.osaurus.shared"),
         home: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> URL? {
@@ -292,58 +302,121 @@ public struct PullCommand: Command {
 
     // MARK: - HuggingFace file listing
 
-    private struct MatchedFile {
-        let path: String
-        let size: Int64
+    struct HubError: Error, Equatable {
+        let message: String
     }
 
-    /// Fetch the list of files from a Hugging Face repo that match any of the given glob patterns.
+    /// A Hub refusal worded for what the user can do about it; nil when the
+    /// status is not one.
+    static func hubStatusMessage(_ status: Int, repoId: String, hasToken: Bool) -> String? {
+        switch status {
+        case 401:
+            return hasToken
+                ? "Hugging Face rejected the token for '\(repoId)' (401). Check HF_TOKEN."
+                : "'\(repoId)' is private or gated and needs a Hugging Face token (401). Set HF_TOKEN, "
+                    + "or sign in with `hf auth login`."
+        case 403:
+            return "Hugging Face refused access to '\(repoId)' (403). If it is gated, accept its terms on "
+                + "huggingface.co/\(repoId) with the account that owns the token."
+        case 404:
+            return hasToken
+                ? "Model '\(repoId)' was not found on Hugging Face (404)."
+                : "Model '\(repoId)' was not found on Hugging Face (404). If it is private, set HF_TOKEN."
+        case 429:
+            return "Hugging Face is rate limiting downloads (429). Wait a minute and try again"
+                + (hasToken ? "." : ", or set HF_TOKEN for a higher limit.")
+        default:
+            return nil
+        }
+    }
+
+    /// `HF_TOKEN`, then `HUGGING_FACE_HUB_TOKEN`, then the token `hf auth
+    /// login` saved (`$HF_HOME/token`, default `~/.cache/huggingface/token`).
+    static func huggingFaceToken(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> String? {
+        for name in ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] {
+            if let value = environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                return value
+            }
+        }
+        let hfHome =
+            environment["HF_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? home.appendingPathComponent(".cache/huggingface", isDirectory: true)
+        let saved = (try? String(contentsOf: hfHome.appendingPathComponent("token"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return saved?.isEmpty == false ? saved : nil
+    }
+
+    /// The `rel="next"` URL of a Hub `Link` header (tree listings are paged).
+    static func nextPageURL(linkHeader: String?) -> URL? {
+        guard let linkHeader else { return nil }
+        for part in linkHeader.split(separator: ",") {
+            let pieces = part.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard pieces.count >= 2, pieces.dropFirst().contains(where: { $0 == "rel=\"next\"" }),
+                pieces[0].hasPrefix("<"), pieces[0].hasSuffix(">")
+            else { continue }
+            return URL(string: String(pieces[0].dropFirst().dropLast()))
+        }
+        return nil
+    }
+
+    /// The tree entries Osaurus downloads, as safe relative paths.
+    static func matchingFiles(in nodes: [TreeNode]) -> [(path: String, size: Int64)] {
+        nodes.compactMap { node in
+            guard node.type != "directory",
+                let safePath = normalizedRemoteFilePath(node.path),
+                ModelFilePatterns.matches(path: safePath)
+            else { return nil }
+            let size = node.size ?? node.lfs?.size ?? 0
+            guard size > 0 else { return nil }
+            return (path: safePath, size: size)
+        }
+    }
+
+    /// Every page of the repository's file tree, filtered to what Osaurus
+    /// downloads.
     private static func fetchMatchingFiles(
         repoId: String,
-        patterns: [String]
-    ) async -> [(path: String, size: Int64)]? {
+        token: String?
+    ) async throws -> [(path: String, size: Int64)] {
         var comps = URLComponents()
         comps.scheme = "https"
         comps.host = "huggingface.co"
         comps.path = "/api/models/\(repoId)/tree/main"
         comps.queryItems = [URLQueryItem(name: "recursive", value: "1")]
-        guard let url = comps.url else { return nil }
+        var next = comps.url
+        var nodes: [TreeNode] = []
+        var pages = 0
 
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 30.0
+        while let url = next {
+            pages += 1
+            guard pages <= 100 else { throw HubError(message: "The file list for '\(repoId)' has too many pages.") }
+            var request = URLRequest(url: url)
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+            request.timeoutInterval = 30.0
 
-        do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else { return nil }
-            if http.statusCode == 404 {
-                fputs("Model '\(repoId)' not found on Hugging Face (404).\n", stderr)
-                return nil
+            guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            if let message = hubStatusMessage(http.statusCode, repoId: repoId, hasToken: token != nil) {
+                throw HubError(message: message)
             }
-            guard (200 ..< 300).contains(http.statusCode) else { return nil }
-
-            let nodes = try JSONDecoder().decode([TreeNode].self, from: data)
-            let matchers = patterns.compactMap { CLIGlob($0) }
-
-            let files: [(path: String, size: Int64)] = nodes.compactMap { node in
-                guard node.type != "directory" else { return nil }
-                guard let safePath = normalizedRemoteFilePath(node.path) else { return nil }
-                let filename = (safePath as NSString).lastPathComponent
-                guard matchers.contains(where: { $0.matches(filename) }) else { return nil }
-                let size = node.size ?? node.lfs?.size ?? 0
-                guard size > 0 else { return nil }
-                return (path: safePath, size: size)
+            guard (200 ..< 300).contains(http.statusCode) else {
+                throw HubError(message: "Hugging Face returned HTTP \(http.statusCode) for '\(repoId)'.")
             }
-            return files
-        } catch {
-            return nil
+            nodes += try JSONDecoder().decode([TreeNode].self, from: data)
+            next = nextPageURL(linkHeader: http.value(forHTTPHeaderField: "Link"))
         }
+        return matchingFiles(in: nodes)
     }
 
     // MARK: - File download with progress bar
 
     private static func downloadFile(
         from url: URL,
+        token: String?,
         to destination: URL,
         fileName: String,
         fileSize: Int64,
@@ -354,8 +427,10 @@ public struct PullCommand: Command {
         let downloader = CLIFileDownloader()
         defer { downloader.invalidate() }
 
+        var request = URLRequest(url: url)
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         try await downloader.download(
-            from: url,
+            from: request,
             to: destination,
             expectedSize: fileSize,
             onProgress: { bytesWritten, _ in
@@ -397,33 +472,6 @@ public struct PullCommand: Command {
     }
 }
 
-// MARK: - Minimal glob matcher (standalone, no OsaurusCore dependency)
-
-private struct CLIGlob {
-    private let regex: NSRegularExpression
-
-    init?(_ pattern: String) {
-        var escaped = ""
-        for ch in pattern {
-            switch ch {
-            case "*": escaped += ".*"
-            case "?": escaped += "."
-            case ".", "+", "(", ")", "[", "]", "{", "}", "^", "$", "|", "\\":
-                escaped += "\\\(ch)"
-            default:
-                escaped += String(ch)
-            }
-        }
-        guard let regex = try? NSRegularExpression(pattern: "^\(escaped)$") else { return nil }
-        self.regex = regex
-    }
-
-    func matches(_ text: String) -> Bool {
-        let range = NSRange(location: 0, length: (text as NSString).length)
-        return regex.firstMatch(in: text, options: [], range: range) != nil
-    }
-}
-
 // MARK: - Download engine with URLSessionDownloadDelegate for reliable progress
 
 /// Downloads a single file using a session-level URLSessionDownloadDelegate,
@@ -444,7 +492,7 @@ private final class CLIFileDownloader: NSObject, URLSessionDownloadDelegate, @un
     }()
 
     func download(
-        from url: URL,
+        from request: URLRequest,
         to destination: URL,
         expectedSize: Int64,
         onProgress: @escaping @Sendable (Int64, Int64) -> Void
@@ -457,12 +505,18 @@ private final class CLIFileDownloader: NSObject, URLSessionDownloadDelegate, @un
             self.progressCallback = onProgress
             self.lastProgressTime = 0
             lock.unlock()
-            let task = session.downloadTask(with: url)
+            let task = session.downloadTask(with: request)
             task.resume()
         }
     }
 
     func invalidate() { session.invalidateAndCancel() }
+
+    /// `owner/name` from a `huggingface.co/<owner>/<name>/resolve/...` URL.
+    private static func repoId(from url: URL?) -> String {
+        let parts = url?.pathComponents.filter { $0 != "/" } ?? []
+        return parts.count >= 2 ? "\(parts[0])/\(parts[1])" : "the model"
+    }
 
     // MARK: URLSessionDownloadDelegate
 
@@ -508,12 +562,12 @@ private final class CLIFileDownloader: NSObject, URLSessionDownloadDelegate, @un
         if let http = downloadTask.response as? HTTPURLResponse,
             !(200 ..< 300).contains(http.statusCode)
         {
-            cont.resume(
-                throwing: URLError(
-                    .badServerResponse,
-                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"]
-                )
-            )
+            let repoId = Self.repoId(from: downloadTask.originalRequest?.url)
+            let hasToken = downloadTask.originalRequest?.value(forHTTPHeaderField: "Authorization") != nil
+            let message =
+                PullCommand.hubStatusMessage(http.statusCode, repoId: repoId, hasToken: hasToken)
+                ?? "HTTP \(http.statusCode)"
+            cont.resume(throwing: PullCommand.HubError(message: message))
             return
         }
 

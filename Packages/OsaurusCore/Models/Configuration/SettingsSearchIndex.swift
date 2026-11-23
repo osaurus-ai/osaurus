@@ -560,6 +560,18 @@ public enum SettingsSearchIndex {
             keywords: ["cli", "install cli", "terminal", "symlink", "install", "command line", "osaurus cli"]
         ),
         .init(
+            id: "server.cliAccess",
+            tab: .server,
+            section: "Overview",
+            title: "Command-Line Tool Access",
+            keywords: [
+                "cli access", "cli approval", "allow cli", "revoke cli", "cli token", "cli 401",
+                "osaurus list unauthorized", "terminal access", "command line access",
+            ],
+            disambiguation:
+                "Whether the osaurus command was allowed to call this server without an access key, with Revoke. Not installing the command (Command Line Tool) and not the access key list."
+        ),
+        .init(
             id: "settings.general.reset",
             tab: .settings,
             section: "Danger Zone",
@@ -662,17 +674,6 @@ public enum SettingsSearchIndex {
                 "handoff", "continue", "resume", "iphone", "phone", "bring to front", "focus", "come back",
                 "return", "unlock", "continue phone chats",
             ]
-        ),
-        .init(
-            id: "settings.connect.pairing",
-            tab: .connect,
-            section: "Pair an iPhone",
-            title: "Generate 6-Digit Code",
-            keywords: [
-                "iphone", "ios", "mobile", "phone", "pair", "pairing code", "6 digit", "six digit",
-                "iosaurus", "osaurus connect", "legacy pairing", "old iphone app",
-            ],
-            disambiguation: "The 6-digit code for an Osaurus iPhone app that doesn't offer Sync yet, kept for one release. It turns off once an iPhone joins in Devices ▸ Add a Device, which is the way to add an iPhone that has Sync."
         ),
         .init(
             id: "settings.connect.pairedDevice",
@@ -4434,6 +4435,17 @@ public enum SettingsSearchIndex {
             ],
             disambiguation:
                 "Inbox → Waiting on Others: your chats with someone else's shared agent that are paused while its owner decides whether to allow a tool. Open Chat goes to the conversation; the row clears when the owner answers or the chat stops."
+        ),
+        .init(
+            id: "approvals.arrangedCalls",
+            tab: .approvals,
+            title: "Arranged Calls",
+            keywords: [
+                "callback", "call me back", "arranged call", "agent call", "cancel call", "scheduled call",
+                "missed call", "was the call made", "arrange_callback",
+            ],
+            disambiguation:
+                "Inbox → Arranged Calls: each call you asked an agent to make to your iPhone (\"call me when the build finishes\"), while it waits and for a week after: whether it rang, you answered, missed or declined it, or the agent never called in time. Cancel Call calls off one that is no longer needed, ringing or not; your iPhone's Inbox lists the same calls. Whether an agent may call on its own is Call You in the agent's settings."
         ),
         .init(
             id: "approvals.liveNow",

@@ -45,7 +45,10 @@ struct MultiPartyVocabularyLintTests {
 
     /// Banned in the guides only: settings paths that no longer exist.
     static let bannedInGuides: [Banned] = [
-        Banned(phrase: "Settings → Mobile", use: "Sharing → Devices (or Devices → Mobile for the 6-digit code)"),
+        Banned(
+            phrase: "Settings → Mobile",
+            use: "Sharing → Devices (or Add Device → Add iPhone or iPad for the 6-digit code)"
+        ),
         Banned(phrase: "General → Sync", use: "Sharing → Devices"),
         Banned(phrase: "Osaurus ID → Workspaces", use: "Sharing → Workspaces"),
         Banned(phrase: "→ Relays", use: "Sharing → Access → Remote Access"),

@@ -2,7 +2,7 @@
 //  ApprovalsView.swift
 //  osaurus
 //
-//  The Inbox (sidebar "Inbox", tab id `approvals`): three sections.
+//  The Inbox (sidebar "Inbox", tab id `approvals`): four sections.
 //
 //  - Needs You: every request waiting on the owner's answer (tool calls, a
 //    teammate's tool call on a shared agent, an agent's question, a
@@ -11,6 +11,7 @@
 //    notification make; the first answer wins.
 //  - Waiting on Others: your chats with someone else's agent that are paused
 //    while its owner decides (`WaitingOnOthers`).
+//  - Arranged Calls: the calls you asked an agent to make (`ArrangedCallsSection`).
 //  - Live Now: people using your agents right now, from a workspace, a guest
 //    link, or another of your devices.
 //
@@ -83,6 +84,7 @@ struct ApprovalsView: View {
                     }
                 }
             }
+            ArrangedCallsSection()
             SettingsSection(
                 title: "Live Now",
                 caption: liveRows.isEmpty ? nil : "\(liveRows.count)",

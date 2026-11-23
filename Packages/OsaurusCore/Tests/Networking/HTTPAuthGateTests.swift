@@ -595,17 +595,16 @@ struct HTTPAuthGateTests {
     /// rather than the (earlier) `peer_inference_disabled` gate.
     @Test func agentScopedKey_cannotNameAnotherAgentInHeader() async throws {
         let fixture = try Self.agentScopedFixture(workspaceMinted: false)
-        let server = try await startAuthTestServer(validator: fixture.validator, peerInferenceSharing: true)
-        defer { Task { await server.shutdown() } }
-
         let mine = UUID()
         let theirs = UUID()
         let theirAddress = try AgentKey.deriveAddress(masterKey: TestKeys.alicePrivateKey, index: 4)
-        AgentIdentityRegistry.shared.update(
-            addresses: [fixture.agent, theirAddress], indices: [3, 4],
-            addressByAgentId: [mine: fixture.agent, theirs: theirAddress]
+        let addresses = [mine: fixture.agent, theirs: theirAddress]
+        let server = try await startAuthTestServer(
+            validator: fixture.validator,
+            peerInferenceSharing: true,
+            agentAddresses: addresses
         )
-        defer { AgentIdentityRegistry.shared.update(addresses: [], indices: [], addressByAgentId: [:]) }
+        defer { Task { await server.shutdown() } }
 
         func send(agentHeader: String) async throws -> (status: Int, body: String) {
             var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/v1/chat/completions")!)
@@ -956,6 +955,209 @@ struct LocalAPIKeyPolicyTests {
     }
 }
 
+// MARK: - CLI Access Approval
+
+/// The `osaurus` CLI's approval token (`X-Osaurus-CLI-Token`) and the
+/// `POST /cli/access` prompt route.
+struct CLIAccessGateTests {
+    private func get(
+        _ server: AuthTestServer,
+        _ path: String,
+        headers: [String: String] = [:]
+    ) async throws -> Int {
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)\(path)")!)
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        let (_, resp) = try await URLSession.shared.data(for: request)
+        return (resp as? HTTPURLResponse)?.statusCode ?? -1
+    }
+
+    private func askForAccess(
+        _ server: AuthTestServer,
+        headers: [String: String] = [:]
+    ) async throws -> (status: Int, body: [String: Any]) {
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/cli/access")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        request.httpBody = Data(#"{"command":"list"}"#.utf8)
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        return ((resp as? HTTPURLResponse)?.statusCode ?? -1, body)
+    }
+
+    @Test func exposedServerRefusesTheCLIWithoutAToken() async throws {
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: false)
+        defer { Task { await server.shutdown() } }
+        #expect(try await get(server, "/v1/models") == 401)
+    }
+
+    @Test func approvedTokenStandsInForLoopbackTrust() async throws {
+        let store = makeTemporaryCLIAccessStore()
+        let token = store.mint(label: "list")
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: false, cliAccessStore: store)
+        defer { Task { await server.shutdown() } }
+        #expect(try await get(server, "/v1/models", headers: [CLIAccessStore.headerName: token]) == 200)
+    }
+
+    @Test func tokenIsIgnoredFromABrowserPage() async throws {
+        let store = makeTemporaryCLIAccessStore()
+        let token = store.mint(label: "list")
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: false, cliAccessStore: store)
+        defer { Task { await server.shutdown() } }
+        let status = try await get(
+            server, "/v1/models",
+            headers: [CLIAccessStore.headerName: token, "Origin": "https://evil.example"]
+        )
+        #expect(status == 401)
+    }
+
+    @Test func tokenIsIgnoredFromTheRelay() async throws {
+        let store = makeTemporaryCLIAccessStore()
+        let token = store.mint(label: "list")
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: false, cliAccessStore: store)
+        defer { Task { await server.shutdown() } }
+        let status = try await get(
+            server, "/v1/models",
+            headers: [CLIAccessStore.headerName: token, HTTPHandler.relayOriginHeaderName: "1"]
+        )
+        #expect(status == 401)
+    }
+
+    @Test func revokedTokenIsRefused() async throws {
+        let store = makeTemporaryCLIAccessStore()
+        let token = store.mint(label: "list")
+        store.revokeAll()
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: false, cliAccessStore: store)
+        defer { Task { await server.shutdown() } }
+        #expect(try await get(server, "/v1/models", headers: [CLIAccessStore.headerName: token]) == 401)
+    }
+
+    @Test func unknownTokenIsRefused() async throws {
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: false)
+        defer { Task { await server.shutdown() } }
+        let status = try await get(server, "/v1/models", headers: [CLIAccessStore.headerName: "osc_not-a-real-token"])
+        #expect(status == 401)
+    }
+
+    @Test func tokenSatisfiesRequireAccessKeyForLocalAdminRoutes() async throws {
+        let store = makeTemporaryCLIAccessStore()
+        let token = store.mint(label: "mcp")
+        let server = try await startAuthTestServer(
+            validator: .empty, trustLoopback: true, localKeyRequired: true, cliAccessStore: store)
+        defer { Task { await server.shutdown() } }
+        #expect(try await get(server, "/mcp/health") == 401)
+        let status = try await get(server, "/mcp/health", headers: [CLIAccessStore.headerName: token])
+        #expect(status != 401 && status != 403)
+    }
+
+    @Test func allowReturnsAWorkingToken() async throws {
+        let store = makeTemporaryCLIAccessStore()
+        let server = try await startAuthTestServer(
+            validator: .empty, trustLoopback: false, cliAccessStore: store,
+            cliAccessPrompter: CLIAccessPrompter { label, _, _ in label == "list" ? .allowed : .denied }
+        )
+        defer { Task { await server.shutdown() } }
+        let (status, body) = try await askForAccess(server)
+        #expect(status == 200)
+        let token = try #require(body["token"] as? String)
+        #expect(token.hasPrefix(CLIAccessStore.tokenPrefix))
+        #expect(store.list().count == 1)
+        #expect(!(store.list().first?.hash.contains(token) ?? true))
+        #expect(try await get(server, "/v1/models", headers: [CLIAccessStore.headerName: token]) == 200)
+    }
+
+    @Test func denyThenCooldown() async throws {
+        let server = try await startAuthTestServer(
+            validator: .empty, trustLoopback: false,
+            cliAccessPrompter: CLIAccessPrompter { _, _, _ in .denied }
+        )
+        defer { Task { await server.shutdown() } }
+        let first = try await askForAccess(server)
+        #expect(first.status == 403)
+        #expect(first.body["error"] as? String == "cli_access_denied")
+        let second = try await askForAccess(server)
+        #expect(second.status == 429)
+    }
+
+    @Test func unansweredPromptTimesOutWithoutCooldown() async throws {
+        let server = try await startAuthTestServer(
+            validator: .empty, trustLoopback: false,
+            cliAccessPrompter: CLIAccessPrompter { _, _, _ in .closed }
+        )
+        defer { Task { await server.shutdown() } }
+        #expect(try await askForAccess(server).status == 408)
+        #expect(try await askForAccess(server).status == 408)
+    }
+
+    @Test func browserPagesCannotRaiseThePrompt() async throws {
+        let server = try await startAuthTestServer(
+            validator: .empty, trustLoopback: false,
+            cliAccessPrompter: CLIAccessPrompter { _, _, _ in
+                Issue.record("prompt must not be raised for a browser origin")
+                return .allowed
+            }
+        )
+        defer { Task { await server.shutdown() } }
+        let (status, _) = try await askForAccess(server, headers: ["Origin": "https://evil.example"])
+        #expect(status == 403)
+    }
+
+    @Test func relayCannotRaiseThePrompt() async throws {
+        let server = try await startAuthTestServer(
+            validator: .empty, trustLoopback: false,
+            cliAccessPrompter: CLIAccessPrompter { _, _, _ in
+                Issue.record("prompt must not be raised for relay traffic")
+                return .allowed
+            }
+        )
+        defer { Task { await server.shutdown() } }
+        let (status, _) = try await askForAccess(server, headers: [HTTPHandler.relayOriginHeaderName: "1"])
+        #expect(status == 403)
+    }
+
+    @Test func onlyTheApprovedCLIListsATerminalSessionsApprovals() async throws {
+        let store = makeTemporaryCLIAccessStore()
+        let token = store.mint(label: "agent")
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: true, cliAccessStore: store)
+        defer { Task { await server.shutdown() } }
+        let session = "cli-" + UUID().uuidString
+        #expect(try await get(server, "/approvals?session=\(session)") == 403, "loopback trust is not enough")
+        #expect(
+            try await get(server, "/approvals?session=bad id", headers: [CLIAccessStore.headerName: token]) == 403)
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/approvals?session=\(session)")!)
+        request.setValue(token, forHTTPHeaderField: CLIAccessStore.headerName)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect((body["approvals"] as? [Any])?.isEmpty == true)
+    }
+
+    @Test func onlyTheApprovedCLIAnswersForATerminalSession() async throws {
+        let store = makeTemporaryCLIAccessStore()
+        let token = store.mint(label: "agent")
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: true, cliAccessStore: store)
+        defer { Task { await server.shutdown() } }
+        func answer(_ headers: [String: String]) async throws -> Int {
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/approvals/\(UUID())")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+            request.httpBody = Data(#"{"decision":"allow_once","session":"cli-12345678"}"#.utf8)
+            let (_, response) = try await URLSession.shared.data(for: request)
+            return (response as? HTTPURLResponse)?.statusCode ?? -1
+        }
+        #expect(try await answer([:]) == 403)
+        #expect(try await answer([CLIAccessStore.headerName: token]) == 404, "approved, but no such card")
+    }
+}
+
+private func makeTemporaryCLIAccessStore() -> CLIAccessStore {
+    CLIAccessStore(
+        fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("cli-access-\(UUID().uuidString).json")
+    )
+}
+
 // MARK: - Test Server Bootstrap
 
 private struct AuthTestServer {
@@ -979,7 +1181,10 @@ private func startAuthTestServer(
     trustLoopback: Bool = false,
     peerInferenceSharing: Bool = false,
     localKeyRequired: Bool = false,
-    allowedOrigins: [String] = []
+    allowedOrigins: [String] = [],
+    cliAccessStore: CLIAccessStore = makeTemporaryCLIAccessStore(),
+    cliAccessPrompter: CLIAccessPrompter = CLIAccessPrompter { _, _, _ in .denied },
+    agentAddresses: [UUID: String]? = nil
 ) async throws -> AuthTestServer {
     var config = ServerConfiguration.default
     config.allowedOrigins = allowedOrigins
@@ -999,7 +1204,15 @@ private func startAuthTestServer(
                             eventLoop: channel.eventLoop,
                             trustLoopback: trustLoopback,
                             peerInferenceSharingProvider: { peerInferenceSharing },
-                            localKeyRequiredProvider: { localKeyRequired }
+                            localKeyRequiredProvider: { localKeyRequired },
+                            cliAccessStore: cliAccessStore,
+                            cliAccessPrompter: cliAccessPrompter,
+                            agentAddressProvider: { id in
+                                guard let agentAddresses else {
+                                    return AgentIdentityRegistry.shared.address(forAgentId: id)
+                                }
+                                return agentAddresses[id]
+                            }
                         )
                     )
                 }

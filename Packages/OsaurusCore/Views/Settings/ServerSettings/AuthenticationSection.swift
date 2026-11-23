@@ -40,6 +40,16 @@ struct AuthenticationSection: View {
                 noAccessKeysWarning
             }
 
+            if requireLocalKey {
+                SettingsCallout(
+                    icon: "terminal",
+                    title: "The osaurus Command Asks First",
+                    message:
+                        "The osaurus command does not need a key: the first time it calls these routes, Osaurus asks you to allow it. Revoke that in Server → Overview → Command-Line Tool Access.",
+                    tone: .info
+                )
+            }
+
             SettingsFieldRow(label: "Planned Controls") {
                 VStack(alignment: .leading, spacing: theme.space.s12) {
                     ServerSettingsPlannedBanner(

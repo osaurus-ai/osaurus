@@ -143,6 +143,7 @@ private struct OverviewTabContent: View {
         AccessKeysSection()
         LocalRouterSpendSection()
         CommandLineToolSection()
+        CLIAccessSection()
         CodexCLISetupSection()
         SettingsSection(title: "Remote Access") {
             SettingsLinkRow(
@@ -182,6 +183,46 @@ private struct LocalRouterSpendSection: View {
             OsaurusRouter.setAllowsUnkeyedLoopbackSpend(newValue)
         }
         .onAppear { isEnabled = OsaurusRouter.allowsUnkeyedLoopbackSpend }
+    }
+}
+
+// MARK: - Command-Line Tool Access
+
+/// Approvals the owner gave the `osaurus` CLI from the Allow prompt
+/// (`CLIAccessStore`). Revoke makes every command ask again.
+private struct CLIAccessSection: View {
+    @State private var approvals: [CLIAccessStore.Approval] = []
+
+    var body: some View {
+        SettingsSection(title: "Command-Line Tool Access", anchorId: "server.cliAccess") {
+            SettingsRow(title: statusTitle, description: statusDescription) {
+                if !approvals.isEmpty {
+                    SettingsButton(.destructive, "Revoke", size: .compact) {
+                        CLIAccessStore.shared.revokeAll()
+                    }
+                }
+            }
+        }
+        .onAppear { approvals = CLIAccessStore.shared.list() }
+        .onReceive(NotificationCenter.default.publisher(for: .cliAccessChanged)) { _ in
+            approvals = CLIAccessStore.shared.list()
+        }
+    }
+
+    private var statusTitle: String {
+        approvals.isEmpty ? "Not approved" : "Approved"
+    }
+
+    private var statusDescription: String {
+        guard let latest = approvals.map(\.createdAt).max() else {
+            return L(
+                "When Osaurus asks for an access key, the osaurus command asks you to allow it here first. Approving lets it call this server without a key."
+            )
+        }
+        return String(
+            format: L("Allowed %@. Revoke to make the osaurus command ask again."),
+            sharedMediumDateFormatter.string(from: latest)
+        )
     }
 }
 
@@ -298,7 +339,7 @@ private struct AccessKeysSection: View {
 
     private var accessKeySummaryKey: String {
         server.configuration.exposeToNetwork
-            ? "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on."
+            ? "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on; the osaurus command asks you to allow it instead."
             : "Localhost clients can call the API without a real key. Create access keys for LAN, relay, or clients that require a Bearer value."
     }
 
@@ -1034,6 +1075,7 @@ struct APIEndpoint {
         case audio = "Audio"
         case memory = "Memory"
         case agents = "Agents"
+        case workflows = "Workflows"
         case mcp = "MCP"
 
         var icon: String {
@@ -1044,6 +1086,7 @@ struct APIEndpoint {
             case .audio: return "waveform"
             case .memory: return "brain.head.profile"
             case .agents: return "person.2"
+            case .workflows: return "point.3.connected.trianglepath.dotted"
             case .mcp: return "wrench.and.screwdriver"
             }
         }
@@ -1056,6 +1099,7 @@ struct APIEndpoint {
             case .audio: return .orange
             case .memory: return .pink
             case .agents: return .indigo
+            case .workflows: return .teal
             case .mcp: return .purple
             }
         }
@@ -1311,11 +1355,67 @@ struct APIEndpoint {
                 category: .agents,
                 examplePayload: "{\n  \"response\": \"Yes, proceed with the changes\"\n}"
             ),
+            APIEndpoint(
+                method: "GET",
+                path: "/approvals",
+                description: L("List tool approvals waiting for an answer"),
+                compatibility: "Osaurus",
+                category: .agents,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/approvals/{id}",
+                description: L("Answer a waiting tool approval"),
+                compatibility: "Osaurus",
+                category: .agents,
+                examplePayload: "{\n  \"decision\": \"allow_once\"\n}"
+            ),
+            APIEndpoint(
+                method: "GET",
+                path: "/workflows",
+                description: L("List installed workflows and their inputs"),
+                compatibility: "Osaurus",
+                category: .workflows,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/workflows/{id}/run",
+                description: L("Start a workflow (Osaurus Shortcuts actions and the approved osaurus command only)"),
+                compatibility: "Osaurus",
+                category: .workflows,
+                examplePayload: "{\n  \"input\": {\"text\": \"Hello\"}\n}"
+            ),
+            APIEndpoint(
+                method: "GET",
+                path: "/workflows/runs",
+                description: L("List recent workflow runs"),
+                compatibility: "Osaurus",
+                category: .workflows,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "GET",
+                path: "/workflows/runs/{id}",
+                description: L("Return a workflow run's status, result, or waiting form"),
+                compatibility: "Osaurus",
+                category: .workflows,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/workflows/runs/{id}/cancel",
+                description: L("Stop a workflow run"),
+                compatibility: "Osaurus",
+                category: .workflows,
+                examplePayload: nil
+            ),
         ]
     }()
 
     static let groupedEndpoints: [(category: EndpointCategory, endpoints: [APIEndpoint])] = {
-        let categories: [EndpointCategory] = [.core, .chat, .embeddings, .audio, .memory, .agents, .mcp]
+        let categories: [EndpointCategory] = [.core, .chat, .embeddings, .audio, .memory, .agents, .workflows, .mcp]
         return categories.map { cat in
             (category: cat, endpoints: allEndpoints.filter { $0.category == cat })
         }

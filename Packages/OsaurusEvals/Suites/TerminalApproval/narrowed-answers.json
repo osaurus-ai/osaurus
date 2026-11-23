@@ -1,0 +1,13 @@
+{
+  "id": "terminal_approval.narrowed-answers",
+  "domain": "terminal_approval",
+  "label": "terminal approval • terminal answers are narrowed on per-call cards",
+  "query": "deterministic policy pin — no model involved",
+  "notes": "On a per-call card (no run lease), always_allow and allow_for_run from the terminal both resolve as allow_once, so the CLI cannot pre-grant beyond the one call.",
+  "fixtures": {},
+  "expect": {
+    "terminalApproval": {
+      "scenario": "narrowed_answers"
+    }
+  }
+}

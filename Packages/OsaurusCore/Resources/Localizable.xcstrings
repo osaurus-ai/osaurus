@@ -1,6 +1,994 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "A Terminal command on this Mac (%@) is asking to use Osaurus. If you allow it, osaurus commands can reach this server while Expose to Network or Require Access Key for Local Admin Routes is on, start your workflows, and answer tool approvals for agent runs they start. You can revoke this in Settings → Server → Overview → Command-Line Tool Access." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Terminal-Befehl auf diesem Mac (%@) möchte Osaurus verwenden. Wenn du es erlaubst, können osaurus-Befehle diesen Server erreichen, während „Expose to Network“ oder „Require Access Key for Local Admin Routes“ aktiviert ist, deine Workflows starten und Werkzeugfreigaben für von ihnen gestartete Agent-Läufe beantworten. Du kannst das unter Einstellungen → Server → Übersicht → Command-Line Tool Access widerrufen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "A Terminal command on this Mac (%@) is asking to use Osaurus. If you allow it, osaurus commands can reach this server while Expose to Network or Require Access Key for Local Admin Routes is on, start your workflows, and answer tool approvals for agent runs they start. You can revoke this in Settings → Server → Overview → Command-Line Tool Access."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac의 터미널 명령(%@)이 Osaurus 사용을 요청하고 있습니다. 허용하면 Expose to Network 또는 Require Access Key for Local Admin Routes가 켜져 있어도 osaurus 명령이 이 서버에 접근하고, 워크플로를 시작하고, 직접 시작한 에이전트 실행의 도구 승인에 응답할 수 있습니다. 설정 → Server → 개요 → Command-Line Tool Access에서 취소할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Команда в Терминале на этом Mac (%@) запрашивает доступ к Osaurus. Если разрешить, команды osaurus смогут обращаться к этому серверу, пока включены Expose to Network или Require Access Key for Local Admin Routes, запускать ваши рабочие процессы и отвечать на запросы разрешений инструментов в запущенных ими агентах. Отозвать разрешение можно в Настройки → Server → Обзор → Command-Line Tool Access."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 Mac 上的一个终端命令（%@）请求使用 Osaurus。如果允许，在开启 Expose to Network 或 Require Access Key for Local Admin Routes 时，osaurus 命令也能访问此服务器、启动你的工作流，并回应它们启动的代理运行中的工具审批。你可以在设置 → Server → 概览 → Command-Line Tool Access 中撤销。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 Mac 上的一個終端命令（%@）請求使用 Osaurus。如果允許，在開啓 Expose to Network 或 Require Access Key for Local Admin Routes 時，osaurus 命令也能訪問此服務器、啓動你的工作流，並回應它們啓動的代理運行中的工具審批。你可以在設定 → Server → 概覽 → Command-Line Tool Access 中撤銷。"
+          }
+        }
+      }
+    },
+    "List tool approvals waiting for an answer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf Antwort wartende Tool-Freigaben auflisten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "List tool approvals waiting for an answer"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "응답을 기다리는 도구 승인 목록 보기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список запросов на разрешение инструментов, ожидающих ответа"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "列出等待回复的工具审批"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "列出等待回覆的工具審核"
+          }
+        }
+      }
+    },
+    "Answer a waiting tool approval" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine wartende Tool-Freigabe beantworten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Answer a waiting tool approval"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기 중인 도구 승인에 응답"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ответить на ожидающий запрос разрешения инструмента"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回复等待中的工具审批"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回覆等待中的工具審核"
+          }
+        }
+      }
+    },
+    "List installed workflows and their inputs" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installierte Workflows und ihre Eingaben auflisten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "List installed workflows and their inputs"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설치된 워크플로와 입력 항목 목록 보기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список установленных рабочих процессов и их входных данных"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "列出已安装的工作流及其输入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "列出已安裝的工作流程及其輸入"
+          }
+        }
+      }
+    },
+    "Start a workflow (Osaurus Shortcuts actions and the approved osaurus command only)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einen Workflow starten (nur Osaurus-Kurzbefehlaktionen und der freigegebene osaurus-Befehl)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Start a workflow (Osaurus Shortcuts actions and the approved osaurus command only)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "워크플로 시작(Osaurus 단축어 동작과 승인된 osaurus 명령만 가능)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запустить рабочий процесс (только действия Быстрых команд Osaurus и одобренная команда osaurus)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启动工作流（仅限 Osaurus 快捷指令操作和已批准的 osaurus 命令）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "啟動工作流程（僅限 Osaurus 捷徑動作和已核准的 osaurus 指令）"
+          }
+        }
+      }
+    },
+    "List recent workflow runs" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Letzte Workflow-Ausführungen auflisten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "List recent workflow runs"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "최근 워크플로 실행 목록 보기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список последних запусков рабочих процессов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "列出最近的工作流运行"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "列出最近的工作流程執行"
+          }
+        }
+      }
+    },
+    "Return a workflow run's status, result, or waiting form" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Status, Ergebnis oder wartendes Formular einer Workflow-Ausführung zurückgeben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Return a workflow run's status, result, or waiting form"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "워크플로 실행의 상태, 결과 또는 대기 중인 양식 반환"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вернуть статус, результат или ожидающую форму запуска рабочего процесса"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返回工作流运行的状态、结果或等待中的表单"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "傳回工作流程執行的狀態、結果或等待中的表單"
+          }
+        }
+      }
+    },
+    "Stop a workflow run" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine Workflow-Ausführung stoppen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Stop a workflow run"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "워크플로 실행 중지"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остановить запуск рабочего процесса"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止工作流运行"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止工作流程執行"
+          }
+        }
+      }
+    },
+    "Some features were paused after repeated crashes. They come back on their own once Osaurus is running normally." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach wiederholten Abstürzen wurden einige Funktionen pausiert. Sie werden automatisch wieder aktiviert, sobald Osaurus normal läuft."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Some features were paused after repeated crashes. They come back on their own once Osaurus is running normally."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "반복적인 충돌로 인해 일부 기능이 일시 중지되었습니다. Osaurus가 정상적으로 실행되면 자동으로 다시 켜집니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "После повторяющихся сбоев некоторые функции приостановлены. Они включатся сами, как только Osaurus заработает нормально."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "由于反复崩溃，部分功能已暂停。Osaurus 恢复正常运行后，这些功能会自动重新开启。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "由於反覆崩潰，部分功能已暫停。Osaurus 恢復正常執行後，這些功能會自動重新開啟。"
+          }
+        }
+      }
+    },
+    "The plugin's `osr_host_api` mirror struct does not match the host's v6 layout — most often the v5 `log_structured` slot is skipped, which shifts every later slot by 8 bytes. The plugin then dispatches `host->free_string` to the wrong host trampoline and `libc free()` aborts on a non-malloc pointer, killing the host." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die `osr_host_api`-Mirror-Struktur des Plugins stimmt nicht mit dem v6-Layout des Hosts überein – meist wird der v5-`log_structured`-Slot übersprungen, wodurch sich jeder spätere Slot um 8 Bytes verschiebt. Das Plugin leitet dann `host->free_string` an das falsche Host-Trampolin weiter, und `libc free()` bricht bei einem Nicht-malloc-Zeiger ab und beendet den Host."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The plugin's `osr_host_api` mirror struct does not match the host's v6 layout — most often the v5 `log_structured` slot is skipped, which shifts every later slot by 8 bytes. The plugin then dispatches `host->free_string` to the wrong host trampoline and `libc free()` aborts on a non-malloc pointer, killing the host."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "플러그인의 `osr_host_api` 미러 구조체가 호스트의 v6 레이아웃과 일치하지 않습니다. 가장 흔한 경우는 v5 `log_structured` 슬롯이 건너뛰어져 이후의 모든 슬롯이 8바이트씩 이동하는 것입니다. 그러면 플러그인이 `host->free_string`을 잘못된 호스트 트램펄린으로 디스패치하고 `libc free()`가 malloc이 아닌 포인터에서 중단되어 호스트를 종료시킵니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зеркальная структура плагина `osr_host_api` не соответствует макету хоста v6 — чаще всего слот v5 `log_structured` пропускается, что сдвигает каждый последующий слот на 8 байт. Затем плагин отправляет `host->free_string` на батут неправильного хоста, а `libc free()` прерывается на указателе, отличном от malloc, убивая хост."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插件的 `osr_host_api` 镜像结构体与宿主的 v6 布局不匹配——最常见的是跳过了 v5 的 `log_structured` 槽位，导致之后的每个槽位都偏移了 8 个字节。随后插件会将 `host->free_string` 分派到错误的宿主跳板，`libc free()` 在一个非 malloc 指针上中止，从而导致宿主崩溃。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插件的 `osr_host_api` 鏡像結構體與主機的 v6 佈局不匹配——最常見的是跳過了 v5 的 `log_structured` 槽位，導致之後的每個槽位都偏移了 8 個字節。隨後插件會將 `host->free_string` 分派到錯誤的主機跳板，`libc free()` 在一個非 malloc 指針上中止，從而導致主機崩潰。"
+          }
+        }
+      }
+    },
+    "Off binds to 127.0.0.1 (this Mac only). On binds to 0.0.0.0 so phones, iPads, and other devices on your network can connect. While on, apps on this Mac need an access key too; the osaurus command asks you to allow it instead." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus bindet an 127.0.0.1 (nur dieser Mac). Ein bindet an 0.0.0.0, damit Telefone, iPads und andere Geräte in deinem Netzwerk eine Verbindung herstellen können. Solange es an ist, brauchen auch Apps auf diesem Mac einen Zugriffsschlüssel; der Befehl osaurus bittet dich stattdessen um Erlaubnis."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Off binds to 127.0.0.1 (this Mac only). On binds to 0.0.0.0 so phones, iPads, and other devices on your network can connect. While on, apps on this Mac need an access key too; the osaurus command asks you to allow it instead."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "끄면 127.0.0.1(이 Mac 전용)에 바인딩됩니다. 켜면 0.0.0.0에 바인딩되어 네트워크의 휴대폰, iPad 및 기타 기기가 연결할 수 있습니다. 켜져 있는 동안에는 이 Mac의 앱에도 액세스 키가 필요하며, osaurus 명령은 대신 허용을 요청합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выкл. — привязка к 127.0.0.1 (только этот Mac). Вкл. — привязка к 0.0.0.0, чтобы телефоны, iPad и другие устройства в вашей сети могли подключаться. Пока параметр включён, приложениям на этом Mac тоже нужен ключ доступа; команда osaurus вместо этого просит вашего разрешения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭则仅绑定到 127.0.0.1（仅此 Mac）。开启则绑定到 0.0.0.0，这样手机、iPad 和其他网络设备就可以连接。开启期间，此 Mac 上的应用也需要访问密钥；osaurus 命令会改为请求你允许。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關閉則僅綁定到 127.0.0.1（僅此 Mac）。開啓則綁定到 0.0.0.0，這樣手機、iPad 和其他網絡設備就可以連接。開啓期間，此 Mac 上的應用也需要訪問密鑰；osaurus 命令會改為請求你允許。"
+          }
+        }
+      }
+    },
+    "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on; the osaurus command asks you to allow it instead." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Netzwerk- und Relay-Aufrufer müssen einen Zugriffsschlüssel vorlegen. Die lokale Loopback-Ausnahme ist deaktiviert, solange das Netzwerk freigegeben ist; der Befehl osaurus bittet dich stattdessen um Erlaubnis."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on; the osaurus command asks you to allow it instead."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "네트워크 및 릴레이 호출자는 액세스 키를 제공해야 합니다. 네트워크 노출이 켜져 있는 동안에는 로컬 루프백 우회가 비활성화되며, osaurus 명령은 대신 허용을 요청합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сетевые вызывающие стороны и вызовы через ретранслятор должны предъявить ключ доступа. Пока включён доступ из сети, локальный обход для loopback отключён; команда osaurus вместо этого просит вашего разрешения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "网络和中继调用方必须出示访问密钥。开启网络暴露时，本地环回绕过将被禁用；osaurus 命令会改为请求你允许。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "網絡和轉接呼叫者必須出示訪問密鑰。網絡暴露開啓時，本地環迴繞過被禁用；osaurus 命令會改為請求你允許。"
+          }
+        }
+      }
+    },
+    "Allow the osaurus command-line tool?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dem Befehlszeilenwerkzeug osaurus erlauben?"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Allow the osaurus command-line tool?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus 명령줄 도구를 허용하시겠습니까?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешить инструмент командной строки osaurus?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许 osaurus 命令行工具吗？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許 osaurus 命令行工具嗎？"
+          }
+        }
+      }
+    },
+    "Don't Allow" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht erlauben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Don't Allow"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "허용 안 함"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не разрешать"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不允许"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不允許"
+          }
+        }
+      }
+    },
+    "Command-Line Tool Access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugriff für das Befehlszeilenwerkzeug"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Command-Line Tool Access"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "명령줄 도구 접근"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ для инструмента командной строки"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命令行工具访问"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命令行工具訪問"
+          }
+        }
+      }
+    },
+    "Not approved" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht freigegeben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Not approved"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "승인되지 않음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не одобрено"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未批准"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未批准"
+          }
+        }
+      }
+    },
+    "When Osaurus asks for an access key, the osaurus command asks you to allow it here first. Approving lets it call this server without a key." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wenn Osaurus einen Zugriffsschlüssel verlangt, bittet dich der Befehl osaurus zuerst hier um Erlaubnis. Nach der Freigabe kann er diesen Server ohne Schlüssel aufrufen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "When Osaurus asks for an access key, the osaurus command asks you to allow it here first. Approving lets it call this server without a key."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 액세스 키를 요구하면 osaurus 명령이 먼저 여기에서 허용을 요청합니다. 승인하면 키 없이 이 서버를 호출할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Когда Osaurus требует ключ доступа, команда osaurus сначала просит разрешения здесь. После одобрения она может обращаться к этому серверу без ключа."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当 Osaurus 要求访问密钥时，osaurus 命令会先在这里请求你允许。批准后，它无需密钥即可调用此服务器。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當 Osaurus 要求訪問密鑰時，osaurus 命令會先在這裡請求你允許。批准後，它無需密鑰即可呼叫此服務器。"
+          }
+        }
+      }
+    },
+    "Allowed %@. Revoke to make the osaurus command ask again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erlaubt am %@. Widerrufe die Freigabe, damit der Befehl osaurus erneut fragt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Allowed %@. Revoke to make the osaurus command ask again."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에 허용됨. 취소하면 osaurus 명령이 다시 요청합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешено %@. Отзовите разрешение, чтобы команда osaurus спросила снова."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已于 %@ 允许。撤销后 osaurus 命令会再次请求。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已於 %@ 允許。撤銷後 osaurus 命令會再次請求。"
+          }
+        }
+      }
+    },
+    "The osaurus Command Asks First" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Befehl osaurus fragt zuerst"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The osaurus Command Asks First"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus 명령은 먼저 요청합니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Команда osaurus сначала спрашивает"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus 命令会先询问"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus 命令會先詢問"
+          }
+        }
+      }
+    },
+    "The osaurus command does not need a key: the first time it calls these routes, Osaurus asks you to allow it. Revoke that in Server → Overview → Command-Line Tool Access." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Befehl osaurus braucht keinen Schlüssel: Beim ersten Aufruf dieser Routen bittet Osaurus dich um Erlaubnis. Widerrufen kannst du das unter Server → Übersicht → Command-Line Tool Access."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The osaurus command does not need a key: the first time it calls these routes, Osaurus asks you to allow it. Revoke that in Server → Overview → Command-Line Tool Access."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus 명령에는 키가 필요 없습니다. 이 경로를 처음 호출할 때 Osaurus가 허용을 요청합니다. Server → 개요 → Command-Line Tool Access에서 취소할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Команде osaurus ключ не нужен: при первом обращении к этим маршрутам Osaurus попросит вашего разрешения. Отозвать его можно в Server → Обзор → Command-Line Tool Access."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus 命令不需要密钥：它第一次调用这些路由时，Osaurus 会请求你允许。可在 Server → 概览 → Command-Line Tool Access 中撤销。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus 命令不需要密鑰：它第一次呼叫這些路由時，Osaurus 會請求你允許。可在 Server → 概覽 → Command-Line Tool Access 中撤銷。"
+          }
+        }
+      }
+    },
+    "%@ will call you %@" : {
+
+    },
+    "%@ won't call you about this." : {
+
+    },
+    "%lld tries didn't reach you" : {
+
+    },
+    "1 try didn't reach you" : {
+
+    },
+    "A newer call was arranged in the chat %@" : {
+
+    },
+    "Arranged %@" : {
+
+    },
+    "Arranged Calls" : {
+
+    },
+    "Cancel Call" : {
+
+    },
+    "Cancel this call?" : {
+
+    },
+    "Declined" : {
+
+    },
+    "Keep Call" : {
+
+    },
+    "Missed" : {
+
+    },
+    "No calls arranged." : {
+
+    },
+    "Not Called" : {
+
+    },
+    "The iPhone paired with a 6-digit code, and keeping this Mac reachable for it" : {
+
+    },
+    "The iPhone paired with a 6-digit code, and keeping this Mac reachable for it." : {
+
+    },
+    "This chat isn't on this Mac anymore" : {
+
+    },
+    "It was deleted, or its data was removed." : {
+
+    },
+    "Agent's Work" : {
+
+    },
+    "Another call was on" : {
+
+    },
+    "Arranged" : {
+
+    },
+    "Arranged Call" : {
+
+    },
+    "Ended" : {
+
+    },
+    "No iPhone could take it" : {
+
+    },
+    "Still running" : {
+
+    },
+    "The call couldn't be sent" : {
+
+    },
+    "Try %lld" : {
+
+    },
+    "Rang %@, nobody answered" : {
+
+    },
+    "Replaced" : {
+
+    },
+    "Ringing" : {
+
+    },
+    "Ringing your iPhone now" : {
+
+    },
+    "Show All" : {
+
+    },
+    "Show Fewer" : {
+
+    },
+    "The agent didn't call in time. Expired %@" : {
+
+    },
+    "The agent stopped while it rang, %@" : {
+
+    },
+    "When you ask an agent to call you back on your iPhone, the call shows here until it's made." : {
+
+    },
+    "Work still running" : {
+
+    },
+    "You answered %@" : {
+
+    },
+    "You cancelled it %@" : {
+
+    },
+    "You declined %@" : {
+
+    },
+    "This deletes your signature, every agent's derived address, and every access key. Onboarding will start over. The backup in your iCloud Keychain will also be removed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dies löscht deine Signatur, die abgeleitete Adresse jedes Agenten und jeden Zugriffsschlüssel. Das Onboarding beginnt von vorne. Das Backup in deinem iCloud-Schlüsselbund wird ebenfalls entfernt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서명, 모든 에이전트의 파생 주소 및 모든 액세스 키가 삭제됩니다. 시작하기가 처음부터 다시 시작됩니다. iCloud 키체인의 백업도 제거됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При этом будет удалена ваша подпись, производный адрес каждого агента и каждый ключ доступа. Регистрация начнется заново. Резервная копия в вашей Связке ключей iCloud также будет удалена."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将删除你的签名、每个智能体派生的地址以及每个访问密钥。初始设置将重新开始。你 iCloud 钥匙串中的备份也将被移除。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這將刪除你的籤名、每個智能體派生的地址以及每個訪問密鑰。初始設置將重新開始。你 iCloud 鑰匙串中的備份也將被移除。"
+          }
+        }
+      }
+    },
+    "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. Onboarding will start over." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Löscht deine Signatur, jede Agentenadresse und jeden Zugriffsschlüssel, einschließlich des Backups in deinem iCloud-Schlüsselbund. Das Onboarding beginnt von vorne."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 키체인의 백업을 포함하여 서명, 모든 에이전트 주소 및 모든 액세스 키를 지웁니다. 시작하기가 다시 시작됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаляет вашу подпись, каждый адрес агента и каждый ключ доступа, включая резервную копию в вашей Связке ключей iCloud. Регистрация начнется заново."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除你的签名、每个智能体地址和每个访问密钥，包括你 iCloud 钥匙串中的备份。初始设置将重新开始。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除你的籤名、每個智能體地址和每個訪問密鑰，包括你 iCloud 鑰匙串中的備份。初始設置將重新開始。"
+          }
+        }
+      }
+    },
     "%@ becomes the identity on this Mac and on every Mac signed in to this iCloud Keychain." : {
       "localizations" : {
         "de" : {
@@ -1984,7 +2972,32 @@
 
     },
     "Encrypted" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verschlüsselt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "암호화됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зашифровано"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已加密"
+          }
+        }
+      }
     },
     "Encrypted relay" : {
 
@@ -204338,40 +205351,6 @@
         }
       }
     },
-    "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Netzwerk- und Relaisanrufer müssen einen Zugriffskey vorlegen. Lokale Loopback-Vermeidung ist deaktiviert, wenn Netzwerkexposition aktiv ist."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "네트워크 및 릴레이 호출자는 액세스 키를 제공해야 합니다. 네트워크 노출이 켜져 있는 동안에는 로컬 루프백 우회가 비활성화됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вызывающие сети и ретрансляторы должны предоставить ключ доступа. Обход локальной шлейфовой проверки отключен, пока включено воздействие сети."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "网络和中继调用方必须出示访问密钥。开启网络暴露时，本地环回绕过将被禁用。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "網絡和轉接呼叫者必須出示訪問密鑰。網絡暴露開啓時，本地環迴繞過被禁用。"
-          }
-        }
-      }
-    },
     "Network error" : {
       "localizations" : {
         "de" : {
@@ -224438,41 +225417,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "關閉（此智能體）"
-          }
-        }
-      }
-    },
-    "Off binds to 127.0.0.1 (this Mac only). On binds to 0.0.0.0 so phones, iPads, and other devices on your network can connect." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Off binds to 127.0.0.1 (this Mac only). On binds to 0.0.0.0 so phones, iPads, and other devices on your network can connect."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "끄면 127.0.0.1(이 Mac 전용)에 바인딩됩니다. 켜면 0.0.0.0에 바인딩되어 네트워크의 휴대폰, iPad 및 기타 기기가 연결할 수 있습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выкл. привязывается к 127.0.0.1 (только для этого Mac). On привязывается к 0.0.0.0, чтобы телефоны, iPad и другие устройства в вашей сети могли подключаться."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关闭则仅绑定到 127.0.0.1（仅此 Mac）。开启则绑定到 0.0.0.0，这样手机、iPad 和其他网络设备就可以连接。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "關閉則僅綁定到127.0.0.1（僅此Mac）。開啓則綁定到0.0.0.0，這樣手機、iPad和其他網絡設備就可以連接。"
           }
         }
       }
@@ -249249,46 +250193,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "現在可以穩定地瀏覽和更新插件程式，不會觸及 GitHub 的限制。"
-          }
-        }
-      }
-    },
-    "Plugins disabled after repeated crashes. Run \"osaurus tools reset\" in Terminal to recover." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Plugins nach wiederholten Abstürzen deaktiviert. Führe „osaurus tools reset“ im Terminal aus, um sie wiederherzustellen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Plugins disabled after repeated crashes. Run \"osaurus tools reset\" in Terminal to recover."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "반복적인 충돌로 인해 플러그인이 사용 안 함으로 설정되었습니다. 복구하려면 터미널에서 \"osaurus tools reset\"을 실행하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Плагины отключены после неоднократных сбоев. Запустите «osaurus сброс инструментов» в Терминале для восстановления."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "插件因反复崩溃已被禁用。请在终端运行“osaurus tools reset”进行恢复。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "插件因反覆崩潰已被禁用。請在終端運行「osaurus tools reset」進行恢復。"
           }
         }
       }
@@ -350605,40 +351509,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "插件沒有捕獲權限。"
-          }
-        }
-      }
-    },
-    "The plugin's `osr_host_api` mirror struct does not match the host's v6 layout — most often the v5 `log_structured` slot is skipped, which shifts every later slot by 8 bytes. The plugin then dispatches `host->free_string` to the wrong host trampoline and `libc free()` aborts on a non-malloc pointer, killing the host. See `docs/plugins/HOST_API.md → Mirror Struct Audit` and `docs/plugins/ABI_VERSIONS.md` for the pinned offsets and the documented v1..v6 evolution." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die `osr_host_api`-Mirror-Struktur des Plugins stimmt nicht mit dem v6-Layout des Hosts überein – meist wird der v5-`log_structured`-Slot übersprungen, wodurch sich jeder spätere Slot um 8 Bytes verschiebt. Das Plugin leitet dann `host->free_string` an das falsche Host-Trampolin weiter, und `libc free()` bricht bei einem Nicht-malloc-Zeiger ab und beendet den Host. Siehe `docs/plugins/HOST_API.md → Mirror Struct Audit` und `docs/plugins/ABI_VERSIONS.md` für die festgelegten Offsets und die dokumentierte v1..v6-Entwicklung."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "플러그인의 `osr_host_api` 미러 구조체가 호스트의 v6 레이아웃과 일치하지 않습니다. 가장 흔한 경우는 v5 `log_structured` 슬롯이 건너뛰어져 이후의 모든 슬롯이 8바이트씩 이동하는 것입니다. 그러면 플러그인이 `host->free_string`을 잘못된 호스트 트램펄린으로 디스패치하고 `libc free()`가 malloc이 아닌 포인터에서 중단되어 호스트를 종료시킵니다. 고정된 오프셋과 문서화된 v1..v6 변경 사항은 `docs/plugins/HOST_API.md → Mirror Struct Audit` 및 `docs/plugins/ABI_VERSIONS.md`를 참조하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Зеркальная структура плагина `osr_host_api` не соответствует макету хоста v6 — чаще всего слот v5 `log_structured` пропускается, что сдвигает каждый последующий слот на 8 байт. Затем плагин отправляет `host->free_string` на батут неправильного хоста, а `libc free()` прерывается на указателе, отличном от malloc, убивая хост. См. `docs/plugins/HOST_API.md → Mirror Struct Audit` и `docs/plugins/ABI_VERSIONS.md` для получения информации о закреплённых смещёниях и документированной эволюции v1..v6."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "插件的 `osr_host_api` 镜像结构体与宿主的 v6 布局不匹配——最常见的是跳过了 v5 的 `log_structured` 槽位，导致之后的每个槽位都偏移了 8 个字节。随后插件会将 `host->free_string` 分派到错误的宿主跳板，`libc free()` 在一个非 malloc 指针上中止，从而导致宿主崩溃。有关固定偏移量以及记录在案的 v1..v6 演进，请参阅 `docs/plugins/HOST_API.md → Mirror Struct Audit` 和 `docs/plugins/ABI_VERSIONS.md`。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "插件的 `osr_host_api` 鏡像結構體與主機的 v6 佈局不匹配——最常見的是跳過了 v5 的 `log_structured` 槽位，導致之後的每個槽位都偏移了 8 個字節。隨後插件會將 `host->free_string` 分派到錯誤的主機跳板，`libc free()` 在一個非 malloc 指針上中止，從而導致主機崩潰。有關固定偏移量以及記錄在案的 v1..v6 演進，請參閱 `docs/plugins/HOST_API.md → Mirror Struct Audit` 和 `docs/plugins/ABI_VERSIONS.md`。"
           }
         }
       }

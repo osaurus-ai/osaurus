@@ -5066,7 +5066,7 @@ struct AgentDetailView: View {
 
                 failedPluginField(label: "Most likely cause") {
                     Text(
-                        "The plugin's `osr_host_api` mirror struct does not match the host's v6 layout — most often the v5 `log_structured` slot is skipped, which shifts every later slot by 8 bytes. The plugin then dispatches `host->free_string` to the wrong host trampoline and `libc free()` aborts on a non-malloc pointer, killing the host. See `docs/plugins/HOST_API.md → Mirror Struct Audit` and `docs/plugins/ABI_VERSIONS.md` for the pinned offsets and the documented v1..v6 evolution.",
+                        "The plugin's `osr_host_api` mirror struct does not match the host's v6 layout — most often the v5 `log_structured` slot is skipped, which shifts every later slot by 8 bytes. The plugin then dispatches `host->free_string` to the wrong host trampoline and `libc free()` aborts on a non-malloc pointer, killing the host.",
                         bundle: .module
                     )
                     .font(SettingsFont.rowDescription)

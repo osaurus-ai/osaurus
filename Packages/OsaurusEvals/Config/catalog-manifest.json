@@ -780,6 +780,12 @@
       "subagent.spawn-live-tool-lane",
       "subagent.spawn-not-spawnable-refused"
     ],
+    "TerminalApproval": [
+      "terminal_approval.headless-refusal",
+      "terminal_approval.narrowed-answers",
+      "terminal_approval.terminal-approve",
+      "terminal_approval.terminal-deny"
+    ],
     "ToolEnvelope": [
       "tool_envelope.failure-execution-error-retryable",
       "tool_envelope.failure-invalid-args",

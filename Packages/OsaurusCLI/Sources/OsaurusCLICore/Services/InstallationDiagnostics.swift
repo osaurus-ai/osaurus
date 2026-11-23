@@ -17,6 +17,7 @@ public enum StartupDiagnosticKind: String, Codable, Sendable {
     case appStale = "app_stale_incompatible"
     case appNewer = "app_newer_than_cli"
     case duplicateBundles = "duplicate_bundles"
+    case duplicateInstances = "duplicate_instances"
     case portBusy = "port_busy"
     case serverUnhealthy = "server_unhealthy"
     case serverNotRunning = "server_not_running"
@@ -82,6 +83,9 @@ public struct InstallationDiagnosticReport: Codable, Equatable, Sendable {
     public let diagnosis: StartupDiagnosticKind
     public let recommendation: String
     public var strandedLegacyModels: LegacyModelDirectoryDiagnostic? = nil
+    /// Running processes of the app. More than one share `~/.osaurus` and
+    /// the port, which is what issue #3479 reported.
+    public var runningInstanceCount: Int = 0
 
     public func redacted(homeDirectory: String = NSHomeDirectory()) -> Self {
         func scrub(_ value: String) -> String {
@@ -134,7 +138,8 @@ public struct InstallationDiagnosticReport: Codable, Equatable, Sendable {
             recommendation: scrub(recommendation),
             strandedLegacyModels: strandedLegacyModels.map {
                 .init(path: scrub($0.path), count: $0.count, complete: $0.complete)
-            }
+            },
+            runningInstanceCount: runningInstanceCount
         )
     }
 }
@@ -226,7 +231,8 @@ public enum InstallationDiagnostics {
                 discoveredPaths + [runningPath, cli.companionAppPath].compactMap { $0 }
             ).filter { FileManager.default.fileExists(atPath: $0) }
         }.value
-        let healthy = await ServerControl.checkHealth(port: port)
+        let healthy = await ServerControl.probe(port: port) == .healthy
+        let runningInstanceCount = AppControl.runningInstances().count
         let owner = await Task.detached(priority: .utility) { portOwner(port: port) }.value
 
         let apps = await Task.detached(priority: .utility) {
@@ -256,7 +262,8 @@ public enum InstallationDiagnostics {
             cliBuild: cli.build,
             healthy: healthy,
             portOwner: owner,
-            startupAttempted: startupAttempted
+            startupAttempted: startupAttempted,
+            runningInstances: runningInstanceCount
         )
         let modelResolution = Configuration.resolveModelsDirectoryWithSource()
         let modelSnapshot = await Task.detached(priority: .utility) {
@@ -286,7 +293,8 @@ public enum InstallationDiagnostics {
             apps: apps,
             diagnosis: diagnosis,
             recommendation: recommendation(for: diagnosis, port: port),
-            strandedLegacyModels: modelSnapshot.2
+            strandedLegacyModels: modelSnapshot.2,
+            runningInstanceCount: runningInstanceCount
         )
     }
 
@@ -296,8 +304,10 @@ public enum InstallationDiagnostics {
         cliBuild: String? = nil,
         healthy: Bool,
         portOwner: String?,
-        startupAttempted: Bool = false
+        startupAttempted: Bool = false,
+        runningInstances: Int = 0
     ) -> StartupDiagnosticKind {
+        if runningInstances > 1 { return .duplicateInstances }
         if apps.count > 1 { return .duplicateBundles }
         if let app = apps.first,
             let appVersion = app.version,
@@ -335,6 +345,8 @@ public enum InstallationDiagnostics {
             return "Update the CLI or invoke the helper bundled with the installed Osaurus app."
         case .duplicateBundles:
             return "Quit Osaurus and remove or archive duplicate registered app bundles, then launch the intended app explicitly."
+        case .duplicateInstances:
+            return "More than one Osaurus process is running. Quit every copy (Activity Monitor → osaurus), then open Osaurus once."
         case .portBusy:
             return "Choose another port or stop the non-Osaurus process using port \(port)."
         case .serverUnhealthy:

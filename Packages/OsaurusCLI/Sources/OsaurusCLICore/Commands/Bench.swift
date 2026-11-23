@@ -44,20 +44,28 @@ public struct BenchCommand: Command {
     }
 
     public static func execute(args: [String]) async {
-        guard var options = parseOptions(args) else {
+        if args.contains("--help") || args.contains("-h") {
+            printUsage()
+            exit(EXIT_SUCCESS)
+        }
+        guard var options = parseOptions(AccessKeyResolver.removingAccessKeyOptions(from: args)) else {
             printUsage()
             exit(EXIT_FAILURE)
         }
 
-        let base = URL(string: "http://127.0.0.1:\(options.port)")!
+        let client = LocalServerClient(
+            port: options.port,
+            accessKey: AccessKeyResolver.resolve(args: args),
+            commandLabel: "bench"
+        )
 
-        guard let health = await fetchJSON(base.appendingPathComponent("health")) else {
+        guard let health = await fetchJSON(client: client, path: "/health") else {
             fputs("Server is not running on port \(options.port). Start it with `osaurus serve`.\n", stderr)
             exit(EXIT_FAILURE)
         }
 
         if options.model == nil {
-            options.model = await defaultModel(base: base)
+            options.model = await defaultModel(client: client)
         }
         guard let model = options.model else {
             fputs("No model specified and none installed. Use --model <id>.\n", stderr)
@@ -65,7 +73,7 @@ public struct BenchCommand: Command {
         }
 
         if options.tunePrefill {
-            await tunePrefill(options: options, model: model, base: base, health: health)
+            await tunePrefill(options: options, model: model, client: client, health: health)
             // tunePrefill exits the process itself.
         }
 
@@ -82,9 +90,9 @@ public struct BenchCommand: Command {
                 let prompt = makePrompt(targetTokens: target, nonce: "run\(run)-\(UUID().uuidString)")
                 do {
                     let first = try await measureOnce(
-                        base: base, model: model, prompt: prompt, maxTokens: options.maxTokens)
+                        client: client, model: model, prompt: prompt, maxTokens: options.maxTokens)
                     let second = try await measureOnce(
-                        base: base, model: model, prompt: prompt, maxTokens: options.maxTokens)
+                        client: client, model: model, prompt: prompt, maxTokens: options.maxTokens)
                     uncached.append(first)
                     cached.append(second)
                     fputs(
@@ -165,7 +173,7 @@ public struct BenchCommand: Command {
     /// 22–24% faster at 2048. Hence a measured per-model value instead of a
     /// global setting.
     static func tunePrefill(
-        options: Options, model: String, base: URL, health: [String: Any]
+        options: Options, model: String, client: LocalServerClient, health: [String: Any]
     ) async -> Never {
         // Chunking matters most on long prompts; tune at the largest
         // requested size.
@@ -204,7 +212,7 @@ public struct BenchCommand: Command {
         // Warm the model (and its engine) so the first candidate doesn't
         // absorb the cold model load.
         _ = try? await measureOnce(
-            base: base, model: model,
+            client: client, model: model,
             prompt: makePrompt(targetTokens: 256, nonce: "tune-warm-\(UUID().uuidString)"),
             maxTokens: 8)
 
@@ -224,7 +232,7 @@ public struct BenchCommand: Command {
             for run in 0..<options.runs {
                 do {
                     let sample = try await measureOnce(
-                        base: base, model: model,
+                        client: client, model: model,
                         prompt: makePrompt(
                             targetTokens: target, nonce: "tune-\(step)-\(run)-\(UUID().uuidString)"),
                         maxTokens: 32)
@@ -376,12 +384,10 @@ public struct BenchCommand: Command {
     }
 
     static func measureOnce(
-        base: URL, model: String, prompt: String, maxTokens: Int
+        client: LocalServerClient, model: String, prompt: String, maxTokens: Int
     ) async throws -> Sample {
-        var request = URLRequest(url: base.appendingPathComponent("v1/chat/completions"))
-        request.httpMethod = "POST"
+        var request = client.request("/v1/chat/completions", method: "POST", timeout: 600)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 600
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": model,
             "messages": [["role": "user", "content": prompt]],
@@ -396,8 +402,9 @@ public struct BenchCommand: Command {
         var lastDelta: DispatchTime?
         var usage: (prompt: Int, completion: Int)?
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+        let (bytes, http) = try await client.bytes(for: request)
+        if http.statusCode == 401 { client.exitUnauthorized() }
+        if http.statusCode != 200 {
             throw BenchError.http(http.statusCode)
         }
 
@@ -486,17 +493,17 @@ public struct BenchCommand: Command {
         Double(to.uptimeNanoseconds - from.uptimeNanoseconds) / 1_000_000
     }
 
-    private static func fetchJSON(_ url: URL) async -> [String: Any]? {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 2
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-            (response as? HTTPURLResponse)?.statusCode == 200
-        else { return nil }
+    private static func fetchJSON(client: LocalServerClient, path: String) async -> [String: Any]? {
+        guard let (data, response) = try? await client.data(for: client.request(path, timeout: 5)) else {
+            return nil
+        }
+        if response.statusCode == 401 { client.exitUnauthorized() }
+        guard response.statusCode == 200 else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
-    private static func defaultModel(base: URL) async -> String? {
-        guard let obj = await fetchJSON(base.appendingPathComponent("v1/models")),
+    private static func defaultModel(client: LocalServerClient) async -> String? {
+        guard let obj = await fetchJSON(client: client, path: "/v1/models"),
             let data = obj["data"] as? [[String: Any]]
         else { return nil }
         return data.first?["id"] as? String
@@ -557,6 +564,7 @@ public struct BenchCommand: Command {
                                  [--max-tokens 128] [--runs 3] [--json <path>] [--port N]
                    osaurus bench --tune-prefill [--model <id>] [--candidates 512,1024,2048,4096]
                                  [--prompt-tokens 8192] [--runs 3]
+                   Both accept --access-key KEY.
 
             Requires a running server (`osaurus serve`). Reports uncached/cached
             TTFT, prefill tok/s, and decode tok/s per prompt size as JSON.

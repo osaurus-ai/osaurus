@@ -496,7 +496,7 @@ final class DiscoveryCenter {
                     names[.courier] ?? "Courier"))
         case .phone:
             end()
-            openSetting("settings.connect.pairing")
+            openSetting("settings.sync.addDevice")
         case .encryption:
             end()
             openSetting("storage.encryption")

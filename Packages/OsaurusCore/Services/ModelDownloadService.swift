@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import OsaurusSync
 import os
 
@@ -194,19 +195,11 @@ final class ModelDownloadService: ObservableObject {
 
     // MARK: - Properties
 
-    nonisolated static let downloadFilePatterns: [String] = [
-        "*.json",
-        "*.jinja",
-        "*.txt",
-        "*.model",
-        "*.safetensors",
-    ]
+    /// Shared with `osaurus pull`.
+    nonisolated static let downloadFilePatterns: [String] = ModelFilePatterns.download
 
     /// Filenames excluded from download even when they match a glob pattern.
-    nonisolated static let downloadExcludedFiles: Set<String> = [
-        "README.md",
-        ".gitattributes",
-    ]
+    nonisolated static let downloadExcludedFiles: Set<String> = ModelFilePatterns.excluded
 
     /// How a download's file URLs are obtained. `.direct` is the plain
     /// anonymous `huggingface.co/resolve` URL. `.onboardingProxy` resolves

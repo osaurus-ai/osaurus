@@ -58,6 +58,11 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 - When cards are being skipped for the agent in the open chat, the composer shows an **Approvals Off** chip; its popover says whether the agent or the global switch is the cause, lists what still asks, and has **Turn Back On** (**Ask for This Agent** when the global switch is the cause) and **Open Settings**. A tool call that ran without its card is marked **Ran without asking** on its card, with the reason on hover.
 - In config YAML these are `agents[].tool_approvals` (`use_global | ask | never_ask`) and `agents[].tools.policies` (tool name → `auto | ask | deny | default`). `never_ask` and each `auto` are high-risk lines on the plan card.
 
+## Running an agent from Terminal
+
+- `osaurus agent list` shows your agents; `osaurus agent run <name|id|default> -p "…"` runs one with its own model, memory and tools and prints the answer. Piped input is added after the prompt (`git diff | osaurus agent run "Code Reviewer" -p "Review this"`); tool activity goes to stderr, so the answer can be piped on. `--session ID` keeps the conversation, and the next run with that ID continues it; `--json` prints one object at the end.
+- Tools set to Ask: run from a terminal, the approval card shows on the Mac as usual and the terminal asks too (**y** allow once, **r** allow for this run, **a** always, **n** deny); whichever you answer first counts. This needs the `osaurus` command approved once (it asks the first time). Run without a terminal, those tools are declined and the command lists them. Tools that write files, run commands or use your Mac's apps never run from the command line.
+
 ## Model (agent → Configure → Model)
 
 - The model picker sets the agent's default model. Picking another model from the chat's model pill also saves it as the agent's default.
