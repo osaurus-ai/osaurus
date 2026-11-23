@@ -149,7 +149,13 @@ public enum SettingsSearchIndex {
     public static func relevantScored(
         toMessage message: String, limit: Int = 6
     ) -> [(entry: SettingsSearchEntry, score: Double)] {
-        let words = SearchService.tokenize(message).filter { $0.count > 2 && !messageStopWords.contains($0) }
+        // Each kept word adds up to two full catalog scans, so repeated words
+        // are dropped and the count is capped to bound the cost of long messages.
+        var seenWords: Set<String> = []
+        let words = Array(
+            SearchService.tokenize(message)
+                .filter { $0.count > 2 && !messageStopWords.contains($0) && seenWords.insert($0).inserted }
+                .prefix(maxMessageWords))
         guard !words.isEmpty else { return [] }
         var queries: [(text: String, weight: Double)] = [(words.joined(separator: " "), 4)]
         if words.count > 1 {
@@ -182,6 +188,10 @@ public enum SettingsSearchIndex {
             .prefix(limit)
             .compactMap { id in byId[id].map { ($0, scores[id]!) } }
     }
+
+    /// Most distinct content words `relevantScored` searches for; later words
+    /// are ignored so a pasted wall of text can't fan out into hundreds of scans.
+    static let maxMessageWords = 24
 
     /// Function words that match half the catalog and carry no intent.
     static let messageStopWords: Set<String> = [
