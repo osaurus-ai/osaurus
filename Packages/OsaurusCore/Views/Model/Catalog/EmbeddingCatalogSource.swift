@@ -19,9 +19,11 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
     private let downloads = ModelDownloadService.shared
     private var subscriptions: Set<AnyCancellable> = []
     private var didActivate = false
-    private var discovered: [MLXModel] = []
     private var osaurusAI: [MLXModel] = []
+    private var disk = DiskState()
     private var fetchTask: Task<Void, Never>?
+    private var scanTask: Task<Void, Never>?
+    private var needsRescan = false
 
     init() {
         super.init(kind: .embedding)
@@ -60,9 +62,27 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
         fetchOsaurusAI()
     }
 
+    /// Reads the bundles on disk off the main thread. `rebuild` runs on every
+    /// download-progress tick and must only read the result.
     private func scanInstalled() {
-        discovered = EmbeddingModelCatalog.discoveredModels()
-        rebuild()
+        guard scanTask == nil else {
+            needsRescan = true
+            return
+        }
+        let published = osaurusAI
+        scanTask = Task { [weak self] in
+            let disk = await Task.detached(priority: .userInitiated) {
+                DiskState.read(published: published)
+            }.value
+            guard let self else { return }
+            self.disk = disk
+            self.scanTask = nil
+            self.rebuild()
+            if self.needsRescan {
+                self.needsRescan = false
+                self.scanInstalled()
+            }
+        }
     }
 
     private func fetchOsaurusAI() {
@@ -74,18 +94,19 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
             self.osaurusAI = fetched
             self.fetchTask = nil
             self.isLoading = false
-            self.rebuild()
+            self.scanInstalled()
         }
     }
 
     private func rebuild() {
         let selectedId = EmbeddingSettingsStore.snapshot().effectiveModelId
+        let discovered = disk.discovered
         let curated = EmbeddingModelCatalog.curated.map { entry in
             item(
                 id: entry.id,
                 model: entry.mlxModel,
                 entry: entry,
-                directory: entry.isBuiltIn ? nil : EmbeddingModelCatalog.installedDirectory(for: entry),
+                directory: entry.isBuiltIn ? nil : disk.directories[entry.id],
                 isManaged: true,
                 selectedId: selectedId
             )
@@ -96,7 +117,7 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
                 id: model.id,
                 model: model,
                 entry: nil,
-                directory: model.isDownloaded ? model.localDirectory : nil,
+                directory: disk.directories[model.id],
                 isManaged: true,
                 selectedId: selectedId
             )
@@ -164,7 +185,7 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
         }
 
         let support: EmbeddingDetection.RuntimeSupport? =
-            isBuiltIn ? .model2vec : directory.map(EmbeddingDetection.runtimeSupport(at:))
+            isBuiltIn ? .model2vec : directory.flatMap { disk.support[$0] }
         let isSelected = selectedId.caseInsensitiveCompare(id) == .orderedSame
         let isRunning = EmbeddingService.modelId.caseInsensitiveCompare(id) == .orderedSame
 
@@ -267,6 +288,32 @@ final class EmbeddingCatalogSource: LocalModelCatalogSource {
         case .unsupported: return L("Not supported")
         case nil: return family == "Model2Vec" ? "Model2Vec (MLX)" : "MLX Embedders"
         }
+    }
+}
+
+/// What the embedding rows need from disk: the bundles found locally, where
+/// each curated or published model is installed, and whether Osaurus can run
+/// each installed bundle.
+private struct DiskState: Sendable {
+    var discovered: [MLXModel] = []
+    var directories: [String: URL] = [:]
+    var support: [URL: EmbeddingDetection.RuntimeSupport] = [:]
+
+    static func read(published: [MLXModel]) -> DiskState {
+        var state = DiskState()
+        state.discovered = EmbeddingModelCatalog.discoveredModels()
+        for entry in EmbeddingModelCatalog.curated {
+            if let directory = EmbeddingModelCatalog.installedDirectory(for: entry) {
+                state.directories[entry.id] = directory
+            }
+        }
+        for model in published where model.isDownloaded {
+            state.directories[model.id] = model.localDirectory
+        }
+        for directory in Array(state.directories.values) + state.discovered.map(\.localDirectory) {
+            state.support[directory] = EmbeddingDetection.runtimeSupport(at: directory)
+        }
+        return state
     }
 }
 
