@@ -18,6 +18,8 @@ public enum OsaurusKeychainServices {
     /// Master identity seed + recovery mnemonic (`MasterKey`,
     /// `MasterMnemonicStore`).
     public static let account = "com.osaurus.account"
+    /// Device-only copies of previous master seeds (`MasterKeyArchive`).
+    public static let accountArchive = "com.osaurus.account.archive"
     /// SQLCipher storage key (`StorageKeyManager`).
     public static let storage = "com.osaurus.storage"
     /// API access keys (`APIKeyManager`).
@@ -65,6 +67,7 @@ public enum OsaurusKeychainServices {
         credentials,
         pushTokens,
         account,
+        accountArchive,
         storage,
         accessKeys,
         addressAllowlist,

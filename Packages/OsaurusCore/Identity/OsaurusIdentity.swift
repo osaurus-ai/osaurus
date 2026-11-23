@@ -146,8 +146,26 @@ public struct OsaurusIdentity: Sendable {
     public static func restore(words: [String]) async throws -> RestoreResult {
         var seed = try MasterKeyMnemonic.key(fromMnemonic: words)
         defer { seed.zeroOut() }
+        return try await restore(seed: seed, words: words)
+    }
 
-        let osaurusId = try MasterKey.install(seed: seed, allowReplace: true)
+    /// Switch back to an identity kept in `MasterKeyArchive`. Reads the
+    /// archived seed (gated by `context`), then runs the same install and
+    /// reconciliation as a phrase restore. The switch replaces the synced
+    /// master, so every Mac on this iCloud Keychain follows.
+    @MainActor
+    public static func switchTo(archivedAddress: OsaurusID, context: LAContext) async throws -> RestoreResult {
+        var seed = try MasterKeyArchive.loadSeed(address: archivedAddress, context: context)
+        defer { seed.zeroOut() }
+        let words = try MasterKeyMnemonic.mnemonic(forKey: seed)
+        return try await restore(seed: seed, words: words)
+    }
+
+    /// Shared engine behind `restore(words:)` and `switchTo(archivedAddress:)`.
+    /// `seed` is borrowed; the caller zeroes it.
+    @MainActor
+    static func restore(seed: Data, words: [String]) async throws -> RestoreResult {
+        let osaurusId = try MasterKey.install(seed: seed, allowReplace: true, source: .restored)
         // Keep the stored phrase in sync with the newly-installed master so
         // "View recovery phrase" reads the store instead of lazily
         // re-deriving from the seed.
@@ -223,7 +241,9 @@ public struct OsaurusIdentity: Sendable {
 
     /// Full identity wipe used by the "Reset Identity" flow. Deletes the master
     /// key, clears every non-built-in agent's derived address, and removes every
-    /// stored osk-v1 access key. The revocation store is intentionally kept.
+    /// stored osk-v1 access key. The revocation store is intentionally kept,
+    /// and so is `MasterKeyArchive`, so a Reset can be undone from Previous
+    /// Identities.
     @MainActor
     public static func wipe() {
         MasterKey.delete()

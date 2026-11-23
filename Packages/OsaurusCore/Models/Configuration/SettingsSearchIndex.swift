@@ -3022,6 +3022,18 @@ public enum SettingsSearchIndex {
             disambiguation: "The Osaurus ID's master address and recovery phrase, plus agent addresses. Not Sharing ▸ Devices ▸ Recovery Phrase, which restores synced chats (unless linked with Use My Osaurus Recovery Phrase)."
         ),
         .init(
+            id: "identity.previousIdentities",
+            tab: .identity,
+            section: "Danger Zone",
+            title: "Switch to a Previous Identity",
+            keywords: [
+                "previous identities", "switch identity", "old identity", "second identity",
+                "wrong identity", "identity replaced", "undo reset", "go back to identity",
+            ],
+            disambiguation:
+                "Switches back to a master this Mac used before, kept on this Mac only. Not Restore From Recovery Phrase, which needs the 24 words, and not Sharing ▸ Devices ▸ Restore From Phrase, which restores synced chats."
+        ),
+        .init(
             id: "identity.signInWithOsaurus",
             tab: .identity,
             title: "Sign In with Osaurus",

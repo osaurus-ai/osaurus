@@ -37,7 +37,7 @@ public struct MasterKey: Sendable {
         let keyData = Data(bytes)
         zeroBytes(&bytes)
 
-        let osaurusId = try install(seed: keyData, allowReplace: allowReplace)
+        let osaurusId = try install(seed: keyData, allowReplace: allowReplace, source: .created)
         return (osaurusId, keyData)
     }
 
@@ -46,8 +46,13 @@ public struct MasterKey: Sendable {
     /// BIP39 phrase.
     ///
     /// - Parameter allowReplace: Mirrors `generate(allowReplace:)`. Defaults to false.
+    /// - Parameter source: How the seed is recorded in `MasterKeyArchive`.
     @discardableResult
-    public static func install(seed keyData: Data, allowReplace: Bool = false) throws -> OsaurusID {
+    public static func install(
+        seed keyData: Data,
+        allowReplace: Bool = false,
+        source: ArchivedIdentity.Source = .restored
+    ) throws -> OsaurusID {
         // Hermetic test/proof launches (OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1)
         // must not persist identity material into the user's login Keychain.
         // This is the same no-op-write contract every other Keychain wrapper
@@ -75,6 +80,7 @@ public struct MasterKey: Sendable {
             throw OsaurusIdentityError.keychainWriteFailed
         }
 
+        MasterKeyArchive.remember(seed: keyData, source: source, force: true)
         setCachedExists(true)
         return osaurusId
     }
@@ -423,6 +429,9 @@ public struct MasterKey: Sendable {
             throw OsaurusIdentityError.keychainReadFailed
         }
         migrateToSharedGroupIfNeeded(keyData: data)
+        // The synced slot can be replaced by a newer identity from another
+        // Mac at any time; keep a device-only copy of whatever we read.
+        MasterKeyArchive.remember(seed: data, source: .keychain)
         return data
     }
 
