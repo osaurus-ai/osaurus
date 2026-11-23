@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Mobile pairing: lets exactly one phone (the Osaurus iPhone app) pair
-//  with this Mac by typing a 6-digit code shown in Settings → Mobile.
+//  with this Mac by typing a 6-digit code shown under Devices → Add Device → Add iPhone or iPad.
 //
 //  Flow:
 //    1. The user clicks "Generate Pairing Code". We mint a master-scoped

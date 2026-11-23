@@ -2,7 +2,7 @@
 //  Configuration.swift
 //  osaurus
 //
-//  Service for reading CLI configuration including server port and tools directory paths.
+//  Service for reading CLI configuration: data root, server port, exposure and models directory.
 //
 
 import Foundation
@@ -80,10 +80,6 @@ public struct Configuration {
         }
     }
 
-    public static func toolsRootDirectory() -> URL {
-        ToolsPaths.toolsRootDirectory()
-    }
-
     struct ModelsDirectoryResolution: Equatable, Sendable {
         let url: URL
         let source: String
@@ -95,7 +91,7 @@ public struct Configuration {
 
     static func resolveModelsDirectoryWithSource(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        appDefaults: UserDefaults? = UserDefaults(suiteName: "com.dinoki.osaurus"),
+        appDefaults: UserDefaults? = UserDefaults(suiteName: AppIdentity.bundleIdentifier),
         sharedDefaults: UserDefaults? = UserDefaults(suiteName: "group.com.osaurus.shared"),
         home: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> ModelsDirectoryResolution {

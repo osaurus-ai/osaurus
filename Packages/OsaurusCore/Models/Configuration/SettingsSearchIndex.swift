@@ -560,6 +560,18 @@ public enum SettingsSearchIndex {
             keywords: ["cli", "install cli", "terminal", "symlink", "install", "command line", "osaurus cli"]
         ),
         .init(
+            id: "server.cliAccess",
+            tab: .server,
+            section: "Overview",
+            title: "Command-Line Tool Access",
+            keywords: [
+                "cli access", "cli approval", "allow cli", "revoke cli", "cli token", "cli 401",
+                "osaurus list unauthorized", "terminal access", "command line access",
+            ],
+            disambiguation:
+                "Whether the osaurus command was allowed to call this server without an access key, with Revoke. Not installing the command (Command Line Tool) and not the access key list."
+        ),
+        .init(
             id: "settings.general.reset",
             tab: .settings,
             section: "Danger Zone",
@@ -662,17 +674,6 @@ public enum SettingsSearchIndex {
                 "handoff", "continue", "resume", "iphone", "phone", "bring to front", "focus", "come back",
                 "return", "unlock", "continue phone chats",
             ]
-        ),
-        .init(
-            id: "settings.connect.pairing",
-            tab: .connect,
-            section: "Pair an iPhone",
-            title: "Generate 6-Digit Code",
-            keywords: [
-                "iphone", "ios", "mobile", "phone", "pair", "pairing code", "6 digit", "six digit",
-                "iosaurus", "osaurus connect", "legacy pairing", "old iphone app",
-            ],
-            disambiguation: "The 6-digit code for an Osaurus iPhone app that doesn't offer Sync yet, kept for one release. It turns off once an iPhone joins in Devices ▸ Add a Device, which is the way to add an iPhone that has Sync."
         ),
         .init(
             id: "settings.connect.pairedDevice",
@@ -2215,6 +2216,19 @@ public enum SettingsSearchIndex {
             disambiguation:
                 "Bottom of an extra bot's, workspace's or Email account's Connect tab (not the channel's first account) → Remove…. Removes its settings, token and listener and deletes the triggers on it, after a confirmation that names them. Messages it received stay in history; an Email account's mail account stays in place.",
             declarativeSection: "channels"
+        ),
+        .init(
+            id: "agentChannels.trustAllowlistedSenders",
+            tab: .agentChannels,
+            section: "Receiving",
+            title: "Trust Allowlisted Senders",
+            keywords: [
+                "trust senders", "trusted senders", "apple apps from telegram", "calendar from telegram",
+                "reminders from slack", "apple apps over channels", "channel apple apps", "calendar_events",
+                "tool call failed", "not available to external callers", "spawn_agent apple apps",
+            ],
+            disambiguation:
+                "Receiving tab of a Telegram, Slack, Discord, iMessage or WhatsApp account, under the sender allowlist. Off by default. When on, runs started by that account's authorized senders (and subagents those runs start) can use Apple app tools on agents whose Apple Apps switch is on; each tool still follows its Tools policy, so tools set to Ask stay refused until set to Auto, and sends and deletes (which always ask) never run from a channel. Other personal tools (files, shell, channel tools) stay blocked. Email, n8n and custom HTTP don't offer it because their sender can't be verified."
         ),
         .init(
             id: "agentChannels.ruleAccount",
@@ -4434,6 +4448,17 @@ public enum SettingsSearchIndex {
             ],
             disambiguation:
                 "Inbox → Waiting on Others: your chats with someone else's shared agent that are paused while its owner decides whether to allow a tool. Open Chat goes to the conversation; the row clears when the owner answers or the chat stops."
+        ),
+        .init(
+            id: "approvals.arrangedCalls",
+            tab: .approvals,
+            title: "Arranged Calls",
+            keywords: [
+                "callback", "call me back", "arranged call", "agent call", "cancel call", "scheduled call",
+                "missed call", "was the call made", "arrange_callback",
+            ],
+            disambiguation:
+                "Inbox → Arranged Calls: each call you asked an agent to make to your iPhone (\"call me when the build finishes\"), while it waits and for a week after: whether it rang, you answered, missed or declined it, or the agent never called in time. Cancel Call calls off one that is no longer needed, ringing or not; your iPhone's Inbox lists the same calls. Whether an agent may call on its own is Call You in the agent's settings."
         ),
         .init(
             id: "approvals.liveNow",

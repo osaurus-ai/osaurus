@@ -20,7 +20,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Remote MCP Providers             | Stable    | REMOTE_MCP_PROVIDERS.md       | Managers/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
 | MCP Server                       | Stable    | Guide: guide-mcp.md           | Networking/OsaurusServer.swift, Services/MCP/ExternalMCPToolPolicy.swift, CLI MCPCommand.swift |
 | Structured Document IO           | Foundation | -                            | Services/Documents/, Models/Documents/, Managers/Documents/DocumentAdaptersBootstrap.swift |
-| Tools & Plugins                  | Stable    | plugins/README.md             | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
+| Tools & Plugins                  | Deprecated | -                            | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
 | Skills                           | Stable    | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
 | Claude Plugin Import             | Stable    | CLAUDE_PLUGINS.md             | Services/GitHubSkillService.swift, Services/Skill/ClaudePluginInstaller.swift, Services/Skill/ClaudePluginManifestStore.swift, Services/Skill/ClaudePluginVariableExpander.swift, Services/Plugin/InstalledClaudePluginsAggregator.swift, Views/Plugin/GitHubImportSheet.swift, Views/Plugin/ClaudePluginCard.swift, Views/Plugin/ClaudePluginDetailView.swift, Views/Plugin/ClaudePluginUserConfigSheet.swift |
 | Methods                          | Stable    | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
@@ -873,7 +873,7 @@ Write plugin scripts beside `plugin.json` before registration; the registrar pac
 - Auto-generated titles from first message
 - **Audit dimension** — every session is tagged with its origin (`chat` / `plugin` / `http` / `schedule` / `watcher`); the sidebar shows a colored badge with plugin name in the tooltip
 - **Source filter rail** — chip-style filter above the list, auto-hidden when a single source is present
-- **Conversation grouping** — plugins that pass `session_id` (e.g. Telegram chat id) reattach to the same session on subsequent dispatches instead of creating a new row each time; see [`docs/plugins/HOST_API.md`](plugins/HOST_API.md#dispatch)
+- **Conversation grouping** — plugins that pass `session_id` (e.g. Telegram chat id) reattach to the same session on subsequent dispatches instead of creating a new row each time
 
 ---
 
@@ -912,7 +912,7 @@ Write plugin scripts beside `plugin.json` before registration; the registrar pac
 | Web        | `capabilities.web`    | Static frontend serving with context injection       |
 | Docs       | `docs`                | README, changelog, and external links                |
 
-See [docs/plugins/README.md](plugins/README.md) for the full reference.
+Native plugins are no longer supported for new development; the `osaurus tools` and `osaurus manifest` CLI commands were removed.
 
 ---
 
@@ -1488,7 +1488,6 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 | [PRIVACY_FILTER.md](PRIVACY_FILTER.md)                         | Privacy Filter architecture, detection layers, settings, and verification |
 | [SANDBOX.md](SANDBOX.md)                                       | Sandbox VM and plugin guide                       |
 | [COMPUTER_USE.md](COMPUTER_USE.md)                             | Computer Use harness, autonomy gate, and cloud-vision boundary |
-| [plugins/README.md](plugins/README.md)                         | Creating custom plugins                           |
 | [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                |
 | [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                    |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                             | Contribution guidelines                           |

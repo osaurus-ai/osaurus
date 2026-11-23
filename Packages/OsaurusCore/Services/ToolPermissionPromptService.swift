@@ -162,10 +162,15 @@ enum ToolPermissionPromptService {
         /// A run this Mac hosts for another of the user's devices. No panel
         /// shows here: the card goes to the run's sync conversation.
         case syncedDevice(scope: String)
+        /// An `osaurus agent run` in a terminal on this Mac. The panel shows
+        /// here, and that terminal may answer it too.
+        case terminal(session: String)
 
         static var current: Requester {
             if let scope = ChatExecutionContext.syncReviewerScope { return .syncedDevice(scope: scope) }
-            return ChatExecutionContext.hasRemoteReviewer ? .pairedPhone : .thisMac
+            if ChatExecutionContext.hasRemoteReviewer { return .pairedPhone }
+            if let session = ChatExecutionContext.terminalReviewerSession { return .terminal(session: session) }
+            return .thisMac
         }
     }
 
@@ -319,6 +324,40 @@ enum ToolPermissionPromptService {
             result.append(remotePrompt(id: entry.id, request: entry.request, isPresented: false))
         }
         return result
+    }
+
+    /// The cards raised by the terminal run with approval `session`,
+    /// presented card first.
+    static func terminalPrompts(session: String) -> [RemotePrompt] {
+        let requester = Requester.terminal(session: session)
+        var result: [RemotePrompt] = []
+        if let slot, let request = presentedRequest, request.requester == requester {
+            result.append(remotePrompt(id: slot.id, request: request, isPresented: true))
+        }
+        for entry in queue where entry.id != slot?.id && entry.request.requester == requester {
+            result.append(remotePrompt(id: entry.id, request: entry.request, isPresented: false))
+        }
+        return result
+    }
+
+    /// Answers a card from the terminal whose run raised it, as the panel's
+    /// buttons do. False when the id is unknown, already answered, or not
+    /// from that terminal's run.
+    @discardableResult
+    static func resolveFromTerminal(id: UUID, session: String, outcome: PromptResolution) -> Bool {
+        guard continuations[id] != nil, let request = pendingRequest(id: id),
+            request.requester == .terminal(session: session)
+        else { return false }
+        let offersLease = request.offersRunLease && !request.perCallApprovalOnly
+        let outcome: PromptResolution =
+            switch outcome {
+            case .allowForRun where !offersLease: .allowOnce
+            case .alwaysAllow where request.perCallApprovalOnly: .allowOnce
+            case .alwaysAllowForAgent, .neverAskForAgent: .allowOnce
+            default: outcome
+            }
+        resolve(id: id, outcome: outcome)
+        return true
     }
 
     /// The outstanding card `id`, presented or queued.

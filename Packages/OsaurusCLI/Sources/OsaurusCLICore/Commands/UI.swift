@@ -10,33 +10,48 @@ import Foundation
 public struct UICommand: Command {
     public static let name = "ui"
 
+    static let usage = """
+        Usage: osaurus ui
+
+        Opens the Osaurus menu bar window, launching the app if it is not running.
+        """
+
+    static let uiNotification = "com.dinoki.osaurus.control.ui"
+
     public static func execute(args: [String]) async {
-        await AppControl.launchAppIfNeeded()
+        if args.contains("--help") || args.contains("-h") {
+            print(usage)
+            exit(EXIT_SUCCESS)
+        }
+        if let unknown = args.first {
+            fputs("osaurus ui: unknown argument `\(unknown)`\n\n\(usage)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
         let port = Configuration.resolveConfiguredPort() ?? 1337
-        let start = Date()
-        let deadline = start.addingTimeInterval(6.0)
+        let state = await AppControl.launchAppIfNeeded(port: port)
+        if state != .appNotRunning {
+            // Already running: the observers are registered, one post is enough.
+            AppControl.postDistributedNotification(name: uiNotification, userInfo: [:])
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            exit(EXIT_SUCCESS)
+        }
+        // Cold start: the app may not have registered its observers yet, so
+        // post periodically until the server answers, then once more.
+        let deadline = Date().addingTimeInterval(10.0)
         var lastPost = Date.distantPast
-        var postedAtLeastOnce = false
         while Date() < deadline {
-            // Once the server is healthy, (re)post a UI request to ensure it is handled
-            if await ServerControl.checkHealth(port: port) {
-                AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.ui", userInfo: [:])
-                // Give the app a moment to show the popover, then exit
+            if await ServerControl.checkHealth(port: port, timeout: 1.0) {
+                AppControl.postDistributedNotification(name: uiNotification, userInfo: [:])
                 try? await Task.sleep(nanoseconds: 300_000_000)
                 exit(EXIT_SUCCESS)
             }
-            // If still not healthy, periodically post the UI request as the app may not have registered observers yet
             if Date().timeIntervalSince(lastPost) > 0.8 {
-                AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.ui", userInfo: [:])
-                postedAtLeastOnce = true
+                AppControl.postDistributedNotification(name: uiNotification, userInfo: [:])
                 lastPost = Date()
             }
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
-        // Best-effort: post one final time and exit success
-        if !postedAtLeastOnce {
-            AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.ui", userInfo: [:])
-        }
+        AppControl.postDistributedNotification(name: uiNotification, userInfo: [:])
         try? await Task.sleep(nanoseconds: 150_000_000)
         exit(EXIT_SUCCESS)
     }

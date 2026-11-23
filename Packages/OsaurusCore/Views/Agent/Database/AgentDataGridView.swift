@@ -616,7 +616,7 @@ private final class DataGridTextCell: NSView {
 }
 
 private final class DataGridCheckboxCell: NSView {
-    private let hosting = NSHostingView(rootView: AnyView(EmptyView()))
+    private let hosting = NSHostingView.embedded(rootView: AnyView(EmptyView()))
     private var palette: DataGridThemeColors?
     private var isOn = false
     private var enabled = true

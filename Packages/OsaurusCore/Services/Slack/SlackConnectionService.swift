@@ -238,6 +238,8 @@ struct SlackNormalizedInboundMessage: Equatable, Sendable {
     let isMention: Bool
     let mentionedUserIds: [String]
     let payloadJSON: String
+    /// Set from the authorization decision when the message is accepted.
+    var senderTrusted = false
 
     var storedMessage: AgentChannelStoredMessage {
         AgentChannelStoredMessage(
@@ -1589,7 +1591,9 @@ final class SlackConnectionService: @unchecked Sendable {
         ) else {
             return .rejected(reason: "duplicate_event")
         }
-        return .accepted(normalized)
+        var accepted = normalized
+        accepted.senderTrusted = authorization.senderTrusted
+        return .accepted(accepted)
     }
 
     func relayInboundMessage(
@@ -1646,7 +1650,8 @@ final class SlackConnectionService: @unchecked Sendable {
                 sourceLabel: "Slack workspace \(message.teamId ?? "unknown"), channel \(message.roomId), sender \(senderId)",
                 mentionsBot: message.isMention,
                 hasPriorOutbound: continuingThread,
-                reply: responder
+                reply: responder,
+                senderTrusted: message.senderTrusted
             )
         )
     }

@@ -538,7 +538,7 @@ struct DiscoveryInChatTests {
             let (center, recorder) = discovery()
             defer { restoreDiscovery(center) }
             for (item, id) in [
-                (DiscoveryItem.search, "search.providers"), (.phone, "settings.connect.pairing"),
+                (DiscoveryItem.search, "search.providers"), (.phone, "settings.sync.addDevice"),
                 (.encryption, "storage.encryption"), (.voice, "voice.stt.model"), (.privacyAI, "privacy.models"),
                 (.toolServer, "tools.directory"), (.channels, "agentChannels.overview"),
                 (.skills, "skills.overview"), (.computerUse, "computerUse.enable"),

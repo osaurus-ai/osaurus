@@ -561,6 +561,9 @@ enum AgentDelegationDispatcher {
             // `continue` reattaches to it; a fresh call never collides
             // because its id is new.
             externalSessionKey: externalSessionKey(for: sessionId),
+            // A queued child starts from the scheduler, outside this task's
+            // locals: carry the parent's surface on the request.
+            externalSurface: ChatExecutionContext.isExternalSurface,
             // The orchestrator turn is synchronously waiting on this run
             // (or awaiting its report-back), so its model load carries
             // interactive intent.
@@ -575,6 +578,7 @@ enum AgentDelegationDispatcher {
             taskIntent: ChatTaskIntent(userText: input)
         )
         request.inferenceSourceOverride = ChatExecutionContext.inferenceSourceOverride
+        request.trustedChannelSender = ChatExecutionContext.isTrustedChannelSender
 
         // The child is a REAL chat session of the target agent, not a
         // nested subagent loop: clear the family recursion guard so the
@@ -813,7 +817,8 @@ enum AgentDelegationDispatcher {
         if let terminalFailure, terminalFailure.kind == .userDenied {
             return .userDenied("Delegated agent '\(targetAgentName)' stopped: \(terminalFailure.message)")
         }
-        return .executionFailed(message: "Delegated agent '\(targetAgentName)' failed: \(message)",
+        let cause = terminalFailure.map(\.message).flatMap { $0.isEmpty ? nil : $0 } ?? message
+        return .executionFailed(message: "Delegated agent '\(targetAgentName)' failed: \(cause)",
             retryable: terminalFailure?.retryable ?? true)
     }
 

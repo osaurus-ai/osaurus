@@ -378,10 +378,12 @@ final class LanguageCatalogSource: LocalModelCatalogSource {
             .throttle(for: .milliseconds(200), scheduler: DispatchQueue.main, latest: true)
             .sink { [weak self] _ in self?.scheduleRefresh() }
             .store(in: &subscriptions)
-        observeNearby { [weak self] in
-            guard let self else { return }
-            self.apply(self.lists)
-        }
+        // Rebuild through the detached `makeLists` pass rather than
+        // re-applying `lists` here: a `.localModelsChanged` since the last
+        // pass clears the warmed `isVLM` / vision-evidence caches, and
+        // `apply` would then read every safetensors header on the main
+        // thread (APPLE-MACOS-324). `apply` merges nearby offers anyway.
+        observeNearby { [weak self] in self?.scheduleRefresh() }
         refreshNow()
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))

@@ -1227,7 +1227,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             providerMessageId: providerMessageId,
             spaceId: spaceId,
             roomId: roomId,
-            senderId: senderId
+            senderId: senderId,
+            senderTrusted: policy.trustAllowlistedSenders
+                && AgentChannelInboundAuthorizationPolicy.senderTrustKinds.contains(connection.kind)
         )
     }
 
@@ -1385,7 +1387,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 allowBotMessages: false,
                 allowSelfMessages: false,
                 requireProviderEventId: true,
-                auditDecisionReason: "discord_receive_authorization"
+                auditDecisionReason: "discord_receive_authorization",
+                trustAllowlistedSenders: config.trustAllowlistedSenders
             )
         )
     }
@@ -1438,7 +1441,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 allowBotMessages: false,
                 allowSelfMessages: false,
                 requireProviderEventId: true,
-                auditDecisionReason: "slack_receive_authorization"
+                auditDecisionReason: "slack_receive_authorization",
+                trustAllowlistedSenders: config.trustAllowlistedSenders
             )
         )
     }
@@ -1507,7 +1511,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 allowBotMessages: !config.ignoreBotMessages,
                 allowSelfMessages: !config.ignoreSelfMessages,
                 requireProviderEventId: true,
-                auditDecisionReason: "telegram_receive_authorization"
+                auditDecisionReason: "telegram_receive_authorization",
+                trustAllowlistedSenders: config.trustAllowlistedSenders
             )
         )
     }
@@ -1566,7 +1571,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 // is the only way to test the loop from a single machine.
                 allowSelfMessages: !config.ignoreSelfMessages,
                 requireProviderEventId: true,
-                auditDecisionReason: "imessage_receive_authorization"
+                auditDecisionReason: "imessage_receive_authorization",
+                trustAllowlistedSenders: config.trustAllowlistedSenders
             )
         )
     }
@@ -1624,7 +1630,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 // the single-number test loop.
                 allowSelfMessages: !config.ignoreSelfMessages,
                 requireProviderEventId: true,
-                auditDecisionReason: "whatsapp_receive_authorization"
+                auditDecisionReason: "whatsapp_receive_authorization",
+                trustAllowlistedSenders: config.trustAllowlistedSenders
             )
         )
     }

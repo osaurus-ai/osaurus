@@ -4,6 +4,7 @@ public struct CoordCommand: Command {
     public static let name = "coord"
 
     public static func execute(args: [String]) async {
+        fputs("osaurus coord is experimental and may change or be removed.\n", stderr)
         do {
             try run(args: args)
         } catch {

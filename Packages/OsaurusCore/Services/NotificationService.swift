@@ -140,7 +140,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         guard let center else { return }
         let content = UNMutableNotificationContent()
         content.title = L("Osaurus started in safe mode")
-        content.body = L("Plugins disabled after repeated crashes. Run \"osaurus tools reset\" in Terminal to recover.")
+        content.body = L("Some features were paused after repeated crashes. They come back on their own once Osaurus is running normally.")
         let request = UNNotificationRequest(identifier: "safe-mode", content: content, trigger: nil)
         center.add(request, withCompletionHandler: nil)
     }

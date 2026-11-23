@@ -32,4 +32,4 @@ Web search, the browser, and the Apple app plugins (`osaurus.calendar`, `osaurus
 
 - Plugin failed to load? Check the card's error and the Plugin log rows in Insights; Retry from the plugin detail page.
 - Plugin web UIs opened in a browser need the Open Web App button (it appends the agent id the plugin needs).
-- Developers: `osaurus tools create`, `osaurus tools dev` (hot reload), `osaurus tools list` — install the CLI from Settings… (⌘,) → Server → Overview → Command Line Tool → Install CLI.
+- The `osaurus tools` and `osaurus manifest` CLI commands were removed; Osaurus no longer supports building new native plugins.

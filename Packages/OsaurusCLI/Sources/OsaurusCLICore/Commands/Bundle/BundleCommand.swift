@@ -11,6 +11,7 @@ public struct BundleCommand: Command {
     public static let name = "bundle"
 
     public static func execute(args: [String]) async {
+        fputs("osaurus bundle is experimental and may change or be removed.\n", stderr)
         guard let sub = args.first else {
             fputs(
                 "Missing bundle subcommand. Use one of: load\n",

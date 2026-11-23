@@ -141,4 +141,26 @@ struct SyncAgentCallsTests {
         #expect(content["title"] as? String == "Builder")
         #expect(content["sessionId"] as? String == Self.request.sessionId.uuidString.lowercased())
     }
+
+    // MARK: A call on
+
+    private static func on(since: Int64, lastTurn: Int64? = nil, running: Bool = false) -> Bool {
+        SyncAgentCalls.callStillOn(sinceMs: since, lastVoiceTurnMs: lastTurn, voiceRunning: running, nowMs: nowMs)
+    }
+
+    @Test func callStaysOnWhileAVoiceTurnRuns() {
+        let since = Self.nowMs - SyncAgentCalls.liveCallIdleMs - 60_000
+        #expect(Self.on(since: since, running: true))
+        #expect(!Self.on(since: since))
+    }
+
+    @Test func idleClockRestartsWhenAVoiceTurnFinishes() {
+        let since = Self.nowMs - SyncAgentCalls.liveCallIdleMs - 60_000
+        #expect(Self.on(since: since, lastTurn: Self.nowMs - 60_000))
+        #expect(!Self.on(since: since, lastTurn: Self.nowMs - SyncAgentCalls.liveCallIdleMs - 1))
+    }
+
+    @Test func callOverAfterTheLimitEvenWhenTalkedOn() {
+        #expect(!Self.on(since: Self.nowMs - SyncAgentCalls.liveCallLimitMs - 1, lastTurn: Self.nowMs))
+    }
 }

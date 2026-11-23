@@ -19,7 +19,7 @@ struct PluginDatabaseSizeCapTests {
 
     @Test func defaultCapIs100MiB() {
         // The published default is the contract authors will see in
-        // HOST_API.md / osaurus_plugin.h. Pin it here so a casual
+        // osaurus_plugin.h. Pin it here so a casual
         // tweak doesn't silently change the documented number.
         #expect(PluginDatabase.defaultMaxBytes == 100 * 1024 * 1024)
     }

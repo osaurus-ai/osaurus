@@ -79,7 +79,7 @@ When you first launch Osaurus, you choose how it runs: a private model on this M
 - **Devices and Workspaces**: sync chats end-to-end encrypted between your Macs and iPhone, and share agents and workflows with teammates. See [Sync](docs/SYNC.md) and [Workspaces](docs/OSAURUS_WORKSPACES.md).
 - **Voice**: on-device transcription, wake word, and a system-wide dictation hotkey. See [Voice Input](docs/VOICE_INPUT.md).
 - **Images**: generate and edit images on-device with local image models. See the [Images guide](Packages/OsaurusCore/Resources/Guide/guide-images.md).
-- **Skills and plugins**: import [Agent Skills](https://agentskills.io/) and Claude plugins, or install native plugins from the registry. See [Skills](docs/SKILLS.md), [Claude Plugins](docs/CLAUDE_PLUGINS.md), and [Plugin Authoring](docs/plugins/README.md).
+- **Skills and Claude plugins**: import [Agent Skills](https://agentskills.io/) and Claude plugins. See [Skills](docs/SKILLS.md) and [Claude Plugins](docs/CLAUDE_PLUGINS.md).
 - **MCP, both ways**: Osaurus is an MCP server for other clients, and an MCP client that connects to remote MCP services with one-tap OAuth. See [Remote MCP Providers](docs/REMOTE_MCP_PROVIDERS.md).
 - **Shortcuts, Spotlight, and Siri**: "Ask Osaurus" and "Run Osaurus Agent" work system-wide. See [App Intents](docs/APP_INTENTS.md).
 
@@ -111,10 +111,18 @@ Open the chat window with the global hotkey (default `⌘;`) or from Spotlight. 
 
 ```bash
 osaurus ui       # Open the chat UI
-osaurus serve    # Start the server (add --expose for LAN access)
+osaurus serve    # Start the server (--expose / --no-expose change LAN access)
 osaurus status   # Check status
 osaurus stop     # Stop the server
+
+osaurus list                                  # Installed models
+osaurus run <model>                           # Chat with a model in the terminal
+osaurus agent run "Code Reviewer" -p "Review this" < diff.txt
+osaurus workflow run "Daily Brief" --input city=Paris
+osaurus mcp install --client cursor           # Also claude-code, claude-desktop, codex
 ```
+
+`osaurus help` lists every command and `osaurus <command> --help` explains one. When Osaurus needs to approve the command, it asks once on your Mac.
 
 ## For developers
 

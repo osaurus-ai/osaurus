@@ -194,6 +194,62 @@ struct SpawnTargetAvailabilityTests {
         #expect(!guidance.contains("Deleted Agent"))
     }
 
+    @Test("live agents: a harness agent stays out of spawn_agent while a built-in agent still spawns")
+    func liveHarnessAgentExcludedBuiltInSpawns() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let modelId = "local/live-delegation-model"
+            let builtIn = Agent(
+                name: "Live Built-in \(UUID().uuidString)",
+                defaultModel: modelId
+            )
+            let harnessed = Agent(
+                name: "Live Harness \(UUID().uuidString)",
+                defaultModel: modelId,
+                runtime: .harness(UUID())
+            )
+            let manager = AgentManager.shared
+            manager.add(builtIn)
+            manager.add(harnessed)
+
+            // Sources come from the live AgentManager path that previously hung
+            // (`liveAgentSources` -> `effectiveRuntime(for: agent)`).
+            let sources = SpawnDescriptors.liveAgentSources()
+            #expect(sources.first { $0.id == builtIn.id }?.runsOnHarness == false)
+            #expect(sources.first { $0.id == harnessed.id }?.runsOnHarness == true)
+
+            let snapshot = resolve(
+                agents: [builtIn.id, harnessed.id],
+                sources: sources,
+                locals: [localModel(modelId)],
+                localAuthoritative: true
+            )
+            #expect(snapshot.agentTargets.first { $0.descriptor.id == builtIn.id }?.state == .runnable)
+            #expect(snapshot.agentTargets.first { $0.descriptor.id == harnessed.id }?.state == .harness)
+            #expect(snapshot.runnableAgentIDs == [builtIn.id])
+
+            let spawnTool = SpawnAgentTool.constrainedSpec(
+                SpawnAgentTool().asOpenAITool(),
+                allowedAgentIDs: snapshot.runnableAgentIDs
+            )
+            var allowed: [String] = []
+            if case .object(let root)? = spawnTool.function.parameters,
+                case .object(let properties)? = root["properties"],
+                case .object(let agentField)? = properties["agent"],
+                case .array(let values)? = agentField["enum"]
+            {
+                allowed = values.compactMap { value -> String? in
+                    if case .string(let s) = value { return s }
+                    return nil
+                }
+            }
+            #expect(allowed == [builtIn.id.uuidString])
+            #expect(!allowed.contains(harnessed.id.uuidString))
+
+            _ = await manager.delete(id: builtIn.id)
+            _ = await manager.delete(id: harnessed.id)
+        }
+    }
+
     @Test("passing display names widens the schema enum to accept name or UUID")
     func schemaEnumAcceptsAgentDisplayNames() {
         let agentID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!

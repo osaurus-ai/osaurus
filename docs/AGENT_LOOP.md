@@ -224,9 +224,9 @@ The command requires macOS **Screen Recording** permission. If Screen Recording 
 
 ## Headless / HTTP / Plugin Use
 
-Plugins and HTTP API callers reach the same loop through [`BackgroundTaskManager`](../Packages/OsaurusCore/Managers/BackgroundTaskManager.swift), admitted by the task queue ([TASK_QUEUE.md](TASK_QUEUE.md)). Each dispatched task runs as a background chat session — same engine, same loop tools, same intercepts. See [`docs/plugins/HOST_API.md`](plugins/HOST_API.md#dispatch) for the dispatch JSON schema and event types.
+Plugins and HTTP API callers reach the same loop through [`BackgroundTaskManager`](../Packages/OsaurusCore/Managers/BackgroundTaskManager.swift), admitted by the task queue ([TASK_QUEUE.md](TASK_QUEUE.md)). Each dispatched task runs as a background chat session — same engine, same loop tools, same intercepts.
 
-When a plugin-dispatched run pauses on `clarify`, the chat-layer intercept publishes the parsed payload onto the session and `BackgroundTaskManager` fires `OSR_TASK_EVENT_CLARIFICATION` (type 3) carrying `{question, allow_multiple, options?}`. The same observer **suppresses** the COMPLETED event that would otherwise fire when `isStreaming` flips false on the intercept — without that suppression the plugin would see a "completion" carrying the literal `clarify` tool envelope as `output`, with the actual question text trapped inside the JSON. The next event the plugin sees is either an ACTIVITY tick after the user answers (the loop resumed inside the same task) or a fresh terminal event after the resumed loop runs to completion. See [HOST_API.md — Task lifecycle events](plugins/HOST_API.md#task-lifecycle-events-on_task_event) for the full payload schema and the COMPLETED-suppression contract.
+When a plugin-dispatched run pauses on `clarify`, the chat-layer intercept publishes the parsed payload onto the session and `BackgroundTaskManager` fires `OSR_TASK_EVENT_CLARIFICATION` (type 3) carrying `{question, allow_multiple, options?}`. The same observer **suppresses** the COMPLETED event that would otherwise fire when `isStreaming` flips false on the intercept — without that suppression the plugin would see a "completion" carrying the literal `clarify` tool envelope as `output`, with the actual question text trapped inside the JSON. The next event the plugin sees is either an ACTIVITY tick after the user answers (the loop resumed inside the same task) or a fresh terminal event after the resumed loop runs to completion.
 
 ### Session Audit Dimension
 
@@ -361,5 +361,4 @@ above), so their `AgentTaskState` lives for the single request/invocation.
 
 - [Sandbox Guide](SANDBOX.md) — Linux VM, sandbox tool inventory, plugin recipes
 - [Skills Guide](SKILLS.md) — Reusable AI capabilities and methods
-- [Plugin Authoring Guide](plugins/README.md) — Building tools and dispatching tasks
 - [Features Overview](FEATURES.md) — Complete feature inventory

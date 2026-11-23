@@ -607,6 +607,26 @@ struct AgentChannelSectionHeading: View {
     }
 }
 
+// MARK: - Trust Allowlisted Senders
+
+/// Lets runs from this connection's authorized senders use the Mac's Apple
+/// apps. Offered only on `AgentChannelInboundAuthorizationPolicy.senderTrustKinds`.
+struct AgentChannelTrustSendersToggle: View {
+    static let anchorId = "agentChannels.trustAllowlistedSenders"
+
+    @Binding var isOn: Bool
+
+    var body: some View {
+        SettingsToggle(
+            title: "Trust Allowlisted Senders",
+            description:
+                "Authorized senders can use this Mac's Apple apps (Calendar, Reminders, Mail and more) on agents that have them on, including subagents those agents start. Tools set to Ask stay refused until you set them to Auto under Tools; sending and deleting always need you in the app.",
+            anchorId: Self.anchorId,
+            isOn: $isOn
+        )
+    }
+}
+
 // MARK: - Auto-Reply Off Notice
 
 

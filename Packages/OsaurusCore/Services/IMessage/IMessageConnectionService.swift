@@ -1069,7 +1069,8 @@ final class IMessageConnectionService: @unchecked Sendable {
                     providerEventId: event.providerEventId,
                     stage: .stored
                 )
-                let submission = await relayInboundEvent(event, config: config)
+                let submission = await relayInboundEvent(
+                    event, config: config, senderTrusted: authorization.senderTrusted)
                 dispatchAttempted += submission.dispatchAttempted
                 dispatchSuppressed += submission.dispatchSuppressed
                 switch submission {
@@ -1120,7 +1121,8 @@ final class IMessageConnectionService: @unchecked Sendable {
 
     private func relayInboundEvent(
         _ event: IMessageNormalizedInboundEvent,
-        config: IMessageConnectionConfiguration
+        config: IMessageConnectionConfiguration,
+        senderTrusted: Bool
     ) async -> AgentChannelInboundRelaySubmission {
         guard let senderId = event.senderId else {
             return .suppressed("inbound_sender_missing")
@@ -1169,7 +1171,8 @@ final class IMessageConnectionService: @unchecked Sendable {
                 attachments: event.attachments,
                 sourceLabel: "iMessage chat \(event.roomId), sender \(senderId)",
                 reply: responder,
-                replyAttachment: attachmentResponder
+                replyAttachment: attachmentResponder,
+                senderTrusted: senderTrusted
             )
         )
     }

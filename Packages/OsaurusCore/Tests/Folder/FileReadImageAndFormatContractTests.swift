@@ -149,6 +149,32 @@ struct FileReadImageAndFormatContractTests {
         #expect(message.lowercased().contains("image"))
     }
 
+    /// Vision rejects images of 2 px or less on a side: it calls the
+    /// request's completion handler with the error and `perform` throws too.
+    /// Runs in its own process because resuming the continuation twice traps
+    /// after the first result has already been returned.
+    @Test func imageVisionRejectsReadsAsNoText() async {
+        await #expect(processExitsWith: .success) {
+            let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: 2,
+                pixelsHigh: 2,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            )
+            guard let png = rep?.representation(using: .png, properties: [:]) else { exit(2) }
+
+            let lines = await FileReadImageSupport.recognizeTextLines(in: png)
+            try? await Task.sleep(for: .milliseconds(500))
+            exit(lines.isEmpty ? 0 : 1)
+        }
+    }
+
     // MARK: - Unsupported document variants
 
     @Test func legacyXLSIsNamedWithWorkingAlternatives() async throws {

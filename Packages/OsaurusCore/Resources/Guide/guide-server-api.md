@@ -22,8 +22,26 @@ By default, callers on this Mac need no key. Turning on Settings → Server → 
 - Without a valid access key (`Authorization: Bearer osk-v1…`) these return `401`. Inference and model routes (`/v1/chat/completions`, `/v1/models`, …) are unaffected.
 - A request carrying a browser `Origin` header is refused with `403` (`browser_origin_refused`), key or not, unless that origin is listed by name in **Allowed Origins (CORS)**; `*` does not count. A listed origin still needs a key.
 - An all-agents key gets the same local behavior as before. An agent-scoped key is confined exactly as it is for a remote caller.
-- Siri / Shortcuts and local harness tokens keep working. `osaurus mcp`, `osaurus config` and `osaurus import` take `--access-key KEY` or `OSAURUS_API_KEY`. Without one, `osaurus import` still queues the bundle, and it applies the next time Osaurus opens.
+- Siri / Shortcuts and local harness tokens keep working. The `osaurus` command asks for approval instead (next section); scripts can still pass `--access-key KEY` or `OSAURUS_API_KEY`. Without either, `osaurus import` still queues the bundle, and it applies the next time Osaurus opens.
 - An Osaurus bundle can switch this (and add to Allowed Origins) during `osaurus import`, through its `settings` object. Turning it off or adding an origin needs `--yes`.
+
+## Approving the osaurus command
+
+With **Require Access Key for Local Admin Routes** or **Expose to Network** on, the `osaurus` command (`list`, `run`, `config`, `mcp`, `workflow`, `agent`, …) does not need an access key. The first time a command run from Terminal is refused, Osaurus shows **Allow the osaurus command-line tool?** on this Mac. **Allow** gives the command a token it keeps in `~/.osaurus/cli/access-token` (readable only by you); later commands send it as `X-Osaurus-CLI-Token` and work without a prompt.
+
+- The token works only from this Mac over loopback, never from the network, a relay, or a browser page. Osaurus stores only its hash.
+- **Don't Allow**, closing the prompt, or two minutes without an answer refuse the command. After **Don't Allow**, new requests are refused for 30 seconds.
+- A command with no terminal (an MCP host, a script) never raises the prompt; it fails with a hint to run any `osaurus` command in Terminal once.
+- Starting a workflow and answering an agent run's tool approvals need the approval even with both switches off, so `osaurus workflow run`, `osaurus agent run` and `osaurus mcp install` ask once in that case too.
+- Settings → Server → Overview → **Command-Line Tool Access** shows whether the command is approved and has **Revoke**.
+- The prompt is `POST /cli/access` (body `{"command": "list"}`); it answers `200` with `token`, `403 cli_access_denied`, `408 cli_access_timeout`, `409` while another prompt is open, or `429` during the cooldown.
+
+## Workflows and agents from the command line
+
+- `osaurus workflow list | run | status | runs | cancel` runs your installed workflows. A form the run asks for is answered in the terminal; without one, the command exits `3` and the form waits in Osaurus. See the Workflows topic.
+- `osaurus agent list` and `osaurus agent run <name|id|default> -p "…"` run an agent with its own model, memory and tools; piped input is added to the prompt, the answer goes to stdout and tool activity to stderr. `--session ID` continues a conversation. See the Agents topic.
+- Routes behind them, all owner-only: `GET /workflows` (each workflow's id, name, `tool_name`, input schema and setup state), `GET /workflows/runs` (`?workflow=` and `?limit=`, newest first), `GET /workflows/runs/{id}`, `POST /workflows/runs/{id}/cancel` (`404 run_not_found`, `409 run_finished`), and `POST /workflows/{id}/run`, which only Osaurus's own Shortcuts actions and the approved command may call (`403 app_only` otherwise).
+- An approved command's agent run in a terminal sends `X-Osaurus-CLI-Approval-Session`; its Ask cards show on this Mac as usual and are also listed by `GET /approvals?session=ID` and answered with `POST /approvals/{id}` (body `{"decision": "allow_once", "session": "ID"}`). Without the approved token those requests are refused with `403 cli_only`.
 
 ## Using Osaurus from Codex CLI
 
@@ -40,6 +58,7 @@ OpenAI's Codex CLI can run against your local models. Settings → Server → Ov
 
 - `POST /v1/chat/completions` is strict OpenAI semantics: Osaurus returns `tool_calls` and your client executes them. No Osaurus memory or skills are injected.
 - `POST /agents/{id}/run` runs a full server-side agent loop (what in-app chat uses): the agent executes its own tools, with memory and context. Tool iterations follow Settings → Chat → Advanced → Max Tool Attempts (30 by default, up to 120).
+- Tools set to Ask are declined on an HTTP run, since nobody can click the card, except for your iPhone and the approved `osaurus agent run` in a terminal, which answer it.
 - Dangerous tools (`file_write`, `file_edit`, `shell_run`, `git_commit`, …) are denied to external HTTP callers by default. An authenticated remote run (Secure Channel, agent-scoped key) of an agent with a working folder gets `file_read`, `file_write` and `file_edit` confined to that folder.
 
 ## Sessions and caching
@@ -52,7 +71,7 @@ Port, network exposure, Sampling Defaults (temperature / top-p / top-k / max tok
 
 ## MCP surface
 
-`GET /mcp/tools` and `POST /mcp/call` expose Osaurus tools over HTTP; `osaurus mcp` runs Osaurus as a stdio MCP server for other AI apps. With **Require Access Key for Local Admin Routes** on, give the MCP host's `osaurus mcp` entry an access key (`--access-key KEY` or `OSAURUS_MCP_ACCESS_KEY`).
+`GET /mcp/tools` and `POST /mcp/call` expose Osaurus tools over HTTP; `osaurus mcp` runs Osaurus as a stdio MCP server for other AI apps, and `osaurus mcp --workflows` adds your workflows as tools. `osaurus mcp install --client cursor|claude-code|claude-desktop|codex` registers it with an app and approves the command (see the MCP topic). With **Require Access Key for Local Admin Routes** or **Expose to Network** on, approve the command once (run `osaurus mcp install` or `osaurus list` in Terminal and click **Allow** in Osaurus); a host can also pass `--access-key KEY` or `OSAURUS_MCP_ACCESS_KEY`.
 
 ## Configuration endpoints (loopback only)
 
@@ -62,4 +81,4 @@ The declarative configuration surface (see the Declarative Configuration topic) 
 - `POST /admin/config/plan` — body `{"yaml": "<document>"}` (or `{"template": "<name>"}`), optional `"prune": true`; returns the diff without changing anything.
 - `POST /admin/config/apply` — same body; high-risk changes return `409` with the risk list until re-sent with `"confirm_high_risk": true`.
 
-Unlike other admin routes, these are strictly restricted to local (loopback) callers — an access key never admits a remote caller, even with network exposure on. With **Require Access Key for Local Admin Routes** on, local callers also need a key. The `osaurus config` CLI wraps these endpoints and sends `--access-key KEY` / `OSAURUS_API_KEY` when given.
+Unlike other admin routes, these are strictly restricted to local (loopback) callers — an access key never admits a remote caller, even with network exposure on. With **Require Access Key for Local Admin Routes** on, local callers also need a key. The `osaurus config` CLI wraps these endpoints; it uses its approval from Osaurus (see below), or `--access-key KEY` / `OSAURUS_API_KEY` when given.

@@ -421,14 +421,27 @@ public enum ChatExecutionContext {
     @TaskLocal public static var defaultShellIdleTimeout: TimeInterval?
 
     /// True when the current tool execution was initiated by an EXTERNAL
-    /// surface (the HTTP `/agents/{id}/run` loop or the `/mcp/call`
-    /// bridge) rather than the in-app chat/plugin surfaces. The registry
-    /// refuses workspace-mutating tool classes
-    /// (`ToolRegistry.externallyDeniedToolNames`) under this flag — with
-    /// a folder open those tools are registered process-wide with policy
-    /// `.auto`, and loopback callers skip Bearer auth entirely.
+    /// surface (the HTTP `/agents/{id}/run` loop, the `/mcp/call` bridge,
+    /// or an inbound Agent Channel message) rather than the in-app
+    /// chat/plugin surfaces. Children dispatched from such a run (subagents,
+    /// workflow steps) inherit it. The registry refuses workspace-mutating
+    /// tool classes (`ToolRegistry.externallyDeniedToolNames`) under this
+    /// flag — with a folder open those tools are registered process-wide
+    /// with policy `.auto`, and loopback callers skip Bearer auth entirely.
     /// Module-internal so out-of-module callers cannot unbind it.
     @TaskLocal static var isExternalSurface: Bool = false
+
+    /// True when an external run came from an Agent Channel message whose
+    /// sender is on the connection's sender allowlist AND the connection has
+    /// Trust Allowlisted Senders on. Only the native channels whose provider
+    /// authenticates the sender id offer that setting (Telegram, Slack,
+    /// Discord, iMessage, WhatsApp). Under it `isDeniedForCurrentSurface`
+    /// lets Apple app tools through to their ordinary gates (the agent's
+    /// Apple Apps switch, then the per-tool policy); every other externally
+    /// denied tool stays denied. Bound by `BackgroundTaskManager` only, and
+    /// narrow-only: inside an external context a child can inherit it but
+    /// never gain it. Module-internal so out-of-module callers cannot bind it.
+    @TaskLocal static var isTrustedChannelSender: Bool = false
 
     /// Root of a host folder an AUTHENTICATED remote agent run (Secure
     /// Channel, agent-scoped) is permitted to read/write inside. Bound by
@@ -491,6 +504,21 @@ public enum ChatExecutionContext {
     /// `BackgroundTaskManager.dispatchChat` from `SyncHostRunner`'s request
     /// only. Module-internal so out-of-module callers cannot bind it.
     @TaskLocal static var syncReviewerScope: String? = nil
+
+    /// The approval session of an `osaurus agent run` in a terminal: the
+    /// approved CLI (valid `X-Osaurus-CLI-Token` over physical loopback)
+    /// said someone is at the keyboard. Its `.ask` tool cards show on this
+    /// Mac as usual instead of being refused as an external surface, and the
+    /// same terminal may answer them through `GET /approvals?session=`.
+    /// Nothing else the phone's standing unlocks follows: the external deny
+    /// list, config and workflow gates still treat the run as external.
+    /// Bound by `handleAgentRunEndpoint` only. Module-internal so
+    /// out-of-module callers cannot bind it.
+    @TaskLocal static var terminalReviewerSession: String? = nil
+
+    /// Someone can answer this run's `.ask` tool cards: the paired phone, or
+    /// the terminal that started it.
+    static var hasInteractiveToolReviewer: Bool { hasRemoteReviewer || terminalReviewerSession != nil }
 
     /// The person answering this run's reviews is on another of their
     /// devices: the paired phone, or the device a hosted run is for.

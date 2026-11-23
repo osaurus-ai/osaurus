@@ -14,6 +14,8 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
     var senderAllowlist: [String]
     var writeEnabled: Bool
     var defaultReadLimit: Int
+    /// Trust Allowlisted Senders: runs from allowlisted senders may use Apple app tools.
+    var trustAllowlistedSenders: Bool
 
     init(
         configuredGuildIds: [String] = [],
@@ -21,7 +23,8 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
         writableChannelIds: [String] = [],
         senderAllowlist: [String] = [],
         writeEnabled: Bool = false,
-        defaultReadLimit: Int = 50
+        defaultReadLimit: Int = 50,
+        trustAllowlistedSenders: Bool = false
     ) {
         self.configuredGuildIds = Self.normalizedIds(configuredGuildIds)
         self.readableChannelIds = Self.normalizedIds(readableChannelIds)
@@ -29,6 +32,7 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
         self.senderAllowlist = Self.normalizedIds(senderAllowlist)
         self.writeEnabled = writeEnabled
         self.defaultReadLimit = Self.clampReadLimit(defaultReadLimit)
+        self.trustAllowlistedSenders = trustAllowlistedSenders
     }
 
     var normalized: DiscordConnectionConfiguration {
@@ -38,7 +42,8 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
             writableChannelIds: writableChannelIds,
             senderAllowlist: senderAllowlist,
             writeEnabled: writeEnabled,
-            defaultReadLimit: defaultReadLimit
+            defaultReadLimit: defaultReadLimit,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 
@@ -49,6 +54,7 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
         case senderAllowlist
         case writeEnabled
         case defaultReadLimit
+        case trustAllowlistedSenders
     }
 
     init(from decoder: Decoder) throws {
@@ -59,7 +65,11 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
             writableChannelIds: try container.decodeIfPresent([String].self, forKey: .writableChannelIds) ?? [],
             senderAllowlist: try container.decodeIfPresent([String].self, forKey: .senderAllowlist) ?? [],
             writeEnabled: try container.decodeIfPresent(Bool.self, forKey: .writeEnabled) ?? false,
-            defaultReadLimit: try container.decodeIfPresent(Int.self, forKey: .defaultReadLimit) ?? 50
+            defaultReadLimit: try container.decodeIfPresent(Int.self, forKey: .defaultReadLimit) ?? 50,
+            trustAllowlistedSenders: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .trustAllowlistedSenders
+            ) ?? false
         )
     }
 

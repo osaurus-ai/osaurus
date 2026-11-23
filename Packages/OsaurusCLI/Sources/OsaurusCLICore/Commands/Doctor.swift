@@ -21,7 +21,19 @@ public struct DoctorCommand: Command {
         case invalid(String)
     }
 
+    static let usage = """
+        Usage: osaurus doctor [--port 1...65535] [--json] [--redact] [--verify-signatures]
+
+        Diagnoses CLI/app version skew, duplicate app bundles, duplicate running copies,
+        server startup and model storage. --verify-signatures checks code signatures
+        (slow with many app bundles installed); --redact writes your home folder as ~.
+        """
+
     public static func execute(args: [String]) async {
+        if args.contains("--help") || args.contains("-h") {
+            print(usage)
+            exit(EXIT_SUCCESS)
+        }
         let options: Options
         do {
             options = try parseOptions(args)
@@ -31,11 +43,7 @@ public struct DoctorCommand: Command {
             case .invalid(let message):
                 detail = message
             }
-            fputs("osaurus doctor: \(detail)\n", stderr)
-            fputs(
-                "Usage: osaurus doctor [--port 1...65535] [--json] [--redact] [--verify-signatures]\n",
-                stderr
-            )
+            fputs("osaurus doctor: \(detail)\n\n\(usage)\n", stderr)
             exit(EXIT_FAILURE)
         } catch {
             fputs("osaurus doctor: invalid arguments\n", stderr)
@@ -116,6 +124,9 @@ public struct DoctorCommand: Command {
             "Server: http://127.0.0.1:\(report.requestedPort) — \(report.serverHealthy ? "healthy" : "unavailable")",
         ]
         if let owner = report.portOwner { lines.append("Port owner: \(owner)") }
+        if report.runningInstanceCount > 1 {
+            lines.append("Running instances: \(report.runningInstanceCount) (expected 1)")
+        }
         if report.apps.isEmpty {
             lines.append("Apps: none discovered")
         } else {

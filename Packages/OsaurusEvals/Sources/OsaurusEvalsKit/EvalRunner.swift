@@ -718,6 +718,8 @@ public enum EvalRunner {
             return await runMemoryCase(testCase, modelId: modelId)
         case "agent_channels":
             return await runAgentChannelsCase(testCase, modelId: modelId)
+        case "terminal_approval":
+            return await runTerminalApprovalCase(testCase, modelId: modelId)
         case "workflow":
             return await runWorkflowCase(testCase, modelId: modelId)
         case "architect":

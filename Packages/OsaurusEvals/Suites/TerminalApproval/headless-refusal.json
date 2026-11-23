@@ -1,0 +1,13 @@
+{
+  "id": "terminal_approval.headless-refusal",
+  "domain": "terminal_approval",
+  "label": "terminal approval • a run with no terminal keeps the external-surface refusal",
+  "query": "deterministic policy pin — no model involved",
+  "notes": "An external run without a terminal session (piped `osaurus agent run`, plain HTTP caller) is refused with 'requires interactive approval', raises no card, and never runs the tool.",
+  "fixtures": {},
+  "expect": {
+    "terminalApproval": {
+      "scenario": "headless_refusal"
+    }
+  }
+}

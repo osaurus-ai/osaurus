@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import OsaurusSync
 import os
 
@@ -194,19 +195,11 @@ final class ModelDownloadService: ObservableObject {
 
     // MARK: - Properties
 
-    nonisolated static let downloadFilePatterns: [String] = [
-        "*.json",
-        "*.jinja",
-        "*.txt",
-        "*.model",
-        "*.safetensors",
-    ]
+    /// Shared with `osaurus pull`.
+    nonisolated static let downloadFilePatterns: [String] = ModelFilePatterns.download
 
     /// Filenames excluded from download even when they match a glob pattern.
-    nonisolated static let downloadExcludedFiles: Set<String> = [
-        "README.md",
-        ".gitattributes",
-    ]
+    nonisolated static let downloadExcludedFiles: Set<String> = ModelFilePatterns.excluded
 
     /// How a download's file URLs are obtained. `.direct` is the plain
     /// anonymous `huggingface.co/resolve` URL. `.onboardingProxy` resolves
@@ -974,6 +967,7 @@ final class ModelDownloadService: ObservableObject {
                     proxyDisabledModels.insert(model.id)
                 }
             }
+            let nearbyPartURL = NearbyFileDownloader.partURL(for: destination)
             do {
                 try await downloader.download(
                     from: downloadURL,
@@ -981,11 +975,15 @@ final class ModelDownloadService: ObservableObject {
                     expectedSize: file.size,
                     expectedDigest: file.digest,
                     resumeData: resumeDataForAttempt,
-                    seed: NearbyFileDownloader.partURL(for: destination),
+                    seed: nearbyPartURL,
                     onProgress: onProgress
                 )
                 finishFileTransfer(modelId: model.id, token: token, path: file.path, size: file.size)
-                try? FileManager.default.removeItem(at: NearbyFileDownloader.partURL(for: destination))
+                // Leftover nearby partial cleanup is filesystem I/O; keep it
+                // off MainActor so a busy disk can't hang the UI.
+                Task.detached(priority: .utility) {
+                    try? FileManager.default.removeItem(at: nearbyPartURL)
+                }
                 return .completed
             } catch let pauseInfo as DirectDownloader.PauseInfo {
                 notePausedFileBytes(

@@ -433,10 +433,14 @@ final class SyncWorkflowPush {
             case 429:
                 let after = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
                 return .wait(seconds: max(after ?? 60, 1))
-            case 500 ..< 600: return .retry
+            case 500 ..< 600:
+                // Why a send is worth another try, which `.retry` alone doesn't say.
+                trace("push service answered \(status) \(code)")
+                return .retry
             default: return .failed("\(status) \(code)")
             }
         } catch let error as URLError {
+            trace("push service unreachable: URLError \(error.code.rawValue)")
             return error.code == .notConnectedToInternet ? .failed("offline") : .retry
         } catch {
             return .failed(error.syncLogDetail)

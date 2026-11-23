@@ -799,6 +799,40 @@ public final class BackgroundTaskManager: ObservableObject {
     /// runs are view-only).
     @discardableResult
     public func submitQuickReply(_ backgroundId: UUID, text: String, author: ParticipantRef? = nil) -> Bool {
+        submitReply(backgroundId, text: text, author: author, external: false, trustedChannelSender: false)
+    }
+
+    /// `submitQuickReply` for a message that arrived on an Agent Channel: the
+    /// follow-up turn runs as an external surface, like the channel's first
+    /// turn, with the sender's trust.
+    @discardableResult
+    func submitChannelReply(
+        _ backgroundId: UUID, text: String, author: ParticipantRef? = nil, trustedChannelSender: Bool
+    ) -> Bool {
+        submitReply(
+            backgroundId, text: text, author: author, external: true, trustedChannelSender: trustedChannelSender)
+    }
+
+    /// Runs `body` (which starts the turn's `Task`) under an external
+    /// surface when `external`; otherwise leaves the caller's context as is,
+    /// so an in-app reply never narrows an inherited external context.
+    /// Trust is narrow-only, as in `resolvedTrustedChannelSender`.
+    private static func withReplySurface(external: Bool, trustedChannelSender: Bool, _ body: () -> Void) {
+        guard external else { return body() }
+        let trusted =
+            ChatExecutionContext.isExternalSurface
+            ? ChatExecutionContext.isTrustedChannelSender && trustedChannelSender
+            : trustedChannelSender
+        ChatExecutionContext.$isExternalSurface.withValue(true) {
+            ChatExecutionContext.$isTrustedChannelSender.withValue(trusted) {
+                body()
+            }
+        }
+    }
+
+    private func submitReply(
+        _ backgroundId: UUID, text: String, author: ParticipantRef?, external: Bool, trustedChannelSender: Bool
+    ) -> Bool {
         // Inbound shared-agent runs are the remote caller's conversation —
         // read-only on the host, never replyable from here.
         guard let state = backgroundTasks[backgroundId], !state.isSubagentMirror, !state.isInboundRun
@@ -828,10 +862,12 @@ public final class BackgroundTaskManager: ObservableObject {
             state.currentStep = "Preparing follow-up..."
             persistRetainedTabs()
             recomputeSortedToastTasks()
-            Task { @MainActor in
-                await context.prepare()
-                session.nextSendAuthor = author
-                session.send(trimmed)
+            Self.withReplySurface(external: external, trustedChannelSender: trustedChannelSender) {
+                Task { @MainActor in
+                    await context.prepare()
+                    session.nextSendAuthor = author
+                    session.send(trimmed)
+                }
             }
             return true
         }
@@ -843,7 +879,9 @@ public final class BackgroundTaskManager: ObservableObject {
         // the next run; the streaming observer transitions the task back to
         // `.running`, so no status write is needed here.
         session.nextSendAuthor = author
-        session.send(trimmed)
+        Self.withReplySurface(external: external, trustedChannelSender: trustedChannelSender) {
+            session.send(trimmed)
+        }
         return true
     }
 
@@ -1067,6 +1105,33 @@ public final class BackgroundTaskManager: ObservableObject {
     /// external context.
     nonisolated static func resolvedExternalSurface(for request: DispatchRequest) -> Bool {
         request.externalSurface || ChatExecutionContext.isExternalSurface
+    }
+
+    /// Trusted-channel-sender flag bound around the dispatched run.
+    /// Narrow-only: inside an external context the run inherits that
+    /// context's trust and a request cannot add any, so an HTTP or MCP
+    /// parent never mints trust for its child. Outside one (the channel
+    /// relay, or a queued child starting from the scheduler) the request's
+    /// own flag decides. Meaningless without an external surface.
+    nonisolated static func resolvedTrustedChannelSender(for request: DispatchRequest) -> Bool {
+        guard resolvedExternalSurface(for: request) else { return false }
+        if ChatExecutionContext.isExternalSurface {
+            return ChatExecutionContext.isTrustedChannelSender
+        }
+        return request.trustedChannelSender
+    }
+
+    /// Binds a run's surface: external-ness and channel-sender trust.
+    static func withSurface(
+        external: Bool,
+        trustedChannelSender: Bool,
+        _ body: () async -> Void
+    ) async {
+        await ChatExecutionContext.$isExternalSurface.withValue(external) {
+            await ChatExecutionContext.$isTrustedChannelSender.withValue(external && trustedChannelSender) {
+                await body()
+            }
+        }
     }
 
     /// An unattended, app-authored trigger (an automation or a self-scheduled
@@ -1353,6 +1418,7 @@ public final class BackgroundTaskManager: ObservableObject {
             // widened, never narrowed: an inherited external context stays
             // external for loopback/plugin/schedule requests too.
             let externalSurface = Self.resolvedExternalSurface(for: request)
+            let trustedChannelSender = Self.resolvedTrustedChannelSender(for: request)
             // An unattended, app-authored trigger (recurring schedule, self-
             // scheduled wake-up, or watcher) fires with no interactive user to
             // answer an approval card. Marked only when NOT external, so the
@@ -1361,7 +1427,7 @@ public final class BackgroundTaskManager: ObservableObject {
             let unattended = Self.isUnattended(request, externalSurface: externalSurface)
             await ChatExecutionContext.$currentSessionSource.withValue(request.runtimeSource) {
                 await ChatExecutionContext.$isUnattendedDispatch.withValue(unattended) {
-                    await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
+                    await Self.withSurface(external: externalSurface, trustedChannelSender: trustedChannelSender) {
                         await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
                             await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
                                 await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {

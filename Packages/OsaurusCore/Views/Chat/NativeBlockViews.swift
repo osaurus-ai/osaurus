@@ -28,7 +28,7 @@ final class NativeTypingIndicatorView: NSView {
     /// Inline prefill token counter, the shared `StatusChip`, next to the
     /// RAM indicator. Runtime progress augments the pending dots instead
     /// of replacing them or borrowing another request's loading phase.
-    private let prefillChip = NSHostingView(rootView: AnyView(EmptyView()))
+    private let prefillChip = NSHostingView.embedded(rootView: AnyView(EmptyView()))
     /// The unscoped theme: the chip resolves its own catalog family.
     private var chipTheme: (any ThemeProtocol)?
     /// "Finishing up…" caption shown beside the dots in the `.finishing`

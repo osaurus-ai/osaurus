@@ -19,6 +19,8 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
     var longPollingEnabled: Bool
     var longPollingLimit: Int
     var longPollingTimeoutSeconds: Int
+    /// Trust Allowlisted Senders: runs from allowlisted senders may use Apple app tools.
+    var trustAllowlistedSenders: Bool
 
     enum CodingKeys: String, CodingKey {
         case readableChatIds
@@ -32,6 +34,7 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         case longPollingEnabled
         case longPollingLimit
         case longPollingTimeoutSeconds
+        case trustAllowlistedSenders
     }
 
     init(
@@ -45,7 +48,8 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         receiveStorageEnabled: Bool = true,
         longPollingEnabled: Bool = false,
         longPollingLimit: Int = 100,
-        longPollingTimeoutSeconds: Int = 20
+        longPollingTimeoutSeconds: Int = 20,
+        trustAllowlistedSenders: Bool = false
     ) {
         self.readableChatIds = Self.normalizedIds(readableChatIds)
         self.writableChatIds = Self.normalizedIds(writableChatIds)
@@ -58,6 +62,7 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         self.longPollingEnabled = longPollingEnabled
         self.longPollingLimit = Self.clampLongPollingLimit(longPollingLimit)
         self.longPollingTimeoutSeconds = Self.clampLongPollingTimeoutSeconds(longPollingTimeoutSeconds)
+        self.trustAllowlistedSenders = trustAllowlistedSenders
     }
 
     init(from decoder: Decoder) throws {
@@ -79,7 +84,11 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
             longPollingTimeoutSeconds: try container.decodeIfPresent(
                 Int.self,
                 forKey: .longPollingTimeoutSeconds
-            ) ?? 20
+            ) ?? 20,
+            trustAllowlistedSenders: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .trustAllowlistedSenders
+            ) ?? false
         )
     }
 
@@ -95,7 +104,8 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
             receiveStorageEnabled: receiveStorageEnabled,
             longPollingEnabled: longPollingEnabled,
             longPollingLimit: longPollingLimit,
-            longPollingTimeoutSeconds: longPollingTimeoutSeconds
+            longPollingTimeoutSeconds: longPollingTimeoutSeconds,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 

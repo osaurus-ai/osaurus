@@ -92,6 +92,43 @@ struct HarnessRuntimeModelTests {
         }
     }
 
+    /// The Agent-instance overload reads the runtime straight from the value
+    /// (no `agent(for:)` lookup), so per-agent loops like
+    /// `SpawnDescriptors.liveAgentSources` stay cheap on the main thread.
+    @Test @MainActor func effectiveRuntimeForAgentValueReadsItsRuntime() {
+        let harnessId = UUID()
+        let manager = AgentManager.shared
+        #expect(manager.effectiveRuntime(for: Agent(name: "Plain")) == .builtIn)
+        #expect(
+            manager.effectiveRuntime(for: Agent(name: "Harnessed", runtime: .harness(harnessId)))
+                == .harness(harnessId)
+        )
+        // An agent the manager doesn't know still resolves from its own value.
+        let unregistered = Agent(name: "Detached", runtime: .harness(harnessId))
+        #expect(manager.effectiveRuntime(for: unregistered.id) == .builtIn)
+        #expect(manager.effectiveRuntime(for: unregistered).harnessId == harnessId)
+    }
+
+    /// Built-in agents read their runtime from a configuration store, not
+    /// `agent.runtime`. The value overload must give the same answer as the
+    /// id overload even when the Agent value carries a different runtime.
+    @Test @MainActor func builtInAgentRuntimeAgreesAcrossOverloads() {
+        let manager = AgentManager.shared
+        let defaultAgent = Agent(id: Agent.defaultId, name: "Default", runtime: .harness(UUID()))
+        #expect(manager.effectiveRuntime(for: defaultAgent) == manager.effectiveRuntime(for: Agent.defaultId))
+        #expect(
+            manager.effectiveRuntime(for: defaultAgent)
+                == (DefaultAgentConfigurationStore.load().runtime ?? .builtIn)
+        )
+
+        let architect = Agent(id: Agent.architectId, name: "Architect", runtime: .harness(UUID()))
+        #expect(manager.effectiveRuntime(for: architect) == manager.effectiveRuntime(for: Agent.architectId))
+        #expect(
+            manager.effectiveRuntime(for: architect)
+                == (ArchitectConfigurationStore.load().runtime ?? .builtIn)
+        )
+    }
+
     @Test func agentsWithoutARuntimeKeyStillDecode() throws {
         let agent = Agent(name: "Legacy")
         var object = try #require(

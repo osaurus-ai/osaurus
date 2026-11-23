@@ -158,6 +158,7 @@ struct SettingsSearchSelfFindProbe {
             ("Add Workspace", "agentChannels.slack.addAccount"),
             ("Add Account", "agentChannels.email.addAccount"),
             ("Remove this bot", "agentChannels.removeAccount"),
+            ("Trust Allowlisted Senders", "agentChannels.trustAllowlistedSenders"),
             ("Manage in Channels", "keys.accounts.manageInChannels"),
             ("Default Read Limit", "agentChannels.imessage"),
             ("Fail Closed When Estimate Is Unknown", "settings.server.failClosedUnknownEstimate"),
@@ -291,6 +292,8 @@ struct SettingsSearchSelfFindProbe {
             // Command Line Tool moved to Server → Overview.
             ("Command Line Tool", "server.cli"),
             ("install cli", "server.cli"),
+            ("Command-Line Tool Access", "server.cliAccess"),
+            ("revoke cli", "server.cliAccess"),
             // Conversation (formerly Chat).
             ("Automatically Name Chats", "settings.chat.autoGenerateTitles"),
             ("Suggest Follow-Up Questions", "settings.chat.generateFollowUps"),
@@ -583,6 +586,7 @@ struct SettingsSearchSelfFindProbe {
             ("Inbox", "approvals.overview"),
             ("Needs You", "approvals.overview"),
             ("Waiting on Others", "approvals.waitingOnOthers"),
+            ("Arranged Calls", "approvals.arrangedCalls"),
             ("Live Now", "approvals.liveNow"),
             ("Past Requests", "approvals.history"),
             ("History", "tasks.history"),
@@ -806,8 +810,6 @@ struct SettingsSearchSelfFindProbe {
             ("Sign Out and Remove Chats", "settings.sync.signOutRemove"),
             ("Keep Mac Awake for iPhone", "settings.devices.keepAwake"),
             ("Continue iPhone Chats on This Mac", "settings.devices.continuePhoneChats"),
-            ("Generate 6-Digit Code", "settings.connect.pairing"),
-            ("6 digit", "settings.connect.pairing"),
             ("Remote Access for This iPhone", "settings.connect.reachAnywhere"),
             ("Keep Mac Awake for This iPhone", "settings.connect.keepAwake"),
             ("unpair", "settings.connect.pairedDevice"),

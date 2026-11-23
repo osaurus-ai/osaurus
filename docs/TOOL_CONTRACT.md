@@ -8,8 +8,7 @@ The type lives at [`Tools/ToolEnvelope.swift`](../Packages/OsaurusCore/Tools/Too
 
 > **Plugin authors:** the contract on this page applies to your tools too.
 > The `invoke` callback's return JSON must match the success or failure
-> envelope below. See [`docs/plugins/AUTHORING.md`](plugins/AUTHORING.md#tools)
-> for the plugin-specific manifest declaration.
+> envelope below.
 
 ---
 

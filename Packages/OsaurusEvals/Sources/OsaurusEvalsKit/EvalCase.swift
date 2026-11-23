@@ -865,6 +865,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `AgentChannelEvalHarness` — no network, no model — and pins the
         /// allowlist / confirm-send / MCP-exposure contracts.
         public let agentChannels: AgentChannelsExpectations?
+        /// Deterministic expectation for `domain == "terminal_approval"`
+        /// cases: an external run's Ask card answered from an
+        /// `osaurus agent run` terminal session (`TerminalApprovalEvalHarness`).
+        public let terminalApproval: TerminalApprovalExpectations?
         /// Deterministic composition-census expectation for
         /// `domain == "prompt_surface"` cases. Composes the REAL preview
         /// surface (no model call) — optionally under an inline
@@ -916,6 +920,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             httpAPI: HTTPAPIExpectations? = nil,
             memory: MemoryExpectations? = nil,
             agentChannels: AgentChannelsExpectations? = nil,
+            terminalApproval: TerminalApprovalExpectations? = nil,
             promptSurface: PromptSurfaceExpectations? = nil,
             workflow: WorkflowExpectations? = nil,
             architect: ArchitectExpectations? = nil,
@@ -947,6 +952,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.httpAPI = httpAPI
             self.memory = memory
             self.agentChannels = agentChannels
+            self.terminalApproval = terminalApproval
             self.promptSurface = promptSurface
             self.workflow = workflow
             self.architect = architect
@@ -1663,6 +1669,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     /// picks one scenario; the harness seeds isolated Slack/Telegram config
     /// (allowlists from this block), injects fake provider clients, and
     /// scores the decision plus the message-store side effects.
+    /// Expectation for `domain == "terminal_approval"` cases. `scenario` is
+    /// one of `terminal_approve`, `terminal_deny`, `headless_refusal`,
+    /// `narrowed_answers` (see `TerminalApprovalEvalHarness.run`).
+    public struct TerminalApprovalExpectations: Sendable, Codable {
+        public let scenario: String
+
+        public init(scenario: String) {
+            self.scenario = scenario
+        }
+    }
+
     public struct AgentChannelsExpectations: Sendable, Codable {
         /// Which policy gate the case pins:
         ///   - `unauthorized_room_read`: `agent_channel_read_messages`

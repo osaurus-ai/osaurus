@@ -159,6 +159,16 @@ struct AgentChannelInboundAuthorizationPolicy: Codable, Equatable, Sendable {
     var requireProviderEventId: Bool
     var duplicateBehavior: String
     var auditDecisionReason: String
+    /// Trust Allowlisted Senders: a run from an allowlisted sender may use
+    /// Apple app tools. Honored only for `senderTrustKinds`.
+    var trustAllowlistedSenders: Bool
+
+    /// Connection kinds whose provider authenticates the sender id, so an
+    /// allowlist match identifies the person. Email (`From` is unsigned
+    /// here) and n8n / custom HTTP (the caller asserts the id) are not.
+    static let senderTrustKinds: Set<AgentChannelKind> = [
+        .telegram, .slack, .discord, .imessage, .whatsapp,
+    ]
 
     init(
         senderAllowlist: [String] = [],
@@ -168,7 +178,8 @@ struct AgentChannelInboundAuthorizationPolicy: Codable, Equatable, Sendable {
         allowSelfMessages: Bool = false,
         requireProviderEventId: Bool = true,
         duplicateBehavior: String = Self.defaultDuplicateBehavior,
-        auditDecisionReason: String = Self.defaultAuditDecisionReason
+        auditDecisionReason: String = Self.defaultAuditDecisionReason,
+        trustAllowlistedSenders: Bool = false
     ) {
         self.senderAllowlist = AgentChannelConnection.normalizedIds(senderAllowlist)
         self.roomAllowlist = AgentChannelConnection.normalizedIds(roomAllowlist)
@@ -178,6 +189,7 @@ struct AgentChannelInboundAuthorizationPolicy: Codable, Equatable, Sendable {
         self.requireProviderEventId = requireProviderEventId
         self.duplicateBehavior = duplicateBehavior.trimmingCharacters(in: .whitespacesAndNewlines)
         self.auditDecisionReason = auditDecisionReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.trustAllowlistedSenders = trustAllowlistedSenders
     }
 
     init(from decoder: Decoder) throws {
@@ -202,7 +214,11 @@ struct AgentChannelInboundAuthorizationPolicy: Codable, Equatable, Sendable {
             auditDecisionReason: try container.decodeIfPresent(
                 String.self,
                 forKey: .auditDecisionReason
-            ) ?? Self.defaultAuditDecisionReason
+            ) ?? Self.defaultAuditDecisionReason,
+            trustAllowlistedSenders: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .trustAllowlistedSenders
+            ) ?? false
         )
     }
 
@@ -217,7 +233,8 @@ struct AgentChannelInboundAuthorizationPolicy: Codable, Equatable, Sendable {
             duplicateBehavior: duplicateBehavior.isEmpty ? Self.defaultDuplicateBehavior : duplicateBehavior,
             auditDecisionReason: auditDecisionReason.isEmpty
                 ? Self.defaultAuditDecisionReason
-                : auditDecisionReason
+                : auditDecisionReason,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 
@@ -288,6 +305,8 @@ public struct AgentChannelInboundAuthorizationDecision: Equatable, Sendable {
     var roomId: String
     var senderId: String?
     var details: [String: String]
+    /// An allowed sender on a connection with Trust Allowlisted Senders on.
+    var senderTrusted: Bool
 
     init(
         decision: AgentChannelInboundAuthorizationDecisionValue,
@@ -300,8 +319,10 @@ public struct AgentChannelInboundAuthorizationDecision: Equatable, Sendable {
         spaceId: String? = nil,
         roomId: String,
         senderId: String? = nil,
-        details: [String: String] = [:]
+        details: [String: String] = [:],
+        senderTrusted: Bool = false
     ) {
+        self.senderTrusted = shouldDispatch && senderTrusted
         self.decision = decision
         self.shouldDispatch = shouldDispatch
         self.reason = reason
@@ -338,6 +359,9 @@ public struct AgentChannelInboundAuthorizationDecision: Equatable, Sendable {
         }
         if !details.isEmpty {
             row["details"] = details
+        }
+        if senderTrusted {
+            row["sender_trusted"] = true
         }
         return row
     }

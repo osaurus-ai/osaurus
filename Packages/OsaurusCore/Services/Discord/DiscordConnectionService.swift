@@ -415,7 +415,8 @@ final class DiscordConnectionService: @unchecked Sendable {
                     dispatchSuppressed += 1
                     continue
                 }
-                let relay = await relayInboundMessage(message, botId: bot.id, config: config)
+                let relay = await relayInboundMessage(
+                    message, botId: bot.id, config: config, senderTrusted: authorization.senderTrusted)
                 dispatchAttempted += relay.dispatchAttempted
                 dispatchSuppressed += relay.dispatchSuppressed
                 switch relay {
@@ -457,7 +458,8 @@ final class DiscordConnectionService: @unchecked Sendable {
     private func relayInboundMessage(
         _ message: DiscordMessage,
         botId: String,
-        config: DiscordConnectionConfiguration
+        config: DiscordConnectionConfiguration,
+        senderTrusted: Bool
     ) async -> AgentChannelInboundRelaySubmission {
         let mentionsBot = message.content.contains("<@\(botId)>")
             || message.content.contains("<@!\(botId)>")
@@ -498,7 +500,8 @@ final class DiscordConnectionService: @unchecked Sendable {
                 sourceLabel: "Discord channel \(message.channelId), sender \(message.author.id)",
                 mentionsBot: mentionsBot,
                 hasPriorOutbound: !mentionsBot && hasOutboundMessage(in: message.channelId),
-                reply: responder
+                reply: responder,
+                senderTrusted: senderTrusted
             )
         )
     }

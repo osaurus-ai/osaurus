@@ -10,35 +10,42 @@ import Foundation
 public struct ListCommand: Command {
     public static let name = "list"
 
+    static let usage = """
+        Usage: osaurus list [--json] [--access-key KEY]
+
+        Lists the model ids the running server can use.
+        """
+
     private struct ModelsListResponse: Decodable {
         struct Model: Decodable { let id: String }
         let data: [Model]
     }
 
     public static func execute(args: [String]) async {
-        // Ensure server is up (best-effort)
-        let port = await ServerControl.ensureServerReadyOrExit()
-
-        guard let url = URL(string: "http://127.0.0.1:\(port)/models") else {
-            fputs("Invalid URL for models\n", stderr)
+        if args.contains("--help") || args.contains("-h") {
+            print(usage)
+            exit(EXIT_SUCCESS)
+        }
+        let rest = AccessKeyResolver.removingAccessKeyOptions(from: args)
+        let json = rest.contains("--json")
+        if let unknown = rest.first(where: { $0 != "--json" }) {
+            fputs("osaurus list: unknown argument `\(unknown)`\n\n\(usage)\n", stderr)
             exit(EXIT_FAILURE)
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 5.0
 
+        let client = await LocalServerClient.connect(command: "list", args: args)
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                fputs(
-                    "Failed to fetch models (status \((response as? HTTPURLResponse)?.statusCode ?? -1))\n",
-                    stderr
-                )
+            let (data, http) = try await client.data(for: client.request("/models", timeout: 10))
+            if http.statusCode == 401 { client.exitUnauthorized() }
+            guard http.statusCode == 200 else {
+                fputs("Failed to fetch models (status \(http.statusCode))\n", stderr)
                 exit(EXIT_FAILURE)
             }
-            let decoder = JSONDecoder()
-            let list = try decoder.decode(ModelsListResponse.self, from: data)
+            if json {
+                print(String(decoding: data, as: UTF8.self))
+                exit(EXIT_SUCCESS)
+            }
+            let list = try JSONDecoder().decode(ModelsListResponse.self, from: data)
             if list.data.isEmpty {
                 print("(no models found)")
                 exit(EXIT_SUCCESS)

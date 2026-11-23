@@ -80,6 +80,26 @@ struct DelegatedToolFailureTests {
         #expect(mapped["retryable"] as? Bool == true)
     }
 
+    /// #3518: a child refused on an external surface used to reach the
+    /// parent as the generic "Tool call failed."; the parent must see why.
+    @Test func surfaceRefusalReachesParentWithItsMessage() throws {
+        var state = DelegatedToolFailureState()
+        let run = UUID()
+        state.begin(runID: run)
+        let refusal = ChatExecutionContext.$isExternalSurface.withValue(true) {
+            ToolRegistry.externalSurfaceDenialEnvelope(tool: "calendar_events")
+        }
+        state.record(refusal, runID: run)
+        let mapped = try object(AgentDelegationDispatcher.failureForChild(message: "Tool call failed.",
+            targetAgentName: "Planner", terminalFailure: state.current))
+        #expect(mapped["retryable"] as? Bool == false)
+        let message = try #require(mapped["message"] as? String)
+        #expect(message.hasPrefix("Delegated agent 'Planner' failed: "))
+        #expect(message.contains("'calendar_events'"))
+        #expect(message.contains("Trust Allowlisted Senders"))
+        #expect(!message.contains("Tool call failed."))
+    }
+
     @Test func newRunClearsOldRejectionAndIgnoresLateOldDelivery() throws {
         var state = DelegatedToolFailureState()
         let old = UUID(), next = UUID()

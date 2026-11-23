@@ -18,8 +18,7 @@
 // defensively check `host->version >= N && host->callback != NULL`
 // before invoking a new slot.
 //
-// See `docs/plugins/ABI_VERSIONS.md` for the per-version evolution
-// (v1 base, v2 host injection, v3 streaming cancel, v4 agent
+// Per-version evolution: (v1 base, v2 host injection, v3 streaming cancel, v4 agent
 // introspection, v5 structured logging, v6 host-side free_string).
 //
 // The struct layout is FROZEN —

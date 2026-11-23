@@ -744,6 +744,5 @@ Existing pre-OAuth `mcp.json` files keep working unchanged; missing fields defau
 ## Related Documentation
 
 - [Remote Providers](REMOTE_PROVIDERS.md) — Connect to inference APIs
-- [Plugin Authoring](plugins/README.md) — Create local plugins
 - [FEATURES.md](FEATURES.md) — Feature inventory
 - [README](../README.md) — Quick start guide

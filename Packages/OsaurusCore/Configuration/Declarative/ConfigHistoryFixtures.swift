@@ -91,6 +91,6 @@ public enum ConfigHistoryFixtures {
     }
 
     private static func canonicalLiveDocument() async throws -> String {
-        try await MainActor.run { try ConfigYAML.canonical(ConfigExporter.export()) }
+        try ConfigYAML.canonical(await ConfigExporter.exportOffMain())
     }
 }
