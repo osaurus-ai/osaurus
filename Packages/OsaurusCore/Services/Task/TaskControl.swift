@@ -77,7 +77,12 @@ enum TaskControl {
             windows.openHistorySession(data)
             return
         }
+        // Gone: deleted, or left with Delete Data. Said, rather than a button that does nothing.
         print("[TaskControl] openChat: chat \(sessionId) is neither open, running nor saved")
+        _ = ToastManager.shared.info(
+            L("This chat isn't on this Mac anymore"),
+            message: L("It was deleted, or its data was removed.")
+        )
     }
 
     /// Opens Tasks → History narrowed by `filter`.
