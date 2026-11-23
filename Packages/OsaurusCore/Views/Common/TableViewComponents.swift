@@ -120,7 +120,7 @@ final class TableHostingCellView: NSTableCellView {
     }
 
     private func createHostingView(rootView: AnyView) {
-        let hv = NSHostingView(rootView: rootView)
+        let hv = NSHostingView.embedded(rootView: rootView)
         hv.translatesAutoresizingMaskIntoConstraints = true
         hv.autoresizingMask = [.width, .height]
         hv.frame = bounds
@@ -162,7 +162,7 @@ final class TypedHostingCellView<Content: View>: NSTableCellView {
         if let hostingView {
             hostingView.rootView = content
         } else {
-            let hv = NSHostingView(rootView: content)
+            let hv = NSHostingView.embedded(rootView: content)
             hv.translatesAutoresizingMaskIntoConstraints = true
             hv.autoresizingMask = [.width, .height]
             hv.frame = bounds
