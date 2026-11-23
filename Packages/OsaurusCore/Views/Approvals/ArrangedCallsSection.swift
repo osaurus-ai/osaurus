@@ -256,6 +256,12 @@ private struct ArrangedCallSheet: View {
     let onCancelCall: () -> Void
     let onClose: () -> Void
 
+    @ObservedObject private var policy = AgentCallPolicy.shared
+
+    /// Still to come, as the policy has it now: the sheet closes once the call has ended, rather than offer
+    /// Cancel Call on a call that already happened.
+    private var stillComing: Bool { policy.waiting.contains { $0.grant.id == grant.id } }
+
     private var isComing: Bool {
         if case .ended = status { return false }
         return true
@@ -279,6 +285,9 @@ private struct ArrangedCallSheet: View {
             onClose: onClose
         ) {
             Text(verbatim: ArrangedCallPresentation.title(agentName: agentName, about: grant.about))
+                .onChange(of: stillComing) { _, coming in
+                    if isComing && !coming { onClose() }
+                }
                 .assignedTypography("component.library.14.label", fallback: SettingsFont.rowTitle)
                 .fixedSize(horizontal: false, vertical: true)
             SettingsGroup {

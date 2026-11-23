@@ -83,6 +83,9 @@ final class AgentCallPolicy: ObservableObject {
         var ringing: [Grant]?
         /// Ended arranged calls, newest first: at most `historyLimit`, for `historyMs`.
         var history: [Grant]?
+        /// Ringing arranged calls the user called off: they end `cancelled` however the ring ends, and stay
+        /// called off if Osaurus quits first. Saved for that.
+        var cancelling: [UUID]?
 
         func dailyCap(for agentId: UUID) -> Int {
             dailyCaps?[agentId] ?? AgentCallPolicy.defaultDailyCap
@@ -112,8 +115,6 @@ final class AgentCallPolicy: ObservableObject {
     private static let saveQueue = DispatchQueue(label: "ai.osaurus.agent-calls.save", qos: .utility)
 
     @Published private(set) var state: State
-    /// Arranged calls the user called off while they rang: they end `cancelled`, not `calledOff`.
-    private var cancelling: Set<UUID> = []
     private var expiryTask: Task<Void, Never>?
 
     private init() {
@@ -123,11 +124,11 @@ final class AgentCallPolicy: ObservableObject {
             .flatMap { try? JSONDecoder().decode(State.self, from: $0) }
         state = saved ?? legacy ?? State()
         Self.relaunched(&state, nowMs: SyncHostedRunContract.nowMs())
-        save()
-        if saved != nil || legacy != nil { UserDefaults.standard.removeObject(forKey: Self.defaultsKey) }
+        // The old copy goes only once the file holds the state: a failed write keeps it for the next launch.
+        save(droppingLegacy: legacy != nil)
     }
 
-    private func save() {
+    private func save(droppingLegacy: Bool = false) {
         guard let data = try? JSONEncoder().encode(state) else { return }
         let url = Self.url
         Self.saveQueue.async {
@@ -135,6 +136,7 @@ final class AgentCallPolicy: ObservableObject {
                 try FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try EncryptedFileStore.writePolicyAware(data, toPlaintextURL: url)
+                if droppingLegacy { UserDefaults.standard.removeObject(forKey: Self.defaultsKey) }
             } catch {
                 Self.log.error("agent calls not saved: \(String(describing: error), privacy: .public)")
             }
@@ -199,13 +201,16 @@ final class AgentCallPolicy: ObservableObject {
     }
 
     /// Moves `grant` to `history`, newest first, dropping what is past `historyMs` or `historyLimit`.
-    nonisolated static func close(_ state: inout State, _ grant: Grant, end: End, atMs: Int64) {
+    /// `nowMs` (default `atMs`) is what "past `historyMs`" counts from: a call that expired long ago, closed
+    /// on a later launch, mustn't keep the rest from ageing out.
+    nonisolated static func close(_ state: inout State, _ grant: Grant, end: End, atMs: Int64, nowMs: Int64? = nil) {
         var ended = grant
         ended.end = end
         ended.endedMs = atMs
         let kept = (state.history ?? []).filter { $0.id != grant.id }
+        let cutoff = max(atMs, nowMs ?? atMs) - historyMs
         let sorted = (kept + [ended])
-            .filter { ($0.endedMs ?? 0) > atMs - historyMs }
+            .filter { ($0.endedMs ?? 0) > cutoff }
             .sorted { ($0.endedMs ?? 0) > ($1.endedMs ?? 0) }
         state.history = Array(sorted.prefix(historyLimit))
     }
@@ -216,18 +221,26 @@ final class AgentCallPolicy: ObservableObject {
         let expired = state.grants.filter { $0.expiresMs <= nowMs }
         guard !expired.isEmpty else { return false }
         state.grants.removeAll { $0.expiresMs <= nowMs }
-        for grant in expired { close(&state, grant, end: .expired, atMs: grant.expiresMs) }
+        for grant in expired { close(&state, grant, end: .expired, atMs: grant.expiresMs, nowMs: nowMs) }
         return true
     }
 
     /// A call ringing when Osaurus quit never ended: its arranged call is given back, as for one that
     /// rang nothing.
+    /// One the user called off while it rang stays called off.
     nonisolated static func relaunched(_ state: inout State, nowMs: Int64) {
-        for grant in state.ringing ?? []
-        where !state.grants.contains(where: { $0.sessionId == grant.sessionId && $0.agentId == grant.agentId }) {
-            state.grants.append(grant)
+        let cancelling = Set(state.cancelling ?? [])
+        for grant in state.ringing ?? [] {
+            if cancelling.contains(grant.id) {
+                close(&state, grant, end: .cancelled, atMs: nowMs)
+            } else if !state.grants.contains(where: {
+                $0.sessionId == grant.sessionId && $0.agentId == grant.agentId
+            }) {
+                state.grants.append(grant)
+            }
         }
         state.ringing = nil
+        state.cancelling = nil
         sweep(&state, nowMs: nowMs)
     }
 
@@ -253,7 +266,7 @@ final class AgentCallPolicy: ObservableObject {
             }
             save()
         case .ringing(let grant):
-            cancelling.insert(id)
+            save()
             SyncAgentCalls.shared.callOff(sessionId: grant.sessionId, agentId: grant.agentId)
         case .alreadyEnded, .notFound:
             break
@@ -269,7 +282,10 @@ final class AgentCallPolicy: ObservableObject {
             close(&state, grant, end: .cancelled, atMs: nowMs)
             return .cancelled
         }
-        if let grant = state.ringing?.first(where: { $0.id == id }) { return .ringing(grant) }
+        if let grant = state.ringing?.first(where: { $0.id == id }) {
+            if state.cancelling?.contains(id) != true { state.cancelling = (state.cancelling ?? []) + [id] }
+            return .ringing(grant)
+        }
         if state.history?.contains(where: { $0.id == id }) == true { return .alreadyEnded }
         return .notFound
     }
@@ -341,10 +357,9 @@ final class AgentCallPolicy: ObservableObject {
     func ended(
         _ outcome: SyncAgentCalls.Outcome, decision: Decision, agentId: UUID, rangMs: Int64, taken: Grant?
     ) -> End? {
-        let byUser = taken.map { cancelling.remove($0.id) != nil } ?? false
         Self.ended(
             &state, outcome: outcome, decision: decision, agentId: agentId, rangMs: rangMs, taken: taken,
-            nowMs: SyncHostedRunContract.nowMs(), cancelledByUser: byUser)
+            nowMs: SyncHostedRunContract.nowMs())
         save()
         return taken.flatMap { grant in state.history?.first(where: { $0.id == grant.id })?.end }
     }
@@ -388,6 +403,11 @@ final class AgentCallPolicy: ObservableObject {
     ) {
         if let taken { state.ringing?.removeAll { $0.id == taken.id } }
         if state.ringing?.isEmpty == true { state.ringing = nil }
+        // Called off by the user while it rang, whether or not a device then rang: it ends `cancelled`.
+        let calledOffByUser = taken.map { state.cancelling?.contains($0.id) == true } ?? false
+        let byUser = cancelledByUser || calledOffByUser
+        if let taken { state.cancelling?.removeAll { $0 == taken.id } }
+        if state.cancelling?.isEmpty == true { state.cancelling = nil }
         guard didRing(outcome) else {
             // Nothing rang (another call on, no device, the push service down): the call isn't
             // counted, and the user's arranged call is kept unless they arranged a new one since.
@@ -397,7 +417,9 @@ final class AgentCallPolicy: ObservableObject {
             }
             guard var taken else { return }
             taken.attempts = (taken.attempts ?? []) + [Attempt(atMs: rangMs, outcome: outcome.rawValue)]
-            if state.grants.contains(where: { $0.sessionId == taken.sessionId && $0.agentId == taken.agentId }) {
+            if byUser {
+                close(&state, taken, end: .cancelled, atMs: nowMs)
+            } else if state.grants.contains(where: { $0.sessionId == taken.sessionId && $0.agentId == taken.agentId }) {
                 close(&state, taken, end: .replaced, atMs: nowMs)
             } else if taken.expiresMs <= nowMs {
                 close(&state, taken, end: .expired, atMs: nowMs)
@@ -411,7 +433,7 @@ final class AgentCallPolicy: ObservableObject {
             switch outcome {
             case .answered: end = .answered
             case .declined: end = .declined
-            case .cancelled: end = cancelledByUser ? .cancelled : .calledOff
+            case .cancelled: end = byUser ? .cancelled : .calledOff
             default: end = .missed
             }
             close(&state, taken, end: end, atMs: nowMs)

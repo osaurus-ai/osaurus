@@ -282,6 +282,44 @@ struct AgentCallPolicyTests {
         #expect(Self.isRefused(Self.decide(state)))
     }
 
+    @Test("a ringing call the user called off stays cancelled when nothing rang after all")
+    func cancelRingingThenBusy() {
+        let grant = Self.grant(expiresMs: Self.now + 60_000)
+        var state = AgentCallPolicy.State()
+        state.grants = [grant]
+        let decision = Self.decide(state)
+        let taken = AgentCallPolicy.rang(&state, decision: decision, agentId: Self.agent, nowMs: Self.now)
+        #expect(AgentCallPolicy.cancel(&state, id: grant.id, nowMs: Self.now) == .ringing(grant))
+        AgentCallPolicy.ended(
+            &state, outcome: .busy, decision: decision, agentId: Self.agent, rangMs: Self.now, taken: taken,
+            nowMs: Self.now + 1)
+        #expect(state.grants.isEmpty)
+        #expect(state.history?.first?.end == .cancelled)
+        #expect(state.cancelling == nil)
+    }
+
+    @Test("a ringing call the user called off stays called off across a relaunch")
+    func cancelRingingThenQuit() {
+        let grant = Self.grant(expiresMs: Self.now + 60_000)
+        var state = AgentCallPolicy.State()
+        state.grants = [grant]
+        _ = AgentCallPolicy.rang(&state, decision: Self.decide(state), agentId: Self.agent, nowMs: Self.now)
+        _ = AgentCallPolicy.cancel(&state, id: grant.id, nowMs: Self.now)
+        AgentCallPolicy.relaunched(&state, nowMs: Self.now + 10)
+        #expect(state.grants.isEmpty && state.ringing == nil && state.cancelling == nil)
+        #expect(state.history?.first?.end == .cancelled)
+    }
+
+    @Test("a call that expired long ago, closed on a later launch, lets older history age out")
+    func longAgoExpiry() {
+        var state = AgentCallPolicy.State()
+        let stale = Self.grant()
+        AgentCallPolicy.close(&state, stale, end: .answered, atMs: Self.now - AgentCallPolicy.historyMs)
+        state.grants = [Self.grant(expiresMs: Self.now - AgentCallPolicy.historyMs + 1)]
+        AgentCallPolicy.sweep(&state, nowMs: Self.now)
+        #expect(!(state.history ?? []).contains { $0.id == stale.id })
+    }
+
     @Test("ended calls are kept a week, newest first, at most 50")
     func historyBounds() {
         var state = AgentCallPolicy.State()
