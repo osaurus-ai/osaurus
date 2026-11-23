@@ -85,6 +85,40 @@ enum ArrangedCallPresentation {
         }
     }
 
+    struct Fact: Equatable {
+        let label: String
+        let value: String
+    }
+
+    /// The sheet's lines, label and value, in order; only those that apply.
+    static func facts(_ grant: AgentCallPolicy.Grant, status: Status) -> [Fact] {
+        let date: (Int64) -> String = { ms in
+            Date(timeIntervalSince1970: TimeInterval(ms) / 1000).formatted(date: .abbreviated, time: .shortened)
+        }
+        var facts = [Fact(label: L("Status"), value: chip(status).text)]
+        if let created = grant.createdMs { facts.append(Fact(label: L("Arranged"), value: date(created))) }
+        switch status {
+        case .waiting(let working):
+            facts.append(Fact(label: L("Expires"), value: date(grant.expiresMs)))
+            facts.append(Fact(label: L("Agent's Work"), value: working ? L("Still running") : L("Finished")))
+        case .ringing:
+            facts.append(Fact(label: L("Expires"), value: date(grant.expiresMs)))
+        case .ended:
+            facts.append(Fact(label: L("Ended"), value: date(grant.endedMs ?? grant.expiresMs)))
+        }
+        for (index, attempt) in (grant.attempts ?? []).enumerated() {
+            let why: String
+            switch attempt.outcome {
+            case "busy": why = L("Another call was on")
+            case "unavailable": why = L("No iPhone could take it")
+            default: why = L("The call couldn't be sent")
+            }
+            let label = String(format: L("Try %lld"), index + 1)
+            facts.append(Fact(label: label, value: "\(date(attempt.atMs)) · \(why)"))
+        }
+        return facts
+    }
+
     static func subtitle(_ grant: AgentCallPolicy.Grant, status: Status, now: Date) -> String {
         func relative(_ ms: Int64) -> String {
             let formatter = RelativeDateTimeFormatter()
@@ -127,6 +161,7 @@ private struct ArrangedCallRow: View {
 
     @Environment(\.theme) private var theme
     @State private var confirmingCancel = false
+    @State private var showsDetails = false
 
     private var agentName: String {
         AgentManager.shared.agent(for: grant.agentId)?.name ?? L("An agent")
@@ -149,6 +184,8 @@ private struct ArrangedCallRow: View {
         return LibraryRow(
             title: ArrangedCallPresentation.title(agentName: agentName, about: grant.about),
             subtitle: ArrangedCallPresentation.subtitle(grant, status: status, now: now),
+            // The whole of it, as the iPhone's Inbox shows a tapped call.
+            action: { showsDetails = true },
             leading: {
                 SettingsIconTile(icon: isComing ? "phone.arrow.down.left" : "phone", size: 28)
             },
@@ -168,6 +205,18 @@ private struct ArrangedCallRow: View {
                 }
             }
         )
+        .sheet(isPresented: $showsDetails) {
+            ArrangedCallSheet(
+                grant: grant,
+                status: status,
+                agentName: agentName,
+                onCancelCall: {
+                    showsDetails = false
+                    confirmingCancel = true
+                },
+                onClose: { showsDetails = false }
+            )
+        }
         .confirmationDialog(L("Cancel this call?"), isPresented: $confirmingCancel) {
             Button(L("Cancel Call"), role: .destructive) {
                 AgentCallPolicy.shared.cancel(grant.id, nowMs: SyncHostedRunContract.nowMs())
@@ -175,6 +224,59 @@ private struct ArrangedCallRow: View {
             Button(L("Keep Call"), role: .cancel) {}
         } message: {
             Text(verbatim: String(format: L("%@ won't call you about this."), agentName))
+        }
+    }
+}
+
+/// A tapped arranged call: what it's about and how it stands (when it was arranged, when it expires or ended, the
+/// agent's work, tries that didn't reach the iPhone), with Open Chat and, while it's still to come, Cancel Call.
+private struct ArrangedCallSheet: View {
+    let grant: AgentCallPolicy.Grant
+    let status: ArrangedCallPresentation.Status
+    let agentName: String
+    let onCancelCall: () -> Void
+    let onClose: () -> Void
+
+    private var isComing: Bool {
+        if case .ended = status { return false }
+        return true
+    }
+
+    private var openChat: SettingsSheetFooter.Action {
+        SettingsSheetFooter.Action(label: "Open Chat") {
+            onClose()
+            TaskControl.openChat(grant.sessionId, agentId: grant.agentId)
+        }
+    }
+
+    var body: some View {
+        SettingsSheet(
+            icon: isComing ? "phone.arrow.down.left" : "phone",
+            title: "Arranged Call",
+            primary: isComing
+                ? SettingsSheetFooter.Action(label: "Cancel Call", isDestructive: true, handler: onCancelCall)
+                : openChat,
+            secondary: isComing ? openChat : nil,
+            onClose: onClose
+        ) {
+            Text(verbatim: ArrangedCallPresentation.title(agentName: agentName, about: grant.about))
+                .assignedTypography("component.library.14.label", fallback: SettingsFont.rowTitle)
+                .fixedSize(horizontal: false, vertical: true)
+            SettingsGroup {
+                ForEach(ArrangedCallPresentation.facts(grant, status: status), id: \.label) { fact in
+                    SettingsRow(
+                        title: fact.label,
+                        verbatimTitle: true,
+                        leading: { EmptyView() },
+                        description: { EmptyView() },
+                        trailing: {
+                            Text(verbatim: fact.value)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    )
+                }
+            }
         }
     }
 }
