@@ -83,6 +83,21 @@ struct LocalizationCacheTests {
         }
     }
 
+    /// Static labels rendered from `FileChangesPanel` body getters
+    /// (`viewPicker`, `titleRow`, change summary; production hang APPLE-MACOS-44G).
+    private static let fileChangesLabels = [
+        "Timeline",
+        "Files",
+        "Revert All",
+        "1 file changed",
+        "1 change",
+    ]
+
+    @Test("LCached matches L for file changes labels", arguments: fileChangesLabels)
+    func matchesUncachedLookupForFileChanges(key: String) {
+        #expect(LCached(key) == L(String.LocalizationValue(key)))
+    }
+
     @Test("LCached returns empty key unchanged")
     func emptyKey() {
         #expect(LCached("") == "")

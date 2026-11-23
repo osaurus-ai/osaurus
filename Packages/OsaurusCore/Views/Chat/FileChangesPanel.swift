@@ -154,7 +154,7 @@ struct FileChangesPanel: View {
                     Button(role: .destructive) {
                         Task { await requestRevert(.all) }
                     } label: {
-                        Label(L("Revert All"), systemImage: "arrow.uturn.backward")
+                        Label(LCached("Revert All"), systemImage: "arrow.uturn.backward")
                     }
                     .disabled(isBusy || hasActiveJob)
                 } label: {
@@ -180,8 +180,8 @@ struct FileChangesPanel: View {
     /// Timeline | Files on one quiet track, each with its count.
     private var viewPicker: some View {
         HStack(spacing: theme.space.s2) {
-            tabButton(.timeline, title: L("Timeline"), count: changeCount)
-            tabButton(.files, title: L("Files"), count: net.count)
+            tabButton(.timeline, title: LCached("Timeline"), count: changeCount)
+            tabButton(.files, title: LCached("Files"), count: net.count)
         }
         .padding(theme.space.s2)
         .background(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous).fill(theme.surface.subtle))
@@ -228,8 +228,8 @@ struct FileChangesPanel: View {
     private var summaryLine: String {
         let files = net.count
         let changes = sets.filter { $0.origin != .userRevert }.count
-        return (files == 1 ? L("1 file changed") : L("\(files) files changed")) + " · "
-            + (changes == 1 ? L("1 change") : L("\(changes) changes"))
+        return (files == 1 ? LCached("1 file changed") : L("\(files) files changed")) + " · "
+            + (changes == 1 ? LCached("1 change") : L("\(changes) changes"))
     }
 
     private var activeJobBanner: some View {
