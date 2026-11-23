@@ -210,6 +210,7 @@ public actor CoreModelService {
         modelOverride: String? = nil,
         fallBackOnResidencyRefusal: Bool = false,
         modelOptions: [String: ModelOptionValue],
+        speculativeDecoding: Bool? = nil,
         purpose: String? = nil
     ) async throws -> String {
         // A per-call override wins over the shared Core Model setting; empty
@@ -236,6 +237,7 @@ public actor CoreModelService {
             temperature: temperature.map { Float($0) },
             maxTokens: maxTokens,
             modelOptions: modelOptions,
+            speculativeDecoding: speculativeDecoding,
             // Carried all the way into `ModelRuntime.loadContainer`, which refuses
             // a background load *at the moment it would evict* — atomically, inside
             // the actor. Probing residency from out here and then loading on a
