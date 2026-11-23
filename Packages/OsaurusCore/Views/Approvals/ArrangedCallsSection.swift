@@ -162,6 +162,8 @@ private struct ArrangedCallRow: View {
     @Environment(\.theme) private var theme
     @State private var confirmingCancel = false
     @State private var showsDetails = false
+    /// Open Chat spins while the chat is looked up, rather than seeming not to work.
+    @State private var openingChat = false
 
     private var agentName: String {
         AgentManager.shared.agent(for: grant.agentId)?.name ?? L("An agent")
@@ -194,8 +196,13 @@ private struct ArrangedCallRow: View {
             trailing: {
                 HStack(spacing: theme.space.s8) {
                     StatusChip(chip.text, tone: chip.tone, showsDot: status == .ringing, pulses: status == .ringing)
-                    SettingsButton(.secondary, "Open Chat", size: .compact) {
-                        TaskControl.openChat(grant.sessionId, agentId: grant.agentId)
+                    SettingsButton(.secondary, "Open Chat", isLoading: openingChat, size: .compact) {
+                        guard !openingChat else { return }
+                        openingChat = true
+                        Task {
+                            await TaskControl.openChatNow(grant.sessionId, agentId: grant.agentId)
+                            openingChat = false
+                        }
                     }
                     if isComing {
                         SettingsButton(.destructive, "Cancel Call", size: .compact) {

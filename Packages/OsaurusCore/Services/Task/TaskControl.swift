@@ -66,13 +66,19 @@ enum TaskControl {
     /// chat reopened from history in a tab, as the sidebar's history does. Only bringing a window forward left
     /// a chat open in a background tab out of sight, and a chat still running with no window couldn't be opened.
     static func openChat(_ sessionId: UUID, agentId: UUID?) {
+        Task { await openChatNow(sessionId, agentId: agentId) }
+    }
+
+    /// `openChat`, returning once the chat is shown (or found gone), for a button that spins meanwhile. The
+    /// history read runs off the main thread (`loadAsync`): a Sync-backed store can take a moment.
+    static func openChatNow(_ sessionId: UUID, agentId: UUID?) async {
         let windows = ChatWindowManager.shared
         if windows.revealOpenSession(sessionId) != nil { return }
         if let task = BackgroundTaskManager.shared.liveTask(forSessionId: sessionId) {
             windows.revealTask(task.id)
             return
         }
-        if var data = ChatSessionStore.load(id: sessionId) {
+        if var data = await ChatSessionStore.loadAsync(id: sessionId) {
             if data.agentId == nil, let agentId { data.agentId = agentId }
             windows.openHistorySession(data)
             return
