@@ -50,8 +50,17 @@ struct LibraryCard<Hero: View, Leading: View, Badges: View, Accessory: View, Con
     @ViewBuilder let content: Content
     @ViewBuilder let footer: Footer
     @ViewBuilder let menu: MenuItems
+    /// Title-to-subtitle gap in place of the catalog's, set with `subtitleGap(_:)`.
+    private var subtitleGapOverride: CGFloat?
 
     @State private var isHovered = false
+
+    /// A tighter (or looser) title-to-subtitle gap for this row than the catalog's.
+    func subtitleGap(_ gap: CGFloat) -> Self {
+        var row = self
+        row.subtitleGapOverride = gap
+        return row
+    }
 
     init(
         title: String,
@@ -390,7 +399,7 @@ struct LibraryRow<Leading: View, Badges: View, Trailing: View, MenuItems: View, 
         HStack(alignment: .center, spacing: theme.catalogLayoutMetric("component.library.20.elements.layout.libraryRow.row.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s12))) {
             leading
 
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.20.elements.layout.libraryRow.row.verticalGap", inheriting: theme.catalogMetric("gap", fallback: theme.settingsTitleToDescription))) {
+            VStack(alignment: .leading, spacing: subtitleGapOverride ?? theme.catalogLayoutMetric("component.library.20.elements.layout.libraryRow.row.verticalGap", inheriting: theme.catalogMetric("gap", fallback: theme.settingsTitleToDescription))) {
                 HStack(spacing: theme.catalogLayoutMetric("component.library.20.elements.layout.libraryRow.row.horizontalGap2", inheriting: theme.catalogMetric("gap", fallback: theme.space.s6))) {
                     Text(verbatim: title)
                         .assignedTypography("component.library.14.label", fallback: SettingsFont.rowTitle)

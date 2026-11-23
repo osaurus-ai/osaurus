@@ -205,6 +205,8 @@ private struct ArrangedCallRow: View {
                 }
             }
         )
+        // The subtitle close under its title, one call's two lines read as one.
+        .subtitleGap(theme.space.s2)
         .sheet(isPresented: $showsDetails) {
             ArrangedCallSheet(
                 grant: grant,
