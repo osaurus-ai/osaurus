@@ -1,6 +1,194 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ will call you %@" : {
+
+    },
+    "%@ won't call you about this." : {
+
+    },
+    "%lld tries didn't reach you" : {
+
+    },
+    "1 try didn't reach you" : {
+
+    },
+    "A newer call was arranged in the chat %@" : {
+
+    },
+    "Arranged %@" : {
+
+    },
+    "Arranged Calls" : {
+
+    },
+    "Cancel Call" : {
+
+    },
+    "Cancel this call?" : {
+
+    },
+    "Declined" : {
+
+    },
+    "Keep Call" : {
+
+    },
+    "Missed" : {
+
+    },
+    "No calls arranged." : {
+
+    },
+    "Not Called" : {
+
+    },
+    "The iPhone paired with a 6-digit code, and keeping this Mac reachable for it" : {
+
+    },
+    "The iPhone paired with a 6-digit code, and keeping this Mac reachable for it." : {
+
+    },
+    "This chat isn't on this Mac anymore" : {
+
+    },
+    "It was deleted, or its data was removed." : {
+
+    },
+    "Agent's Work" : {
+
+    },
+    "Another call was on" : {
+
+    },
+    "Arranged" : {
+
+    },
+    "Arranged Call" : {
+
+    },
+    "Ended" : {
+
+    },
+    "No iPhone could take it" : {
+
+    },
+    "Still running" : {
+
+    },
+    "The call couldn't be sent" : {
+
+    },
+    "Try %lld" : {
+
+    },
+    "Rang %@, nobody answered" : {
+
+    },
+    "Replaced" : {
+
+    },
+    "Ringing" : {
+
+    },
+    "Ringing your iPhone now" : {
+
+    },
+    "Show All" : {
+
+    },
+    "Show Fewer" : {
+
+    },
+    "The agent didn't call in time. Expired %@" : {
+
+    },
+    "The agent stopped while it rang, %@" : {
+
+    },
+    "When you ask an agent to call you back on your iPhone, the call shows here until it's made." : {
+
+    },
+    "Work still running" : {
+
+    },
+    "You answered %@" : {
+
+    },
+    "You cancelled it %@" : {
+
+    },
+    "You declined %@" : {
+
+    },
+    "This deletes your signature, every agent's derived address, and every access key. Onboarding will start over. The backup in your iCloud Keychain will also be removed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dies löscht deine Signatur, die abgeleitete Adresse jedes Agenten und jeden Zugriffsschlüssel. Das Onboarding beginnt von vorne. Das Backup in deinem iCloud-Schlüsselbund wird ebenfalls entfernt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서명, 모든 에이전트의 파생 주소 및 모든 액세스 키가 삭제됩니다. 시작하기가 처음부터 다시 시작됩니다. iCloud 키체인의 백업도 제거됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При этом будет удалена ваша подпись, производный адрес каждого агента и каждый ключ доступа. Регистрация начнется заново. Резервная копия в вашей Связке ключей iCloud также будет удалена."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将删除你的签名、每个智能体派生的地址以及每个访问密钥。初始设置将重新开始。你 iCloud 钥匙串中的备份也将被移除。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這將刪除你的籤名、每個智能體派生的地址以及每個訪問密鑰。初始設置將重新開始。你 iCloud 鑰匙串中的備份也將被移除。"
+          }
+        }
+      }
+    },
+    "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. Onboarding will start over." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Löscht deine Signatur, jede Agentenadresse und jeden Zugriffsschlüssel, einschließlich des Backups in deinem iCloud-Schlüsselbund. Das Onboarding beginnt von vorne."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 키체인의 백업을 포함하여 서명, 모든 에이전트 주소 및 모든 액세스 키를 지웁니다. 시작하기가 다시 시작됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаляет вашу подпись, каждый адрес агента и каждый ключ доступа, включая резервную копию в вашей Связке ключей iCloud. Регистрация начнется заново."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除你的签名、每个智能体地址和每个访问密钥，包括你 iCloud 钥匙串中的备份。初始设置将重新开始。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除你的籤名、每個智能體地址和每個訪問密鑰，包括你 iCloud 鑰匙串中的備份。初始設置將重新開始。"
+          }
+        }
+      }
+    },
     "%@ becomes the identity on this Mac and on every Mac signed in to this iCloud Keychain." : {
       "localizations" : {
         "de" : {

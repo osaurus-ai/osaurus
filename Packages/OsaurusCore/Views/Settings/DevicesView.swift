@@ -351,8 +351,8 @@ struct DevicesView: View {
             ForEach(model.devices, id: \.id) { device in
                 deviceRow(device)
             }
-            // The Mobile page: an iPhone paired with a 6-digit code.
-            ManagementChildLinkRows(parent: .devices)
+            // No Mobile row: the 6-digit code is in Add iPhone or iPad. The Mobile page (`.connect`, a child of
+            // Devices) stays reachable from settings search, for the code-paired phone's Unpair and Availability.
         }
     }
 
