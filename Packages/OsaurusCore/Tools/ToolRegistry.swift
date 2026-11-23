@@ -143,11 +143,7 @@ private final class ToolBodyRaceState: @unchecked Sendable {
 /// bootstrap schemas and hot-load full ones later.
 enum ToolSpecTokenEstimator {
     static func estimate(name: String, description: String?, parameters: JSONValue?) -> Int {
-        // `utf8.count` is O(1) for native Swift strings, while `count`
-        // walks every grapheme cluster. Walking large tool schemas that way
-        // on each preview recompose hung the main thread (APPLE-MACOS-2VT).
-        // Bytes are also what the serialized `tools[]` payload is made of.
-        var total = name.utf8.count + (description?.utf8.count ?? 0)
+        var total = characterCount(name) + (description.map(characterCount) ?? 0)
         if let parameters {
             total += estimateJSONSize(parameters)
         }
@@ -166,16 +162,33 @@ enum ToolSpecTokenEstimator {
         case .bool(let value):
             return value ? 4 : 5
         case .number(let value):
-            return String(value).utf8.count
+            return characterCount(String(value))
         case .string(let value):
-            return value.utf8.count + 2
+            return characterCount(value) + 2
         case .array(let array):
             return array.reduce(2) { $0 + estimateJSONSize($1) + 1 }
         case .object(let object):
             return object.reduce(2) { total, pair in
-                total + pair.key.utf8.count + 5 + estimateJSONSize(pair.value)
+                total + characterCount(pair.key) + 5 + estimateJSONSize(pair.value)
             }
         }
+    }
+
+    /// Unicode scalar count, computed by counting UTF-8 lead bytes.
+    ///
+    /// `String.count` runs grapheme segmentation on every string, and doing
+    /// that across large tool schemas on each preview recompose hung the
+    /// main thread (APPLE-MACOS-2VT). This is a plain byte loop instead.
+    /// Unlike `utf8.count`, it gives the same result as `String.count` for
+    /// any text without combining sequences, so a multi-byte "—" or "→" in a
+    /// built-in description still counts as one character and the pinned
+    /// schema budgets don't move.
+    static func characterCount(_ string: String) -> Int {
+        var count = 0
+        for byte in string.utf8 where byte & 0xC0 != 0x80 {
+            count += 1
+        }
+        return count
     }
 }
 
