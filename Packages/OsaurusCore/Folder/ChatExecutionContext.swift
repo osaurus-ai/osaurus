@@ -421,14 +421,27 @@ public enum ChatExecutionContext {
     @TaskLocal public static var defaultShellIdleTimeout: TimeInterval?
 
     /// True when the current tool execution was initiated by an EXTERNAL
-    /// surface (the HTTP `/agents/{id}/run` loop or the `/mcp/call`
-    /// bridge) rather than the in-app chat/plugin surfaces. The registry
-    /// refuses workspace-mutating tool classes
-    /// (`ToolRegistry.externallyDeniedToolNames`) under this flag — with
-    /// a folder open those tools are registered process-wide with policy
-    /// `.auto`, and loopback callers skip Bearer auth entirely.
+    /// surface (the HTTP `/agents/{id}/run` loop, the `/mcp/call` bridge,
+    /// or an inbound Agent Channel message) rather than the in-app
+    /// chat/plugin surfaces. Children dispatched from such a run (subagents,
+    /// workflow steps) inherit it. The registry refuses workspace-mutating
+    /// tool classes (`ToolRegistry.externallyDeniedToolNames`) under this
+    /// flag — with a folder open those tools are registered process-wide
+    /// with policy `.auto`, and loopback callers skip Bearer auth entirely.
     /// Module-internal so out-of-module callers cannot unbind it.
     @TaskLocal static var isExternalSurface: Bool = false
+
+    /// True when an external run came from an Agent Channel message whose
+    /// sender is on the connection's sender allowlist AND the connection has
+    /// Trust Allowlisted Senders on. Only the native channels whose provider
+    /// authenticates the sender id offer that setting (Telegram, Slack,
+    /// Discord, iMessage, WhatsApp). Under it `isDeniedForCurrentSurface`
+    /// lets Apple app tools through to their ordinary gates (the agent's
+    /// Apple Apps switch, then the per-tool policy); every other externally
+    /// denied tool stays denied. Bound by `BackgroundTaskManager` only, and
+    /// narrow-only: inside an external context a child can inherit it but
+    /// never gain it. Module-internal so out-of-module callers cannot bind it.
+    @TaskLocal static var isTrustedChannelSender: Bool = false
 
     /// Root of a host folder an AUTHENTICATED remote agent run (Secure
     /// Channel, agent-scoped) is permitted to read/write inside. Bound by

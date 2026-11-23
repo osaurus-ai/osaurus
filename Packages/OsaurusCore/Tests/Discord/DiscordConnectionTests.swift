@@ -1343,6 +1343,83 @@ struct DiscordConnectionTests {
         }
     }
 
+    /// Trust Allowlisted Senders marks only dispatched messages, only when
+    /// the connection opted in, and never on a kind whose sender id can't
+    /// be verified (custom HTTP here; Email and n8n share the rule).
+    @Test func inboundAuthorizationMarksTrustedSendersOnlyWhenOptedIn() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            let discord = DiscordConnectionService(client: FakeDiscordAPIClient(), credentialStore: credentials)
+            try discord.saveBotToken("discord-bot-token-super-secret")
+            try AgentChannelConfigurationStore.save(
+                AgentChannelConfiguration(connections: [
+                    AgentChannelConnection(
+                        id: "ops-webhook",
+                        name: "Ops Webhook",
+                        kind: .customHTTP,
+                        supportedActions: [.diagnostics],
+                        spaceAllowlist: ["ops"],
+                        customHTTP: AgentChannelCustomHTTPConfiguration(baseURL: "https://hooks.example.test"),
+                        inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                            senderAllowlist: ["user-1"],
+                            roomAllowlist: ["alerts"],
+                            trustAllowlistedSenders: true
+                        )
+                    )
+                ])
+            )
+            let service = AgentChannelConnectionService(discordService: discord)
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+            var eventNumber = 0
+            func authorize(sender: String) throws -> AgentChannelInboundAuthorizationDecision {
+                eventNumber += 1
+                return try service.authorizeInboundMessage(
+                    AgentChannelInboundMessageAuthorizationRequest(
+                        connectionId: "discord",
+                        providerEventId: "discord:trust-\(eventNumber)",
+                        spaceId: "111111111111111111",
+                        roomId: "222222222222222222",
+                        senderId: sender
+                    ),
+                    messageStore: store
+                )
+            }
+
+            for trust in [false, true] {
+                try discord.saveConfiguration(
+                    DiscordConnectionConfiguration(
+                        configuredGuildIds: ["111111111111111111"],
+                        readableChannelIds: ["222222222222222222"],
+                        senderAllowlist: ["555555555555555555"],
+                        trustAllowlistedSenders: trust
+                    )
+                )
+                let allowed = try authorize(sender: "555555555555555555")
+                #expect(allowed.shouldDispatch)
+                #expect(allowed.senderTrusted == trust)
+                #expect((allowed.dictionary["sender_trusted"] as? Bool) == (trust ? true : nil))
+
+                let stranger = try authorize(sender: "999999999999999999")
+                #expect(!stranger.shouldDispatch)
+                #expect(!stranger.senderTrusted)
+            }
+
+            let webhook = try service.authorizeInboundMessage(
+                AgentChannelInboundMessageAuthorizationRequest(
+                    connectionId: "ops-webhook",
+                    providerEventId: "evt-trust",
+                    spaceId: "ops",
+                    roomId: "alerts",
+                    senderId: "user-1"
+                ),
+                messageStore: store
+            )
+            #expect(webhook.shouldDispatch)
+            #expect(!webhook.senderTrusted)
+        }
+    }
+
     @Test func inboundAuthorizationDeniesBeforeAgentDispatchAndAuditsReason() async throws {
         try await withIsolatedDiscordStores { credentials in
             let connection = AgentChannelConnection(

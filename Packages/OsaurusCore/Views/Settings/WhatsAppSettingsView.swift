@@ -39,6 +39,7 @@ struct WhatsAppSettingsView: View {
     @State private var attachmentIngestionEnabled: Bool = false
     @State private var allowedAttachmentRootsText: String = ""
     @State private var maxAttachmentMB: String = "25"
+    @State private var trustAllowlistedSenders: Bool = false
     /// Incoming messages are handled by the events that listen to this
     /// channel; these read them so readiness checks stay honest.
     private var channelEvents: [OsaurusEvent] {
@@ -100,6 +101,7 @@ struct WhatsAppSettingsView: View {
         var attachmentIngestionEnabled: Bool
         var allowedAttachmentRootsText: String
         var maxAttachmentMB: String
+        var trustAllowlistedSenders: Bool
     }
 
     private var currentDraft: DraftSnapshot {
@@ -114,7 +116,8 @@ struct WhatsAppSettingsView: View {
             sendReadReceipts: sendReadReceipts,
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             allowedAttachmentRootsText: allowedAttachmentRootsText,
-            maxAttachmentMB: maxAttachmentMB
+            maxAttachmentMB: maxAttachmentMB,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 
@@ -813,6 +816,8 @@ struct WhatsAppSettingsView: View {
             if parseIds(senderAllowlistText).isEmpty && !parseIds(readableChatIdsText).isEmpty {
                 missingSendersWarning
             }
+
+            AgentChannelTrustSendersToggle(isOn: $trustAllowlistedSenders)
         }
     }
 
@@ -1161,6 +1166,7 @@ struct WhatsAppSettingsView: View {
         attachmentIngestionEnabled = configuration.attachmentIngestionEnabled
         allowedAttachmentRootsText = configuration.allowedAttachmentRoots.joined(separator: "\n")
         maxAttachmentMB = "\(configuration.maxAttachmentBytes / (1_024 * 1_024))"
+        trustAllowlistedSenders = configuration.trustAllowlistedSenders
         // Arm autosave only after the stored configuration has hydrated the
         // draft, so hydration itself is never mistaken for an edit.
         lastSavedDraft = currentDraft
@@ -1207,7 +1213,8 @@ struct WhatsAppSettingsView: View {
             sendReadReceipts: sendReadReceipts,
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             allowedAttachmentRoots: roots,
-            maxAttachmentBytes: (Int(maxAttachmentMB) ?? 25) * 1_024 * 1_024
+            maxAttachmentBytes: (Int(maxAttachmentMB) ?? 25) * 1_024 * 1_024,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 

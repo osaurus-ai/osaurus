@@ -670,7 +670,8 @@ public final class ToolRegistry: ObservableObject {
     ]
 
     /// Tool classes that must never be invocable from EXTERNAL surfaces
-    /// (the HTTP `/agents/{id}/run` loop and the `/mcp/call` bridge).
+    /// (the HTTP `/agents/{id}/run` loop, the `/mcp/call` bridge, and
+    /// inbound Agent Channel runs, including the subagents they spawn).
     /// With a working folder open, folder tools register process-wide
     /// with policy `.auto`; an external caller — loopback skips Bearer
     /// auth entirely — could otherwise rewrite the user's files or run
@@ -681,7 +682,9 @@ public final class ToolRegistry: ObservableObject {
     /// registration state and are hidden from `/mcp/tools` listings.
     /// Built-in Apple app tools are denied as a family too: they read and
     /// write the user's personal data and are gated per agent, so the
-    /// unauthenticated loopback bridge must never reach them.
+    /// unauthenticated loopback bridge must never reach them. The one
+    /// carve-out is a channel run from a trusted allowlisted sender
+    /// (`ChatExecutionContext.isTrustedChannelSender`).
     nonisolated public static let externallyDeniedToolNames: Set<String> =
         externallyDeniedHostToolNames.union(agentChannelToolNames).union(AppleApp.allToolNames)
         // Opens an AppKit folder picker on a chat window and re-roots the
@@ -721,7 +724,9 @@ public final class ToolRegistry: ObservableObject {
     /// (`authenticatedHostFolderRoot` set) is allowed the host file tools in
     /// `hostFolderAllowedWhenAuthenticated`; the `/mcp/call` bridge, loopback,
     /// plaintext, and cross-agent callers never set that task-local, so they
-    /// remain fully denied.
+    /// remain fully denied. A channel run from a trusted allowlisted sender
+    /// (`isTrustedChannelSender`) is allowed the Apple app tools, which then
+    /// face the agent's Apple Apps switch and the per-tool policy.
     nonisolated static func isDeniedForCurrentSurface(_ name: String) -> Bool {
         guard ChatExecutionContext.isExternalSurface,
             externallyDeniedToolNames.contains(name)
@@ -729,6 +734,9 @@ public final class ToolRegistry: ObservableObject {
         if ChatExecutionContext.authenticatedHostFolderRoot != nil,
             hostFolderAllowedWhenAuthenticated.contains(name)
         {
+            return false
+        }
+        if ChatExecutionContext.isTrustedChannelSender, AppleApp.allToolNames.contains(name) {
             return false
         }
         return true
@@ -756,9 +764,28 @@ public final class ToolRegistry: ObservableObject {
         }
         return ToolEnvelope.failure(
             kind: .rejected,
-            message:
-                "'\(tool)' is not available to external callers. This tool can only run from the Osaurus app.",
-            tool: tool
+            message: externalSurfaceDenialMessage(tool: tool),
+            tool: tool,
+            retryable: false
+        )
+    }
+
+    /// Why `tool` is refused on an external surface. An Apple app tool
+    /// names the channel setting that would allow it, so the model can tell
+    /// the person what to change instead of reporting a bare failure.
+    nonisolated static func externalSurfaceDenialMessage(tool: String) -> String {
+        if AppleApp.allToolNames.contains(tool) {
+            return "'\(tool)' uses the user's personal apps and is not available to external callers. "
+                + "For a run that came from a Telegram, Slack, Discord, iMessage or WhatsApp channel, "
+                + "the user can turn on Trust Allowlisted Senders in that channel's settings. "
+                + "Otherwise this tool can only run from the Osaurus app."
+        }
+        return "'\(tool)' is not available to external callers. This tool can only run from the Osaurus app."
+    }
+
+    nonisolated static func logExternalSurfaceDenial(_ tool: String) {
+        ToolRegistryLogger.registry.error(
+            "refusing '\(tool, privacy: .public)': denied on an external surface (source: \(ChatExecutionContext.currentSessionSource?.rawValue ?? "none", privacy: .public), trusted channel sender: \(ChatExecutionContext.isTrustedChannelSender, privacy: .public))"
         )
     }
 
@@ -905,13 +932,11 @@ public final class ToolRegistry: ObservableObject {
         // External-surface deny happens BEFORE the gate so a denied tool
         // can never pop an approval prompt from an external request.
         if Self.isDeniedForCurrentSurface(name) {
+            Self.logExternalSurfaceDenial(name)
             throw NSError(
                 domain: "ToolRegistry",
                 code: 3,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "'\(name)' is not available to external callers. This tool can only run from the Osaurus app."
-                ]
+                userInfo: [NSLocalizedDescriptionKey: Self.externalSurfaceDenialMessage(tool: name)]
             )
         }
         guard dynamicGrantRefusal(for: name) == nil, readOnlyFolderRefusal(for: name) == nil else { return nil }
@@ -1263,9 +1288,11 @@ public final class ToolRegistry: ObservableObject {
                         (ChatExecutionContext.isExternalSurface && !ChatExecutionContext.hasInteractiveToolReviewer)
                         || ChatExecutionContext.denyUnapprovedToolPrompts
                     let message =
-                        unanswerable
-                        ? "Tool '\(name)' requires interactive approval in the Osaurus app. Enable auto-approve or change the tool policy to auto before calling it from an external MCP client."
-                        : "User denied execution for tool: \(name)"
+                        !unanswerable
+                        ? "User denied execution for tool: \(name)"
+                        : perCallApproval
+                            ? "Tool '\(name)' asks for approval on every call, so it can only run from the Osaurus app."
+                            : "Tool '\(name)' requires interactive approval in the Osaurus app. Enable auto-approve or change the tool policy to auto before calling it from an external MCP client."
                     throw NSError(
                         domain: "ToolRegistry",
                         code: 4,
@@ -1659,6 +1686,7 @@ public final class ToolRegistry: ObservableObject {
         // classes for HTTP/MCP-initiated executions regardless of
         // registration state or permission policy.
         if Self.isDeniedForCurrentSurface(name) {
+            Self.logExternalSurfaceDenial(name)
             return Self.externalSurfaceDenialEnvelope(tool: name)
         }
         guard let tool = toolsByName[name] else {

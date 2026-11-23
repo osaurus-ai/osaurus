@@ -39,6 +39,7 @@ struct DiscordSettingsView: View {
     @State private var senderAllowlistText: String = ""
     @State private var writeEnabled: Bool = false
     @State private var defaultReadLimit: String = "50"
+    @State private var trustAllowlistedSenders: Bool = false
     @State private var tokenSaved: Bool = false
     @State private var statusMessage: String?
     @State private var statusDetails: [String] = []
@@ -79,6 +80,7 @@ struct DiscordSettingsView: View {
         var senderAllowlistText: String
         var writeEnabled: Bool
         var defaultReadLimit: String
+        var trustAllowlistedSenders: Bool
     }
 
     private var currentDraft: DraftSnapshot {
@@ -88,7 +90,8 @@ struct DiscordSettingsView: View {
             writableChannelIdsText: writableChannelIdsText,
             senderAllowlistText: senderAllowlistText,
             writeEnabled: writeEnabled,
-            defaultReadLimit: defaultReadLimit
+            defaultReadLimit: defaultReadLimit,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 
@@ -423,6 +426,8 @@ struct DiscordSettingsView: View {
             )
             .font(SettingsFont.rowDescription)
             .foregroundColor(theme.text.tertiary)
+
+            AgentChannelTrustSendersToggle(isOn: $trustAllowlistedSenders)
         }
     }
 
@@ -708,6 +713,7 @@ struct DiscordSettingsView: View {
         senderAllowlistText = configuration.senderAllowlist.joined(separator: "\n")
         writeEnabled = configuration.writeEnabled
         defaultReadLimit = "\(configuration.defaultReadLimit)"
+        trustAllowlistedSenders = configuration.trustAllowlistedSenders
         Task { tokenSaved = await service.hasBotTokenOffMain() }
         // Arm autosave only after the stored configuration has hydrated the
         // draft, so hydration itself is never mistaken for an edit.
@@ -767,7 +773,8 @@ struct DiscordSettingsView: View {
             writableChannelIds: parseIds(writableChannelIdsText),
             senderAllowlist: parseIds(senderAllowlistText),
             writeEnabled: writeEnabled,
-            defaultReadLimit: Int(defaultReadLimit) ?? 50
+            defaultReadLimit: Int(defaultReadLimit) ?? 50,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 

@@ -60,6 +60,8 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
     /// Accept messages an allowlisted person posted through a Slack app
     /// with their own user token. Slack stamps those with the app's bot_id.
     var acceptAppPostsFromAllowlistedSenders: Bool
+    /// Trust Allowlisted Senders: runs from allowlisted senders may use Apple app tools.
+    var trustAllowlistedSenders: Bool
 
     init(
         configuredTeamIds: [String] = [],
@@ -74,7 +76,8 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         apiAppId: String? = nil,
         workspaceAccounts: [SlackWorkspaceAccountConfiguration] = [],
         workspaceName: String? = nil,
-        acceptAppPostsFromAllowlistedSenders: Bool = false
+        acceptAppPostsFromAllowlistedSenders: Bool = false,
+        trustAllowlistedSenders: Bool = false
     ) {
         self.configuredTeamIds = Self.normalizedIds(configuredTeamIds)
         self.readableChannelIds = Self.normalizedIds(readableChannelIds)
@@ -92,6 +95,7 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         }
         self.workspaceName = Self.normalizedOptionalId(workspaceName)
         self.acceptAppPostsFromAllowlistedSenders = acceptAppPostsFromAllowlistedSenders
+        self.trustAllowlistedSenders = trustAllowlistedSenders
     }
 
     var normalized: SlackConnectionConfiguration {
@@ -108,7 +112,8 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             apiAppId: apiAppId,
             workspaceAccounts: workspaceAccounts,
             workspaceName: workspaceName,
-            acceptAppPostsFromAllowlistedSenders: acceptAppPostsFromAllowlistedSenders
+            acceptAppPostsFromAllowlistedSenders: acceptAppPostsFromAllowlistedSenders,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 
@@ -145,6 +150,7 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         case workspaceAccounts
         case workspaceName
         case acceptAppPostsFromAllowlistedSenders
+        case trustAllowlistedSenders
     }
 
     init(from decoder: Decoder) throws {
@@ -171,6 +177,10 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             acceptAppPostsFromAllowlistedSenders: try container.decodeIfPresent(
                 Bool.self,
                 forKey: .acceptAppPostsFromAllowlistedSenders
+            ) ?? false,
+            trustAllowlistedSenders: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .trustAllowlistedSenders
             ) ?? false
         )
     }

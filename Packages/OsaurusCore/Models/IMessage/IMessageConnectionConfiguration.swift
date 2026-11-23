@@ -49,6 +49,8 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
     /// SIP/Library-Validation security warning in the setup UI.
     var advancedActionsEnabled: Bool
     var enabledAdvancedActions: [AdvancedAction]
+    /// Trust Allowlisted Senders: runs from allowlisted senders may use Apple app tools.
+    var trustAllowlistedSenders: Bool
 
     enum CodingKeys: String, CodingKey {
         case readableChatIds
@@ -65,6 +67,7 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
         case maxAttachmentBytes
         case advancedActionsEnabled
         case enabledAdvancedActions
+        case trustAllowlistedSenders
     }
 
     static let defaultMaxAttachmentBytes = 25 * 1_024 * 1_024
@@ -96,7 +99,8 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
         allowedAttachmentRoots: [String]? = nil,
         maxAttachmentBytes: Int = IMessageConnectionConfiguration.defaultMaxAttachmentBytes,
         advancedActionsEnabled: Bool = false,
-        enabledAdvancedActions: [AdvancedAction] = []
+        enabledAdvancedActions: [AdvancedAction] = [],
+        trustAllowlistedSenders: Bool = false
     ) {
         self.readableChatIds = Self.normalizedIds(readableChatIds)
         self.writableChatIds = Self.normalizedIds(writableChatIds)
@@ -114,6 +118,7 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
         self.maxAttachmentBytes = Self.clampAttachmentBytes(maxAttachmentBytes)
         self.advancedActionsEnabled = advancedActionsEnabled
         self.enabledAdvancedActions = Self.normalizedAdvancedActions(enabledAdvancedActions)
+        self.trustAllowlistedSenders = trustAllowlistedSenders
     }
 
     init(from decoder: Decoder) throws {
@@ -153,7 +158,11 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
             enabledAdvancedActions: try container.decodeIfPresent(
                 [AdvancedAction].self,
                 forKey: .enabledAdvancedActions
-            ) ?? []
+            ) ?? [],
+            trustAllowlistedSenders: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .trustAllowlistedSenders
+            ) ?? false
         )
     }
 
@@ -172,7 +181,8 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
             allowedAttachmentRoots: allowedAttachmentRoots,
             maxAttachmentBytes: maxAttachmentBytes,
             advancedActionsEnabled: advancedActionsEnabled,
-            enabledAdvancedActions: enabledAdvancedActions
+            enabledAdvancedActions: enabledAdvancedActions,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 

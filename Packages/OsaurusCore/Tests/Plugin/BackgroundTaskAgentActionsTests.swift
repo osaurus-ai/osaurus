@@ -212,6 +212,66 @@ struct BackgroundTaskQuickReplyTests {
         }
     }
 
+    /// A channel follow-up steered into a finished run keeps the channel's
+    /// external surface (and the sender's trust); an in-app quick reply
+    /// never picks either up.
+    @Test(arguments: [false, true])
+    func channelReplyRunsOnTheChannelSurface(trusted: Bool) async throws {
+        try await ChatHistoryTestStorage.run {
+            for channel in [false, true] {
+                let state = makeObservedState()
+                defer { mgr.finalizeTask(state.id) }
+                let session = try #require(state.chatSession)
+                var observed: (external: Bool, trusted: Bool)?
+                session.chatEngineFactory = { _ in
+                    observed = (ChatExecutionContext.isExternalSurface, ChatExecutionContext.isTrustedChannelSender)
+                    return MockChatEngine()
+                }
+                session.isStreaming = true
+                try await waitUntil { state.status == .running }
+                session.isStreaming = false
+                try await waitUntil { state.status == .completed(summary: "Chat completed") }
+
+                let text = channel ? "from the channel" : "from the app"
+                let accepted =
+                    channel
+                    ? mgr.submitChannelReply(state.id, text: text, trustedChannelSender: trusted)
+                    : mgr.submitQuickReply(state.id, text: text)
+                #expect(accepted)
+                try await waitUntil { observed != nil }
+                #expect(observed?.external == channel, "channel=\(channel)")
+                #expect(observed?.trusted == (channel && trusted), "channel=\(channel)")
+            }
+        }
+    }
+
+    /// Inside an untrusted external context a channel reply stays external
+    /// and cannot mint trust for itself.
+    @Test func channelReplyCannotGainTrustInsideAnUntrustedExternalContext() async throws {
+        try await ChatHistoryTestStorage.run {
+            let state = makeObservedState()
+            defer { mgr.finalizeTask(state.id) }
+            let session = try #require(state.chatSession)
+            var observed: (external: Bool, trusted: Bool)?
+            session.chatEngineFactory = { _ in
+                observed = (ChatExecutionContext.isExternalSurface, ChatExecutionContext.isTrustedChannelSender)
+                return MockChatEngine()
+            }
+            session.isStreaming = true
+            try await waitUntil { state.status == .running }
+            session.isStreaming = false
+            try await waitUntil { state.status == .completed(summary: "Chat completed") }
+
+            let accepted = ChatExecutionContext.$isExternalSurface.withValue(true) {
+                mgr.submitChannelReply(state.id, text: "from an HTTP caller", trustedChannelSender: true)
+            }
+            #expect(accepted)
+            try await waitUntil { observed != nil }
+            #expect(observed?.external == true)
+            #expect(observed?.trusted == false)
+        }
+    }
+
     @Test func completedTab_dehydratesWithContextAndRehydratesOnReply() async throws {
         try await ChatHistoryTestStorage.run {
             let state = makeTaskState(
