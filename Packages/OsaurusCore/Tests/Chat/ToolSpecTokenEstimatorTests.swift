@@ -50,7 +50,7 @@ struct ToolSpecTokenEstimatorTests {
     }
 
     @Test("Total for large schemas equals the per-spec sum")
-    func largeSchemaTotalMatchesPerSpecSum() {
+    func largeSchemaTotalMatchesPerSpecSum() async {
         let tools = (0..<5).map { i in
             Tool(
                 type: "function",
@@ -69,6 +69,13 @@ struct ToolSpecTokenEstimatorTests {
                     parameters: tool.function.parameters
                 )
         }
-        #expect(ToolRegistry.shared.totalEstimatedTokens(for: tools) == expected)
+        // Touch the shared registry only under the process-wide catalog lock,
+        // like every other suite that reads `ToolRegistry.shared`, so this
+        // suite can't be the one that cold-initializes the registry while
+        // another suite is registering tools or asserting on the catalog.
+        let total = await DynamicCatalogTestLock.shared.run {
+            ToolRegistry.shared.totalEstimatedTokens(for: tools)
+        }
+        #expect(total == expected)
     }
 }
