@@ -107,8 +107,7 @@ enum FileReadImageSupport {
     // MARK: - OCR
 
     /// Recognised text lines, top-to-bottom, left-to-right. Empty when the
-    /// image has no legible text. Vision runs its own worker threads; this
-    /// just awaits the completion handler.
+    /// image has no legible text or Vision rejects it.
     static func recognizeTextLines(in data: Data) async -> [String] {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -118,19 +117,19 @@ enum FileReadImageSupport {
 
     static func recognizeTextLines(in image: CGImage) async -> [String] {
         await withCheckedContinuation { (continuation: CheckedContinuation<[String], Never>) in
-            let request = VNRecognizeTextRequest { request, _ in
-                let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
-                continuation.resume(returning: orderedLines(from: observations))
-            }
+            // No completion handler: when `perform` throws, Vision has
+            // already called it with the error, so resuming from both
+            // places traps.
+            let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
             let handler = VNImageRequestHandler(cgImage: image, options: [:])
             DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    try handler.perform([request])
-                } catch {
-                    continuation.resume(returning: [])
+                var lines: [String] = []
+                if (try? handler.perform([request])) != nil {
+                    lines = orderedLines(from: request.results ?? [])
                 }
+                continuation.resume(returning: lines)
             }
         }
     }
