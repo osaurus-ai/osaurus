@@ -47,6 +47,7 @@ struct SlackSettingsView: View {
     @State private var allowBroadcastMentions: Bool = false
     @State private var acceptAppPostsFromAllowlistedSenders = false
     @State private var pendingAcceptAppPostsConfirm = false
+    @State private var trustAllowlistedSenders = false
     @State private var defaultReadLimit: String = "50"
     /// Incoming messages are handled by the events that listen to this
     /// channel; these read them so readiness checks stay honest.
@@ -90,6 +91,7 @@ struct SlackSettingsView: View {
         var writeEnabled: Bool
         var allowBroadcastMentions: Bool
         var acceptAppPostsFromAllowlistedSenders: Bool
+        var trustAllowlistedSenders: Bool
         var defaultReadLimit: String
     }
 
@@ -102,6 +104,7 @@ struct SlackSettingsView: View {
             writeEnabled: writeEnabled,
             allowBroadcastMentions: allowBroadcastMentions,
             acceptAppPostsFromAllowlistedSenders: acceptAppPostsFromAllowlistedSenders,
+            trustAllowlistedSenders: trustAllowlistedSenders,
             defaultReadLimit: defaultReadLimit
         )
     }
@@ -311,6 +314,7 @@ struct SlackSettingsView: View {
         VStack(alignment: .leading, spacing: theme.space.s20) {
             accessSection
             appPostsSection
+            AgentChannelTrustSendersToggle(isOn: $trustAllowlistedSenders)
             advancedSection
         }
     }
@@ -920,6 +924,7 @@ struct SlackSettingsView: View {
         writeEnabled = configuration.writeEnabled
         allowBroadcastMentions = configuration.allowBroadcastMentions
         acceptAppPostsFromAllowlistedSenders = configuration.acceptAppPostsFromAllowlistedSenders
+        trustAllowlistedSenders = configuration.trustAllowlistedSenders
         defaultReadLimit = "\(configuration.defaultReadLimit)"
         Task {
             let presence = await service.credentialPresenceOffMain()
@@ -1060,7 +1065,8 @@ struct SlackSettingsView: View {
             botId: previous.botId,
             apiAppId: previous.apiAppId,
             workspaceName: previous.workspaceName,
-            acceptAppPostsFromAllowlistedSenders: acceptAppPostsFromAllowlistedSenders
+            acceptAppPostsFromAllowlistedSenders: acceptAppPostsFromAllowlistedSenders,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 

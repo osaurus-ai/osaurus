@@ -37014,6 +37014,74 @@
         }
       }
     },
+    "Trust Allowlisted Senders" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trust Allowlisted Senders"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trust Allowlisted Senders"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trust Allowlisted Senders"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "信任允许列表中的发送者"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "信任允許清單中的傳送者"
+          }
+        }
+      }
+    },
+    "Authorized senders can use this Mac's Apple apps (Calendar, Reminders, Mail and more) on agents that have them on, including subagents those agents start. Tools set to Ask stay refused until you set them to Auto under Tools; sending and deleting always need you in the app." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Authorized senders can use this Mac's Apple apps (Calendar, Reminders, Mail and more) on agents that have them on, including subagents those agents start. Tools set to Ask stay refused until you set them to Auto under Tools; sending and deleting always need you in the app."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Authorized senders can use this Mac's Apple apps (Calendar, Reminders, Mail and more) on agents that have them on, including subagents those agents start. Tools set to Ask stay refused until you set them to Auto under Tools; sending and deleting always need you in the app."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Authorized senders can use this Mac's Apple apps (Calendar, Reminders, Mail and more) on agents that have them on, including subagents those agents start. Tools set to Ask stay refused until you set them to Auto under Tools; sending and deleting always need you in the app."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已授权的发送者可以在已开启 Apple 应用的代理上使用此 Mac 的 Apple 应用（日历、提醒事项、邮件等），包括这些代理启动的子代理。设为“询问”的工具会一直被拒绝，直到你在“工具”中将其设为“自动”；发送和删除始终需要你在应用中操作。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已授權的傳送者可以在已開啟 Apple 應用程式的代理上使用此 Mac 的 Apple 應用程式（行事曆、提醒事項、郵件等），包括這些代理啟動的子代理。設為「詢問」的工具會一直被拒絕，直到你在「工具」中將其設為「自動」；傳送和刪除一律需要你在應用程式中操作。"
+          }
+        }
+      }
+    },
     "Accept Messages Sent Through Apps" : {
       "localizations" : {
         "de" : {

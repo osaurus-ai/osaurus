@@ -95,6 +95,13 @@ public struct DispatchRequest: Sendable {
     /// task-local binding at the HTTP layer were lost across the dispatch
     /// pipeline. Never used to relax an inherited external-surface context.
     public let externalSurface: Bool
+    /// An external run from a channel sender that the connection trusts
+    /// (Trust Allowlisted Senders), bound as
+    /// `ChatExecutionContext.isTrustedChannelSender`. Set by the channel
+    /// relay, and copied by delegation so a queued child keeps it. Ignored
+    /// when dispatched from an external context that is not itself trusted.
+    /// Module-internal so out-of-module callers cannot set it.
+    var trustedChannelSender: Bool = false
     /// Whether this run's model load may evict a model someone else is using.
     ///
     /// Deliberately NOT derived from `source`. `source` records *where* a run

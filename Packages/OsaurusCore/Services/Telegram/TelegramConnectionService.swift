@@ -1138,7 +1138,8 @@ final class TelegramConnectionService: @unchecked Sendable {
                         providerEventId: event.providerEventId,
                         stage: .stored
                     )
-                    let submission = await relayInboundEvent(event, configuration: config)
+                    let submission = await relayInboundEvent(
+                        event, configuration: config, senderTrusted: authorization.senderTrusted)
                     dispatchAttempted += submission.dispatchAttempted
                     dispatchSuppressed += submission.dispatchSuppressed
                     switch submission {
@@ -1206,7 +1207,8 @@ final class TelegramConnectionService: @unchecked Sendable {
 
     private func relayInboundEvent(
         _ event: TelegramNormalizedInboundEvent,
-        configuration: TelegramConnectionConfiguration
+        configuration: TelegramConnectionConfiguration,
+        senderTrusted: Bool
     ) async -> AgentChannelInboundRelaySubmission {
         guard let senderId = event.senderId else {
             return .suppressed("inbound_sender_missing")
@@ -1250,7 +1252,8 @@ final class TelegramConnectionService: @unchecked Sendable {
                 content: event.content,
                 attachments: event.attachments,
                 sourceLabel: "Telegram chat \(event.roomId), sender \(senderId)",
-                reply: responder
+                reply: responder,
+                senderTrusted: senderTrusted
             )
         )
     }

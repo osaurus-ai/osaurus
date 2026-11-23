@@ -37,6 +37,7 @@ struct IMessageSettingsView: View {
     @State private var ignoreSelfMessages: Bool = true
     @State private var advancedActionsEnabled: Bool = false
     @State private var enabledAdvancedActions: Set<IMessageConnectionConfiguration.AdvancedAction> = []
+    @State private var trustAllowlistedSenders: Bool = false
     /// Incoming messages are handled by the events that listen to this
     /// channel; these read them so readiness checks stay honest.
     private var channelEvents: [OsaurusEvent] {
@@ -90,6 +91,7 @@ struct IMessageSettingsView: View {
         var ignoreSelfMessages: Bool
         var advancedActionsEnabled: Bool
         var enabledAdvancedActions: Set<IMessageConnectionConfiguration.AdvancedAction>
+        var trustAllowlistedSenders: Bool
     }
 
     private var currentDraft: DraftSnapshot {
@@ -105,7 +107,8 @@ struct IMessageSettingsView: View {
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             ignoreSelfMessages: ignoreSelfMessages,
             advancedActionsEnabled: advancedActionsEnabled,
-            enabledAdvancedActions: enabledAdvancedActions
+            enabledAdvancedActions: enabledAdvancedActions,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 
@@ -593,6 +596,8 @@ struct IMessageSettingsView: View {
             if parseIds(senderAllowlistText).isEmpty && !parseIds(readableChatIdsText).isEmpty {
                 missingSendersWarning
             }
+
+            AgentChannelTrustSendersToggle(isOn: $trustAllowlistedSenders)
         }
     }
 
@@ -1065,6 +1070,7 @@ struct IMessageSettingsView: View {
         ignoreSelfMessages = configuration.ignoreSelfMessages
         advancedActionsEnabled = configuration.advancedActionsEnabled
         enabledAdvancedActions = Set(configuration.enabledAdvancedActions)
+        trustAllowlistedSenders = configuration.trustAllowlistedSenders
         // Arm autosave only after the stored configuration has hydrated the
         // draft, so hydration itself is never mistaken for an edit.
         lastSavedDraft = currentDraft
@@ -1103,7 +1109,8 @@ struct IMessageSettingsView: View {
             pollIntervalSeconds: Int(pollIntervalSeconds) ?? 3,
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             advancedActionsEnabled: advancedActionsEnabled,
-            enabledAdvancedActions: Array(enabledAdvancedActions)
+            enabledAdvancedActions: Array(enabledAdvancedActions),
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 

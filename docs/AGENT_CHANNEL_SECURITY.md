@@ -265,6 +265,43 @@ validation, nonce replay protection, message-store dedupe, and the write kill
 switch. The helper prunes stale in-memory rate windows and task leases lazily
 when authorized channel requests are evaluated.
 
+## Personal Tools on Channel Runs
+
+A run started by an inbound channel message executes with
+`ChatExecutionContext.isExternalSurface == true`, and so does every follow-up
+steered into it (`BackgroundTaskManager.submitChannelReply`) and every
+`spawn_agent` child it starts. A child queued behind the batching scheduler
+gets the flag from `DispatchRequest.externalSurface` because it starts outside
+the parent's task locals. On that surface `ToolRegistry.isDeniedForCurrentSurface`
+refuses everything in `externallyDeniedToolNames`: Apple app tools, folder and
+sandbox tools, and `agent_channel_*`.
+
+**Trust Allowlisted Senders** is a per-connection opt-in (default off) that
+narrows exactly one part of that denial. It is available on Telegram, Slack,
+Discord, iMessage and WhatsApp
+(`AgentChannelInboundAuthorizationPolicy.senderTrustKinds`). Those adapters
+authenticate the sender id. Email (spoofable `From:`), n8n and custom HTTP
+(the caller asserts the sender) are excluded and never mark a message trusted.
+
+- `authorizeInboundMessage` sets `senderTrusted` on the decision only when the
+  message was dispatched past the sender allowlist and the policy is on for a
+  trusted kind.
+- The flag travels on `ChannelInboundMessage` and
+  `AgentChannelInboundRelayRequest` into `DispatchRequest.trustedChannelSender`
+  and binds the `ChatExecutionContext.isTrustedChannelSender` task local.
+  It is narrow-only: it binds only together with an external surface, and
+  inside an already external context the inherited value wins, so an HTTP or
+  MCP caller cannot mint it.
+- With it bound, only `AppleApp.allToolNames` leave the deny set. The per-agent
+  Apple Apps switch and each tool's policy still apply; a tool resolving to
+  `ask` is refused because an external run has no reviewer. Folder, sandbox
+  and `agent_channel_*` tools stay denied.
+
+Denials return a non-retryable `ToolEnvelope` whose message names the setting
+for Apple tools, and `AgentDelegationDispatcher` passes the child's terminal
+refusal to the parent instead of a generic "Tool call failed". Both deny sites
+log to `ToolRegistry` with the run source and trust flag.
+
 ## Webhook Ingress (`/channels/`)
 
 The generic inbound route `POST /channels/{kind}/{connection_id}/inbound`, its

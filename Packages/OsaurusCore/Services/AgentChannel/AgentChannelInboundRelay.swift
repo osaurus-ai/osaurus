@@ -55,6 +55,9 @@ struct AgentChannelInboundRelayRequest: Sendable {
     /// auto-reply is off. Nothing leaves the Mac.
     var draftReply: AgentChannelInboundReplyHandler?
     var onOutcome: AgentChannelTurnOutcomeHandler?
+    /// The sender passed an allowlist on a connection with Trust Allowlisted
+    /// Senders on; the run may use Apple app tools.
+    var senderTrusted: Bool
 
     init(
         identity: ChannelIdentity,
@@ -75,7 +78,8 @@ struct AgentChannelInboundRelayRequest: Sendable {
         reply: AgentChannelInboundReplyHandler? = nil,
         replyAttachment: AgentChannelInboundAttachmentReplyHandler? = nil,
         draftReply: AgentChannelInboundReplyHandler? = nil,
-        onOutcome: AgentChannelTurnOutcomeHandler? = nil
+        onOutcome: AgentChannelTurnOutcomeHandler? = nil,
+        senderTrusted: Bool = false
     ) {
         self.identity = identity
         self.connectionId = connectionId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -96,6 +100,7 @@ struct AgentChannelInboundRelayRequest: Sendable {
         self.replyAttachment = replyAttachment
         self.draftReply = draftReply
         self.onOutcome = onOutcome
+        self.senderTrusted = senderTrusted
     }
 }
 
@@ -566,11 +571,15 @@ final class AgentChannelInboundRelay {
             source: .channel,
             externalSessionKey: partition.externalSessionKey,
             target: target
-        ), taskManager.submitQuickReply(replyableId, text: prompt, author: Self.author(of: request)) {
+        ),
+            taskManager.submitChannelReply(
+                replyableId, text: prompt, author: Self.author(of: request),
+                trustedChannelSender: request.senderTrusted)
+        {
             taskId = replyableId
             try? await Task.sleep(for: .milliseconds(100))
         } else {
-            let dispatch = DispatchRequest(
+            var dispatch = DispatchRequest(
                 id: partition.sessionId,
                 prompt: prompt,
                 target: target,
@@ -599,6 +608,7 @@ final class AgentChannelInboundRelay {
                 loadIntent: .background,
                 author: Self.author(of: request)
             )
+            dispatch.trustedChannelSender = request.senderTrusted
             guard let handle = await taskManager.dispatchChat(dispatch) else {
                 // A refused workspace run carries the real reason (host
                 // offline, unshared, key lapsed); surface it as the reply so
@@ -649,7 +659,10 @@ final class AgentChannelInboundRelay {
             let leftover = taskManager.takeRemoteSteers(taskId)
             guard !leftover.isEmpty else { break }
             turnStartedAt = Date()
-            guard taskManager.submitQuickReply(taskId, text: leftover.joined(separator: "\n\n")) else {
+            guard
+                taskManager.submitChannelReply(
+                    taskId, text: leftover.joined(separator: "\n\n"), trustedChannelSender: request.senderTrusted)
+            else {
                 await recordFailure(
                     request,
                     agentId: agentId,

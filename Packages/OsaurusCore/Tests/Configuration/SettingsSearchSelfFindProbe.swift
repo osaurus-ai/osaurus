@@ -158,6 +158,7 @@ struct SettingsSearchSelfFindProbe {
             ("Add Workspace", "agentChannels.slack.addAccount"),
             ("Add Account", "agentChannels.email.addAccount"),
             ("Remove this bot", "agentChannels.removeAccount"),
+            ("Trust Allowlisted Senders", "agentChannels.trustAllowlistedSenders"),
             ("Manage in Channels", "keys.accounts.manageInChannels"),
             ("Default Read Limit", "agentChannels.imessage"),
             ("Fail Closed When Estimate Is Unknown", "settings.server.failClosedUnknownEstimate"),

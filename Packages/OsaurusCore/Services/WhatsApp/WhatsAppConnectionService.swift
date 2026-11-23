@@ -1179,7 +1179,8 @@ final class WhatsAppConnectionService: @unchecked Sendable {
                     providerEventId: event.providerEventId,
                     stage: .stored
                 )
-                let submission = await relayInboundEvent(event, config: config)
+                let submission = await relayInboundEvent(
+                    event, config: config, senderTrusted: authorization.senderTrusted)
                 dispatchAttempted += submission.dispatchAttempted
                 dispatchSuppressed += submission.dispatchSuppressed
                 switch submission {
@@ -1259,7 +1260,8 @@ final class WhatsAppConnectionService: @unchecked Sendable {
 
     private func relayInboundEvent(
         _ event: WhatsAppNormalizedInboundEvent,
-        config: WhatsAppConnectionConfiguration
+        config: WhatsAppConnectionConfiguration,
+        senderTrusted: Bool
     ) async -> AgentChannelInboundRelaySubmission {
         guard let senderId = event.senderId else {
             return .suppressed("inbound_sender_missing")
@@ -1312,7 +1314,8 @@ final class WhatsAppConnectionService: @unchecked Sendable {
                 // mentioned JIDs); a DM is inherently addressed to the account.
                 mentionsBot: event.isGroup ? event.mentionsSelf : nil,
                 reply: responder,
-                replyAttachment: attachmentResponder
+                replyAttachment: attachmentResponder,
+                senderTrusted: senderTrusted
             )
         )
     }

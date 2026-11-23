@@ -36,6 +36,9 @@ struct ChannelInboundMessage: Sendable {
     /// Platform-specific trigger values added to the run payload
     /// (`{{email.subject}}`).
     var extraPayload: [String: JSONValue] = [:]
+    /// From the authorization decision: the agent turn may use Apple app
+    /// tools (Trust Allowlisted Senders).
+    var senderTrusted: Bool = false
 
     var conversationKey: String {
         [connectionId, providerRoute.conversationId, providerRoute.threadId ?? ""].joined(separator: "|")
@@ -370,7 +373,8 @@ extension EventManager {
                     self.adjustRunningCount(eventId, by: -1)
                     self.settle(runId, status: status == .awaitingUser ? .succeeded : status, reason: reason)
                 }
-            }
+            },
+            senderTrusted: message.senderTrusted
         )
         let submission = await relay.submit(request)
         if case .suppressed(let reason) = submission, liveRun(runId) != nil {

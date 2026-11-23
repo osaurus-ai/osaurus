@@ -2218,6 +2218,19 @@ public enum SettingsSearchIndex {
             declarativeSection: "channels"
         ),
         .init(
+            id: "agentChannels.trustAllowlistedSenders",
+            tab: .agentChannels,
+            section: "Receiving",
+            title: "Trust Allowlisted Senders",
+            keywords: [
+                "trust senders", "trusted senders", "apple apps from telegram", "calendar from telegram",
+                "reminders from slack", "apple apps over channels", "channel apple apps", "calendar_events",
+                "tool call failed", "not available to external callers", "spawn_agent apple apps",
+            ],
+            disambiguation:
+                "Receiving tab of a Telegram, Slack, Discord, iMessage or WhatsApp account, under the sender allowlist. Off by default. When on, runs started by that account's authorized senders (and subagents those runs start) can use Apple app tools on agents whose Apple Apps switch is on; each tool still follows its Tools policy, so tools set to Ask stay refused until set to Auto, and sends and deletes (which always ask) never run from a channel. Other personal tools (files, shell, channel tools) stay blocked. Email, n8n and custom HTTP don't offer it because their sender can't be verified."
+        ),
+        .init(
             id: "agentChannels.ruleAccount",
             tab: .agentChannels,
             section: "Routing",

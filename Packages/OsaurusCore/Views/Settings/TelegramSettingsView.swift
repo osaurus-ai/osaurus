@@ -44,6 +44,7 @@ struct TelegramSettingsView: View {
     @State private var longPollingEnabled: Bool = false
     @State private var longPollingLimit: String = "100"
     @State private var longPollingTimeoutSeconds: String = "20"
+    @State private var trustAllowlistedSenders: Bool = false
     /// Incoming messages are handled by the events that listen to this
     /// channel; these read them so readiness checks stay honest.
     private var channelEvents: [OsaurusEvent] {
@@ -91,6 +92,7 @@ struct TelegramSettingsView: View {
         var longPollingEnabled: Bool
         var longPollingLimit: String
         var longPollingTimeoutSeconds: String
+        var trustAllowlistedSenders: Bool
     }
 
     private var currentDraft: DraftSnapshot {
@@ -105,7 +107,8 @@ struct TelegramSettingsView: View {
             receiveStorageEnabled: receiveStorageEnabled,
             longPollingEnabled: longPollingEnabled,
             longPollingLimit: longPollingLimit,
-            longPollingTimeoutSeconds: longPollingTimeoutSeconds
+            longPollingTimeoutSeconds: longPollingTimeoutSeconds,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 
@@ -402,6 +405,8 @@ struct TelegramSettingsView: View {
             .font(SettingsFont.rowDescription)
             .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
+
+            AgentChannelTrustSendersToggle(isOn: $trustAllowlistedSenders)
         }
     }
 
@@ -758,6 +763,7 @@ struct TelegramSettingsView: View {
         longPollingEnabled = configuration.longPollingEnabled
         longPollingLimit = "\(configuration.longPollingLimit)"
         longPollingTimeoutSeconds = "\(configuration.longPollingTimeoutSeconds)"
+        trustAllowlistedSenders = configuration.trustAllowlistedSenders
         Task { tokenSaved = await service.hasBotTokenOffMain() }
         // Arm autosave only after the stored configuration has hydrated the
         // draft, so hydration itself is never mistaken for an edit.
@@ -830,7 +836,8 @@ struct TelegramSettingsView: View {
             receiveStorageEnabled: receiveStorageEnabled,
             longPollingEnabled: longPollingEnabled,
             longPollingLimit: Int(longPollingLimit) ?? 100,
-            longPollingTimeoutSeconds: Int(longPollingTimeoutSeconds) ?? 20
+            longPollingTimeoutSeconds: Int(longPollingTimeoutSeconds) ?? 20,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 

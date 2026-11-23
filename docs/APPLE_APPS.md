@@ -32,7 +32,8 @@ When an app is off for an agent, that agent cannot reach its tools by any path:
 - The manual picker never stores Apple tool names; `AgentManager` strips them on save.
 - `capabilities_discover` never returns Apple tools, and `capabilities_load` refuses them with a message naming the switch to flip — there is no discover → load loop.
 - `ToolRegistry.execute` refuses an Apple tool unless the *current* agent has the owning app enabled. A call with no agent context is refused.
-- All Apple tool names are on the external-surface deny list: hidden from `GET /mcp/tools`, `403 tool_not_exposable` from `POST /mcp/call`, and rejected in `/agents/{id}/run`.
+- All Apple tool names are on the external-surface deny list: hidden from `GET /mcp/tools`, `403 tool_not_exposable` from `POST /mcp/call`, and rejected in `/agents/{id}/run`. Runs started by an inbound channel message, and `spawn_agent` children of any external run, are external too.
+- The one carve-out is **Trust Allowlisted Senders** (Settings → Channels → Telegram, Slack, Discord, iMessage or WhatsApp → Receiving; off by default). Runs from that account's allowlisted senders, and their children, may call Apple tools. The off switch and per-tool policy above still apply, and a tool that resolves to `ask` is refused because no one is there to approve it. The always-approve sends and deletes below therefore never run from a channel. Email, n8n and custom HTTP never get the carve-out. See `AGENT_CHANNEL_SECURITY.md` → Personal Tools on Channel Runs.
 - MCP providers, plugins, and sandbox tools cannot register a tool whose name collides with a built-in Apple tool; the registration is logged and dropped.
 
 ## Approval

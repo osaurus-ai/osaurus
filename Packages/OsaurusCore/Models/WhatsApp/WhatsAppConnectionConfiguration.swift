@@ -41,6 +41,8 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
     /// always written inside the default media directory.
     var allowedAttachmentRoots: [String]
     var maxAttachmentBytes: Int
+    /// Trust Allowlisted Senders: runs from allowlisted senders may use Apple app tools.
+    var trustAllowlistedSenders: Bool
 
     enum CodingKeys: String, CodingKey {
         case readableChatIds
@@ -54,6 +56,7 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
         case attachmentIngestionEnabled
         case allowedAttachmentRoots
         case maxAttachmentBytes
+        case trustAllowlistedSenders
     }
 
     static let defaultMaxAttachmentBytes = 25 * 1_024 * 1_024
@@ -82,7 +85,8 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
         sendReadReceipts: Bool = false,
         attachmentIngestionEnabled: Bool = false,
         allowedAttachmentRoots: [String]? = nil,
-        maxAttachmentBytes: Int = WhatsAppConnectionConfiguration.defaultMaxAttachmentBytes
+        maxAttachmentBytes: Int = WhatsAppConnectionConfiguration.defaultMaxAttachmentBytes,
+        trustAllowlistedSenders: Bool = false
     ) {
         self.readableChatIds = Self.normalizedIds(readableChatIds)
         self.writableChatIds = Self.normalizedIds(writableChatIds)
@@ -97,6 +101,7 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
             allowedAttachmentRoots ?? Self.defaultAttachmentRoots
         )
         self.maxAttachmentBytes = Self.clampAttachmentBytes(maxAttachmentBytes)
+        self.trustAllowlistedSenders = trustAllowlistedSenders
     }
 
     init(from decoder: Decoder) throws {
@@ -120,7 +125,11 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
                 forKey: .allowedAttachmentRoots
             ),
             maxAttachmentBytes: try container.decodeIfPresent(Int.self, forKey: .maxAttachmentBytes)
-                ?? Self.defaultMaxAttachmentBytes
+                ?? Self.defaultMaxAttachmentBytes,
+            trustAllowlistedSenders: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .trustAllowlistedSenders
+            ) ?? false
         )
     }
 
@@ -136,7 +145,8 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
             sendReadReceipts: sendReadReceipts,
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             allowedAttachmentRoots: allowedAttachmentRoots,
-            maxAttachmentBytes: maxAttachmentBytes
+            maxAttachmentBytes: maxAttachmentBytes,
+            trustAllowlistedSenders: trustAllowlistedSenders
         )
     }
 
