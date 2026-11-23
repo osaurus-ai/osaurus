@@ -250,6 +250,7 @@ private struct ArrangedCallRow: View {
 /// A tapped arranged call: what it's about and how it stands (when it was arranged, when it expires or ended, the
 /// agent's work, tries that didn't reach the iPhone), with Open Chat and, while it's still to come, Cancel Call.
 private struct ArrangedCallSheet: View {
+    @Environment(\.theme) private var theme
     let grant: AgentCallPolicy.Grant
     let status: ArrangedCallPresentation.Status
     let agentName: String
@@ -292,17 +293,19 @@ private struct ArrangedCallSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             SettingsGroup {
                 ForEach(ArrangedCallPresentation.facts(grant, status: status), id: \.label) { fact in
-                    SettingsRow(
-                        title: fact.label,
-                        verbatimTitle: true,
-                        leading: { EmptyView() },
-                        description: { EmptyView() },
-                        trailing: {
-                            Text(verbatim: fact.value)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.trailing)
-                        }
-                    )
+                    // The label keeps its width and the value wraps under itself: a long value ("… · The call
+                    // couldn't be sent") squeezed the label of a row to a sliver.
+                    HStack(alignment: .firstTextBaseline, spacing: theme.space.s12) {
+                        Text(verbatim: fact.label)
+                            .foregroundColor(theme.text.primary)
+                            .fixedSize()
+                        Spacer(minLength: theme.space.s12)
+                        Text(verbatim: fact.value)
+                            .foregroundColor(theme.text.secondary)
+                            .multilineTextAlignment(.trailing)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .assignedTypography("component.library.14.label", fallback: SettingsFont.rowTitle)
                 }
             }
         }
