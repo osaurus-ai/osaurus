@@ -53,7 +53,74 @@ public struct IdentityDrift: Sendable {
     }
 }
 
+/// How much of this Mac's persisted state a candidate master reproduces.
+/// Used to rank archived identities in Previous Identities.
+public struct IdentityCandidateMatch: Sendable, Equatable {
+    public let address: OsaurusID
+    /// Non-built-in agents with a stored address whose own key path
+    /// re-derives that address under this candidate.
+    public let matchedAgents: Int
+    /// Non-built-in agents with a stored address and key path.
+    public let addressedAgents: Int
+    /// Active access keys issued by this candidate or one of its matched agents.
+    public let matchedAccessKeys: Int
+
+    public var matchesAnything: Bool { matchedAgents > 0 || matchedAccessKeys > 0 }
+}
+
 public enum IdentityHealthCheck {
+
+    /// Score `masterKey` against the persisted agents and access keys. Pure,
+    /// like `diagnose`; the caller owns and wipes the seed. An agent whose
+    /// device scope was dropped by an older build counts as matched when the
+    /// v2 path under `currentDeviceScope` reproduces it, mirroring
+    /// `diagnose`'s recoverable case.
+    public static func match(
+        masterKey: Data,
+        agents: [Agent],
+        accessKeys: [AccessKeyInfo],
+        currentDeviceScope: String? = nil
+    ) -> IdentityCandidateMatch? {
+        guard let address = try? deriveOsaurusId(from: masterKey) else { return nil }
+        var issuers: Set<String> = [address.lowercased()]
+        var addressed = 0
+        var matched = 0
+        for agent in agents where !agent.isBuiltIn {
+            guard let stored = agent.agentAddress?.lowercased(), let path = agent.agentKeyPath else { continue }
+            addressed += 1
+            var paths = [path]
+            if path.deviceScope == nil, let scope = currentDeviceScope, !scope.isEmpty {
+                paths.append(AgentKeyPath(index: path.index, deviceScope: scope))
+            }
+            let reproduces = paths.contains { candidate in
+                (try? AgentKey.deriveAddress(masterKey: masterKey, path: candidate))?.lowercased() == stored
+            }
+            if reproduces {
+                matched += 1
+                issuers.insert(stored)
+            }
+        }
+        let keys = accessKeys.filter { !$0.revoked && issuers.contains($0.iss.lowercased()) }.count
+        return IdentityCandidateMatch(
+            address: address,
+            matchedAgents: matched,
+            addressedAgents: addressed,
+            matchedAccessKeys: keys
+        )
+    }
+
+    /// Best match first: most agents reproduced, then most access keys.
+    /// Ties keep their input order.
+    public static func rank(_ matches: [IdentityCandidateMatch]) -> [IdentityCandidateMatch] {
+        matches.enumerated()
+            .sorted { lhs, rhs in
+                let l = lhs.element, r = rhs.element
+                if l.matchedAgents != r.matchedAgents { return l.matchedAgents > r.matchedAgents }
+                if l.matchedAccessKeys != r.matchedAccessKeys { return l.matchedAccessKeys > r.matchedAccessKeys }
+                return lhs.offset < rhs.offset
+            }
+            .map(\.element)
+    }
 
     /// Custom agents that share their address with an older custom agent.
     /// In each group the earliest-created agent (ties broken by id) keeps

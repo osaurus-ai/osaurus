@@ -28,7 +28,9 @@ Osaurus gives every participant — you, each agent, and each device — a crypt
 ## Backup and recovery
 
 - Your identity has a 24-word recovery phrase. Open it any time with **View recovery phrase** in Settings… (⌘,) → Osaurus ID, then copy, save, or print it. It is the only way to rebuild your master key if the Keychain entry is lost.
-- Osaurus ID → **Danger Zone** has explicit **Restore From Recovery Phrase** and **Reset Identity** flows. Your identity is never silently replaced.
+- Osaurus ID → **Danger Zone** has explicit **Switch to a Previous Identity**, **Restore From Recovery Phrase** and **Reset Identity** flows. Your identity is never silently replaced.
+- Your identity lives in one iCloud Keychain slot, so creating a new identity on any Mac replaces it on every Mac. To undo that, each Mac keeps its own copy of every identity it has created, restored or used. **Switch to a Previous Identity** opens **Previous Identities**: choose **Unlock to compare** to see which identity this Mac's agents and access keys were made with, then **Switch**. Switching changes the identity on every Mac signed in to the same iCloud Keychain. When the Identity view detects that your agents belong to an earlier identity, its banner offers **Switch back** directly.
+- The copies never leave the Mac and survive **Reset Identity**; remove one with its trash button (**Forget**). An identity replaced before this feature shipped, or never used on this Mac, can only come back with its recovery phrase.
 
 ## Access keys (osk-v1)
 
