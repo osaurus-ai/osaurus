@@ -1079,7 +1079,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
         guard let section = ConfigSectionID.parse(scope),
             !settingsUIOnlyScopes.contains(scope.lowercased())
         else { return nil }
-        let document = await MainActor.run { ConfigExporter.export(sections: [section]) }
+        let document = await ConfigExporter.exportOffMain(sections: [section])
         let yaml: String
         do {
             yaml = try ConfigYAML.encode(document)

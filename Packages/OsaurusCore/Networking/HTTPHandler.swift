@@ -2426,7 +2426,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     respondError(status: .badRequest, message: "`format` must be yaml or json.")
                     return
                 }
-                let document = await MainActor.run { ConfigExporter.export(sections: nil) }
+                let document = await ConfigExporter.exportOffMain(sections: nil)
                 do {
                     switch format {
                     case .yaml:

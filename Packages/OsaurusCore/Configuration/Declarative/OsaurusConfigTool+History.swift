@@ -126,7 +126,7 @@ extension OsaurusConfigTool {
     /// live document.
     private func resolveVersion(_ reference: String) async throws -> (yaml: String, label: String)? {
         if reference.lowercased() == "current" {
-            let yaml = try await MainActor.run { try ConfigYAML.canonical(ConfigExporter.export()) }
+            let yaml = try ConfigYAML.canonical(await ConfigExporter.exportOffMain())
             return (yaml, "current")
         }
         guard let snapshot = try await Self.snapshot(for: reference) else { return nil }
