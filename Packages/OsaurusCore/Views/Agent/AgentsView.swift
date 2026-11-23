@@ -6380,7 +6380,7 @@ struct AgentDetailView: View {
         maxTokens = agent.maxTokens.map { String($0) } ?? ""
         generationSettings = agent.generationSettings
         claudeCodeConfig = agentManager.effectiveClaudeCodeConfig(for: agent.id)
-        agentRuntime = agentManager.effectiveRuntime(for: agent.id)
+        agentRuntime = agentManager.effectiveRuntime(for: agent)
         chatQuickActions = agent.chatQuickActions
         chatGreetingDraft = agent.chatGreeting ?? ""
         chatSubtitleDraft = agent.chatSubtitle ?? ""
