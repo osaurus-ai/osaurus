@@ -24,7 +24,7 @@ enum AgentContentSurfaceAssignments {
         for (family, part, title) in parts {
             result.append(.init(key: key(family, part), label: title + " — Background", token: "color.surface.canvas"))
             if (part.hasSuffix("Header") && [33, 34].contains(family)) || part == "todo" {
-                result.append(.init(key: key(family, part, "hover"), label: title + " — Hover background", token: "color.surface.canvas"))
+                result.append(.init(key: key(family, part, "hover"), label: title + " — Hover background", token: part == "todo" ? "color.surface.canvas" : "color.surface.hover"))
                 result.append(.init(key: key(family, part, "selected"), label: title + " — Expanded background", token: "color.surface.canvas"))
             }
         }

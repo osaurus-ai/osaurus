@@ -99,7 +99,7 @@ enum SettingsKitLintBaseline {
             "Views/Common/InspectorSubTabBar.swift": 1,
             "Views/Common/PickerCardStyle.swift": 1,
             "Views/Common/SimpleComponents.swift": 1,
-            "Views/Common/ThemedAlertDialog.swift": 3,
+            "Views/Common/ThemedAlertDialog.swift": 1,
             "Views/Credits/CreditsView.swift": 1,
             "Views/Event/AutomationHistoryView.swift": 1,
             "Views/Event/ChannelRoutingSection.swift": 8,

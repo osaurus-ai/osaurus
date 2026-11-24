@@ -20,11 +20,11 @@ final class NativeThinkingView: NSView {
     // MARK: Subviews
 
     private let headerButton = NSButton()
-    /// Circular tinted node holding the thinking glyph, matching the tool
-    /// timeline nodes (this block is a separate borderless unit — no rail).
-    private let iconNode = NSView()
-    private static let iconNodeSize: CGFloat = 28
-    private let iconView = NSImageView()
+    /// Status node holding the thinking glyph, matching the tool timeline
+    /// nodes; it orbits while reasoning streams.
+    private let iconNode = ActivityNodeView()
+    private static let iconNodeSize = ActivityNodeStyle.side
+    private var iconView: NSImageView { iconNode.glyph }
     // Streaming status (in-progress), deliberately a separate catalog key
     // from the mode label `thinking.mode.label` (#2621).
     private let titleLabel = NSTextField(labelWithString: L("Thinking"))
@@ -126,10 +126,6 @@ final class NativeThinkingView: NSView {
         titleLabel.font = titleFont
         titleLabel.textColor = tint
 
-        iconView.contentTintColor = tint
-        iconNode.layer?.backgroundColor = NSColor(theme.surface.hover).cgColor
-        iconNode.layer?.borderColor = NSColor(theme.border.default).cgColor
-        iconNode.layer?.borderWidth = theme.stroke.default
         separatorView.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
 
         // While streaming, shimmer the present-tense "Thinking" title; once done,
@@ -174,18 +170,20 @@ final class NativeThinkingView: NSView {
         headerButton.setAccessibilityValue(isExpanded ? L("Expanded") : L("Collapsed"))
         ThinkingInspectionStyle.label(titleLabel, property: "label", color: tint, theme: theme)
         ThinkingInspectionStyle.label(charCountLabel, property: "caption", color: NSColor(theme.text.secondary), theme: theme)
-        iconView.contentTintColor = NSColor(isStreaming ? theme.border.focus : theme.status.success.foreground)
-        iconNode.layer?.backgroundColor = NSColor(theme.surface.raised).cgColor
+        iconNode.ringWidth = ThinkingInspectionStyle.metric("borderWidth", 1, theme)
+        iconNode.cornerRadius = ActivityNodeStyle.cornerRadius(side: Self.iconNodeSize, theme: theme)
+        iconNode.apply(
+            color: NSColor(isStreaming ? theme.status.info.foreground : theme.status.success.foreground),
+            backing: NSColor(theme.surface.raised))
+        let wasStreaming = isSameBlock && iconNode.isRunning
+        iconNode.setRunning(isStreaming)
+        if wasStreaming, !isStreaming { iconNode.playSettle() }
         catalogAssignmentTarget([AgentContentSurfaceAssignments.key(33, "reasoningCard")], name: "Reasoning card", theme: theme)
         contentContainer.wantsLayer = true
         contentContainer.layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(33, "reasoningContent", theme)).cgColor
-        iconNode.layer?.borderColor = NSColor(theme.border.default).cgColor
-        iconNode.layer?.cornerRadius = min(CGFloat(theme.radius.medium), Self.iconNodeSize / 2)
-        chevronView.contentTintColor = NSColor(theme.text.secondary)
+        chevronView.contentTintColor = NSColor(theme.text.tertiary)
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(33, "reasoningCard", theme)).cgColor
-        layer?.borderColor = NSColor(theme.border.subtle).cgColor
-        layer?.borderWidth = ThinkingInspectionStyle.metric("borderWidth", 0, theme)
-        layer?.cornerRadius = theme.radius.medium
+        ActivityNodeStyle.applyCard(layer, theme: theme, borderWidth: ThinkingInspectionStyle.metric("borderWidth", 1, theme))
         applyAssignedLayout(theme)
         refreshHeaderFill()
         configuredBlockId = blockId
@@ -275,9 +273,6 @@ final class NativeThinkingView: NSView {
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
 
-        // Borderless: no card fill, border, or shadow — the block reads as a
-        // standalone unit distinguished only by its glyph + title.
-        layer?.masksToBounds = false
         layer?.backgroundColor = NSColor.clear.cgColor
 
         // transparent overlay covering the header row for click handling;
@@ -288,18 +283,10 @@ final class NativeThinkingView: NSView {
         headerButton.target = self; headerButton.action = #selector(headerTapped)
         addSubview(headerButton)
 
-        // Circular node (tinted fill + ring), matching the tool timeline nodes.
         // Colors and stroke are applied per-theme in configure().
         iconNode.translatesAutoresizingMaskIntoConstraints = false
-        iconNode.wantsLayer = true
-        iconNode.layer?.cornerRadius = Self.iconNodeSize / 2
         addSubview(iconNode)
-
-        // glyph in the node foreground
-        iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.image = SymbolImageCache.image("brain", accessibilityDescription: nil)
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconNode.addSubview(iconView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.isEditable = false; titleLabel.isBordered = false; titleLabel.drawsBackground = false
@@ -353,11 +340,6 @@ final class NativeThinkingView: NSView {
             iconNode.widthAnchor.constraint(equalToConstant: Self.iconNodeSize),
             iconNode.heightAnchor.constraint(equalToConstant: Self.iconNodeSize),
 
-            iconView.centerXAnchor.constraint(equalTo: iconNode.centerXAnchor),
-            iconView.centerYAnchor.constraint(equalTo: iconNode.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 14),
-            iconView.heightAnchor.constraint(equalToConstant: 14),
-
             titleLabel.leadingAnchor.constraint(equalTo: iconNode.trailingAnchor, constant: 10),
             titleLabel.centerYAnchor.constraint(equalTo: iconNode.centerYAnchor),
 
@@ -409,7 +391,9 @@ final class NativeThinkingView: NSView {
             if view === iconNode, c.firstAttribute == .centerY { c.constant = height / 2 }
             if (view === titleLabel || view === shimmerLabel), c.firstAttribute == .leading { c.constant = gap }
             if view === charCountLabel, c.firstAttribute == .trailing { c.constant = -ThinkingInspectionStyle.layout("headerCountGap", "gap", theme.space.s8, theme) }
-            if view === chevronView, c.firstAttribute == .trailing { c.constant = -pad }
+            if view === chevronView, c.firstAttribute == .trailing {
+                c.constant = -(pad - SymbolImageCache.chevronTrailingSlack(slot: 12, pointSize: 10, weight: .semibold))
+            }
             if view === separatorView, c.firstAttribute == .top { c.constant = height }
             if (view === separatorView || view === contentContainer), c.firstAttribute == .leading { c.constant = contentPad }
             if (view === separatorView || view === contentContainer), c.firstAttribute == .trailing { c.constant = -contentPad }
@@ -418,7 +402,6 @@ final class NativeThinkingView: NSView {
     }
     private func refreshHeaderFill() {
         guard let theme = currentTheme else { return }
-        headerBackdrop.layer?.cornerRadius = theme.radius.medium
         headerBackdrop.layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(33, "reasoningHeader", theme, state: headerHover ? "hover" : isExpanded ? "selected" : "background")).cgColor
     }
     override func updateTrackingAreas() {

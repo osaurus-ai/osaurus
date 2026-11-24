@@ -20,13 +20,14 @@ final class NativeActivityGroupView: NSView {
     // MARK: Subviews
 
     private let headerButton = NSButton()
-    /// Circular tinted node matching the thinking block / tool timeline nodes.
-    private let iconNode = NSView()
-    private let iconView = NSImageView()
+    /// Status node matching the thinking block / tool timeline nodes; it
+    /// orbits while any step is live.
+    private let iconNode = ActivityNodeView()
+    private var iconView: NSImageView { iconNode.glyph }
     private let titleLabel = NSTextField(labelWithString: "")
     /// Shown in place of `titleLabel` while any child is still streaming.
     private let shimmerLabel = ShimmerLabel()
-    /// Collapsed-state step preview: overlapping status circles (one per
+    /// Collapsed-state step preview: small status tiles (one per
     /// step, capped at 3) plus a trailing "steps" word for the overflow case.
     private let stepChipsStack = NSStackView()
     private let stepCountLabel = NSTextField(labelWithString: "")
@@ -116,10 +117,6 @@ final class NativeActivityGroupView: NSView {
         let titleFont = theme.assignedNativeFont(ActivityInspectionStyle.key + "heading", fallback: theme.nsFont(.caption, weight: .semibold))
         titleLabel.font = titleFont
         titleLabel.textColor = tint
-        iconView.contentTintColor = tint
-        iconNode.layer?.backgroundColor = NSColor(theme.surface.hover).cgColor
-        iconNode.layer?.borderColor = NSColor(theme.border.default).cgColor
-        iconNode.layer?.borderWidth = theme.stroke.default
         expandAllButton.font = theme.nsFont(.footnote, weight: .medium)
         chevronView.contentTintColor = NSColor(theme.text.tertiary)
         separatorView.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
@@ -135,6 +132,13 @@ final class NativeActivityGroupView: NSView {
             default: return false
             }
         }
+
+        iconNode.apply(
+            color: live ? NSColor(theme.status.info.foreground) : NSColor(theme.text.secondary),
+            backing: NSColor(theme.surface.raised))
+        let wasLive = configuredBlockId == blockId && iconNode.isRunning
+        iconNode.setRunning(live)
+        if wasLive, !live { iconNode.playSettle() }
 
         if live {
             let titleTracking = theme.assignedTracking(ActivityInspectionStyle.key + "heading")
@@ -268,18 +272,18 @@ final class NativeActivityGroupView: NSView {
         catalogAssignmentTarget([AgentContentSurfaceAssignments.key(34, "activityCard")], name: "Grouped activity card", theme: theme)
         contentContainer.wantsLayer = true
         contentContainer.layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "activityContent", theme)).cgColor
-        layer?.borderColor = NSColor(theme.border.subtle).cgColor
-        layer?.borderWidth = ActivityInspectionStyle.metric("borderWidth", 0, theme)
-        layer?.cornerRadius = theme.radius.medium
-        iconNode.layer?.backgroundColor = NSColor(theme.surface.raised).cgColor
-        iconNode.layer?.borderColor = NSColor(theme.border.default).cgColor
+        ActivityNodeStyle.applyCard(layer, theme: theme, borderWidth: ActivityInspectionStyle.metric("borderWidth", 1, theme))
+        iconNode.ringWidth = ActivityInspectionStyle.metric("borderWidth", 1, theme)
+        iconNode.cornerRadius = ActivityNodeStyle.cornerRadius(side: Self.iconNodeSize, theme: theme)
         separatorView.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
         for c in constraints {
             let view = c.firstItem as? NSView
             if view === iconNode, c.firstAttribute == .leading { c.constant = pad }
             if view === iconNode, c.firstAttribute == .centerY { c.constant = height / 2 }
             if (view === titleLabel || view === shimmerLabel), c.firstAttribute == .leading { c.constant = gap }
-            if view === chevronView, c.firstAttribute == .trailing { c.constant = -pad }
+            if view === chevronView, c.firstAttribute == .trailing {
+                c.constant = -(pad - SymbolImageCache.chevronTrailingSlack(slot: 12, pointSize: 10, weight: .semibold))
+            }
             if view === separatorView, c.firstAttribute == .top { c.constant = height }
             if (view === separatorView || view === contentContainer), c.firstAttribute == .leading { c.constant = contentPad }
             if (view === separatorView || view === contentContainer), c.firstAttribute == .trailing { c.constant = -contentPad }
@@ -475,15 +479,12 @@ final class NativeActivityGroupView: NSView {
             stepChipsStack.removeArrangedSubview(v)
             v.removeFromSuperview()
         }
-        // Opaque backing so overlapped circles don't show through each other.
         let backing = NSColor(theme.surface.raised)
         for chip in chips {
             let color = chipColor(chip.colorKey, theme: theme)
             stepChipsStack.addArrangedSubview(makeChipView(chip, color: color, backing: backing, theme: theme))
         }
-        // Trailing "steps" word (overflow case only — hidden views are
-        // detached from the stack's layout). Positive gap after the
-        // negatively-spaced circles.
+        // Trailing "steps" word, set a little further from the chips.
         stepChipsStack.addArrangedSubview(stepCountLabel)
         if let lastChip = stepChipsStack.arrangedSubviews.dropLast().last {
             stepChipsStack.setCustomSpacing(ActivityInspectionStyle.metric("gap", theme.space.s6, theme), after: lastChip)
@@ -491,7 +492,7 @@ final class NativeActivityGroupView: NSView {
     }
 
     private static let chipSize: CGFloat = 20
-    private static let iconNodeSize: CGFloat = 28
+    private static let iconNodeSize = ActivityNodeStyle.side
 
     private func makeChipView(
         _ chip: StepChip, color: NSColor, backing: NSColor, theme: any ThemeProtocol
@@ -499,13 +500,13 @@ final class NativeActivityGroupView: NSView {
         let circle = NSView()
         circle.translatesAutoresizingMaskIntoConstraints = false
         circle.wantsLayer = true
-        circle.layer?.cornerRadius = Self.chipSize / 2
         circle.layer?.borderWidth = theme.stroke.default
-        circle.layer?.borderColor = NSColor(theme.border.default).cgColor
+        circle.layer?.borderColor = (backing.blended(withFraction: 0.42, of: color) ?? color).cgColor
         circle.layer?.backgroundColor =
             (backing.blended(withFraction: 0.14, of: color) ?? backing).cgColor
         let chipHeight = max(Self.chipSize, ActivityInspectionStyle.fieldHeight("caption", theme, fallback: Self.chipSize))
-        circle.layer?.cornerRadius = chipHeight / 2
+        circle.layer?.cornerRadius = ActivityNodeStyle.cornerRadius(side: chipHeight, theme: theme)
+        circle.layer?.cornerCurve = .continuous
         circle.heightAnchor.constraint(equalToConstant: chipHeight).isActive = true
 
         if let glyph = chip.glyph {
@@ -572,7 +573,6 @@ final class NativeActivityGroupView: NSView {
     private func buildViews() {
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
-        layer?.masksToBounds = false
         layer?.backgroundColor = NSColor.clear.cgColor
 
         headerButton.translatesAutoresizingMaskIntoConstraints = false
@@ -583,14 +583,8 @@ final class NativeActivityGroupView: NSView {
         addSubview(headerButton)
 
         iconNode.translatesAutoresizingMaskIntoConstraints = false
-        iconNode.wantsLayer = true
-        iconNode.layer?.cornerRadius = Self.iconNodeSize / 2
         addSubview(iconNode)
-
-        iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.image = SymbolImageCache.image("sparkles", accessibilityDescription: nil)
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconNode.addSubview(iconView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.isEditable = false; titleLabel.isBordered = false; titleLabel.drawsBackground = false
@@ -603,8 +597,7 @@ final class NativeActivityGroupView: NSView {
         stepChipsStack.translatesAutoresizingMaskIntoConstraints = false
         stepChipsStack.orientation = .horizontal
         stepChipsStack.alignment = .centerY
-        // Negative spacing overlaps the circles into an avatar-style stack.
-        stepChipsStack.spacing = -6
+        stepChipsStack.spacing = 3
         addSubview(stepChipsStack)
 
         stepCountLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -666,11 +659,6 @@ final class NativeActivityGroupView: NSView {
             iconNode.centerYAnchor.constraint(equalTo: topAnchor, constant: headerH / 2),
             iconNode.widthAnchor.constraint(equalToConstant: Self.iconNodeSize),
             iconNode.heightAnchor.constraint(equalToConstant: Self.iconNodeSize),
-
-            iconView.centerXAnchor.constraint(equalTo: iconNode.centerXAnchor),
-            iconView.centerYAnchor.constraint(equalTo: iconNode.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 14),
-            iconView.heightAnchor.constraint(equalToConstant: 14),
 
             titleLabel.leadingAnchor.constraint(equalTo: iconNode.trailingAnchor, constant: 10),
             titleLabel.centerYAnchor.constraint(equalTo: iconNode.centerYAnchor),

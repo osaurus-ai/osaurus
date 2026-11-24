@@ -72,9 +72,6 @@ struct ConfigApprovalModal: View {
                 id: request.id,
                 title: L("Review configuration changes"),
                 message: nil,
-                // The plan list under a "?" badge reads as noise; the
-                // content dialog convention is title-only.
-                showsHeaderIcon: false,
                 // The visible buttons live in `customContent` (which
                 // replaces the standard row); this cancel entry backs the
                 // Esc path — ChatView's window-level Esc monitor resolves
@@ -111,7 +108,6 @@ struct ConfigApprovalModal: View {
                 id: id,
                 title: L("Review what to install"),
                 message: nil,
-                showsHeaderIcon: false,
                 buttons: [
                     .cancel(L("Cancel")) {
                         queue.resolve(id: id, outcome: .denied)

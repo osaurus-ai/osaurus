@@ -19,7 +19,15 @@ import QuartzCore
 final class ShimmerLabel: NSView {
 
     /// One left-to-right pass of the highlight.
-    private static let sweepPeriod: CFTimeInterval = 1.3
+    private static let sweepPeriod: CFTimeInterval = 1.4
+    /// Half the band's width, as a fraction of the label. Narrow enough that
+    /// a short title shows a distinct bright band, not a whole-word fade.
+    private static let bandHalfWidth: Double = 0.28
+    /// Opacity of the text outside the band. Theme text tokens can sit close
+    /// together (light mode's tertiary and primary are both dark grays), so
+    /// the trough is dimmed toward the background to keep the band legible
+    /// in either appearance.
+    private static let troughOpacity: CGFloat = 0.5
 
     private let gradientLayer = CAGradientLayer()
     private let textMaskLayer = CATextLayer()
@@ -106,11 +114,21 @@ final class ShimmerLabel: NSView {
     }
 
     private func applyColors() {
-        gradientLayer.colors =
-            animating
-            ? [baseColor.cgColor, highlightColor.cgColor, baseColor.cgColor]
-            : [baseColor.cgColor, baseColor.cgColor, baseColor.cgColor]
-        gradientLayer.locations = [0.0, 0.5, 1.0]
+        // Reduce Motion gets no sweep, so it gets the solid label rather than
+        // a band frozen mid-word.
+        if animating, !ThemeMotion.reduceMotionEnabled {
+            let trough = baseColor.withAlphaComponent(baseColor.alphaComponent * Self.troughOpacity).cgColor
+            gradientLayer.colors = [trough, highlightColor.cgColor, trough]
+        } else {
+            gradientLayer.colors = [baseColor.cgColor, baseColor.cgColor, baseColor.cgColor]
+        }
+        gradientLayer.locations = Self.bandLocations(center: 0.5)
+    }
+
+    /// Trough → peak → trough around `center`; outside the band the end
+    /// colors clamp, so the rest of the text holds the trough color.
+    private static func bandLocations(center: Double) -> [NSNumber] {
+        [center - bandHalfWidth, center, center + bandHalfWidth].map { NSNumber(value: $0) }
     }
 
     private func addSweepAnimation() {
@@ -120,8 +138,10 @@ final class ShimmerLabel: NSView {
         // token streaming (frequent re-layouts). Only add when none is live.
         guard gradientLayer.animation(forKey: "shimmer") == nil, !ThemeMotion.reduceMotionEnabled else { return }
         let anim = CABasicAnimation(keyPath: "locations")
-        anim.fromValue = [-1.0, -0.5, 0.0]
-        anim.toValue = [1.0, 1.5, 2.0]
+        // The band enters fully off the leading edge and leaves fully past
+        // the trailing one, so each pass starts and ends on plain trough text.
+        anim.fromValue = Self.bandLocations(center: -Self.bandHalfWidth)
+        anim.toValue = Self.bandLocations(center: 1 + Self.bandHalfWidth)
         anim.duration = Self.sweepPeriod
         anim.repeatCount = .infinity
         anim.isRemovedOnCompletion = false

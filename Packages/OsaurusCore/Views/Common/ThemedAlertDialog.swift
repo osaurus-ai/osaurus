@@ -170,10 +170,6 @@ public struct ThemedAlertRequest: Identifiable {
     /// Accessibility description for the header artwork as a whole. Ignored
     /// when no header images are set.
     public let headerImageAccessibilityLabel: String?
-    /// False hides the default symbol header (the "?" / "!" badge) when no
-    /// header artwork is set — for content dialogs (e.g. chat history)
-    /// where a question-mark badge over a list reads as noise.
-    public let showsHeaderIcon: Bool
     /// Optional accessory view rendered between the message and the button row.
     /// Use for extras like a "Don't ask again" toggle.
     public let accessory: AnyView?
@@ -189,7 +185,7 @@ public struct ThemedAlertRequest: Identifiable {
     /// page chooser flows that need their own state and navigation.
     public let customContent: AnyView?
     /// Optional fixed width override for the dialog. Defaults to the
-    /// standard alert width (340). Useful for `customContent` flows
+    /// standard alert width (380). Useful for `customContent` flows
     /// that need more breathing room than a text alert.
     public let width: CGFloat?
     /// True for container dialogs (e.g. chat History) whose content raises
@@ -212,7 +208,6 @@ public struct ThemedAlertRequest: Identifiable {
         message: String?,
         headerImageNames: [String] = [],
         headerImageAccessibilityLabel: String? = nil,
-        showsHeaderIcon: Bool = true,
         accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
         showsCloseButton: Bool = false,
@@ -226,7 +221,6 @@ public struct ThemedAlertRequest: Identifiable {
         self.message = message
         self.headerImageNames = headerImageNames
         self.headerImageAccessibilityLabel = headerImageAccessibilityLabel
-        self.showsHeaderIcon = showsHeaderIcon
         self.accessory = accessory
         self.buttons = buttons
         self.showsCloseButton = showsCloseButton
@@ -294,7 +288,6 @@ private struct ThemedAlertDialogContent: View {
     let message: String?
     var headerImageNames: [String] = []
     var headerImageAccessibilityLabel: String? = nil
-    var showsHeaderIcon: Bool = true
     let accessory: AnyView?
     let buttons: [AlertButtonConfig]
     let showsCloseButton: Bool
@@ -331,9 +324,9 @@ private struct ThemedAlertDialogContent: View {
                             .padding(.top, titleLeadsHeader ? theme.space.s24 : theme.space.s8)
                     }
                 }
-                .scaleEffect(isAppearing ? 1 : 0.9)
+                .scaleEffect(isAppearing ? 1 : 0.96)
                 .opacity(isAppearing ? 1 : 0)
-                .offset(y: isAppearing ? 0 : 20)
+                .offset(y: isAppearing ? 0 : 8)
         }
         .onAppear {
             withAnimation(theme.motion.springAnimation) {
@@ -368,7 +361,8 @@ private struct ThemedAlertDialogContent: View {
                 // Optional accessory (e.g. "Don't ask again" toggle)
                 if let accessory = accessory {
                     accessory
-                        .padding(.top, theme.space.s12)
+                        .frame(maxWidth: .infinity, alignment: frameAlignment)
+                        .padding(.top, theme.space.s14)
                 }
 
                 if !inlineButtons.isEmpty {
@@ -384,7 +378,7 @@ private struct ThemedAlertDialogContent: View {
         .padding(.top, dialogLayout("paddingTop", inheriting: inspectionMetric("padding", 24))).catalogLayoutTarget(dialogLayoutKey("paddingTop"))
         .padding(.horizontal, dialogLayout("paddingX", inheriting: inspectionMetric("padding", 24))).catalogLayoutTarget(dialogLayoutKey("paddingX"))
         .padding(.bottom, dialogLayout("paddingBottom", inheriting: inspectionMetric("padding", 16))).catalogLayoutTarget(dialogLayoutKey("paddingBottom"))
-        .frame(width: width ?? 340)
+        .frame(width: width ?? defaultWidth)
         // Measured before the flexible frame below, which reports the height
         // it was offered rather than the content's.
         .background(
@@ -398,12 +392,12 @@ private struct ThemedAlertDialogContent: View {
 
     // MARK: - Header Section
 
+    /// Text dialogs read like the app's sheets: a leading-aligned title and
+    /// message. Announcement artwork keeps a centred hero layout.
+    @ViewBuilder
     private var headerSection: some View {
-        VStack(spacing: theme.space.s12) {
-            if !headerImageNames.isEmpty {
-                // Custom artwork header (announcement-style dialogs). Kept
-                // small and static — no pulsing ring — so it reads as a
-                // friendly mark, not an attention grab.
+        if !headerImageNames.isEmpty {
+            VStack(spacing: theme.space.s12) {
                 HStack(alignment: .bottom, spacing: theme.space.s12) {
                     ForEach(headerImageNames, id: \.self) { name in
                         Image(name, bundle: .module)
@@ -415,38 +409,32 @@ private struct ThemedAlertDialogContent: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(headerImageAccessibilityLabel ?? "")
                 .accessibilityHidden(headerImageAccessibilityLabel == nil)
-            } else if showsHeaderIcon {
-                iconHeader
+
+                titleText
             }
-
-            // Title
-            Text(LocalizedStringKey(title), bundle: .module)
-                .textStyle(.heading)
-                .foregroundColor(theme.text.primary)
-                .multilineTextAlignment(.center)
+        } else {
+            titleText
+                // Clears the corner X, which shares the title row.
+                .padding(.trailing, showsCloseButton ? theme.space.s20 : theme.space.s0)
         }
     }
 
-    /// True when the header is just the title (no images, no icon).
+    private var titleText: some View {
+        Text(LocalizedStringKey(title), bundle: .module)
+            .textStyle(.heading)
+            .foregroundColor(theme.text.primary)
+            .multilineTextAlignment(textAlignment)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: frameAlignment)
+    }
+
+    /// True when the header is just the title (no artwork).
     private var titleLeadsHeader: Bool {
-        headerImageNames.isEmpty && !showsHeaderIcon
+        headerImageNames.isEmpty
     }
 
-    private var iconHeader: some View {
-        ZStack {
-            Circle()
-                .fill(iconStatus.background)
-                .frame(width: 48, height: 48)
-
-            Circle()
-                .stroke(iconStatus.border, lineWidth: theme.stroke.default)
-                .frame(width: 48, height: 48)
-
-            Image(systemName: iconName)
-                .glyphSize(.xlarge, weight: .semibold)
-                .foregroundColor(iconStatus.foreground)
-        }
-    }
+    private var textAlignment: TextAlignment { titleLeadsHeader ? .leading : .center }
+    private var frameAlignment: Alignment { titleLeadsHeader ? .leading : .center }
 
     // MARK: - Message Section
 
@@ -454,27 +442,42 @@ private struct ThemedAlertDialogContent: View {
         Text(message)
             .textStyle(.bodySmall)
             .foregroundColor(theme.text.secondary)
-            .multilineTextAlignment(.center)
+            .multilineTextAlignment(textAlignment)
             .lineSpacing(2)
-            .padding(.top, theme.space.s8)
             .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: frameAlignment)
+            .padding(.top, theme.space.s6)
     }
 
     // MARK: - Button Section
 
     private var buttonSection: some View {
         let inline = inlineButtons
+        let primaryTitle = inline.indices.contains(inlinePrimaryIndex) ? inline[inlinePrimaryIndex].title : nil
         return Group {
-            if inline.count <= 2 {
-                HStack(spacing: theme.space.s12) {
-                    ForEach(Array(inline.enumerated()), id: \.element.title) { idx, button in
-                        alertButton(button, isPrimary: idx == inlinePrimaryIndex)
+            if let footer = footerLayout {
+                // The sheet footer's shape: the destructive action alone on
+                // the leading edge, away from the commit pair.
+                HStack(spacing: theme.space.s8) {
+                    alertButton(footer.destructive, isPrimary: false)
+                    Spacer(minLength: theme.space.s16)
+                    ForEach(footer.trailing, id: \.title) { button in
+                        alertButton(button, isPrimary: button.role == nil)
+                    }
+                }
+            } else if inline.count <= 2 {
+                // Sheet-footer order: Cancel, then the commit action on the
+                // trailing edge.
+                HStack(spacing: theme.space.s8) {
+                    Spacer(minLength: theme.space.s0)
+                    ForEach(inline.filter { $0.role == .cancel } + inline.filter { $0.role != .cancel }, id: \.title) { button in
+                        alertButton(button, isPrimary: button.title == primaryTitle)
                     }
                 }
             } else {
-                VStack(spacing: theme.space.s10) {
-                    ForEach(Array(inline.enumerated()), id: \.element.title) { idx, button in
-                        alertButton(button, isPrimary: idx == inlinePrimaryIndex)
+                VStack(spacing: theme.space.s8) {
+                    ForEach(inline, id: \.title) { button in
+                        alertButton(button, isPrimary: button.title == primaryTitle, fillsWidth: true)
                     }
                 }
             }
@@ -487,6 +490,24 @@ private struct ThemedAlertDialogContent: View {
     private var inlineButtons: [AlertButtonConfig] {
         guard showsCloseButton else { return buttons }
         return buttons.filter { $0.role != .cancel }
+    }
+
+    /// Cancel, a safer commit action and a destructive one ("Archive
+    /// instead" beside "Delete") lay out as one footer row: the destructive
+    /// action leading, Cancel then the commit action trailing.
+    private var footerLayout: (destructive: AlertButtonConfig, trailing: [AlertButtonConfig])? {
+        let inline = inlineButtons
+        guard inline.count == 3,
+            let destructive = inline.first(where: { $0.role == .destructive }),
+            let cancel = inline.first(where: { $0.role == .cancel }),
+            let primary = inline.first(where: { $0.role == nil })
+        else { return nil }
+        return (destructive, [cancel, primary])
+    }
+
+    /// Wide enough for the footer row's three labels on one line.
+    private var defaultWidth: CGFloat {
+        footerLayout == nil ? 380 : SettingsSheetWidth.compact
     }
 
     /// Index of the inline button that takes the accent style and Return.
@@ -510,7 +531,7 @@ private struct ThemedAlertDialogContent: View {
         .keyboardShortcut(.cancelAction)
     }
 
-    private func alertButton(_ config: AlertButtonConfig, isPrimary: Bool) -> some View {
+    private func alertButton(_ config: AlertButtonConfig, isPrimary: Bool, fillsWidth: Bool = false) -> some View {
         let isDestructive = config.role == .destructive
         // Return activates the primary action; Esc activates cancel.
         // `keyboardShortcut(nil)` is a no-op for the remaining buttons.
@@ -519,39 +540,22 @@ private struct ThemedAlertDialogContent: View {
             ? .defaultAction
             : (config.role == .cancel ? .cancelAction : nil)
 
-        let role: SettingsButtonRole = isPrimary ? (isDestructive ? .destructive : .primary) : .secondary
+        // A destructive action stays red even when a safer action owns Return.
+        let role: SettingsButtonRole = isDestructive ? .destructive : (isPrimary ? .primary : .secondary)
         return Button {
             dismissWithAnimation { config.action() }
         } label: {
             Text(config.title)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: fillsWidth ? .infinity : nil)
         }
         .assignedSettingsButtonStyle(role)
         .keyboardShortcut(shortcut)
     }
 
-    // MARK: - Styling Helpers
-
-    private var iconName: String {
-        hasDestructiveButton ? "exclamationmark.triangle.fill" : "questionmark.circle.fill"
-    }
-
-    private var iconStatus: ThemeStatusSet<Color> {
-        hasDestructiveButton ? theme.status.warning : theme.status.info
-    }
+    // MARK: - Helpers
 
     private var cancelButton: AlertButtonConfig? {
         buttons.first { $0.role == .cancel }
-    }
-
-    private var primaryButtonIndex: Int {
-        buttons.firstIndex { $0.role == nil }
-            ?? buttons.firstIndex { $0.role == .destructive }
-            ?? 0
-    }
-
-    private var hasDestructiveButton: Bool {
-        buttons.contains { $0.role == .destructive }
     }
 
     // MARK: - Dismiss Animation
@@ -695,7 +699,6 @@ public struct ThemedAlertHost: View {
                     message: request.message,
                     headerImageNames: request.headerImageNames,
                     headerImageAccessibilityLabel: request.headerImageAccessibilityLabel,
-                    showsHeaderIcon: request.showsHeaderIcon,
                     accessory: request.accessory,
                     buttons: request.buttons,
                     showsCloseButton: request.showsCloseButton,
@@ -759,7 +762,7 @@ extension View {
 
     /// Present a themed alert dialog with glass effects and spring animations.
     /// Supports 1–3 (or more) buttons; when 3+, buttons stack vertically for better ergonomics.
-    /// `width` overrides the standard 340pt dialog width (honoured by the
+    /// `width` overrides the standard 380pt dialog width (honoured by the
     /// `.contained` style only) — use when button labels would otherwise wrap.
     @ViewBuilder
     func themedAlert(

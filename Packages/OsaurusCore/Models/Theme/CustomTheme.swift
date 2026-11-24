@@ -291,7 +291,7 @@ extension ThemeColorRoles where Value == String {
                 ),
                 destructive: ThemeActionVariant(
                     default: ThemeActionState(background: "#AF290EFF", foreground: "#FBFAF7FF"),
-                    hover: ThemeActionState(background: "#F2340DFF", foreground: "#000000FF"),
+                    hover: ThemeActionState(background: "#C4300FFF", foreground: "#FBFAF7FF"),
                     pressed: ThemeActionState(background: "#85230FFF", foreground: "#FBFAF7FF"),
                     disabled: ThemeActionState(background: "#312E2BFF", foreground: "#75716DFF")
                 ),

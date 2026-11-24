@@ -195,7 +195,7 @@ extension ThemeProtocol {
 /// colour; the theme decides the colours through its semantic roles.
 enum SettingsChrome: Equatable {
     /// The grouped-form surface: `surface.raised` + `border.default`,
-    /// `radius.large`, `elevation.raised`.
+    /// `radius.large`, flat.
     case surface
     /// A raised library card: same recipe as `.surface`.
     case card
@@ -295,12 +295,10 @@ private struct SettingsChromeModifier: ViewModifier {
 
     private var lineWidth: CGFloat { chrome == .selected ? theme.selectionStroke : theme.stroke.default }
 
+    /// In-page surfaces sit flat on the page and are defined by their border;
+    /// only floating overlays cast a shadow.
     private var elevation: ThemeElevationRecipe {
-        switch chrome {
-        case .surface, .card, .cardHover: return theme.elevation.raised
-        case .overlay: return theme.elevation.overlay
-        default: return theme.elevation.none
-        }
+        chrome == .overlay ? theme.elevation.overlay : theme.elevation.none
     }
 
     func body(content: Content) -> some View {
