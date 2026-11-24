@@ -21,46 +21,30 @@ struct AgentKeysSection: View {
     var body: some View {
         let ownCount = entries.filter { $0.source != .shared }.count
 
-        VStack(alignment: .leading, spacing: theme.space.s8) {
-            HStack(spacing: theme.space.s8) {
-                SettingsFieldLabel("Keys")
-                if ownCount > 0 {
-                    CountBadge(ownCount)
-                }
-                Spacer()
-                SettingsButton(.tertiary, "Open Vault", icon: "arrow.up.right", size: .compact) {
-                    CredentialRegistry.shared.focusAgentId = agentId
-                    ManagementStateManager.shared.selectedTab = .keys
-                }
-                SettingsButton(.secondary, "Add Key", icon: "plus", size: .compact) {
-                    editor = CredentialEditorRequest(scope: .agent(agentId))
-                }
+        SettingsSection(
+            title: "Keys",
+            caption: ownCount > 0 ? L("\(ownCount) only for this agent") : nil,
+            subtitle:
+                "Keys this agent can use when it runs commands or plugins in the sandbox. Keys shared with all agents apply unless this agent has its own value."
+        ) {
+            SettingsButton(.tertiary, "Open Vault", icon: "arrow.up.right", size: .compact) {
+                CredentialRegistry.shared.focusAgentId = agentId
+                ManagementStateManager.shared.selectedTab = .keys
             }
-
-            Text(
-                "Keys this agent can use when it runs commands or plugins in the sandbox. Keys shared with all agents apply unless this agent has its own value.",
-                bundle: .module
-            )
-            .font(SettingsFont.rowDescription)
-            .foregroundColor(theme.text.tertiary)
-
+            SettingsButton(.secondary, "Add Key", icon: "plus", size: .compact) {
+                editor = CredentialEditorRequest(scope: .agent(agentId))
+            }
+        } content: {
             if entries.isEmpty {
                 SettingsEmptyState(
-                    inline: "key.fill",
+                    inline: "key",
                     title: "No keys yet",
-                    hint: "Add a key here or in the Vault, and turn on “Agents Can Use This When Running Code”.")
-                    .settingsChrome(.inset)
+                    hint: "Add a key here or in the Vault, and turn on “Agents Can Use This When Running Code”."
+                )
             } else {
-                VStack(spacing: theme.space.s0) {
-                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                        if index > 0 {
-                            ThemeHairlineDivider()
-                                .padding(.leading, theme.space.s12)
-                        }
-                        row(entry)
-                    }
+                ForEach(entries) { entry in
+                    row(entry)
                 }
-                .settingsChrome(.inset)
             }
         }
         .sheet(item: $editor) { request in
@@ -134,8 +118,7 @@ struct AgentKeysSection: View {
                 }
             }
         }
-        .padding(.horizontal, theme.space.s12)
-        .padding(.vertical, theme.space.s8)
+        .settingsRowChrome()
     }
 }
 

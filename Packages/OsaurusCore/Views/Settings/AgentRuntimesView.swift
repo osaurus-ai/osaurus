@@ -27,7 +27,7 @@ struct AgentRuntimesView: View {
         SettingsPage {
             SettingsPageHeader(
                 title: "Agent Runtimes",
-                subtitle: "External agent harnesses, like Claude Code or Pi, that run an agent's chats. Pick one in an agent's Configure tab.",
+                subtitle: "External agent harnesses, like Claude Code or Pi, that run an agent's chats. Pick one in an agent's General tab, under Model.",
                 count: store.runtimes.count,
                 primary: {
                     SettingsButton(.primary, "Add Runtime", icon: "plus") {

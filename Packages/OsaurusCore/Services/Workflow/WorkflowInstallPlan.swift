@@ -71,6 +71,8 @@ struct WorkflowInstallPlan: Equatable, Sendable {
     var optional: [Item]
     /// What only the person can answer, in report order.
     var questions: [SetupItem]
+    /// The model slots each chat download serves, by item id.
+    var chatSlots: [String: [String]] = [:]
 
     var needsNothing: Bool { items.isEmpty && questions.isEmpty }
 
@@ -105,6 +107,37 @@ struct WorkflowInstallPlan: Equatable, Sendable {
         return copy
     }
 
+    /// The plan without the suggested-model downloads for `slots`. Their
+    /// issues become questions again, except the `deferred` ones: those the
+    /// person set aside to choose after the install.
+    func withoutDownloads(for slots: Set<String>, deferring deferred: Set<String>, report: SetupReport) -> WorkflowInstallPlan {
+        guard !slots.isEmpty || !deferred.isEmpty else { return self }
+        let dropped = slots.union(deferred)
+        let byID = Dictionary(report.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        func isDroppedSlot(_ id: String) -> Bool {
+            guard let issue = byID[id] else { return false }
+            return issue.kind == .model && dropped.contains(issue.value)
+        }
+        func trim(_ list: [Item]) -> [Item] {
+            list.compactMap { item in
+                guard case .chatModel = item.work, let served = chatSlots[item.id] else { return item }
+                guard served.contains(where: { !dropped.contains($0) }) else { return nil }
+                var kept = item
+                kept.covers.removeAll(where: isDroppedSlot)
+                return kept
+            }
+        }
+        var copy = self
+        copy.items = trim(items)
+        copy.optional = trim(optional)
+        let covered = Set(copy.items.flatMap(\.covers))
+        copy.questions = report.items.filter { item in
+            !covered.contains(item.id) && (item.isBlocking || item.isMissingKey)
+                && !(item.kind == .model && deferred.contains(item.value))
+        }
+        return copy
+    }
+
     // MARK: - Building
 
     static func make(
@@ -112,6 +145,7 @@ struct WorkflowInstallPlan: Equatable, Sendable {
     ) -> WorkflowInstallPlan {
         var items: [Item] = []
         var optional: [Item] = []
+        var chatSlots: [String: [String]] = [:]
         var covered = Set<String>()
         let blocking = report.blocking
         let def = template.workflow
@@ -134,6 +168,7 @@ struct WorkflowInstallPlan: Equatable, Sendable {
                 title: steps.isEmpty ? L("Text model") : L("Text model for \(WorkflowSummary.list(steps))"),
                 detail: source.repoId, activity: L("Downloading the text model"), sizeBytes: source.sizeBytes,
                 covers: issues.map(\.id))
+            chatSlots[item.id, default: []].append(slot.slot)
             // Required, or nothing stands in for it: it is part of the
             // install. Otherwise the default model runs the slot meanwhile.
             if slot.requiredModel != nil || !issues.isEmpty {
@@ -189,7 +224,7 @@ struct WorkflowInstallPlan: Equatable, Sendable {
         let questions = report.items.filter { item in
             !covered.contains(item.id) && (item.isBlocking || item.isMissingKey)
         }
-        return WorkflowInstallPlan(items: items, optional: optional, questions: questions)
+        return WorkflowInstallPlan(items: items, optional: optional, questions: questions, chatSlots: chatSlots)
     }
 
     // MARK: - Live

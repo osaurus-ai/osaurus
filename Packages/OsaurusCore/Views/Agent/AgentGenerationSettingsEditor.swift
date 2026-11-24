@@ -5,6 +5,7 @@ import SwiftUI
 struct AgentGenerationSettingsEditor: View {
     @Environment(\.theme) private var theme
     @Environment(\.settingsLandingPending) private var pendingLanding
+    @Environment(\.settingsGroupRowWidth) private var groupRowWidth
     let modelID: String?
     let modelIsLocal: Bool
     let catalogCapabilities: ModelReasoningCapabilities?
@@ -46,6 +47,10 @@ struct AgentGenerationSettingsEditor: View {
             draft: draft
         )
     }
+
+    /// Until the editor has measured itself, the enclosing disclosure's row
+    /// width stands in so the first frame already uses the final layout.
+    private var layoutWidth: CGFloat { editorWidth > 0 ? editorWidth : groupRowWidth }
 
     private var currentApplicability: AgentGenerationApplicability {
         defaultsModelID == modelID ? applicability : .unrestricted
@@ -372,20 +377,23 @@ struct AgentGenerationSettingsEditor: View {
         let value = inherited[field]
         return HStack(spacing: theme.space.s6) {
             Text(value.text).font(SettingsFont.mono)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 0)
             if !value.source.isEmpty {
                 Text(value.source)
                     .font(SettingsFont.chip)
+                    .lineLimit(1)
+                    .fixedSize()
             }
         }.foregroundColor(theme.text.tertiary)
-            .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s8)
+            .padding(.horizontal, theme.space.s10).padding(.vertical, theme.space.s6)
             .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-            .overlay(
-                RoundedRectangle(cornerRadius: theme.radius.medium).stroke(
-                    theme.border.default,
-                    style: StrokeStyle(lineWidth: theme.stroke.default, dash: [4, 3])
-                )
+            .settingsChrome(.inset)
+            .help(
+                value.source.isEmpty
+                    ? L("Inherited from the model or server: \(value.text)")
+                    : L("Inherited from \(value.source): \(value.text)")
             )
     }
 
@@ -393,11 +401,11 @@ struct AgentGenerationSettingsEditor: View {
         VStack(alignment: .leading, spacing: theme.space.s6) {
             // Use the editor width for every row. Ideal text widths made ViewThatFits
             // mix horizontal and stacked rows on the same editing screen.
-            if editorWidth >= 600 {
+            if layoutWidth >= 600 {
                 HStack(alignment: .top, spacing: theme.space.s14) {
                     rowLabel(title, description).frame(minWidth: 190)
                     modePicker(title, field: field)
-                    parameterValue(title, field: field).frame(maxWidth: 160)
+                    parameterValue(title, field: field).frame(maxWidth: 180)
                 }
             } else {
                 VStack(alignment: .leading, spacing: theme.space.s10) {

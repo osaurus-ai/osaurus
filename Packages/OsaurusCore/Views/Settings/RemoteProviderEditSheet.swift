@@ -320,7 +320,7 @@ private struct AddProviderFlow: View {
         var header = SettingsSheetHeader(
             icon: selectedPreset == .custom ? "server.rack" : "cloud.fill",
             title: title,
-            subtitle: "Connect to a remote API provider"
+            subtitle: "Bring in models from a cloud service"
         ) { dismiss() }
         if let preset = selectedPreset, preset != .custom {
             header.leading = AnyView(
@@ -375,7 +375,7 @@ private struct AddProviderFlow: View {
                 HStack(spacing: theme.space.s4) {
                     Image(systemName: "lock.fill")
                         .glyphSize(.micro)
-                    Text("Your API key never leaves your device.", bundle: .module)
+                    Text("Sign-ins and API keys are kept in your Mac's Keychain.", bundle: .module)
                         .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                 }
                 .foregroundColor(theme.text.tertiary)
@@ -441,45 +441,115 @@ private struct AddProviderFlow: View {
 
     private var knownProviderStep: some View {
         VStack(spacing: theme.space.s0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.s20) {
-                    // Back button
-                    backToSelectionButton
+            if let kind = selectedOAuthKind, let preset = selectedPreset {
+                oauthSignInStep(kind: kind, preset: preset)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: theme.space.s20) {
+                        backToSelectionButton
 
-                    if selectedPreset == .azureOpenAI {
-                        azureConnectionSection
-                        azureDeploymentsSection
+                        if selectedPreset == .azureOpenAI {
+                            azureConnectionSection
+                            azureDeploymentsSection
+                        }
+
+                        if shouldShowKnownAPIKeyField {
+                            apiKeySection
+                        }
+
+                        if let preset = selectedPreset, preset.isKnown, !preset.consoleURL.isEmpty,
+                            shouldShowKnownAPIKeyField
+                        {
+                            helpSection(for: preset)
+                        }
+
+                        advancedSettingsSection
                     }
-
-                    if let kind = selectedOAuthKind {
-                        oauthInfoSection(for: kind)
-                    }
-
-                    if shouldShowKnownAPIKeyField {
-                        apiKeySection
-                    }
-
-                    // Help section
-                    if let preset = selectedPreset, preset.isKnown, !preset.consoleURL.isEmpty,
-                        shouldShowKnownAPIKeyField
-                    {
-                        helpSection(for: preset)
-                    }
-
-                    // Advanced settings toggle
-                    advancedSettingsSection
+                    .padding(theme.space.s24)
                 }
-                .padding(theme.space.s24)
             }
 
-            // Footer
-            sheetFooter(canProceed: canTest) {
+            sheetFooter(canProceed: canTest, showsResult: selectedOAuthKind == nil) {
                 if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest {
                     saveKnownProvider()
                 } else {
                     testKnownProvider()
                 }
             }
+        }
+    }
+
+    // MARK: - Step 2a': Browser Sign-In
+
+    /// A browser sign-in needs no form: the brand, what it uses, and where the
+    /// flow stands. The footer button starts (or retries) the sign-in.
+    private func oauthSignInStep(kind: ProviderOAuthKind, preset: ProviderPreset) -> some View {
+        VStack(spacing: theme.space.s0) {
+            HStack {
+                backToSelectionButton
+                Spacer()
+            }
+            .padding(.horizontal, theme.space.s24)
+            .padding(.top, theme.space.s20)
+
+            Spacer(minLength: theme.space.s16)
+
+            VStack(spacing: theme.space.s16) {
+                ProviderIconTile(preset: preset, size: 64)
+                VStack(spacing: theme.space.s6) {
+                    Text(LocalizedStringKey(kind.ctaTitle), bundle: .module)
+                        .catalogTypography(.heading, theme: theme, fallback: SettingsFont.detailTitle)
+                        .foregroundColor(theme.text.primary)
+                    Text(LocalizedStringKey(kind.subtitle), bundle: .module)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                        .foregroundColor(theme.text.secondary)
+                }
+                oauthSignInStatus
+                    .padding(.top, theme.space.s4)
+            }
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: 380)
+            .padding(.horizontal, theme.space.s24)
+
+            Spacer(minLength: theme.space.s16)
+
+            Label {
+                Text("Osaurus never sees your password. Your sign-in is kept in your Mac's Keychain.", bundle: .module)
+            } icon: {
+                Image(systemName: "lock.fill")
+            }
+            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.bottom, theme.space.s20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var oauthSignInStatus: some View {
+        if isTesting {
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner()
+                Text("Finish signing in in your browser, then come back here.", bundle: .module)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
+            }
+        } else if case .success(let models) = testResult {
+            Label {
+                Text(models.count == 1 ? L("Signed in · 1 model ready") : L("Signed in · \(models.count) models ready"))
+            } icon: {
+                Image(systemName: "checkmark.circle.fill")
+            }
+            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+            .foregroundColor(theme.status.success.foreground)
+        } else if case .failure(let message) = testResult {
+            InlineBanner(kind: .error, title: L("Sign-in didn't finish"), caption: message)
+                .multilineTextAlignment(.leading)
+        } else {
+            Text("Your browser opens so you can sign in. It takes about a minute.", bundle: .module)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
         }
     }
 
@@ -547,7 +617,7 @@ private struct AddProviderFlow: View {
     // MARK: - Shared Components
 
     private var backToSelectionButton: some View {
-        Button {
+        SettingsBackButton(title: "Back") {
             withAnimation(theme.motion.springAnimation) {
                 // Return to the level the form was reached from. Dual-mode
                 // presets appear at both levels and the custom endpoint sits on
@@ -576,16 +646,7 @@ private struct AddProviderFlow: View {
                 disableTimeout = false
                 customHeaders = []
             }
-        } label: {
-            HStack(spacing: theme.space.s6) {
-                Image(systemName: "chevron.left")
-                    .glyphSize(.footnote, weight: .semibold)
-                Text("Back", bundle: .module)
-                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
-            }
-            .foregroundColor(theme.text.secondary)
         }
-        .buttonStyle(PlainButtonStyle())
     }
 
     /// When a full URL lands in the known-provider host field, distribute its
@@ -811,27 +872,6 @@ private struct AddProviderFlow: View {
         guard let preset = selectedPreset, let entry = ProviderCatalog.entry(for: preset) else { return true }
         if entry.primaryOAuthKind != nil { return selectedAuthMethod == .apiKey }
         return true
-    }
-
-    /// Body shown for the OAuth-first entry of a dual-mode preset. There's no
-    /// key field — the footer button starts the browser flow — so this banner
-    /// carries the short "here's how this works" context.
-    private func oauthInfoSection(for kind: ProviderOAuthKind) -> some View {
-        HStack(spacing: theme.space.s12) {
-            Image(systemName: kind.icon)
-                .glyphSize(.medium, weight: .semibold)
-                .foregroundColor(theme.text.link)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(theme.status.info.background))
-            Text(LocalizedStringKey(kind.subtitle), bundle: .module)
-                .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
-                .foregroundColor(theme.text.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(theme.space.s12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .settingsChrome(.card)
     }
 
     private func helpSection(for preset: ProviderPreset) -> some View {
@@ -1071,9 +1111,11 @@ private struct AddProviderFlow: View {
 
     // MARK: - Footer
 
-    private func sheetFooter(canProceed: Bool, onAction: @escaping () -> Void) -> some View {
+    private func sheetFooter(canProceed: Bool, showsResult: Bool = true, onAction: @escaping () -> Void) -> some View {
         HStack(spacing: theme.space.s12) {
-            testResultBadge
+            if showsResult {
+                testResultBadge
+            }
 
             Spacer()
 
@@ -1133,9 +1175,9 @@ private struct AddProviderFlow: View {
 
     private var actionButtonTitle: String {
         let oauthKind = selectedOAuthKind
-        if isTesting { return oauthKind != nil ? L("Signing in...") : L("Testing...") }
+        if isTesting { return oauthKind != nil ? L("Waiting for Browser…") : L("Testing…") }
         if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return L("Add Provider") }
-        if case .failure = testResult { return L("Retry") }
+        if case .failure = testResult { return L("Try Again") }
         if let oauthKind {
             return NSLocalizedString(oauthKind.ctaTitle, bundle: .module, comment: "")
         }

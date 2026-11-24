@@ -326,7 +326,8 @@ struct AgentsView: View {
     /// cold-mounted Agents tab never sees the `onChange`.
     private func routeSettingsLanding(_ pending: String?) {
         guard let pending, pending.hasPrefix("agents.") else { return }
-        if (pending == "agents.description" || AgentAdvancedSettingsLanding.matches(pending)),
+        if (pending == "agents.description" || pending == "agents.avatar"
+            || AgentAdvancedSettingsLanding.matches(pending)),
             let target = detailAgent ?? customAgents.first
         {
             selectedRemoteAgentId = nil
@@ -1161,9 +1162,10 @@ private enum DetailTab: String, CaseIterable {
         return (tab, route.databaseSection)
     }
 
+    /// The page's name: its header tab, or its Abilities sub-tab.
     var label: String {
         switch self {
-        case .configure: return L("Configure")
+        case .configure: return L("General")
         case .abilities: return L("Overview")
         case .capabilities: return L("Tools")
         case .subagents: return L("Subagents")
@@ -1172,66 +1174,74 @@ private enum DetailTab: String, CaseIterable {
         case .connections: return L("Guests")
         case .channels: return L("Channels")
         case .sandbox: return L("Sandbox")
-        case .automation: return L("Automation")
+        case .automation: return L("Automations")
+        case .memory: return L("Memory")
+        case .database: return L("Database")
+        }
+    }
+}
+
+/// The agent page's header tabs. Abilities holds Tools, Subagents, Sandbox
+/// and plugins as sub-tabs; Sharing holds Guests and Channels.
+private enum AgentPageTab: String, CaseIterable, AnimatedTabItem {
+    case general, abilities, appearance, sharing, automations, memory, database
+
+    var title: String {
+        switch self {
+        case .general: return L("General")
+        case .abilities: return L("Abilities")
+        case .appearance: return L("Appearance")
+        case .sharing: return L("Sharing")
+        case .automations: return L("Automations")
         case .memory: return L("Memory")
         case .database: return L("Database")
         }
     }
 
-    /// Title of the tab's page and of its row on the agent's main page.
-    /// Sharing, Guests and Channels share one page.
-    var pageTitle: String {
-        switch self {
-        case .abilities: return L("Abilities")
-        case .network, .connections, .channels: return L("Sharing & Channels")
-        case .automation: return L("Automations")
-        default: return label
+    init(_ tab: AgentTab) {
+        switch tab {
+        case .builtIn(.configure): self = .general
+        case .builtIn(.abilities), .builtIn(.capabilities), .builtIn(.subagents), .builtIn(.sandbox),
+            .plugin, .failedPlugin:
+            self = .abilities
+        case .builtIn(.customization): self = .appearance
+        case .builtIn(.network), .builtIn(.connections), .builtIn(.channels): self = .sharing
+        case .builtIn(.automation): self = .automations
+        case .builtIn(.memory): self = .memory
+        case .builtIn(.database): self = .database
         }
     }
 
-    var icon: String {
+    /// The page a tab opens on.
+    var root: AgentTab {
         switch self {
-        case .configure: return "gear"
-        case .abilities: return "switch.2"
-        case .capabilities: return "wrench.and.screwdriver"
-        case .subagents: return "person.2.wave.2"
-        case .customization: return "paintpalette.fill"
-        case .network: return "network"
-        case .connections: return "person.2.badge.key"
-        case .channels: return "bubble.left.and.bubble.right"
-        case .sandbox: return "shippingbox"
-        case .automation: return "clock.badge.checkmark"
-        case .memory: return "brain.head.profile"
-        case .database: return "cylinder.split.1x2"
+        case .general: return .builtIn(.configure)
+        case .abilities: return .builtIn(.abilities)
+        case .appearance: return .builtIn(.customization)
+        case .sharing: return .builtIn(.network)
+        case .automations: return .builtIn(.automation)
+        case .memory: return .builtIn(.memory)
+        case .database: return .builtIn(.database)
         }
     }
+}
 
-    var helperText: String {
+/// One Abilities sub-tab: Overview, Tools, Subagents, Sandbox, or a plugin.
+/// The list is built per agent, so `allCases` is empty and callers pass it.
+private struct AbilitiesPage: AnimatedTabItem {
+    let tab: AgentTab
+    let title: String
+
+    static var allCases: [AbilitiesPage] { [] }
+}
+
+extension AgentDatabaseSection: AnimatedTabItem {
+    var title: String {
         switch self {
-        case .configure: return L("Identity, model, and behavior overrides.")
-        case .abilities:
-            return L(
-                "Everything this agent can do. Context impact updates as you turn abilities on or off."
-            )
-        case .capabilities:
-            return L("Pick which tools this agent can use. Skills come from the shared library and are always available.")
-        case .subagents:
-            return L(
-                "Let this agent delegate work — control your Mac, delegate tasks to other agents or models, or generate images."
-            )
-        case .customization: return L("Avatar, empty state, and visual theme.")
-        case .network: return L("Remote access, the workspaces this agent is shared with, and its guests.")
-        case .connections:
-            return L("Guests who can reach this agent — usage and revocation.")
-        case .channels:
-            return L(
-                "The channels this agent is on. Edit who answers and who may post under Channels."
-            )
-        case .sandbox: return L("Sandboxed code execution.")
-        case .automation: return L("Automations that run this agent on their own — schedules, folders, webhooks and channel messages.")
-        case .memory: return L("Conversation history, pinned facts, and episode summaries.")
-        case .database:
-            return L("Everything this agent stores — browse tables, saved views, and history.")
+        case .overview: return L("Overview")
+        case .tables: return L("Tables")
+        case .savedViews: return L("Saved Views")
+        case .history: return L("History")
         }
     }
 }
@@ -1293,7 +1303,7 @@ struct AgentDetailView: View {
         // `activity`) resolve to the Database tab plus a workspace section.
         let resolved = initialTab.flatMap(DetailTab.fromDeeplink)
         _selectedTab = State(initialValue: .builtIn(resolved?.tab ?? .configure))
-        _pendingDatabaseSection = State(initialValue: resolved?.dbSection)
+        _databaseSection = State(initialValue: resolved?.dbSection ?? .overview)
     }
 
     // MARK: - Editable State
@@ -1542,10 +1552,8 @@ struct AgentDetailView: View {
     /// Drives the Save as Template sheet from the share menu.
     @State private var showingSaveTemplateSheet: Bool = false
 
-    /// Local UI state: which tabs the user has dropped into the "Advanced" disclosure
-    /// of the Configure tab. Persists only for the lifetime of this view (intentional —
-    /// the disclosure defaults to collapsed each time the agent is opened so the
-    /// primary settings always greet the user first).
+    /// Whether General's Advanced Settings disclosure is open. Collapsed each
+    /// time the agent opens, so the primary settings greet the user first.
     @State private var showAdvancedSettings: Bool = false
 
     // MARK: - UI State
@@ -1566,7 +1574,7 @@ struct AgentDetailView: View {
     /// the deep-link raw tab value (legacy `home` / `schema` / `data` /
     /// `views` / `activity` map to sections). Cleared once the user
     /// navigates away so manual re-entry lands on the default section.
-    @State private var pendingDatabaseSection: AgentDatabaseSection? = nil
+    @State private var databaseSection: AgentDatabaseSection = .overview
     @State private var saveIndicator: String?
     @State private var saveDebounceTask: Task<Void, Never>?
     @State private var showDeleteConfirm = false
@@ -1698,7 +1706,7 @@ struct AgentDetailView: View {
                 agentId: agent.id,
                 isEnabled: dbEnabled,
                 isRemoteProvider: isUsingRemoteProvider,
-                initialSection: pendingDatabaseSection,
+                section: $databaseSection,
                 initialTableName: pendingFocusedTableName,
                 initialViewName: pendingFocusedViewName,
                 isBundleBusy: isBundleBusy,
@@ -1901,7 +1909,7 @@ struct AgentDetailView: View {
             {
                 pendingFocusedViewName = info["viewRef"] as? String
                 pendingFocusedTableName = info["tableRef"] as? String
-                pendingDatabaseSection = resolved.dbSection
+                databaseSection = resolved.dbSection ?? .overview
                 selectedTab = .builtIn(resolved.tab)
             }
         }
@@ -1914,7 +1922,7 @@ struct AgentDetailView: View {
             if newValue != .builtIn(.database) {
                 pendingFocusedViewName = nil
                 pendingFocusedTableName = nil
-                pendingDatabaseSection = nil
+                databaseSection = .overview
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
@@ -2085,23 +2093,25 @@ struct AgentDetailView: View {
 
     // MARK: - Detail Header Bar
 
-    /// Compact identity bar: back, avatar + name + optional description, actions.
-    /// Tapping the identity block opens the agent switcher popover; editing the
-    /// name / description happens inside the Configure tab's Identity section.
+    /// Avatar (click to change it), name with the agent switcher beside it,
+    /// description, actions, then the page tabs. Abilities adds its own
+    /// sub-tabs and the context estimate under the tabs.
     private var detailHeaderBar: some View {
-        let parent = pageParent
-        return SettingsPageHeader(
-            title: parent == nil ? (name.isEmpty ? L("Untitled Agent") : name) : pageTitle(for: selectedTab),
+        SettingsPageHeader(
+            title: name.isEmpty ? L("Untitled Agent") : name,
             verbatimTitle: true,
-            subtitle: parent == nil && !description.isEmpty ? description : nil,
+            subtitle: description.isEmpty ? nil : description,
             verbatimSubtitle: true,
+            subtitleLineLimit: 1,
+            titleAccessory: AnyView(agentSwitcherButton),
             leading: {
-                AgentHeaderAvatar(mascotId: avatar, name: name, tint: agentColor) {
-                    showingAgentSwitcher = true
-                }
-                .popover(isPresented: $showingAgentSwitcher, arrowEdge: .bottom) {
-                    agentSwitcherPopover
-                }
+                AgentAvatarEditButton(
+                    name: name,
+                    tint: agentColor,
+                    mascotId: avatar,
+                    customImageURL: currentAgent.customAvatarURL,
+                    actions: avatarActions
+                )
             },
             status: {
                 if let indicator = saveIndicator {
@@ -2117,23 +2127,25 @@ struct AgentDetailView: View {
             },
             overflow: {
                 Button(role: .destructive, action: { requestDelete() }) {
-                    Label(L("Delete"), systemImage: "trash")
+                    Label(L("Delete Agent…"), systemImage: "trash")
                 }
             },
             toolbar: {
-                if parent != nil, isAbilitiesGroupSelected {
-                    AgentAbilityContextPreviewBar(
-                        preview: abilityContextPreview,
-                        delta: abilityContextDelta,
-                        enabledCount: abilityFlagValues.filter { $0 }.count,
-                        totalCount: abilityFlagValues.count
+                VStack(alignment: .leading, spacing: theme.space.s12) {
+                    SettingsTabsRow(
+                        selection: pageTabBinding,
+                        counts: pageTabCounts,
+                        badges: agentFailedPlugins.isEmpty ? nil : [.abilities: agentFailedPlugins.count]
                     )
+                    if isAbilitiesGroupSelected {
+                        abilitiesSubTabs
+                    } else if selectedTab == .builtIn(.database), dbEnabled {
+                        databaseSubTabs
+                    }
                 }
             }
         )
-        .settingsBackDestination(parent.map { pageTitle(for: $0) } ?? L("Agents"), verbatim: true) {
-            if let parent { selectedTab = parent } else { onBack() }
-        }
+        .settingsBackDestination(L("Agents"), verbatim: true) { onBack() }
         .themedAlert(
             L("Agent is shared"),
             isPresented: $showDeleteBlockedByShare,
@@ -2192,50 +2204,91 @@ struct AgentDetailView: View {
         .environment(\.theme, themeManager.currentTheme)
     }
 
-    // MARK: - Tab Bar
+    // MARK: - Tabs
 
-    private func tabBadgeCount(for tab: AgentTab) -> Int? {
-        switch tab {
-        case .builtIn(let dt):
-            switch dt {
-            case .configure, .abilities, .capabilities, .subagents, .customization, .network,
-                .connections, .channels, .sandbox, .database:
-                return nil
-            case .automation:
-                let count = linkedEvents.count
-                return count > 0 ? count : nil
-            case .memory:
-                let count = chatSessions.count
-                return count > 0 ? count : nil
-            }
-        case .plugin:
-            return nil
-        case .failedPlugin:
-            // Suppress the badge so the warning icon (set in the strip)
-            // is the only visual signal for the failed state — adding
-            // a count on top would compete for attention.
-            return nil
+    private var agentSwitcherButton: some View {
+        SettingsIconButton("chevron.down", help: "Switch Agent", size: .compact) {
+            showingAgentSwitcher = true
+        }
+        .popover(isPresented: $showingAgentSwitcher, arrowEdge: .bottom) {
+            agentSwitcherPopover
         }
     }
 
-    /// Where the back bar on a sub-page returns to: Tools, Subagents,
-    /// Sandbox and plugins sit under Abilities; every other page sits under
-    /// the agent's main page (Configure). `nil` on the main page.
-    private var pageParent: AgentTab? {
-        switch selectedTab {
-        case .builtIn(.configure):
-            return nil
-        case .builtIn(.capabilities), .builtIn(.subagents), .builtIn(.sandbox), .plugin, .failedPlugin:
-            return .builtIn(.abilities)
-        case .builtIn:
-            return .builtIn(.configure)
+    private var pageTabBinding: Binding<AgentPageTab> {
+        Binding(
+            get: { AgentPageTab(selectedTab) },
+            set: { tab in
+                guard AgentPageTab(selectedTab) != tab else { return }
+                selectedTab = tab.root
+            }
+        )
+    }
+
+    /// Automations and chats, hidden at zero.
+    private var pageTabCounts: [AgentPageTab: Int] {
+        var counts: [AgentPageTab: Int] = [:]
+        if !linkedEvents.isEmpty { counts[.automations] = linkedEvents.count }
+        if !chatSessions.isEmpty { counts[.memory] = chatSessions.count }
+        return counts
+    }
+
+    private var abilitiesPages: [AbilitiesPage] {
+        let builtIn: [DetailTab] = [.abilities, .capabilities, .subagents, .sandbox]
+        return builtIn.map { AbilitiesPage(tab: .builtIn($0), title: $0.label) }
+            + agentPlugins.map { AbilitiesPage(tab: .plugin($0.plugin.id), title: pageTitle(for: .plugin($0.plugin.id))) }
+            + agentFailedPlugins.map {
+                AbilitiesPage(tab: .failedPlugin($0.pluginId), title: pageTitle(for: .failedPlugin($0.pluginId)))
+            }
+    }
+
+    private var abilitiesPageBinding: Binding<AbilitiesPage> {
+        let pages = abilitiesPages
+        return Binding(
+            get: { pages.first { $0.tab == selectedTab } ?? pages[0] },
+            set: { selectedTab = $0.tab }
+        )
+    }
+
+    /// Overview, Tools, Subagents, Sandbox and this agent's plugins, with the
+    /// context estimate every Abilities page shares.
+    private var abilitiesSubTabs: some View {
+        let pages = abilitiesPages
+        let failed = pages.filter { if case .failedPlugin = $0.tab { return true } else { return false } }
+        return HStack(spacing: theme.settingsInlineGap) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                AnimatedTabSelector(
+                    selection: abilitiesPageBinding,
+                    tabs: pages,
+                    badges: Dictionary(uniqueKeysWithValues: failed.map { ($0, 1) })
+                )
+                .fixedSize()
+            }
+            AgentAbilityContextPreviewBar(
+                preview: abilityContextPreview,
+                delta: abilityContextDelta,
+                enabledCount: abilityFlagValues.filter { $0 }.count,
+                totalCount: abilityFlagValues.count
+            )
+            .fixedSize()
+        }
+    }
+
+    /// Overview, Tables, Saved Views and History, with the workspace-wide
+    /// storage and write-activity status.
+    private var databaseSubTabs: some View {
+        HStack(spacing: theme.settingsInlineGap) {
+            AnimatedTabSelector(selection: $databaseSection, tabs: AgentDatabaseSection.allCases)
+                .fixedSize()
+            Spacer(minLength: theme.space.s8)
+            StorageQuotaBadge(agentId: agent.id, theme: theme)
+            MutationsInFlightIndicator(agentId: agent.id, theme: theme)
         }
     }
 
     private func pageTitle(for tab: AgentTab) -> String {
         switch tab {
-        case .builtIn(.configure): return currentAgent.name
-        case .builtIn(let detail): return detail.pageTitle
+        case .builtIn(let detail): return detail.label
         case .plugin(let pid):
             return agentPlugins.first { $0.plugin.id == pid }?.plugin.manifest.name ?? pid
         case .failedPlugin(let pid):
@@ -2243,106 +2296,25 @@ struct AgentDetailView: View {
         }
     }
 
-    private func navigationRow(_ tab: AgentTab, subtitle: String? = nil) -> some View {
-        let icon: String
-        let help: String
-        var isWarning = false
-        switch tab {
-        case .builtIn(let detail):
-            icon = detail.icon
-            help = detail.helperText
-        case .plugin:
-            icon = "puzzlepiece.extension"
-            help = L("Settings this plugin adds for this agent.")
-        case .failedPlugin:
-            icon = "exclamationmark.triangle.fill"
-            help = L("This plugin failed to load. Open for details and Retry.")
-            isWarning = true
-        }
-        return SettingsNavigationRow(
-            icon: icon,
-            title: pageTitle(for: tab),
-            subtitle: subtitle ?? help,
-            badge: tabBadgeCount(for: tab),
-            badgeHighlight: isWarning
-        ) {
-            withAnimation(theme.motion.quick) { selectedTab = tab }
-        }
-    }
-
-    /// The rows that close the agent's main page: one per sub-page.
-    private var mainPageNavigationRows: some View {
-        VStack(alignment: .leading, spacing: theme.space.s8) {
-            SettingsSectionHeader(title: "More Settings")
-            SettingsGroup {
-                navigationRow(
-                    .builtIn(.abilities),
-                    subtitle: agentFailedPlugins.isEmpty
-                        ? nil : L("A plugin for this agent failed to load.")
-                )
-                navigationRow(.builtIn(.customization))
-                navigationRow(.builtIn(.network))
-                navigationRow(.builtIn(.automation))
-                navigationRow(.builtIn(.memory))
-                navigationRow(.builtIn(.database))
-            }
-        }
-    }
-
-    /// Tools, Subagents, Sandbox and this agent's plugins, under Abilities.
-    private var abilitiesSubpageRows: some View {
-        VStack(alignment: .leading, spacing: theme.space.s8) {
-            SettingsSectionHeader(title: "Configure")
-            SettingsGroup {
-                navigationRow(.builtIn(.capabilities))
-                navigationRow(.builtIn(.subagents))
-                navigationRow(.builtIn(.sandbox))
-                ForEach(agentPlugins, id: \.plugin.id) { loaded in
-                    navigationRow(.plugin(loaded.plugin.id))
-                }
-                ForEach(agentFailedPlugins, id: \.pluginId) { failed in
-                    navigationRow(.failedPlugin(failed.pluginId))
-                }
-            }
-        }
-    }
-
-    private func tabHelperText(_ text: String) -> some View {
-        HStack(spacing: theme.space.s6) {
-            Image(systemName: "info.circle")
-                .glyphSize(.micro)
-                .foregroundColor(theme.text.tertiary)
-            Text(text)
-                .font(SettingsFont.caption)
-                .foregroundColor(theme.text.tertiary)
-        }
-        .padding(.bottom, theme.space.s4)
+    /// Saves avatar choices from the header and the Identity card.
+    private var avatarActions: AgentAvatarActions {
+        AgentAvatarActions(
+            upload: { presentCustomAvatarPicker() },
+            removeImage: { removeCustomAvatar() },
+            pick: { pickAvatar($0) }
+        )
     }
 
     // MARK: - Tab Content
 
-    /// Configure tab content. The Capabilities, Customization, and Network
-    /// tabs handle their own concerns now, so this tab leads with the three
-    /// fields that DEFINE an agent and tucks the rarely-touched knobs behind
-    /// the Advanced disclosure.
-    ///
-    ///   PRIMARY: Identity, Model, System Prompt, Voice.
-    ///   ADVANCED: Generation overrides (Temperature, Max Tokens) and the
-    ///   Disable Tools / Disable Memory toggles.
+    /// General: who the agent is, what it runs on, how it behaves, then the
+    /// rarely touched overrides and the destructive actions.
     @ViewBuilder
     private var configureTabContent: some View {
-        tabHelperText(DetailTab.configure.helperText)
-        // Ordered by how often each is touched from the chat menu: model
-        // right after identity, voice further down.
         identitySection
-        runtimeSection
-        switch selectedHarness {
-        case nil:
-            defaultModelSection
-        case .resolved(let runtime) where runtime.kind == .claudeCode:
+        modelSection
+        if case .resolved(let runtime) = selectedHarness, runtime.kind == .claudeCode {
             claudeCodeSection
-        case .resolved, .missing:
-            EmptyView()
         }
         systemPromptSection
         voiceSection
@@ -2351,17 +2323,13 @@ struct AgentDetailView: View {
         if agent.id != Agent.defaultId {
             followUpSection
         }
-        // The schedule-mode picker is configuration for the self-scheduling
-        // feature, so it only appears once that capability is switched on
-        // (the master toggle lives in Abilities → Overview). With it off
-        // the agent has no scheduler tools, so the bounds picker would be
-        // dead UI.
+        // The schedule-mode picker configures self-scheduling, so it appears
+        // once that ability is on (Abilities → Overview).
         if agent.id != Agent.defaultId, selfSchedulingEnabled {
             scheduleSection
         }
         advancedSettingsDisclosure
-        mainPageNavigationRows
-        deleteAllDataSection
+        dangerZoneSection
     }
 
     /// Routed by `selectedTab` from the body. Capabilities is rendered
@@ -2417,93 +2385,70 @@ struct AgentDetailView: View {
         return generated.isEmpty ? nil : generated
     }
 
-    /// Editable identity card — name, description, and "Created" footer. Lives at
-    /// the top of the Configure tab now that the title bar's avatar/dropdown is
-    /// dedicated to switching between agents.
+    /// Avatar beside the name and description. The avatar opens the same
+    /// choices as the header avatar.
     private var identitySection: some View {
         SettingsSection(title: "editor.section.identity") {
-            VStack(alignment: .leading, spacing: theme.space.s10) {
-                SettingsTextField(
-                    placeholder: L("e.g., Code Assistant"),
-                    text: $name,
-                    icon: "textformat"
-                )
-
-                SettingsTextField(
-                    placeholder: generatedDescriptionPlaceholder ?? L("Brief description (optional)"),
-                    text: $description,
-                    icon: "text.alignleft"
-                )
-                .accessibilityIdentifier("agent.description")
-                .settingsLandingAnchor("agents.description")
-                if generatedDescriptionPlaceholder != nil {
-                    Text("Auto-generated from the system prompt; type to override.", bundle: .module)
-                        .font(SettingsFont.rowDescription)
+            HStack(alignment: .top, spacing: theme.space.s20) {
+                VStack(spacing: theme.space.s8) {
+                    AgentAvatarEditButton(
+                        name: name,
+                        tint: agentColor,
+                        mascotId: avatar,
+                        customImageURL: currentAgent.customAvatarURL,
+                        actions: avatarActions,
+                        diameter: 72,
+                        anchorId: "agents.avatar"
+                    )
+                    .accessibilityIdentifier("agent.avatar")
+                    Text("Avatar", bundle: .module)
+                        .font(SettingsFont.footnote)
                         .foregroundColor(theme.text.tertiary)
                 }
+                .padding(.top, theme.space.s4)
 
-                HStack(spacing: theme.space.s6) {
-                    Image(systemName: "calendar")
-                        .glyphSize(.tiny, weight: .medium)
-                        .foregroundColor(theme.text.tertiary)
+                VStack(alignment: .leading, spacing: theme.space.s12) {
+                    SettingsFieldRow(label: "Name") {
+                        SettingsTextField(placeholder: L("e.g., Code Assistant"), text: $name)
+                    }
+                    SettingsFieldRow(
+                        label: "Description",
+                        hint: generatedDescriptionPlaceholder != nil
+                            ? "Auto-generated from the system prompt; type to override." : nil
+                    ) {
+                        SettingsTextField(
+                            placeholder: generatedDescriptionPlaceholder ?? L("Brief description (optional)"),
+                            text: $description
+                        )
+                        .accessibilityIdentifier("agent.description")
+                        .settingsLandingAnchor("agents.description")
+                    }
                     Text(
                         "Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))",
                         bundle: .module
                     )
-                    .font(SettingsFont.chip)
+                    .font(SettingsFont.footnote)
                     .foregroundColor(theme.text.tertiary)
                 }
-                .padding(.top, theme.space.s2)
             }
             .onChange(of: name) { debouncedSave() }
             .onChange(of: description) { debouncedSave() }
         }
     }
 
+    /// One card: the header row, then each control as a row of the same
+    /// group, so expanding grows the card in place.
     private var advancedSettingsDisclosure: some View {
-        VStack(alignment: .leading, spacing: theme.space.s12) {
-            Button {
-                withAnimation(theme.motion.quick) {
-                    showAdvancedSettings.toggle()
-                }
-            } label: {
-                HStack(spacing: theme.space.s10) {
-                    Image(systemName: "chevron.right")
-                        .glyphSize(.micro, weight: .semibold)
-                        .foregroundColor(theme.text.tertiary)
-                        .rotationEffect(.degrees(showAdvancedSettings ? 90 : 0))
-
-                    Image(systemName: "wrench.adjustable")
-                        .glyphSize(.footnote, weight: .semibold)
-                        .foregroundColor(theme.text.secondary)
-
-                    Text("Advanced Settings", bundle: .module)
-                        .font(SettingsFont.compactLabel)
-                        .foregroundColor(theme.text.primary)
-
-                    Text(advancedSummary)
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
-
-                    Spacer()
-                }
-                .padding(.horizontal, theme.space.s12)
-                .padding(.vertical, theme.space.s12)
-                .settingsChrome(.surface)
-                .contentShape(Rectangle())
+        SettingsAdvancedDisclosure(
+            title: "Advanced Settings",
+            summary: advancedSummary,
+            isExpanded: $showAdvancedSettings
+        ) {
+            if agent.id != Agent.defaultId {
+                AgentResponseMetricsToggle(isOn: $showResponseMetrics)
+                    .onChange(of: showResponseMetrics) { debouncedSave() }
             }
-            .buttonStyle(.plain)
-
-            if showAdvancedSettings {
-                VStack(alignment: .leading, spacing: theme.space.s16) {
-                    generationOverridesSection
-                    if agent.id != Agent.defaultId {
-                        AgentResponseMetricsToggle(isOn: $showResponseMetrics)
-                            .onChange(of: showResponseMetrics) { debouncedSave() }
-                    }
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+            generationOverridesSection
         }
     }
 
@@ -2522,134 +2467,65 @@ struct AgentDetailView: View {
 
     @ViewBuilder
     private var customizationTabContent: some View {
-        tabHelperText(DetailTab.customization.helperText)
         avatarSection
         emptyStateSection
+        actionBarSection
     }
 
-    /// Customization → Empty State. Provides user-authored Greeting, Message,
-    /// and Action Bar controls.
+    /// Appearance → Empty State: the greeting and message a new chat shows.
     private var emptyStateSection: some View {
-        SettingsSection(title: "Empty State") {
-            manualEmptyStateBody
-                .onChange(of: chatGreetingDraft) { debouncedSave() }
-                .onChange(of: chatSubtitleDraft) { debouncedSave() }
-        }
-    }
-
-    /// Manual side: Greeting / Message / Action Bar. The Action Bar's
-    /// own group header (icon + label + Default/Custom badge + enable
-    /// toggle, rendered by `quickActionsModeGroup`) is the only header
-    /// — we no longer wrap it in an outer "Action Bar" Text since
-    /// there's just one quick-actions block now that work mode is gone.
-    private var manualEmptyStateBody: some View {
-        VStack(alignment: .leading, spacing: theme.space.s12) {
-            VStack(alignment: .leading, spacing: theme.space.s6) {
-                Text("Greeting", bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
-                SettingsTextField(
-                    placeholder: L("Welcome back, friend"),
-                    text: $chatGreetingDraft,
-                    icon: "text.cursor"
-                )
+        SettingsSection(
+            title: "Empty State",
+            subtitle: "What a new chat with this agent shows before the first message."
+        ) {
+            SettingsFieldRow(label: "Greeting") {
+                SettingsTextField(placeholder: L("Welcome back, friend"), text: $chatGreetingDraft)
             }
-
-            VStack(alignment: .leading, spacing: theme.space.s6) {
-                Text("Message", bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
-                SettingsTextField(
-                    placeholder: L("How can I help today?"),
-                    text: $chatSubtitleDraft,
-                    icon: "text.cursor"
-                )
+            SettingsFieldRow(label: "Message") {
+                SettingsTextField(placeholder: L("How can I help today?"), text: $chatSubtitleDraft)
             }
-
-            actionBarBlock
         }
+        .onChange(of: chatGreetingDraft) { debouncedSave() }
+        .onChange(of: chatSubtitleDraft) { debouncedSave() }
     }
 
     private var avatarSection: some View {
-        SettingsSection(title: "Avatar") {
-            VStack(alignment: .leading, spacing: theme.space.s12) {
-                HStack(spacing: theme.space.s10) {
-                    if currentAgent.customAvatarURL != nil {
-                        customAvatarPreview
-                    }
-                    customAvatarUploadButton
-                    avatarOption(mascotId: nil)
-                    ForEach(AgentMascot.allCases) { mascot in
-                        avatarOption(mascotId: mascot.id)
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                Text("Upload a custom image, pick a mascot, or fall back to the agent's first letter.", bundle: .module)
-                    .font(SettingsFont.rowDescription)
-                    .foregroundColor(theme.text.tertiary)
+        SettingsSection(
+            title: "Avatar",
+            subtitle: "Shown in chats, the sidebar and the agent list."
+        ) {
+            HStack(alignment: .center, spacing: theme.space.s20) {
+                AgentAvatarView(
+                    mascotId: avatar,
+                    name: name,
+                    tint: agentColor,
+                    diameter: 72,
+                    customImageURL: currentAgent.customAvatarURL,
+                    monogramFontSize: 30,
+                    borderWidth: theme.stroke.default,
+                    followsLibrarySize: false
+                )
+                .animation(theme.motion.springAnimation, value: avatar)
+                AgentAvatarChoices(
+                    name: name,
+                    tint: agentColor,
+                    mascotId: avatar,
+                    customImageURL: currentAgent.customAvatarURL,
+                    actions: avatarActions
+                )
+                Spacer(minLength: 0)
             }
         }
-    }
-
-    /// Square tile rendering the live custom avatar; tap clears it.
-    private var customAvatarPreview: some View {
-        Button {
-            agentManager.clearCustomAvatar(for: agent.id)
-            if let url = currentAgent.customAvatarURL {
-                AvatarImageCache.shared.invalidate(url: url)
-            }
-        } label: {
-            AgentAvatarView(
-                mascotId: nil,
-                name: name,
-                tint: agentColor,
-                diameter: 40,
-                customImageURL: currentAgent.customAvatarURL,
-                monogramFontSize: 16,
-                borderWidth: 1.5
-            )
-            .overlay(
-                Circle()
-                    .strokeBorder(theme.action.primary.default.background, lineWidth: theme.stroke.focus)
-                    .padding(-3)
-            )
-            .overlay(alignment: .topTrailing) {
-                Image(systemName: "xmark.circle.fill")
-                    .glyphSize(.body, weight: .semibold)
-                    .foregroundColor(theme.text.secondary)
-                    .background(Circle().fill(theme.surface.canvas))
-                    .offset(x: 4, y: -4)
-            }
-        }
-        .buttonStyle(.plain)
-        .localizedHelp("Remove custom avatar")
-    }
-
-    /// "Upload…" tile: opens an NSOpenPanel and writes the selected image
-    /// (downscaled to 256×256 PNG) as this agent's custom avatar.
-    private var customAvatarUploadButton: some View {
-        Button(action: presentCustomAvatarPicker) {
-            ZStack {
-                Circle()
-                    .fill(theme.surface.subtle)
-                Circle()
-                    .strokeBorder(theme.border.strong, style: StrokeStyle(lineWidth: theme.stroke.default, dash: [3, 3]))
-                Image(systemName: "photo.badge.plus")
-                    .glyphSize(.body, weight: .semibold)
-                    .foregroundColor(theme.text.secondary)
-            }
-            .frame(width: 40, height: 40)
-        }
-        .buttonStyle(.plain)
-        .localizedHelp("Upload custom image")
     }
 
     @MainActor
     private func presentCustomAvatarPicker() {
         Task { @MainActor in
             guard let pngData = await AvatarImageImport.choosePNG() else { return }
-            agentManager.setCustomAvatar(pngData, ext: "png", for: agent.id)
+            guard agentManager.setCustomAvatar(pngData, ext: "png", for: agent.id) else { return }
+            // The store clears the dino when an image is set; match it so the
+            // next save doesn't write the old dino back.
+            avatar = nil
             // Bust the cache for this agent's avatar URL so the new bytes show
             // up immediately in inline chat + sidebar without an mtime race.
             if let updated = agentManager.agent(for: agent.id), let newURL = updated.customAvatarURL {
@@ -2658,36 +2534,22 @@ struct AgentDetailView: View {
         }
     }
 
-    private func avatarOption(mascotId: String?) -> some View {
-        let isSelected = avatar == mascotId
-        return Button {
-            avatar = mascotId
-            saveAgent()
-        } label: {
-            AgentAvatarView(
-                mascotId: mascotId,
-                name: name,
-                tint: agentColor,
-                diameter: 40,
-                monogramFontSize: 16,
-                borderWidth: 1.5
-            )
-            .overlay(
-                Circle()
-                    .strokeBorder(
-                        isSelected ? theme.action.primary.default.background : Color.clear,
-                        lineWidth: theme.stroke.focus
-                    )
-                    .padding(-3)
-            )
-        }
-        .buttonStyle(.plain)
-        .help(Text(mascotId.map { "Mascot: \($0)" } ?? "Initial", bundle: .module))
+    private func removeCustomAvatar() {
+        let url = currentAgent.customAvatarURL
+        agentManager.clearCustomAvatar(for: agent.id)
+        if let url { AvatarImageCache.shared.invalidate(url: url) }
+    }
+
+    /// A dino or the monogram. An uploaded image wins over both, so picking
+    /// one removes the image.
+    private func pickAvatar(_ mascotId: String?) {
+        if currentAgent.customAvatarURL != nil { removeCustomAvatar() }
+        avatar = mascotId
+        saveAgent()
     }
 
     @ViewBuilder
     private var networkTabContent: some View {
-        tabHelperText(DetailTab.network.helperText)
         if currentAgent.agentAddress != nil, currentAgent.agentIndex != nil {
             RemoteAccessSection(agentId: agent.id)
         }
@@ -2774,7 +2636,6 @@ struct AgentDetailView: View {
 
     @ViewBuilder
     private var sandboxTabContent: some View {
-        tabHelperText(DetailTab.sandbox.helperText)
         // Execution permissions (master switch + plugin creation, network,
         // background processes, secret reads). The master switch is also
         // surfaced as the Code Execution card on Abilities → Overview,
@@ -2782,19 +2643,40 @@ struct AgentDetailView: View {
         if agent.id != Agent.defaultId {
             SettingsSection(
                 title: "Execution",
-                subtitle: "What the agent may do inside the sandbox."
+                subtitle: "What the agent may do inside the sandbox.",
+                footer: sandboxExecFooter
             ) {
-                VStack(alignment: .leading, spacing: theme.space.s12) {
-                    sandboxExecSubsection
-                }
+                sandboxExecSubsection
             }
         }
         sandboxSection
+        if SandboxManager.State.shared.availability.isAvailable {
+            AgentKeysSection(agentId: agent.id)
+        }
+    }
+
+    /// State that applies to every Execution row, so it reads once under
+    /// the group instead of between rows.
+    private var sandboxExecFooter: String? {
+        let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
+        let sandboxRunning = SandboxManager.State.shared.status == .running
+        let execOn = (abilityPreviewAutonomousConfig ?? agentManager.effectiveAutonomousExec(for: agent.id))?.enabled == true
+        var parts: [String] = []
+        if !sandboxAvailable {
+            parts.append(L("Sandboxed execution is unavailable on this device."))
+        } else if !sandboxRunning {
+            parts.append(L("Changes will apply when the sandbox starts."))
+        }
+        if execOn {
+            parts.append(
+                L("While on, chats ignore their working folder. Picking a folder in a chat or project turns the sandbox off again.")
+            )
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
     @ViewBuilder
     private var automationTabContent: some View {
-        tabHelperText(DetailTab.automation.helperText)
         eventsSection
         recentTasksSection
     }
@@ -2816,7 +2698,6 @@ struct AgentDetailView: View {
     /// platform → Routing / Sending).
     @ViewBuilder
     private var channelsTabContent: some View {
-        tabHelperText(DetailTab.channels.helperText)
         onChannelsSection
     }
 
@@ -2834,7 +2715,6 @@ struct AgentDetailView: View {
 
     @ViewBuilder
     private var memoryTabContent: some View {
-        tabHelperText(DetailTab.memory.helperText)
         historySection
         pinnedFactsSection
         episodesSection
@@ -2858,48 +2738,51 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Primary "what model does this agent use?" picker. Lives at the top of the
-    /// Configure tab next to System Prompt and Capabilities — the three things users
-    /// reach for most. Temperature / Max Tokens overrides moved into the Advanced
-    /// disclosure below.
-    private var defaultModelSection: some View {
+    /// What runs the agent, then (on the built-in runtime) its model and
+    /// whether chats may switch it.
+    private var modelSection: some View {
         let isLocked = currentAgent.modelLocked == true
         let hasModel = selectedModel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         return SettingsSection(title: "Model") {
-            if isLocked && hasModel {
-                StatusChip(L("Locked"), icon: "lock.fill")
+            SettingsButton(.tertiary, "Manage Runtimes", icon: "arrow.right", size: .compact) {
+                ManagementStateManager.shared.selectedTab = .agentRuntimes
             }
         } content: {
-            ModelSearchablePicker(
-                items: pickerItems,
-                selection: Binding(
-                    get: { selectedModel },
-                    set: { newModel in
-                        selectedModel = newModel
-                        agentManager.updateDefaultModel(for: agent.id, model: newModel)
-                        showSaveIndicator()
-                    }
-                ),
-                noneTitle: L("Default (from global settings)")
-            )
+            runtimeRow
 
-            if !currentAgent.isBuiltIn {
-                SettingsToggle(
-                    title: "Lock Model",
-                    description: "Chats with this agent always use this model and hide the model picker.",
-                    anchorId: "agents.model.locked",
-                    isOn: Binding(
-                        get: { isLocked },
-                        set: { locked in
-                            agentManager.updateModelLocked(for: agent.id, locked: locked)
+            if selectedHarness == nil {
+                ModelSearchablePicker(
+                    items: pickerItems,
+                    selection: Binding(
+                        get: { selectedModel },
+                        set: { newModel in
+                            selectedModel = newModel
+                            agentManager.updateDefaultModel(for: agent.id, model: newModel)
                             showSaveIndicator()
                         }
-                    )
+                    ),
+                    noneTitle: L("Default (from global settings)")
                 )
-                .accessibilityIdentifier("agent.modelLocked")
-                .disabled(!isLocked && !hasModel)
+
+                if !currentAgent.isBuiltIn {
+                    SettingsToggle(
+                        title: "Lock Model",
+                        description: "Chats with this agent always use this model and hide the model picker.",
+                        anchorId: "agents.model.locked",
+                        isOn: Binding(
+                            get: { isLocked },
+                            set: { locked in
+                                agentManager.updateModelLocked(for: agent.id, locked: locked)
+                                showSaveIndicator()
+                            }
+                        )
+                    )
+                    .accessibilityIdentifier("agent.modelLocked")
+                    .disabled(!isLocked && !hasModel)
+                }
             }
         }
+        .onAppear { harnessRuntimeStore.loadIfNeeded() }
     }
 
     private var claudeCodeSection: some View {
@@ -2921,39 +2804,30 @@ struct AgentDetailView: View {
         return .missing(id)
     }
 
-    private var runtimeSection: some View {
-        SettingsSection(title: "Runtime") {
-            VStack(alignment: .leading, spacing: theme.space.s12) {
-                SettingsRow(title: "Runs on", description: "", anchorId: "agents.runtime") {
-                    SettingsMenuPicker(
-                        selection: Binding(
-                            get: { agentRuntime },
-                            set: { runtime in
-                                agentRuntime = runtime
-                                agentManager.updateRuntime(runtime, for: agent.id)
-                                showSaveIndicator()
-                            }
-                        )
-                    ) {
-                        Text("Osaurus (built-in)", bundle: .module).tag(AgentRuntime.builtIn)
-                        ForEach(harnessRuntimeStore.runtimes) { runtime in
-                            Text(verbatim: runtime.displayName).tag(AgentRuntime.harness(runtime.id))
-                        }
-                        if case .missing(let id) = selectedHarness {
-                            Text("Missing runtime", bundle: .module).tag(AgentRuntime.harness(id))
-                        }
+    private var runtimeRow: some View {
+        SettingsRow(title: "Runs on", anchorId: "agents.runtime") {
+            runtimeExplanation
+        } trailing: {
+            SettingsMenuPicker(
+                selection: Binding(
+                    get: { agentRuntime },
+                    set: { runtime in
+                        agentRuntime = runtime
+                        agentManager.updateRuntime(runtime, for: agent.id)
+                        showSaveIndicator()
                     }
-                    .accessibilityLabel(Text("Runs on", bundle: .module))
+                )
+            ) {
+                Text("Osaurus (built-in)", bundle: .module).tag(AgentRuntime.builtIn)
+                ForEach(harnessRuntimeStore.runtimes) { runtime in
+                    Text(verbatim: runtime.displayName).tag(AgentRuntime.harness(runtime.id))
                 }
-
-                runtimeExplanation
-
-                SettingsButton(.tertiary, "Manage Runtimes", icon: "arrow.right", size: .compact) {
-                    ManagementStateManager.shared.selectedTab = .agentRuntimes
+                if case .missing(let id) = selectedHarness {
+                    Text("Missing runtime", bundle: .module).tag(AgentRuntime.harness(id))
                 }
             }
+            .accessibilityLabel(Text("Runs on", bundle: .module))
         }
-        .onAppear { harnessRuntimeStore.loadIfNeeded() }
     }
 
     @ViewBuilder
@@ -3136,11 +3010,10 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Power-user generation overrides. Tucked inside the Advanced disclosure so
-    /// the Configure tab leads with model + capabilities + system prompt for the
-    /// 90% case.
+    /// Power-user generation overrides, inside General's Advanced disclosure.
     private var generationOverridesSection: some View {
-        SettingsSection(title: "Generation Overrides") {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            SettingsSectionHeader(title: "Generation Overrides")
             if agentRuntime != .builtIn {
                 Text(
                     "These generation defaults apply to Osaurus (built-in). The selected external runtime owns its generation settings.",
@@ -3194,8 +3067,6 @@ struct AgentDetailView: View {
     /// Database, Sandbox) for detailed configuration.
     @ViewBuilder
     private var abilitiesTabContent: some View {
-        tabHelperText(DetailTab.abilities.helperText)
-        abilitiesSubpageRows
         AgentAbilitiesOverviewView {
             abilityCards
         }
@@ -3601,7 +3472,16 @@ struct AgentDetailView: View {
                 .settingsLandingAnchor("agents.redactionTools")
             }
 
-            SettingsSection(title: "Memory & Recall", subtitle: "Active lookups into the agent's memory.") {
+            SettingsSection(title: "Information", subtitle: "What the agent can look up and keep.") {
+                SettingsAbilityRow(
+                    title: "Web Search",
+                    description:
+                        "Let the agent search the web through your search providers. Works out of the box with built-in sources; configure providers in Settings → Web Search.",
+                    icon: "globe",
+                    isOn: toolBackedSaveBinding($webSearchEnabled),
+                    pausedNote: toolsPausedNote,
+                    onPausedNoteTap: flashToolsToggle
+                )
                 SettingsAbilityRow(
                     title: "Memory Recall",
                     description:
@@ -3611,12 +3491,6 @@ struct AgentDetailView: View {
                     pausedNote: toolsPausedNote,
                     onPausedNoteTap: flashToolsToggle
                 )
-            }
-
-            SettingsSection(
-                title: "Knowledge",
-                subtitle: "Curated reference material the agent can consult on demand."
-            ) {
                 SettingsAbilityRow(
                     title: "Knowledge",
                     description:
@@ -3645,41 +3519,6 @@ struct AgentDetailView: View {
                         }
                     }
                 }
-            }
-            // The Curator toggle is gone. It gated `propose_knowledge_update`,
-            // which asked for consent twice and could never tell the agent
-            // whether its own work had landed. Writing follows the collection
-            // grant above, and each write is approved with a diff at call
-            // time. `knowledgeCuratorEnabled` remains on the model only so
-            // existing agent JSON still decodes; nothing reads it.
-
-            SettingsSection(title: "Web", subtitle: "Live information from the internet.") {
-                SettingsAbilityRow(
-                    title: "Web Search",
-                    description:
-                        "Let the agent search the web through your search providers. Works out of the box with built-in sources; configure providers in Settings → Web Search.",
-                    icon: "globe",
-                    isOn: toolBackedSaveBinding($webSearchEnabled),
-                    pausedNote: toolsPausedNote,
-                    onPausedNoteTap: flashToolsToggle
-                )
-            }
-
-            SettingsSection(title: "Autonomy", subtitle: "Let the agent act between your messages.") {
-                SettingsAbilityRow(
-                    title: "Self-scheduling",
-                    description:
-                        "Let the agent schedule its own follow-up runs and send you notifications. Run frequency and limits are under Scheduling on this agent's main page.",
-                    icon: "calendar.badge.clock",
-                    isOn: toolBackedSaveBinding($selfSchedulingEnabled),
-                    pausedNote: toolsPausedNote,
-                    onPausedNoteTap: flashToolsToggle,
-                    configureLabel: "Automations",
-                    onConfigure: { selectedTab = .builtIn(.automation) }
-                )
-            }
-
-            SettingsSection(title: "Data", subtitle: "Durable storage for this agent.") {
                 SettingsAbilityRow(
                     title: "Database",
                     description:
@@ -3702,8 +3541,25 @@ struct AgentDetailView: View {
                     }
                 }
             }
+            // The Curator toggle is gone. It gated `propose_knowledge_update`,
+            // which asked for consent twice and could never tell the agent
+            // whether its own work had landed. Writing follows the collection
+            // grant above, and each write is approved with a diff at call
+            // time. `knowledgeCuratorEnabled` remains on the model only so
+            // existing agent JSON still decodes; nothing reads it.
 
-            SettingsSection(title: "Code Execution", subtitle: "Run code and commands in an isolated sandbox.") {
+            SettingsSection(title: "Autonomy", subtitle: "Let the agent act between your messages and run code.") {
+                SettingsAbilityRow(
+                    title: "Self-scheduling",
+                    description:
+                        "Let the agent schedule its own follow-up runs and send you notifications. Run frequency and limits are under Scheduling on this agent's General tab.",
+                    icon: "calendar.badge.clock",
+                    isOn: toolBackedSaveBinding($selfSchedulingEnabled),
+                    pausedNote: toolsPausedNote,
+                    onPausedNoteTap: flashToolsToggle,
+                    configureLabel: "Automations",
+                    onConfigure: { selectedTab = .builtIn(.automation) }
+                )
                 codeExecutionAbilityCard
             }
 
@@ -3712,7 +3568,7 @@ struct AgentDetailView: View {
                 subtitle:
                     "The one macOS folder this agent works inside. Remembered from the chat Folder chip or set here.",
                 footer:
-                    "Voice output is set under Voice on this agent's main page; the greeting text and personality are in Appearance → Empty State."
+                    "Voice output is set under Voice on this agent's General tab; the greeting text and personality are in Appearance → Empty State."
             ) {
                 SettingsAbilityRow(
                     title: "Working Folder",
@@ -4126,8 +3982,9 @@ struct AgentDetailView: View {
     /// the copy lives here in the view layer.
     private struct PerAgentFeature {
         let flag: SubagentCapability.PerAgentFlag
-        let title: LocalizedStringKey
-        let subtitle: LocalizedStringKey
+        let title: String
+        let subtitle: String
+        let icon: String
     }
 
     /// The per-agent capability cards to render in the Subagents tab, derived
@@ -4143,42 +4000,48 @@ struct AgentDetailView: View {
                     flag: .computerUse,
                     title: "Computer Use",
                     subtitle:
-                        "Let the agent control macOS apps for you — clicking, typing, and reading the screen. Reads and navigation run automatically; edits and anything consequential pause for your approval."
+                        "Let the agent control macOS apps for you — clicking, typing, and reading the screen. Reads and navigation run automatically; edits and anything consequential pause for your approval.",
+                    icon: "cursorarrow.rays"
                 )
             case .spawn:
                 return PerAgentFeature(
                     flag: .spawn,
                     title: "Delegate to subagents",
                     subtitle:
-                        "Let this agent delegate a bounded task to an agent or model you allow below. The subagent runs it and returns only the result."
+                        "Let this agent delegate a bounded task to an agent or model you allow below. The subagent runs it and returns only the result.",
+                    icon: "arrow.triangle.branch"
                 )
             case .image:
                 return PerAgentFeature(
                     flag: .image,
                     title: "Image",
                     subtitle:
-                        "Let the agent generate images with a configured local or hosted model, and edit with a local model."
+                        "Let the agent generate images with a configured local or hosted model, and edit with a local model.",
+                    icon: "photo"
                 )
             case .video:
                 return PerAgentFeature(
                     flag: .video,
                     title: "Video",
                     subtitle:
-                        "Let the agent generate local or cloud text-to-video and image-to-video jobs. Cloud jobs require a price quote."
+                        "Let the agent generate local or cloud text-to-video and image-to-video jobs. Cloud jobs require a price quote.",
+                    icon: "film"
                 )
             case .appleScript:
                 return PerAgentFeature(
                     flag: .appleScript,
                     title: "AppleScript",
                     subtitle:
-                        "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below."
+                        "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below.",
+                    icon: "applescript"
                 )
             case .browserUse:
                 return PerAgentFeature(
                     flag: .browserUse,
                     title: "Browser Use",
                     subtitle:
-                        "Let the agent browse the web in its own persistent browser session — sign-ins stick around between chats. Reads and navigation run automatically; typing and anything consequential pause for your approval."
+                        "Let the agent browse the web in its own persistent browser session — sign-ins stick around between chats. Reads and navigation run automatically; typing and anything consequential pause for your approval.",
+                    icon: "safari"
                 )
             }
         }
@@ -4282,130 +4145,64 @@ struct AgentDetailView: View {
 
     // MARK: - Subagents tab
 
-    /// The Subagents tab: one card per per-agent capability (Computer Use,
-    /// spawn, image), each with its full config (model / targets / permission /
-    /// budgets) revealed inline when the toggle is on. Every card binds to this
-    /// agent's `AgentSettings` (custom agents only — the built-in Default agent
-    /// has no detail view).
+    /// The Subagents tab: one ability row per per-agent capability, the same
+    /// row the Overview uses, with its readiness and full config (model /
+    /// targets / permission / budgets) under it while it is on. Every row
+    /// binds to this agent's `AgentSettings` (custom agents only — the
+    /// built-in Default agent has no detail view).
     @ViewBuilder
     private var subagentsTabContent: some View {
-        tabHelperText(DetailTab.subagents.helperText)
         SettingsSection(
             title: "Subagents",
             caption:
                 "\(callableSubagentCount) \(L("callable")) · "
-                + "\(configuredSubagentCount) \(L("configured"))"
+                + "\(configuredSubagentCount) \(L("configured"))",
+            subtitle: "Work this agent hands to a dedicated model, app or helper agent."
         ) {
-            VStack(alignment: .leading, spacing: theme.space.s16) {
-                ForEach(perAgentFeatures, id: \.flag) { feature in
-                    let isOn = subagentToggleBinding(feature.flag)
-                    let readiness = subagentReadiness(for: feature.flag)
-                    VStack(alignment: .leading, spacing: theme.space.s6) {
-                        subagentCapabilityCard(
-                            title: feature.title,
-                            subtitle: feature.subtitle,
-                            isOn: isOn,
-                            readiness: readiness
+            ForEach(perAgentFeatures, id: \.flag) { feature in
+                let isOn = subagentToggleBinding(feature.flag)
+                let readiness = subagentReadiness(for: feature.flag)
+                SettingsAbilityRow(
+                    title: feature.title,
+                    description: feature.subtitle,
+                    icon: feature.icon,
+                    isOn: isOn
+                ) {
+                    if readiness.configured, let status = readiness.statusMessage {
+                        StatusChip(
+                            status,
+                            tone: subagentReadinessTone(readiness.state),
+                            icon: readiness.isCallable ? "checkmark.circle.fill" : "info.circle.fill"
                         )
-                        if isOn.wrappedValue {
-                            subagentConfigPanel {
-                                // The standard model-override row is rendered from
-                                // the registry flag (`supportsModelOverride`), so a
-                                // new chat-driven kind gets the picker for free —
-                                // the kind-specific config follows it.
-                                if let capability = SubagentCapabilityRegistry.capability(
-                                    forPerAgentFlag: feature.flag
-                                ), capability.supportsModelOverride, feature.flag != .spawn {
-                                    subagentModelOverrideRow(capability)
-                                    subagentPanelDivider
-                                }
-                                subagentInlineConfig(for: feature.flag)
+                    }
+                    if isOn.wrappedValue {
+                        VStack(alignment: .leading, spacing: theme.space.s12) {
+                            // The standard model-override row is rendered from
+                            // the registry flag (`supportsModelOverride`), so a
+                            // new chat-driven kind gets the picker for free —
+                            // the kind-specific config follows it.
+                            if let capability = SubagentCapabilityRegistry.capability(
+                                forPerAgentFlag: feature.flag
+                            ), capability.supportsModelOverride, feature.flag != .spawn {
+                                subagentModelOverrideRow(capability)
+                                subagentPanelDivider
                             }
+                            subagentInlineConfig(for: feature.flag)
                         }
+                        .padding(.top, theme.space.s4)
                     }
                 }
             }
         }
     }
 
-    /// Capability toggle card for the Subagents tab. Mirrors `featureCard`'s
-    /// chrome so it matches the other toggle rows, but binds directly to the
-    /// per-capability enable binding (which routes the right save) and tints its
-    /// border with the accent color when on, so an active capability is
-    /// scannable at a glance.
-    private func subagentCapabilityCard(
-        title: LocalizedStringKey,
-        subtitle: LocalizedStringKey,
-        isOn: Binding<Bool>,
-        readiness: AgentCapabilityReadiness
-    ) -> some View {
-        HStack(spacing: theme.space.s12) {
-            SettingsRowText(compact: true) {
-                Text(title, bundle: .module)
-            } description: {
-                Text(subtitle, bundle: .module)
-                if readiness.configured, let status = readiness.statusMessage {
-                    HStack(spacing: theme.space.s4) {
-                        Image(systemName: readiness.isCallable ? "checkmark.circle.fill" : "info.circle.fill")
-                            .glyphSize(.tiny, weight: .semibold)
-                        Text(verbatim: status)
-                            .font(SettingsFont.chip)
-                    }
-                    .foregroundColor(subagentReadinessColor(readiness.state))
-                }
-            }
-            Spacer(minLength: 12)
-            Toggle("", isOn: isOn)
-                .settingsSwitch()
-        }
-        .padding(theme.space.s8)
-        .background(
-            roundedSurface(
-                fill: theme.surface.raised,
-                stroke:
-                    isOn.wrappedValue
-                    ? subagentReadinessBorder(readiness.state)
-                    : theme.border.strong
-            )
-        )
-    }
-
-    private func subagentReadinessBorder(_ state: AgentCapabilityReadinessState) -> Color {
+    private func subagentReadinessTone(_ state: AgentCapabilityReadinessState) -> StatusChip.Tone {
         switch state {
-        case .disabled: return theme.border.strong
-        case .active: return theme.status.success.border
-        case .paused, .needsSetup: return theme.status.warning.border
-        case .unavailable: return theme.status.error.border
+        case .disabled: return .neutral
+        case .active: return .success
+        case .paused, .needsSetup: return .warning
+        case .unavailable: return .error
         }
-    }
-
-    private func subagentReadinessColor(_ state: AgentCapabilityReadinessState) -> Color {
-        switch state {
-        case .disabled:
-            return theme.text.tertiary
-        case .active:
-            return theme.status.success.foreground
-        case .paused, .needsSetup:
-            return theme.status.warning.foreground
-        case .unavailable:
-            return theme.status.error.foreground
-        }
-    }
-
-    /// Calm, clearly subordinate container for a capability's expanded settings.
-    /// Sits just under its toggle card, indented, with a quieter background and a
-    /// single hairline border — so the controls read as "settings for this card"
-    /// instead of more top-level cards.
-    private func subagentConfigPanel<Content: View>(
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.s12) {
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(theme.space.s12)
-        .background(roundedSurface(fill: theme.surface.hover, stroke: theme.border.default))
-        .padding(.leading, theme.space.s12)
     }
 
     /// Hairline separator between control clusters inside `subagentConfigPanel`.
@@ -4441,22 +4238,6 @@ struct AgentDetailView: View {
             Spacer(minLength: 12)
             control()
         }
-    }
-
-    /// Rounded fill plus a hairline border — the shared surface chrome for the
-    /// Subagents capability cards, the nested config panel, and the ceiling
-    /// menu button.
-    private func roundedSurface(
-        fill: Color,
-        stroke: Color,
-        cornerRadius: CGFloat = 8
-    ) -> some View {
-        RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(fill)
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(stroke, lineWidth: theme.stroke.default)
-            )
     }
 
     /// The inline config panel revealed under a subagent toggle when it is on.
@@ -4933,9 +4714,6 @@ struct AgentDetailView: View {
     @ViewBuilder
     private func pluginTabContent(for pid: String) -> some View {
         if let loaded = PluginManager.shared.loadedPlugin(for: pid) {
-            let pluginName = loaded.plugin.manifest.name ?? pid
-            tabHelperText(String(format: L("Configure %@ settings for this agent."), pluginName))
-
             if loaded.plugin.manifest.instructions != nil || pluginInstructionsMap[pid] != nil {
                 pluginInstructionsCard(for: loaded)
             }
@@ -5023,15 +4801,10 @@ struct AgentDetailView: View {
     /// directory and secrets — the escape hatch).
     @ViewBuilder
     private func failedPluginTabContent(for pid: String) -> some View {
-        let display = PluginManager.shared.failedPlugins[pid]?.lastKnownManifest?.name ?? pid
         let error =
             PluginManager.shared.loadError(for: pid)
             ?? "The host failed to load this plugin and the underlying error was not captured."
         let installPath = PluginInstallManager.toolsPluginDirectory(pluginId: pid).path
-
-        tabHelperText(
-            String(format: L("\u{201C}%@\u{201D} could not be loaded for this agent."), display)
-        )
 
         SettingsSection(title: "Plugin Failed to Load") {
             VStack(alignment: .leading, spacing: theme.space.s14) {
@@ -5380,37 +5153,35 @@ struct AgentDetailView: View {
 
     // MARK: - Sandbox Tab Sections
 
-    @ViewBuilder
     private var sandboxSection: some View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
         let sandboxRunning = SandboxManager.State.shared.status == .running
 
-        let subtitle: String = {
-            if sandboxRunning { return L("Running") }
-            if sandboxAvailable { return L("Not Running") }
-            return L("Unavailable")
-        }()
+        let status: String
+        let statusTone: StatusChip.Tone
+        let statusDetail: String
+        if sandboxRunning {
+            status = L("Running")
+            statusTone = .success
+            statusDetail = L("This agent's commands run in its own isolated Linux environment.")
+        } else if sandboxAvailable {
+            status = L("Not Running")
+            statusTone = .neutral
+            statusDetail = L(
+                "It starts on its own the first time this agent runs a command, once Autonomous Execution is on above."
+            )
+        } else {
+            status = L("Unavailable")
+            statusTone = .warning
+            statusDetail = L("Sandboxed execution is unavailable on this device. Native plugins continue to work normally.")
+        }
 
-        SettingsSection(title: "Sandbox", caption: subtitle) {
-            VStack(alignment: .leading, spacing: theme.space.s16) {
-                if !sandboxAvailable {
-                    SettingsEmptyState(
-                        inline: "shippingbox",
-                        title: "Sandbox unavailable",
-                        hint: "Sandboxed execution is unavailable on this device. Native plugins continue to work normally."
-                    )
-                } else if !sandboxRunning {
-                    workspaceFolderRow
-                    SettingsEmptyState(
-                        inline: "shippingbox",
-                        title: "Sandbox not running",
-                        hint: "It starts on its own the first time this agent runs a command, once Autonomous Execution is on above."
-                    )
-                    AgentKeysSection(agentId: agent.id)
-                } else {
-                    workspaceFolderRow
-                    AgentKeysSection(agentId: agent.id)
-                }
+        return SettingsSection(title: "Sandbox") {
+            SettingsRow(title: "Status", description: statusDetail, verbatimDescription: true) {
+                StatusChip(status, tone: statusTone, showsDot: true)
+            }
+            if sandboxAvailable {
+                workspaceFolderRow
             }
         }
     }
@@ -5579,8 +5350,6 @@ struct AgentDetailView: View {
         }
 
         if execConfig?.enabled == true {
-            sandboxFolderSuspensionHint
-
             featureCard(
                 title: "Plugin Creation",
                 subtitle: "Let the agent create its own tools as plugins.",
@@ -5591,10 +5360,15 @@ struct AgentDetailView: View {
                 updateAutonomousExec(from: execConfig) { $0.pluginCreate = create }
             }
 
+            // The filtering egress proxy is a vmnet construct — on the
+            // Seatbelt backend a domain allowlist would fail closed to NO
+            // network, so the field is only offered on the VM backend.
+            let offersAllowlist = SandboxBackend.current == .virtualMachine
             featureCard(
                 title: "Sandbox Network",
-                subtitle:
-                    "Let this agent's sandbox commands reach the internet. Applies to this agent only; if the running sandbox has to change, it restarts once running commands finish.",
+                subtitle: offersAllowlist
+                    ? "Let this agent's sandbox commands reach the internet. Applies to this agent only; if the running sandbox has to change, it restarts once running commands finish."
+                    : "Let this agent's sandbox commands reach the internet. Applies to this agent only. Per-domain allowlists require the VM sandbox (macOS 26 or later), so on this device it is all-or-nothing.",
                 isOn: execConfig?.sandboxNetworkEnabled ?? true,
                 interactive: interactive,
                 anchorId: "agents.sandbox.network"
@@ -5602,22 +5376,8 @@ struct AgentDetailView: View {
                 updateAutonomousExec(from: execConfig) { $0.sandboxNetworkEnabled = networkOn }
             }
 
-            if execConfig?.sandboxNetworkEnabled ?? true {
-                // The filtering egress proxy is a vmnet construct — on the
-                // Seatbelt backend a domain allowlist would fail closed to
-                // NO network, so don't offer the field there.
-                if SandboxBackend.current == .virtualMachine {
-                    sandboxAllowedDomainsField(execConfig: execConfig, interactive: interactive)
-                } else {
-                    Text(
-                        "Per-domain network allowlists require the VM sandbox (macOS 26 or later). On this device sandbox network access is all-or-nothing — use the Sandbox Network toggle above.",
-                        bundle: .module
-                    )
-                    .font(SettingsFont.rowDescription)
-                    .foregroundColor(theme.text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, theme.space.s2)
-                }
+            if execConfig?.sandboxNetworkEnabled ?? true, offersAllowlist {
+                sandboxAllowedDomainsField(execConfig: execConfig, interactive: interactive)
             }
 
             featureCard(
@@ -5641,15 +5401,6 @@ struct AgentDetailView: View {
             ) { hostOn in
                 updateAutonomousExec(from: execConfig) { $0.hostServicesEnabled = hostOn }
             }
-
-            Text(
-                "Sandbox execution cannot access a selected Mac folder. Disable Sandbox to resume the writable Trusted Folder.",
-                bundle: .module
-            )
-            .font(SettingsFont.rowDescription)
-            .foregroundColor(theme.text.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.leading, theme.space.s2)
         }
     }
 
@@ -5658,22 +5409,11 @@ struct AgentDetailView: View {
     /// sandbox is unavailable, and otherwise configurable before first
     /// provisioning. The tab gates this on
     /// `isCustomAgent`.
-    @ViewBuilder
     private var sandboxExecSubsection: some View {
-        let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
-        let sandboxRunning = SandboxManager.State.shared.status == .running
-        let execConfig =
-            abilityPreviewAutonomousConfig
-            ?? agentManager.effectiveAutonomousExec(for: agent.id)
-
-        sandboxExecToggles(execConfig: execConfig, interactive: sandboxAvailable)
-        if !sandboxAvailable {
-            sandboxFeatureHint("Sandboxed execution is unavailable on this device.")
-        } else if !sandboxRunning {
-            sandboxFeatureHint(
-                "Changes will apply when the sandbox starts."
-            )
-        }
+        sandboxExecToggles(
+            execConfig: abilityPreviewAutonomousConfig ?? agentManager.effectiveAutonomousExec(for: agent.id),
+            interactive: SandboxManager.State.shared.availability.isAvailable
+        )
     }
 
     /// Egress domain allowlist editor. Empty keeps unrestricted outbound
@@ -5703,7 +5443,6 @@ struct AgentDetailView: View {
                     execConfig?.sandboxAllowedDomains?.joined(separator: ", ") ?? ""
             }
         }
-        .padding(.leading, theme.space.s2)
         .opacity(interactive ? 1 : 0.5)
         .settingsLandingAnchor("agents.sandbox.allowedDomains")
     }
@@ -5757,82 +5496,31 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Single quick-actions block surfaced under Custom in the merged
-    /// Empty State section. Now that work mode is gone, there's only
-    /// one list — `chatQuickActions` — so we label the group "Action
-    /// Bar" rather than "Chat" to match the surrounding section copy.
-    private var actionBarBlock: some View {
-        quickActionsModeGroup(
-            label: L("Action Bar"),
-            icon: "bolt.fill",
-            actions: $chatQuickActions,
-            defaults: AgentQuickAction.defaultChatQuickActions
-        )
-    }
+    /// Appearance → Action Bar: the quick prompts under a new chat's
+    /// composer. `nil` is the defaults, an empty list hides the bar, and
+    /// anything else is the agent's own list.
+    private var actionBarSection: some View {
+        let actions = $chatQuickActions
+        let defaults = AgentQuickAction.defaultChatQuickActions
+        let enabled = chatQuickActions.map { !$0.isEmpty } ?? true
+        let resolved = chatQuickActions ?? defaults
+        let isCustomized = chatQuickActions != nil
 
-    private func quickActionsModeGroup(
-        label: String,
-        icon: String,
-        actions: Binding<[AgentQuickAction]?>,
-        defaults: [AgentQuickAction]
-    ) -> some View {
-        let enabled = actions.wrappedValue == nil || !actions.wrappedValue!.isEmpty
-        let resolved = actions.wrappedValue ?? defaults
-        let isCustomized = actions.wrappedValue != nil
-
-        return VStack(alignment: .leading, spacing: theme.space.s10) {
-            HStack {
-                Image(systemName: icon)
-                    .glyphSize(.footnote, weight: .semibold)
-                    .foregroundColor(theme.text.link)
-                    .frame(width: 16)
-                Text(label)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
-
-                Text(!enabled ? "Hidden" : isCustomized ? "\(resolved.count) custom" : "Default")
-                    .font(SettingsFont.chip)
-                    .foregroundColor(theme.text.tertiary)
-
-                Spacer()
-
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { enabled },
-                        set: { newEnabled in
-                            if newEnabled {
-                                actions.wrappedValue = nil
-                            } else {
-                                actions.wrappedValue = []
-                            }
+        return SettingsSection(
+            title: "Action Bar",
+            caption: !enabled ? L("Hidden") : isCustomized ? L("\(resolved.count) custom") : L("Default"),
+            subtitle: "Quick prompts shown under the composer in a new chat."
+        ) {
+            if enabled {
+                HStack(spacing: theme.space.s8) {
+                    if isCustomized {
+                        SettingsButton(.tertiary, "Reset to Defaults", icon: "arrow.uturn.backward", size: .compact) {
+                            actions.wrappedValue = nil
                             editingQuickActionId = nil
                             debouncedSave()
                         }
-                    )
-                )
-                .settingsSwitch()
-            }
-
-            if enabled {
-                VStack(spacing: theme.space.s0) {
-                    ForEach(Array(resolved.enumerated()), id: \.element.id) { index, action in
-                        if index > 0 {
-                            Divider().background(theme.border.subtle)
-                        }
-                        quickActionRow(
-                            action: action,
-                            index: index,
-                            actions: actions,
-                            isCustomized: isCustomized
-                        )
                     }
-                }
-                .settingsChrome(.control)
-                .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium))
-
-                HStack(spacing: theme.space.s12) {
-                    Button {
+                    SettingsButton(.secondary, "Add Action", icon: "plus", size: .compact) {
                         if actions.wrappedValue == nil {
                             actions.wrappedValue = defaults
                         }
@@ -5840,39 +5528,36 @@ struct AgentDetailView: View {
                         actions.wrappedValue!.append(newAction)
                         editingQuickActionId = newAction.id
                         debouncedSave()
-                    } label: {
-                        HStack(spacing: theme.space.s4) {
-                            Image(systemName: "plus")
-                                .glyphSize(.micro, weight: .semibold)
-                            Text("Add", bundle: .module)
-                                .font(SettingsFont.compactLabel)
-                        }
-                        .foregroundColor(theme.text.link)
                     }
-                    .buttonStyle(PlainButtonStyle())
-
-                    if isCustomized {
-                        Button {
-                            actions.wrappedValue = nil
-                            editingQuickActionId = nil
-                            debouncedSave()
-                        } label: {
-                            HStack(spacing: theme.space.s4) {
-                                Image(systemName: "arrow.uturn.backward")
-                                    .glyphSize(.micro)
-                                Text("Reset to Defaults", bundle: .module)
-                                    .font(SettingsFont.compactLabel)
-                            }
-                            .foregroundColor(theme.text.secondary)
-                        }
-                        .buttonStyle(PlainButtonStyle())
+                }
+            }
+        } content: {
+            SettingsToggle(
+                title: "Show Action Bar",
+                description: isCustomized ? "" : "Showing the default prompts. Add an action to make your own list.",
+                isOn: Binding(
+                    get: { enabled },
+                    set: { newEnabled in
+                        actions.wrappedValue = newEnabled ? nil : []
+                        editingQuickActionId = nil
+                        debouncedSave()
                     }
-
-                    Spacer()
+                )
+            )
+            if enabled {
+                ForEach(Array(resolved.enumerated()), id: \.element.id) { index, action in
+                    quickActionRow(
+                        action: action,
+                        index: index,
+                        actions: actions,
+                        isCustomized: isCustomized
+                    )
                 }
             }
         }
     }
+
+    private static let quickActionTileSize: CGFloat = 26
 
     private func quickActionRow(
         action: AgentQuickAction,
@@ -5881,13 +5566,11 @@ struct AgentDetailView: View {
         isCustomized: Bool
     ) -> some View {
         let isEditing = editingQuickActionId == action.id
+        let count = actions.wrappedValue?.count ?? 0
 
-        return VStack(spacing: theme.space.s0) {
-            HStack(spacing: theme.space.s10) {
-                Image(systemName: action.icon)
-                    .glyphSize(.label, weight: .medium)
-                    .foregroundColor(theme.text.link)
-                    .frame(width: 20)
+        return VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s12) {
+                SettingsIconTile(icon: action.icon.isEmpty ? "star" : action.icon, size: Self.quickActionTileSize)
 
                 SettingsRowText {
                     Text(action.text.isEmpty ? L("Untitled") : action.text)
@@ -5898,50 +5581,27 @@ struct AgentDetailView: View {
                         .lineLimit(1)
                 }
 
-                Spacer()
+                Spacer(minLength: theme.space.s8)
 
                 if isCustomized {
-                    HStack(spacing: theme.space.s4) {
-                        Button {
+                    HStack(spacing: theme.space.s2) {
+                        SettingsIconButton("chevron.up", help: "Move Up", size: .compact) {
+                            moveQuickAction(in: actions, from: index, direction: -1)
+                        }
+                        .disabled(index == 0)
+                        SettingsIconButton("chevron.down", help: "Move Down", size: .compact) {
+                            moveQuickAction(in: actions, from: index, direction: 1)
+                        }
+                        .disabled(index >= count - 1)
+                        SettingsIconButton(isEditing ? "checkmark" : "pencil", help: isEditing ? "Done" : "Edit", size: .compact) {
                             editingQuickActionId = isEditing ? nil : action.id
-                        } label: {
-                            Image(systemName: "pencil")
-                                .glyphSize(.footnote, weight: .medium)
-                                .foregroundColor(isEditing ? theme.text.link : theme.text.tertiary)
-                                .frame(width: 24, height: 24)
                         }
-                        .buttonStyle(PlainButtonStyle())
-
-                        if index > 0 {
-                            Button {
-                                moveQuickAction(in: actions, from: index, direction: -1)
-                            } label: {
-                                Image(systemName: "chevron.up")
-                                    .glyphSize(.micro, weight: .semibold)
-                                    .foregroundColor(theme.text.tertiary)
-                                    .frame(width: 24, height: 24)
-                            }
-                            .buttonStyle(PlainButtonStyle())
+                        SettingsIconButton("trash", help: "Remove", size: .compact, isDestructive: true) {
+                            deleteQuickAction(in: actions, at: index)
                         }
-
-                        if index < (actions.wrappedValue?.count ?? 0) - 1 {
-                            Button {
-                                moveQuickAction(in: actions, from: index, direction: 1)
-                            } label: {
-                                Image(systemName: "chevron.down")
-                                    .glyphSize(.micro, weight: .semibold)
-                                    .foregroundColor(theme.text.tertiary)
-                                    .frame(width: 24, height: 24)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-
-                        SettingsIconButton("xmark", help: "Remove", size: .compact) { deleteQuickAction(in: actions, at: index) }
                     }
                 }
             }
-            .padding(.horizontal, theme.space.s12)
-            .padding(.vertical, theme.space.s8)
             .contentShape(Rectangle())
             .onTapGesture {
                 if isCustomized {
@@ -5951,8 +5611,6 @@ struct AgentDetailView: View {
 
             if isEditing, isCustomized {
                 VStack(spacing: theme.space.s10) {
-                    Divider().background(theme.border.subtle)
-
                     HStack(spacing: theme.space.s10) {
                         SettingsTextField(
                             placeholder: L("SF Symbol name"),
@@ -5974,8 +5632,7 @@ struct AgentDetailView: View {
                         icon: "text.cursor"
                     )
                 }
-                .padding(.horizontal, theme.space.s12)
-                .padding(.bottom, theme.space.s8)
+                .padding(.leading, Self.quickActionTileSize + theme.space.s12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -6024,64 +5681,44 @@ struct AgentDetailView: View {
     private var eventsSection: some View {
         SettingsSection(
             title: "Automations",
-            caption: linkedEvents.isEmpty ? L("None") : "\(linkedEvents.count)"
+            caption: linkedEvents.isEmpty ? nil : "\(linkedEvents.count)",
+            subtitle: "Run this agent on a schedule, when files change, when a webhook is called, or when a channel message arrives."
         ) {
-            VStack(alignment: .leading, spacing: theme.space.s12) {
-                if linkedEvents.isEmpty {
-                    SettingsEmptyState(
-                        inline: "bolt.badge.clock",
-                        title: "No automations yet",
-                        hint: "Run this agent on a schedule, when files change, when a webhook is called, or when a channel message arrives.",
-                        action: SettingsEmptyState.Action(title: L("Add Automation"), icon: "", handler: { eventEditor = EventEditorRequest(initialAgentId: agent.id) })
-                    )
-                } else {
-                    ForEach(linkedEvents) { event in
-                        eventRow(event)
+            HStack(spacing: theme.space.s8) {
+                if !linkedEvents.isEmpty {
+                    SettingsButton(.tertiary, "Manage", size: .compact, help: "Manage in Automations") {
+                        AppDelegate.shared?.showManagementWindow(initialTab: .automations)
                     }
-
-                    HStack(spacing: theme.space.s16) {
-                        Button {
-                            eventEditor = EventEditorRequest(initialAgentId: agent.id)
-                        } label: {
-                            HStack(spacing: theme.space.s4) {
-                                Image(systemName: "plus.circle")
-                                    .glyphSize(.footnote)
-                                Text("Add Automation", bundle: .module)
-                                    .font(SettingsFont.smallLabel)
-                            }
-                            .foregroundColor(theme.text.link)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-
-                        Button {
-                            AppDelegate.shared?.showManagementWindow(initialTab: .automations)
-                        } label: {
-                            Text("Manage in Automations", bundle: .module)
-                                .font(SettingsFont.smallLabel)
-                                .foregroundColor(theme.text.secondary)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
+                }
+                SettingsButton(.secondary, "Add Automation", icon: "plus", size: .compact) {
+                    eventEditor = EventEditorRequest(initialAgentId: agent.id)
+                }
+            }
+        } content: {
+            if linkedEvents.isEmpty {
+                SettingsEmptyState(inline: "bolt.badge.clock", title: "No automations yet")
+            } else {
+                ForEach(linkedEvents) { event in
+                    eventRow(event)
                 }
             }
         }
     }
 
     private func eventRow(_ event: OsaurusEvent) -> some View {
-        HStack(spacing: theme.space.s12) {
-            Image(systemName: EventSourceTemplate.icon(for: event))
-                .glyphSize(.footnote)
-                .foregroundColor(event.isEnabled ? theme.status.success.foreground : theme.text.tertiary)
-                .frame(width: 14)
-
-            SettingsRowText {
-                Text(event.name)
-            } description: {
+        SettingsRow(
+            title: event.name,
+            verbatimTitle: true,
+            leading: {
+                SettingsIconTile(
+                    icon: EventSourceTemplate.icon(for: event),
+                    tint: event.isEnabled ? nil : theme.text.tertiary
+                )
+            },
+            description: {
                 HStack(spacing: theme.space.s8) {
                     Text(event.sourceSummary)
-                        .foregroundColor(theme.text.secondary)
                         .lineLimit(1)
-
                     if let nextRun = event.nextRunDescription {
                         Text("Next: \(nextRun)", bundle: .module)
                     } else if let last = event.lastFiredAt {
@@ -6089,188 +5726,110 @@ struct AgentDetailView: View {
                     }
                 }
             }
-
-            Spacer()
-
+        ) {
             StatusChip(event.isEnabled ? L("Active") : L("Paused"), tone: event.isEnabled ? .success : .neutral)
         }
-        .padding(theme.space.s8)
-        .settingsChrome(.control)
     }
 
     // MARK: - Memory Tab Sections
 
+    private static let historyPreviewLimit = 5
+
     private var historySection: some View {
-        SettingsSection(
+        let count = chatSessions.count
+        return SettingsSection(
             title: "History",
-            subtitle: L("\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s")")
+            caption: count == 0 ? nil : L("\(count) chat\(count == 1 ? "" : "s")"),
+            subtitle: "Recent conversations with this agent. Open one to pick up where you left off.",
+            footer: count > Self.historyPreviewLimit
+                ? L("Showing the \(Self.historyPreviewLimit) most recent of \(count) chats.") : nil
         ) {
-            VStack(alignment: .leading, spacing: theme.space.s16) {
-                VStack(alignment: .leading, spacing: theme.space.s8) {
-                    HStack {
-                        HStack(spacing: theme.space.s6) {
-                            Image(systemName: "bubble.left.and.bubble.right.fill")
-                                .glyphSize(.micro, weight: .medium)
-                                .foregroundColor(theme.text.link)
-                            Text("Recent chats", bundle: .module)
-                                .font(SettingsFont.compactLabel)
-                                .foregroundColor(theme.text.secondary)
-                        }
-                        Spacer()
-                        Button {
-                            ChatWindowManager.shared.createWindow(agentId: agent.id)
-                        } label: {
-                            HStack(spacing: theme.space.s2) {
-                                Image(systemName: "plus")
-                                    .glyphSize(.tiny, weight: .semibold)
-                                Text("New Chat", bundle: .module)
-                                    .font(SettingsFont.chip)
-                            }
-                            .foregroundColor(theme.text.link)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-
-                    if chatSessions.isEmpty {
-                        SettingsEmptyState(
-                            inline: "bubble.left.and.bubble.right.fill",
-                            title: "No chats yet",
-                            hint: "Start a conversation to build this agent's memory — history, pinned facts, and episode summaries all flow from here.",
-                            action: SettingsEmptyState.Action(title: L("New Chat"), icon: "", handler: { ChatWindowManager.shared.createWindow(agentId: agent.id) })
-                        )
-                    } else {
-                        ForEach(chatSessions.prefix(5)) { session in
-                            ClickableHistoryRow {
-                                ChatWindowManager.shared.createWindow(
-                                    agentId: agent.id,
-                                    sessionData: session
-                                )
-                            } content: {
-                                HStack(spacing: theme.space.s10) {
-                                    VStack(alignment: .leading, spacing: theme.space.s2) {
-                                        Text(session.title)
-                                            .font(SettingsFont.compactLabel)
-                                            .foregroundColor(theme.text.primary)
-                                            .lineLimit(1)
-
-                                        Text(session.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                                            .font(SettingsFont.footnote)
-                                            .foregroundColor(theme.text.tertiary)
-                                    }
-                                    Spacer()
-                                    HStack(spacing: theme.space.s4) {
-                                        let turnCount =
-                                            sessionTurnCounts[session.id]
-                                            ?? session.turns.count
-                                        Text(turnCount == 1 ? L("1 turn") : L("\(turnCount) turns"))
-                                            .font(SettingsFont.footnote)
-                                            .foregroundColor(theme.text.tertiary)
-                                        Image(systemName: "arrow.up.right")
-                                            .glyphSize(.tiny, weight: .medium)
-                                            .foregroundColor(theme.text.tertiary)
-                                    }
-                                }
-                            }
-                        }
-                        if chatSessions.count > 5 {
-                            Text("and \(chatSessions.count - 5) more...", bundle: .module)
-                                .font(SettingsFont.rowDescription)
-                                .foregroundColor(theme.text.tertiary)
-                                .padding(.leading, theme.space.s4)
-                        }
-                    }
-                }
-
+            SettingsButton(.secondary, "New Chat", icon: "plus", size: .compact) {
+                ChatWindowManager.shared.createWindow(agentId: agent.id)
             }
+        } content: {
+            if chatSessions.isEmpty {
+                SettingsEmptyState(
+                    inline: "bubble.left.and.bubble.right",
+                    title: "No chats yet",
+                    hint: "Start a conversation to build this agent's memory — history, pinned facts, and episode summaries all flow from here."
+                )
+            } else {
+                ForEach(chatSessions.prefix(Self.historyPreviewLimit)) { session in
+                    historyRow(session)
+                }
+            }
+        }
+    }
+
+    private func historyRow(_ session: ChatSessionData) -> some View {
+        let turnCount = sessionTurnCounts[session.id] ?? session.turns.count
+        return LibraryRow(
+            title: session.title,
+            subtitle: session.updatedAt.formatted(date: .abbreviated, time: .shortened),
+            showsChevron: true,
+            action: { ChatWindowManager.shared.createWindow(agentId: agent.id, sessionData: session) }
+        ) {
+            SettingsIconTile(icon: "bubble.left.and.bubble.right")
+        } trailing: {
+            Text(turnCount == 1 ? L("1 turn") : L("\(turnCount) turns"))
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
         }
     }
 
     private var pinnedFactsSection: some View {
-        SettingsSection(
-            title: "Pinned Facts",
-            caption: pinnedFacts.isEmpty ? L("None") : "\(pinnedFacts.count)"
-        ) {
-            if pinnedFacts.isEmpty {
-                SettingsEmptyState(
-                    inline: "pin.slash",
-                    title: "No pinned facts yet",
-                    hint: "Facts are promoted from session distillations once they accumulate enough salience. Keep chatting and they'll show up here."
-                )
-            } else {
-                PinnedFactsPanel(
-                    facts: pinnedFacts,
-                    onDelete: { factId in
-                        deletePinnedFact(factId)
-                    }
-                )
-            }
+        PinnedFactsSection(facts: pinnedFacts) { factId in
+            deletePinnedFact(factId)
         }
     }
+
+    private static let episodePreviewLimit = 10
 
     private var episodesSection: some View {
         SettingsSection(
             title: "Episodes",
-            caption: episodes.isEmpty ? L("None") : "\(episodes.count)"
+            caption: episodes.isEmpty ? nil : "\(episodes.count)",
+            subtitle: "Short summaries the agent distills after each chat so it can recall past sessions."
         ) {
+            if episodes.count > Self.episodePreviewLimit {
+                SettingsButton(
+                    .tertiary,
+                    showAllSummaries ? L("Show Less") : L("Show All \(episodes.count)"),
+                    size: .compact,
+                    verbatim: true
+                ) {
+                    withAnimation(theme.motion.quick) { showAllSummaries.toggle() }
+                }
+            }
+        } content: {
             if episodes.isEmpty {
-                SettingsEmptyState(
-                    inline: "doc.text.magnifyingglass",
-                    title: "No episodes yet",
-                    hint: "After each chat, the agent distills the conversation into a short summary. Episodes accumulate here so the agent can recall past sessions."
-                )
+                SettingsEmptyState(inline: "doc.text.magnifyingglass", title: "No episodes yet")
             } else {
-                VStack(alignment: .leading, spacing: theme.space.s0) {
-                    let displayed = showAllSummaries ? episodes : Array(episodes.prefix(10))
-
-                    ForEach(Array(displayed.enumerated()), id: \.element.id) { index, episode in
-                        if index > 0 {
-                            ThemeHairlineDivider()
-                        }
-                        EpisodeRow(episode: episode)
-                    }
-
-                    if episodes.count > 10 {
-                        Button {
-                            withAnimation(theme.motion.quick) {
-                                showAllSummaries.toggle()
-                            }
-                        } label: {
-                            Text(showAllSummaries ? "Show Less" : "View All \(episodes.count) Episodes")
-                                .font(SettingsFont.smallLabel)
-                                .foregroundColor(theme.text.link)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .padding(.top, theme.space.s8)
-                    }
+                ForEach(showAllSummaries ? episodes : Array(episodes.prefix(Self.episodePreviewLimit)), id: \.id) { episode in
+                    EpisodeRow(episode: episode)
                 }
             }
         }
     }
 
-    /// Danger-zone card at the end of the General tab. Lets the user wipe the
-    /// agent's accumulated data (chats, facts, episodes) without deleting the
-    /// agent itself, which was previously the only way to start over.
-    private var deleteAllDataSection: some View {
-        SettingsSection(title: "Delete All Data") {
-            Text("Remove this agent's chats and memory. The agent itself stays.", bundle: .module)
-                .font(SettingsFont.rowDescription)
-                .foregroundColor(theme.text.tertiary)
-
-            Button {
+    private var dangerZoneSection: some View {
+        SettingsDestructiveZone {
+            SettingsDestructiveRow(
+                title: "Delete All Data",
+                description: "Remove this agent's chats and memory. The agent itself stays.",
+                actionTitle: "Delete Data…",
+                severity: .warning
+            ) {
                 presentDeleteAllData()
-            } label: {
-                HStack(spacing: theme.space.s6) {
-                    Image(systemName: "trash")
-                        .glyphSize(.footnote, weight: .medium)
-                    Text("Delete Data…", bundle: .module)
-                        .font(SettingsFont.compactLabel)
-                }
-                .foregroundColor(theme.status.error.foreground)
-                .padding(.horizontal, theme.space.s12)
-                .padding(.vertical, theme.space.s8)
-                .settingsChrome(.status(.error))
             }
-            .buttonStyle(PlainButtonStyle())
+            SettingsDestructiveRow(
+                title: "Delete Agent",
+                description: "Remove this agent and any sandbox resources it uses. This can't be undone.",
+                actionTitle: "Delete Agent…"
+            ) {
+                requestDelete()
+            }
         }
     }
 
@@ -6805,75 +6364,36 @@ private struct AgentDetailVoiceSection: View {
 
     var body: some View {
         SettingsSection(title: "Voice") {
-            VStack(alignment: .leading, spacing: theme.space.s12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: theme.space.s2) {
-                        Text("Auto Speak Responses", bundle: .module)
-                            .font(SettingsFont.compactLabel)
-                            .foregroundColor(theme.text.primary)
-                        Text(
-                            voiceAvailable
-                                ? "Read every reply aloud automatically after streaming completes. For on-request only, use the Speak Tool feature instead."
-                                : "Download the voice model in Voice settings to enable.",
-                            bundle: .module
-                        )
-                        .textStyle(.footnote)
-                        .foregroundColor(theme.text.tertiary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: $autoSpeak)
-                        .settingsSwitch()
-                        .disabled(!voiceAvailable)
-                        .onChange(of: autoSpeak) { onSave() }
+            SettingsToggle(
+                title: "Auto Speak Responses",
+                description: voiceAvailable
+                    ? "Read every reply aloud automatically after streaming completes. For on-request only, use the Speak Tool feature instead."
+                    : "Download the voice model in Voice settings to enable.",
+                isOn: $autoSpeak
+            )
+            .disabled(!voiceAvailable)
+            .onChange(of: autoSpeak) { onSave() }
+
+            if !voiceAvailable {
+                SettingsLinkRow(
+                    title: "Voice Model",
+                    icon: "arrow.right",
+                    actionTitle: "Open Voice Settings"
+                ) {
+                    NotificationCenter.default.post(name: .openTTSSettingsRequested, object: nil)
                 }
-                .padding(theme.space.s8)
-                .settingsChrome(.control)
+            }
 
-                if !voiceAvailable {
-                    Button {
-                        NotificationCenter.default.post(
-                            name: .openTTSSettingsRequested,
-                            object: nil
-                        )
-                    } label: {
-                        HStack(spacing: theme.space.s6) {
-                            Image(systemName: "arrow.down.circle")
-                                .glyphSize(.footnote, weight: .semibold)
-                            Text("Open Voice Settings", bundle: .module)
-                                .font(SettingsFont.smallLabel)
+            if autoSpeak && voiceAvailable {
+                SettingsRow(title: "Voice", description: unavailableVoiceHint ?? "", verbatimDescription: true) {
+                    SettingsMenuPicker(selection: $ttsVoice) {
+                        Text("Default (global)", bundle: .module).tag("")
+                        ForEach(agentVoiceOptions, id: \.self) { voice in
+                            Text(verbatim: displayName(for: voice)).tag(voice)
                         }
-                        .foregroundColor(theme.text.link)
                     }
-                    .buttonStyle(.plain)
-                }
-
-                if autoSpeak && voiceAvailable {
-                    HStack {
-                        Text("Voice", bundle: .module)
-                            .font(SettingsFont.caption)
-                            .foregroundColor(theme.text.secondary)
-                        Spacer()
-                        Picker("", selection: $ttsVoice) {
-                            Text("Default (global)", bundle: .module).tag("")
-                            ForEach(agentVoiceOptions, id: \.self) { voice in
-                                Text(displayName(for: voice))
-                                    .tag(voice)
-                            }
-                        }
-                        .assignedPickerPopupPresentation()
-                        .labelsHidden()
-                        .pickerStyle(MenuPickerStyle())
-                        .frame(maxWidth: 200)
-                        .onChange(of: ttsVoice) { onSave() }
-                    }
-                    .padding(theme.space.s8)
-                    .settingsChrome(.control)
-
-                    if let unavailableVoiceHint {
-                        Text(unavailableVoiceHint)
-                            .textStyle(.footnote)
-                            .foregroundColor(theme.text.tertiary)
-                    }
+                    .frame(maxWidth: 220)
+                    .onChange(of: ttsVoice) { onSave() }
                 }
             }
         }
@@ -6941,32 +6461,6 @@ private struct AgentRelayBaseURLProvider<Content: View>: View {
             return nil
         }()
         content(tunnelBaseURL)
-    }
-}
-
-// MARK: - Clickable History Row
-
-private struct ClickableHistoryRow<Content: View>: View {
-    @Environment(\.theme) private var theme
-
-    let action: () -> Void
-    @ViewBuilder let content: () -> Content
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            content()
-                .padding(.horizontal, theme.space.s8)
-                .padding(.vertical, theme.space.s6)
-                .settingsChrome(.hover)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(theme.motion.quick) {
-                isHovered = hovering
-            }
-        }
     }
 }
 

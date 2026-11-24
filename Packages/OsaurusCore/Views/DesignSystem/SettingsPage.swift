@@ -188,6 +188,9 @@ struct SettingsPageHeader<
     let verbatimTitle: Bool
     let subtitle: String?
     let verbatimSubtitle: Bool
+    /// Caps user-written subtitles (an agent's description) so a long one
+    /// can't push the page's content down; the full text shows on hover.
+    let subtitleLineLimit: Int?
     let count: Int?
     /// A small control right after the title (a chip that reopens an explainer).
     let titleAccessory: AnyView?
@@ -214,6 +217,7 @@ struct SettingsPageHeader<
         verbatimTitle: Bool = false,
         subtitle: String? = nil,
         verbatimSubtitle: Bool = false,
+        subtitleLineLimit: Int? = nil,
         count: Int? = nil,
         titleAccessory: AnyView? = nil,
         onRefresh: (() -> Void)? = nil,
@@ -233,6 +237,7 @@ struct SettingsPageHeader<
         self.verbatimTitle = verbatimTitle
         self.subtitle = subtitle
         self.verbatimSubtitle = verbatimSubtitle
+        self.subtitleLineLimit = subtitleLineLimit
         self.count = count
         self.titleAccessory = titleAccessory
         self.onRefresh = onRefresh
@@ -388,7 +393,9 @@ struct SettingsPageHeader<
             }
             .font(SettingsFont.pageSubtitle)
             .foregroundColor(theme.text.secondary)
+            .lineLimit(subtitleLineLimit)
             .fixedSize(horizontal: false, vertical: true)
+            .help(subtitleLineLimit == nil ? "" : subtitle)
         }
     }
 

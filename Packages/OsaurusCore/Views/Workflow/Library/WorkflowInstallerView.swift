@@ -49,7 +49,15 @@ struct WorkflowInstallerView: View {
     @State private var working: WorkflowSetupSubject?
     @State private var report: SetupReport?
     @State private var plan: WorkflowInstallPlan?
+    /// The check the plan was made from, so the questions a set-aside
+    /// download brings back stay put while the person answers them.
+    @State private var planReport: SetupReport?
     @State private var included: Set<String> = []
+    /// Slots whose suggested model the person won't download: they pick
+    /// another model in the Models question.
+    @State private var choosingSlots: Set<String> = []
+    /// Slots left for after the install, which then reads Needs setup.
+    @State private var skippedSlots: Set<String> = []
     @State private var freeBytes: Int64?
     @State private var screen: Screen = .preparing
     @State private var direction: OnboardingDirection = .forward
@@ -149,7 +157,7 @@ struct WorkflowInstallerView: View {
             .onboardingEntrance(0)
             if chosen.items.isEmpty {
                 Label {
-                    if plan.questionSteps().isEmpty {
+                    if chosen.questionSteps().isEmpty && skippedSlots.isEmpty {
                         Text("Everything it needs is already on this Mac.", bundle: .module)
                     } else {
                         Text("Nothing to download.", bundle: .module)
@@ -170,10 +178,12 @@ struct WorkflowInstallerView: View {
                         items: chosen.items.map {
                             SettingsChecklistItem(id: $0.id, title: $0.title, detail: Self.size($0.sizeBytes), state: .waiting)
                         })
+                    modelDownloadChoices(chosen)
                 }
             }
+            setAsideModels
             VStack(alignment: .leading, spacing: theme.space.s6) {
-                let questions = plan.questionSteps().count
+                let questions = chosen.questionSteps().count
                 if questions > 0 {
                     Text(
                         verbatim: questions == 1
@@ -189,7 +199,96 @@ struct WorkflowInstallerView: View {
                 }
             }
             .onboardingEntrance(chosen.items.count + 2)
-            if !plan.items.isEmpty || !plan.optional.isEmpty { readyDetails(plan) }
+            let trimmed = withoutSetAside(plan)
+            if !trimmed.items.isEmpty || !trimmed.optional.isEmpty { readyDetails(trimmed) }
+        }
+    }
+
+    /// A suggested text model the install would download: the person may
+    /// pick another model instead, or leave the slot for later.
+    @ViewBuilder
+    private func modelDownloadChoices(_ chosen: WorkflowInstallPlan) -> some View {
+        let downloads = chosen.items.filter { item in
+            guard case .chatModel = item.work, !included.contains(item.id) else { return false }
+            return !(chosen.chatSlots[item.id] ?? []).isEmpty
+        }
+        ForEach(downloads) { item in
+            let slots = (chosen.chatSlots[item.id] ?? []).filter { !choosingSlots.contains($0) && !skippedSlots.contains($0) }
+            HStack(spacing: theme.space.s8) {
+                Text(verbatim: downloads.count == 1 ? L("Rather not download it?") : item.title)
+                    .textStyle(.caption)
+                    .foregroundColor(theme.text.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: theme.space.s8)
+                if slots.allSatisfy(canChooseAnother) {
+                    SettingsButton(.tertiary, "Choose Another Model", size: .compact) {
+                        setAside(slots, skipping: false)
+                    }
+                }
+                SettingsButton(.tertiary, "Skip for Now", size: .compact) {
+                    setAside(slots, skipping: true)
+                }
+            }
+        }
+    }
+
+    /// Slots the person took out of the download, each with Undo.
+    @ViewBuilder
+    private var setAsideModels: some View {
+        let slots = (working?.template.requirements.models ?? []).map(\.slot)
+            .filter { choosingSlots.contains($0) || skippedSlots.contains($0) }
+        if !slots.isEmpty {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                ForEach(slots, id: \.self) { slot in
+                    HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
+                        Image(systemName: skippedSlots.contains(slot) ? "clock" : "arrow.triangle.swap")
+                            .glyphSize(.caption, weight: .semibold)
+                            .foregroundColor(theme.text.tertiary)
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
+                            Text(verbatim: slotTitle(slot))
+                                .textStyle(.caption, weight: 600)
+                                .foregroundColor(theme.text.primary)
+                            Text(
+                                verbatim: skippedSlots.contains(slot)
+                                    ? L("Skipped. The workflow reads Needs setup until you choose a model in its setup.")
+                                    : L("You'll choose a model on the next screen.")
+                            )
+                            .textStyle(.caption)
+                            .foregroundColor(theme.text.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: theme.space.s8)
+                        SettingsButton(.tertiary, "Undo", size: .compact) { restoreDownload(slot) }
+                    }
+                }
+            }
+            .padding(theme.space.s12)
+            .settingsChrome(.inset)
+        }
+    }
+
+    /// Shown above the Models question for a slot the person chose to fill
+    /// with a model other than the one the workflow suggests.
+    @ViewBuilder
+    private func otherModelDisclaimer(_ template: Template, asked: [SetupItem]) -> some View {
+        let slots = template.requirements.models.filter { slot in
+            choosingSlots.contains(slot.slot) && asked.contains { $0.kind == .model && $0.value == slot.slot }
+        }
+        ForEach(slots) { slot in
+            let suggested = WorkflowModelChoices.suggested(slot).map(WorkflowModelChoices.displayName) ?? L("its suggested model")
+            SettingsCallout(
+                icon: "exclamationmark.triangle",
+                title: L("This workflow was made for \(suggested)"),
+                message: L(
+                    "Another model can run it, but results may differ from what its author tested, and smaller models may struggle with some steps."
+                ),
+                tone: .warning
+            ) {
+                SettingsButton(.secondary, L("Download \(suggested) Instead"), size: .compact, verbatim: true) {
+                    restoreDownload(slot.slot)
+                    go(.ready)
+                }
+            }
         }
     }
 
@@ -252,6 +351,7 @@ struct WorkflowInstallerView: View {
             }
             switch step {
             case .models:
+                otherModelDisclaimer(working.template, asked: items)
                 WorkflowModelsStep(
                     template: working.template, bindings: working.bindings, items: items,
                     onlySlots: Set(items.filter { $0.kind == .model }.map(\.value)),
@@ -296,15 +396,22 @@ struct WorkflowInstallerView: View {
         }
     }
 
+    /// The install finished with a model slot left for later.
+    private var finishedWithSkippedModel: Bool { !(job?.deferredSlots.isEmpty ?? true) }
+
     private var done: some View {
         VStack(spacing: theme.space.s16) {
             SettingsCompletionMark(size: 64)
-            Text(verbatim: L("\(name) is ready"))
+            Text(verbatim: finishedWithSkippedModel ? L("\(name) is added") : L("\(name) is ready"))
                 .font(SettingsFont.detailTitle)
                 .foregroundColor(theme.text.primary)
                 .multilineTextAlignment(.center)
                 .onboardingEntrance(1, baseDelay: 0.35)
-            Text("It's in Your Workflows whenever you need it.", bundle: .module)
+            Text(
+                verbatim: finishedWithSkippedModel
+                    ? L("It's in Your Workflows. Choose a model in its setup before you run it.")
+                    : L("It's in Your Workflows whenever you need it.")
+            )
                 .textStyle(.body)
                 .foregroundColor(theme.text.secondary)
                 .multilineTextAlignment(.center)
@@ -362,9 +469,13 @@ struct WorkflowInstallerView: View {
                 secondary: .init(label: "Continue in Background", handler: onClose),
                 destructive: .init(label: "Cancel Install", handler: { confirmingCancel = true }))
         case .done:
-            SettingsSheetFooter(
-                primary: .init(label: "Try It", handler: tryIt),
-                secondary: .init(label: "Done", handler: finishDone))
+            if finishedWithSkippedModel {
+                SettingsSheetFooter(primary: .init(label: "Done", handler: finishDone))
+            } else {
+                SettingsSheetFooter(
+                    primary: .init(label: "Try It", handler: tryIt),
+                    secondary: .init(label: "Done", handler: finishDone))
+            }
         case .problem:
             SettingsSheetFooter(
                 primary: .init(label: "Try Again", handler: retry),
@@ -379,6 +490,7 @@ struct WorkflowInstallerView: View {
         guard working == nil else { return }
         if let job {
             working = job.subject
+            skippedSlots = job.deferredSlots
             refresh()
             followJob()
             return
@@ -388,6 +500,7 @@ struct WorkflowInstallerView: View {
         guard let working, let report else { return }
         let built = await WorkflowInstallPlan.live(template: working.template, bindings: working.bindings, report: report)
         freeBytes = WorkflowInstallPlan.liveFreeBytes()
+        planReport = report
         plan = built
         go(skipsReady ? .question(0) : .ready)
     }
@@ -469,8 +582,37 @@ struct WorkflowInstallerView: View {
             return
         }
         guard let plan else { return }
-        coordinator.start(working, items: chosenPlan(plan).items)
+        coordinator.start(working, items: chosenPlan(plan).items, deferring: skippedSlots)
         followJob()
+    }
+
+    // MARK: - Suggested models
+
+    /// A slot locked to its model (`always`) can only wait, not change.
+    private func canChooseAnother(_ slot: String) -> Bool {
+        working?.template.requirements.models.first { $0.slot == slot }?.requiredModel == nil
+    }
+
+    private func slotTitle(_ slot: String) -> String {
+        let steps = WorkflowSummary.slotSteps(slot, in: working?.template.workflow)
+        return steps.isEmpty ? L("Text model") : L("Text model for \(WorkflowSummary.list(steps))")
+    }
+
+    private func setAside(_ slots: [String], skipping: Bool) {
+        withAnimation(theme.motion.quick) {
+            if skipping { skippedSlots.formUnion(slots) } else { choosingSlots.formUnion(slots) }
+            warning = nil
+        }
+    }
+
+    /// Puts the suggested model back in the download and drops any other
+    /// model picked for the slot meanwhile.
+    private func restoreDownload(_ slot: String) {
+        withAnimation(theme.motion.quick) {
+            choosingSlots.remove(slot)
+            skippedSlots.remove(slot)
+        }
+        if working?.bindings.models[slot] != nil { setBindings { $0.models[slot] = nil } }
     }
 
     private func cancelInstall() {
@@ -545,7 +687,10 @@ struct WorkflowInstallerView: View {
     }
 
     private func askedItems(_ step: Step, in report: SetupReport) -> [SetupItem] {
-        step.items(in: report).filter { !covered.contains($0.id) && ($0.isBlocking || $0.isMissingKey) }
+        step.items(in: report).filter {
+            !covered.contains($0.id) && ($0.isBlocking || $0.isMissingKey)
+                && !($0.kind == .model && skippedSlots.contains($0.value))
+        }
     }
 
     /// The steps with something to ask, from the latest check. A step
@@ -553,12 +698,17 @@ struct WorkflowInstallerView: View {
     private var questionSteps: [Step] {
         guard let report else { return [] }
         let order: [Step] = [.models, .secrets, .folders, .apps, .agents, .tools, .dependencies, .permissions]
-        let planned = Set(plan?.questionSteps() ?? [])
+        let planned = Set(plan.map { chosenPlan($0).questionSteps() } ?? [])
         return order.filter { planned.contains($0) || !askedItems($0, in: report).isEmpty }
     }
 
     private func chosenPlan(_ plan: WorkflowInstallPlan) -> WorkflowInstallPlan {
-        included.reduce(plan) { $0.including($1) }
+        withoutSetAside(included.reduce(plan) { $0.including($1) })
+    }
+
+    private func withoutSetAside(_ plan: WorkflowInstallPlan) -> WorkflowInstallPlan {
+        guard let planReport else { return plan }
+        return plan.withoutDownloads(for: choosingSlots, deferring: skippedSlots, report: planReport)
     }
 
     // MARK: - Words

@@ -182,16 +182,7 @@ public final class ManagementBadgeStore: ObservableObject {
     /// task so the recompute itself never blocks the main thread.
     private func recompute() {
         var counts = Self.mainActorCounts(
-            connectedInferenceProviders: {
-                // Paired Osaurus agents hidden from Cloud Models (their owner
-                // shares no models for inference) don't count toward the
-                // Cloud Models badge.
-                let providerManager = RemoteProviderManager.shared
-                return providerManager.configuration.providers.filter {
-                    providerManager.providerStates[$0.id]?.isConnected == true
-                        && providerManager.exposesModelsForInference($0)
-                }.count
-            }(),
+            providers: RemoteProviderManager.shared.userFacingProviders.count,
             tools: ToolRegistry.shared.toolCount,
             skills: SkillManager.shared.skills.count,
             customCommands: SlashCommandRegistry.shared.customCommands.count,
@@ -299,7 +290,7 @@ public final class ManagementBadgeStore: ObservableObject {
     /// user's own items get a badge; status pages (Voice, Images & Video,
     /// Sandbox) do not.
     nonisolated static func mainActorCounts(
-        connectedInferenceProviders: Int,
+        providers: Int,
         tools: Int,
         skills: Int,
         customCommands: Int,
@@ -311,7 +302,7 @@ public final class ManagementBadgeStore: ObservableObject {
         observedChannelCount: Int?
     ) -> [ManagementTab: Int] {
         var counts: [ManagementTab: Int] = [:]
-        counts[.providers] = connectedInferenceProviders
+        counts[.providers] = providers
         counts[.tools] = tools
         counts[.skills] = skills
         counts[.commands] = customCommands

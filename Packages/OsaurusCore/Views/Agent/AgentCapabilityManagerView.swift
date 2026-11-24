@@ -519,11 +519,6 @@ struct AgentCapabilityManagerView: View {
         VStack(spacing: theme.space.s0) {
             stickyHeader
                 .background(theme.surface.canvas)
-                .overlay(
-                    ThemeHairlineDivider()
-                        .opacity(compact ? 0 : 1),
-                    alignment: .bottom
-                )
 
             // Intentionally NO `.id()` on the table: SwiftUI would recreate
             // the underlying NSScrollView on every state change and snap the
@@ -547,7 +542,12 @@ struct AgentCapabilityManagerView: View {
                     emptyState
                 }
             }
-            .background(theme.surface.canvas)
+            // One card, like every `SettingsGroup`; the rows inside are flat
+            // and scroll within it.
+            .clipShape(RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous))
+            .settingsChrome(.surface)
+            .padding(.horizontal, compact ? theme.space.s20 : theme.space.s24)
+            .padding(.bottom, theme.space.s16)
         }
         .onAppear {
             loadFromRegistries()
@@ -570,51 +570,63 @@ struct AgentCapabilityManagerView: View {
 
     private var stickyHeader: some View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
-            // Helper-text row (standalone mode only) — mirrors the info line
-            // every other detail tab leads with; the tab strip already names
-            // the tab, so repeating a "Tools" title here was noise. In
-            // compact mode the host sheet's header supplies the context.
-            if !compact {
-                HStack(spacing: theme.space.s8) {
-                    if onDismiss != nil { doneButton }
-
-                    Image(systemName: "info.circle")
-                        .glyphSize(.micro)
-                        .foregroundColor(theme.text.tertiary)
-                    Text(
-                        "Pick which tools this agent can use. Skills come from the shared library; limit them below.",
-                        bundle: .module
-                    )
-                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
-                    .foregroundColor(theme.text.tertiary)
-
-                    Spacer()
-                    summaryPill
-                }
-            }
-
-            // Compact mode places the Done affordance left of the search field
-            // so it reads as a "back" arrow into the host form, not a trailing
-            // accessory of the input.
+            // The Done affordance leads the search field so it reads as a
+            // "back" arrow into the host form, not an accessory of the input.
             HStack(spacing: theme.space.s8) {
-                if compact, onDismiss != nil { doneButton }
+                if onDismiss != nil { doneButton }
                 searchField
                 if compact { summaryPill }
                 filterChips
             }
 
-            if case .live(let agentId) = source, agentManager.agent(for: agentId)?.isBuiltIn == false {
+            if compact {
+                autoDiscoverToggle
+            } else {
+                toolSettingsGroup
+            }
+        }
+        .padding(.horizontal, compact ? theme.space.s20 : theme.space.s24)
+        .padding(.top, theme.space.s12)
+        .padding(.bottom, theme.space.s16)
+    }
+
+    /// Collapsed by default so the tool list keeps the page's height; the
+    /// summary keeps every setting's state visible while it is closed.
+    private var toolSettingsGroup: some View {
+        SettingsAdvancedDisclosure(
+            title: "Tool Settings",
+            summary: toolSettingsSummary,
+            anchorIds: ["agents.toolApprovals", "agents.toolPolicies", "agents.skills"]
+        ) {
+            if let agentId = liveCustomAgentId {
                 AgentToolApprovalsCard(agentId: agentId)
             }
-
-            autoDiscoverCard
-
+            autoDiscoverToggle
             if case .live(let agentId) = source, agentId != Agent.defaultId {
                 AgentSkillAllowListCard(agentId: agentId)
             }
         }
-        .padding(.horizontal, compact ? theme.space.s20 : theme.space.s24)
-        .padding(.vertical, theme.space.s12)
+    }
+
+    private var liveCustomAgentId: UUID? {
+        guard case .live(let agentId) = source, agentManager.agent(for: agentId)?.isBuiltIn == false else {
+            return nil
+        }
+        return agentId
+    }
+
+    private var toolSettingsSummary: String {
+        var parts: [String] = []
+        if let agentId = liveCustomAgentId, let agent = agentManager.agent(for: agentId) {
+            parts.append(L("Approvals: \(agent.settings.toolApprovalMode.displayName)"))
+        }
+        parts.append(toolMode == .auto ? L("Auto-discover on") : L("Auto-discover off"))
+        if case .live(let agentId) = source, agentId != Agent.defaultId,
+            let agent = agentManager.agent(for: agentId)
+        {
+            parts.append(agent.skillNames.map { L("\($0.count) skills") } ?? L("All skills"))
+        }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -669,43 +681,17 @@ struct AgentCapabilityManagerView: View {
         )
     }
 
-    private var autoDiscoverCard: some View {
-        HStack(spacing: theme.space.s12) {
-            Image(systemName: toolMode == .auto ? "sparkles" : "list.bullet.rectangle")
-                .glyphSize(.label, weight: .semibold)
-                .foregroundColor(toolMode == .auto ? theme.text.link : theme.text.secondary)
-                .frame(width: 26, height: 26)
-                .settingsChrome(toolMode == .auto ? .selected : .inset)
-
-            VStack(alignment: .leading, spacing: theme.space.s2) {
-                Text("Auto-discover relevant tools", bundle: .module)
-                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
-                Text(
-                    toolMode == .auto
-                        ? "The model starts with a small set and loads more of your assigned tools on demand."
-                        : "All assigned tools are sent to the model every turn.",
-                    bundle: .module
-                )
-                .componentInspectionText(48, role: .caption, fallback: .footnote, theme: theme)
-                .foregroundColor(theme.text.tertiary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer()
-
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { toolMode == .auto },
-                    set: { newValue in commit(mode: newValue ? .auto : .manual) }
-                )
+    private var autoDiscoverToggle: some View {
+        SettingsToggle(
+            title: "Auto-discover relevant tools",
+            description: toolMode == .auto
+                ? "The model starts with a small set and loads more of your assigned tools on demand."
+                : "All assigned tools are sent to the model every turn.",
+            isOn: Binding(
+                get: { toolMode == .auto },
+                set: { newValue in commit(mode: newValue ? .auto : .manual) }
             )
-            .settingsSwitch()
-        }
-        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
-        .settingsChrome(.surface)
+        )
     }
 
     private var filterChips: some View {

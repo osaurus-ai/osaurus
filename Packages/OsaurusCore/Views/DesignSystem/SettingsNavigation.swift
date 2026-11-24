@@ -231,6 +231,21 @@ struct SettingsDrillInRows<Item: SettingsDrillInItem>: View {
 
 // MARK: - Advanced Disclosure
 
+private struct SettingsGroupRowWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    /// Width of a row in the enclosing disclosure, measured on its always
+    /// visible header. Lets width-dependent content pick its final layout on
+    /// the first frame it appears instead of reflowing mid-expansion. Zero
+    /// when unknown.
+    var settingsGroupRowWidth: CGFloat {
+        get { self[SettingsGroupRowWidthKey.self] }
+        set { self[SettingsGroupRowWidthKey.self] = newValue }
+    }
+}
+
 /// Collapsed-by-default home for power-user options. Opens automatically
 /// when a settings-search result lands on one of `anchorIds`.
 struct SettingsAdvancedDisclosure<Content: View>: View {
@@ -240,32 +255,50 @@ struct SettingsAdvancedDisclosure<Content: View>: View {
     @Environment(\.settingsLandingPending) private var pendingLanding
 
     let title: String
+    /// Already-localized one-line state beside the title ("Defaults",
+    /// "2 overrides"), so a collapsed group still says what is inside.
+    let summary: String?
     let anchorIds: Set<String>
+    /// Owner-held expansion, for pages that open the group themselves.
+    let externalExpanded: Binding<Bool>?
     @ViewBuilder let content: Content
 
-    @State private var isExpanded = false
+    @State private var localExpanded = false
+    @State private var rowWidth: CGFloat = 0
 
     init(
         title: String = "Advanced",
+        summary: String? = nil,
         anchorIds: Set<String> = [],
+        isExpanded: Binding<Bool>? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
+        self.summary = summary
         self.anchorIds = anchorIds
+        self.externalExpanded = isExpanded
         self.content = content()
+    }
+
+    private var isExpanded: Bool { externalExpanded?.wrappedValue ?? localExpanded }
+
+    private func setExpanded(_ value: Bool) {
+        if let externalExpanded { externalExpanded.wrappedValue = value } else { localExpanded = value }
     }
 
     var body: some View {
         SettingsGroup(assignmentFamily: 15) {
-            Button {
-                withAnimation(theme.motion.quick) {
-                    isExpanded.toggle()
-                }
-            } label: {
+            Button(action: toggleExpansion) {
                 HStack(spacing: theme.catalogLayoutMetric("component.library.15.elements.layout.settingsAdvancedDisclosure.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s10))) {
                     Text(LocalizedStringKey(title), bundle: .module)
                         .assignedTypography("component.library.15.label", fallback: SettingsFont.rowTitle)
                         .foregroundColor(theme.text.primary)
+                    if let summary, !summary.isEmpty {
+                        Text(verbatim: summary)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
+                            .lineLimit(1)
+                    }
                     Spacer(minLength: 0)
                     SettingsChevron()
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
@@ -278,11 +311,13 @@ struct SettingsAdvancedDisclosure<Content: View>: View {
             .pointingHandCursor()
             .accessibilityAddTraits(.isHeader)
             .accessibilityValue(isExpanded ? Text("Expanded", bundle: .module) : Text("Collapsed", bundle: .module))
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = $0 }
 
             if isExpanded {
                 content
             }
         }
+        .environment(\.settingsGroupRowWidth, rowWidth)
         .onAppear { expandIfLanding(pendingLanding) }
         .onChange(of: pendingLanding) { _, id in expandIfLanding(id) }
     }
@@ -290,12 +325,12 @@ struct SettingsAdvancedDisclosure<Content: View>: View {
     private func expandIfLanding(_ id: String?) {
         guard let id, !isExpanded, anchorIds.contains(id) else { return }
         withAnimation(theme.motion.quick) {
-            isExpanded = true
+            setExpanded(true)
         }
     }
 
     private func toggleExpansion() {
-        withAnimation(theme.motion.quick) { isExpanded.toggle() }
+        withAnimation(theme.motion.quick) { setExpanded(!isExpanded) }
     }
 }
 

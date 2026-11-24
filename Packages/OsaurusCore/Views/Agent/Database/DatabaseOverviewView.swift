@@ -34,25 +34,20 @@ struct DatabaseOverviewView: View {
     var body: some View {
         ScrollView {
             SettingsPageContent {
-                summaryStrip
-                if isLoading {
-                    HStack {
-                        SettingsSpinner(size: .large)
-                        Text("Loading…", bundle: .module).catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
-                            .foregroundColor(theme.text.tertiary)
-                    }
-                } else if let error = loadError {
-                    Label {
-                        Text(verbatim: error)
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle")
-                    }
-                    .componentInspectionText(53, role: .caption, fallback: .footnote, theme: theme)
-                    .foregroundColor(theme.status.error.foreground)
-                } else {
-                    pinnedSection
+                storedDataSection
+                if !isLoading, loadError == nil, !(userTables.isEmpty && pinned.isEmpty) {
+                    dashboardSection
                 }
-                manageSection
+                backupSection
+                SettingsDestructiveZone {
+                    SettingsDestructiveRow(
+                        title: "Delete All Data",
+                        description: "Permanently delete every table and row this agent has stored. The agent itself is kept.",
+                        actionTitle: "Delete All Data…"
+                    ) {
+                        onDeleteData()
+                    }
+                }
             }
         }
         .background(theme.surface.canvas)
@@ -64,7 +59,9 @@ struct DatabaseOverviewView: View {
         }
     }
 
-    // MARK: - Summary
+    // MARK: - Stored data
+
+    private static let tablePreviewLimit = 8
 
     private var userTables: [AgentTableSchema] {
         tables.filter { !$0.name.hasPrefix("_") }
@@ -74,87 +71,90 @@ struct DatabaseOverviewView: View {
         userTables.reduce(0) { $0 + $1.rowCount }
     }
 
-    @ViewBuilder
-    private var summaryStrip: some View {
-        HStack(spacing: theme.space.s12) {
-            summaryTile(
-                icon: "tablecells",
-                value: userTables.count.formatted(),
-                label: userTables.count == 1 ? L("table") : L("tables")
-            )
-            summaryTile(
-                icon: "list.bullet.rectangle",
-                value: totalRows.formatted(),
-                label: totalRows == 1 ? L("row") : L("rows")
-            )
-            Button {
-                onOpenSection(.tables)
-            } label: {
-                Label(localized: "Browse tables", systemImage: "arrow.right")
-                    .componentInspectionText(53, role: .caption, fallback: .footnote, weight: 500, theme: theme)
-            }
-            .assignedSettingsButtonStyle(.secondary, size: .compact)
-            .disabled(userTables.isEmpty)
-            Spacer()
-        }
+    private var storedDataCaption: String? {
+        guard !isLoading, loadError == nil, !userTables.isEmpty else { return nil }
+        let tableLabel = userTables.count == 1 ? L("1 table") : L("\(userTables.count) tables")
+        let rowLabel = totalRows == 1 ? L("1 row") : L("\(totalRows.formatted()) rows")
+        return "\(tableLabel) · \(rowLabel)"
     }
 
-    @ViewBuilder
-    private func summaryTile(icon: String, value: String, label: String) -> some View {
-        HStack(spacing: theme.space.s8) {
-            Image(systemName: icon)
-                .glyphSize(.label, weight: .medium)
-                .foregroundColor(theme.text.link)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(theme.status.info.background))
-            VStack(alignment: .leading, spacing: theme.space.s0) {
-                Text(verbatim: value)
-                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.detailTitle)
-                    .foregroundColor(theme.text.primary)
-                Text(verbatim: label)
-                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
-                    .foregroundColor(theme.text.tertiary)
-            }
-        }
-        .padding(.horizontal, theme.space.s12)
-        .padding(.vertical, theme.space.s8)
-        .settingsChrome(.surface)
-        .overlay(RoundedRectangle(cornerRadius: theme.radius.medium).stroke(theme.border.default, lineWidth: theme.stroke.default))
+    private var storedDataFooter: String? {
+        let hidden = userTables.count - Self.tablePreviewLimit
+        guard hidden > 0 else { return nil }
+        return L("\(hidden) more in Tables.")
     }
 
-    // MARK: - Pinned views
-
-    @ViewBuilder
-    private var pinnedSection: some View {
-        if userTables.isEmpty && pinned.isEmpty {
-            SettingsEmptyState(
-                inline: "cylinder.split.1x2",
-                title: "This agent hasn't stored anything yet.",
-                hint: "Ask the agent in chat to remember or track something — it will set up its own tables, and this overview fills in as it works.",
-                action: SettingsEmptyState.Action(title: L("Go to Tables"), icon: "tablecells", handler: { onOpenSection(.tables) })
-            )
-            .frame(maxHeight: .infinity)
-            .frame(minHeight: 200)
-        } else if pinned.isEmpty {
-            VStack(alignment: .leading, spacing: theme.space.s6) {
-                sectionLabel("Dashboard")
-                Text(
-                    "No pinned views yet. Pin a saved view from the Saved Views section to see it here at a glance.",
-                    bundle: .module
-                )
-                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
-                .foregroundColor(theme.text.tertiary)
-                Button {
-                    onOpenSection(.savedViews)
-                } label: {
-                    Label(localized: "Open Saved Views", systemImage: "eye")
-                        .componentInspectionText(53, role: .caption, fallback: .footnote, weight: 500, theme: theme)
+    private var storedDataSection: some View {
+        SettingsSection(
+            title: "Stored Data",
+            caption: storedDataCaption,
+            subtitle: "Tables the agent created to keep notes, lists, and records.",
+            footer: storedDataFooter
+        ) {
+            if !userTables.isEmpty {
+                SettingsButton(.secondary, "Browse Tables", icon: "tablecells", size: .compact) {
+                    onOpenSection(.tables)
                 }
-                .assignedSettingsButtonStyle(.secondary, size: .compact)
+            }
+        } content: {
+            if isLoading {
+                SettingsEmptyState(loading: "Loading…")
+            } else if let error = loadError {
+                SettingsRow(
+                    title: "Couldn't read the database",
+                    description: error,
+                    verbatimDescription: true,
+                    leading: { SettingsIconTile(icon: "exclamationmark.triangle", tint: theme.status.error.foreground) }
+                ) {
+                    SettingsButton(.tertiary, "Retry", size: .compact) { Task { await reload() } }
+                }
+            } else if userTables.isEmpty {
+                SettingsEmptyState(
+                    inline: "cylinder.split.1x2",
+                    title: "Nothing stored yet",
+                    hint: "Ask the agent in chat to remember or track something — it sets up its own tables, and they show up here."
+                )
+            } else {
+                ForEach(userTables.prefix(Self.tablePreviewLimit), id: \.name) { table in
+                    LibraryRow(
+                        title: table.name,
+                        subtitle: table.rowCount == 1 ? L("1 row") : L("\(table.rowCount.formatted()) rows"),
+                        showsChevron: true,
+                        action: { onOpenSection(.tables) }
+                    ) {
+                        SettingsIconTile(icon: "tablecells")
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Dashboard
+
+    @ViewBuilder
+    private var dashboardSection: some View {
+        if pinned.isEmpty {
+            SettingsSection(title: "Dashboard") {
+                SettingsRow(
+                    title: "No pinned views yet",
+                    description: "Pin a saved view to see its latest results here at a glance."
+                ) {
+                    SettingsButton(.secondary, "Open Saved Views", icon: "eye", size: .compact) {
+                        onOpenSection(.savedViews)
+                    }
+                }
             }
         } else {
-            VStack(alignment: .leading, spacing: theme.space.s8) {
-                sectionLabel("Dashboard")
+            SettingsSection(
+                title: "Dashboard",
+                caption: "\(pinned.count)",
+                subtitle: "Saved views you pinned, with their latest results.",
+                layout: .plain
+            ) {
+                SettingsButton(.tertiary, "Saved Views", icon: "eye", size: .compact) {
+                    onOpenSection(.savedViews)
+                }
+            } content: {
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 280, maximum: 600), spacing: theme.space.s16)],
                     spacing: theme.space.s16
@@ -165,13 +165,6 @@ struct DatabaseOverviewView: View {
                 }
             }
         }
-    }
-
-    @ViewBuilder
-    private func sectionLabel(_ text: LocalizedStringKey) -> some View {
-        Text(text, bundle: .module)
-            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
-            .foregroundColor(theme.text.tertiary)
     }
 
     @ViewBuilder
@@ -192,7 +185,6 @@ struct DatabaseOverviewView: View {
         }
         .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
         .settingsChrome(.surface)
-        .overlay(RoundedRectangle(cornerRadius: theme.radius.medium).stroke(theme.border.default, lineWidth: theme.stroke.default))
     }
 
     @ViewBuilder
@@ -270,54 +262,31 @@ struct DatabaseOverviewView: View {
         }
     }
 
-    // MARK: - Manage
+    // MARK: - Backup
 
-    @ViewBuilder
-    private var manageSection: some View {
-        VStack(alignment: .leading, spacing: theme.space.s8) {
-            sectionLabel("Manage")
-            VStack(alignment: .leading, spacing: theme.space.s12) {
-                HStack(spacing: theme.space.s8) {
-                    Button(action: onExportBundle) {
-                        Label(localized: "Export Bundle", systemImage: "shippingbox")
-                            .componentInspectionText(53, role: .caption, fallback: .footnote, weight: 500, theme: theme)
-                    }
-                    .assignedSettingsButtonStyle(.secondary, size: .compact)
-                    .disabled(isBundleBusy)
-                    .localizedHelp(
-                        "Save this agent and its database as an encrypted .osaurus-agent bundle you can back up or move to another Mac."
-                    )
-                    Button(action: onImportBundle) {
-                        Label(localized: "Import Bundle", systemImage: "square.and.arrow.down.on.square")
-                            .componentInspectionText(53, role: .caption, fallback: .footnote, weight: 500, theme: theme)
-                    }
-                    .assignedSettingsButtonStyle(.secondary, size: .compact)
-                    .disabled(isBundleBusy)
-                    .localizedHelp("Restore an agent bundle exported from this or another Mac.")
-                    if isBundleBusy {
-                        SettingsSpinner()
-                    }
-                    Spacer()
-                    Button(role: .destructive, action: onDeleteData) {
-                        Label(localized: "Delete All Data…", systemImage: "trash")
-                            .componentInspectionText(53, role: .caption, fallback: .footnote, weight: 500, theme: theme)
-                    }
-                    .assignedSettingsButtonStyle(.destructive, size: .compact)
-                    .localizedHelp(
-                        "Permanently delete every table and row this agent has stored. The agent itself is kept."
-                    )
-                }
-                Text(
-                    "Bundles include the agent's configuration and its encrypted database, protected by a passphrase you choose.",
-                    bundle: .module
-                )
-                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
-                .foregroundColor(theme.text.tertiary)
+    private var backupSection: some View {
+        SettingsSection(
+            title: "Backup & Transfer",
+            footer: L("Bundles include the agent's configuration and its encrypted database, protected by a passphrase you choose.")
+        ) {
+            if isBundleBusy {
+                SettingsSpinner()
             }
-            .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .settingsChrome(.surface)
-            .overlay(RoundedRectangle(cornerRadius: theme.radius.medium).stroke(theme.border.default, lineWidth: theme.stroke.default))
+        } content: {
+            SettingsRow(
+                title: "Export Bundle",
+                description: "Save this agent and its database as an encrypted .osaurus-agent bundle you can back up or move to another Mac."
+            ) {
+                SettingsButton(.secondary, "Export…", icon: "shippingbox", size: .compact, action: onExportBundle)
+                    .disabled(isBundleBusy)
+            }
+            SettingsRow(
+                title: "Import Bundle",
+                description: "Restore an agent bundle exported from this or another Mac."
+            ) {
+                SettingsButton(.secondary, "Import…", icon: "square.and.arrow.down.on.square", size: .compact, action: onImportBundle)
+                    .disabled(isBundleBusy)
+            }
         }
     }
 

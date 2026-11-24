@@ -23,6 +23,9 @@ struct SettingsCallout<Actions: View>: View {
     /// Someone's own words (a reviewer's note), shown verbatim and set off
     /// below the message.
     var quote: String?
+    /// Adds a close button for a suggestion the user may decline. The caller
+    /// persists the dismissal.
+    var onDismiss: (() -> Void)?
     @ViewBuilder let actions: Actions
 
     init(
@@ -31,6 +34,7 @@ struct SettingsCallout<Actions: View>: View {
         message: String,
         tone: ThemeStatusKind? = nil,
         quote: String? = nil,
+        onDismiss: (() -> Void)? = nil,
         @ViewBuilder actions: () -> Actions = { EmptyView() }
     ) {
         self.icon = icon
@@ -38,6 +42,7 @@ struct SettingsCallout<Actions: View>: View {
         self.message = message
         self.tone = tone
         self.quote = quote
+        self.onDismiss = onDismiss
         self.actions = actions()
     }
 
@@ -83,6 +88,10 @@ struct SettingsCallout<Actions: View>: View {
                 }
             }.catalogLayoutTarget("component.library.18.elements.layout.settingsCallout.body.verticalGap")
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let onDismiss {
+                SettingsIconButton("xmark", help: "Dismiss", size: .compact, action: onDismiss)
+            }
         }.catalogLayoutTarget("component.library.18.elements.layout.settingsCallout.body.horizontalGap")
         .padding(.horizontal, theme.catalogLayoutMetric("component.library.18.elements.layout.settingsCallout.body.padding.horizontal", inheriting: theme.space.s16)).padding(.vertical, theme.catalogLayoutMetric("component.library.18.elements.layout.settingsCallout.body.padding.vertical", inheriting: theme.space.s16)).catalogLayoutTarget("component.library.18.elements.layout.settingsCallout.body.padding.horizontal").catalogLayoutTarget("component.library.18.elements.layout.settingsCallout.body.padding.vertical")
         .assignedBaseChrome(18, fallback: tone.map { .status($0) } ?? .surface)

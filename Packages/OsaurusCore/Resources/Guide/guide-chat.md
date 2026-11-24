@@ -73,7 +73,7 @@ Only one Osaurus app per Mac user can run the sandbox. While another one holds i
 
 ## Agent generation defaults
 
-Set persistent generation overrides under Settings → Agents → the custom agent → General → Configure → Advanced Settings → Generation Overrides. The chat input bar has no Next turn control. These defaults stay specific to the agent. In the built-in runtime, changing Thinking, reasoning effort or speculative decoding in the chat model picker overrides the current conversation and model only. It does not edit the saved agent, shared Server settings or another chat. Reset to default removes that conversation's override and inherits its saved defaults again. Conversation choices survive reopening the chat.
+Set persistent generation overrides under Settings → Agents → the custom agent → General → Advanced Settings → Generation Overrides. The chat input bar has no Next turn control. These defaults stay specific to the agent. In the built-in runtime, changing Thinking, reasoning effort or speculative decoding in the chat model picker overrides the current conversation and model only. It does not edit the saved agent, shared Server settings or another chat. Reset to default removes that conversation's override and inherits its saved defaults again. Conversation choices survive reopening the chat.
 
 Inherit leaves a parameter unset. Explicit request or workflow overrides take priority over the saved agent default. A submitted message captures its defaults for its tool steps, queue and regeneration, including after reopening the chat. Editing the agent affects later submissions.
 
@@ -92,14 +92,14 @@ Template parameters (JSON) passes an object to a supporting model's own chat tem
 
 - Be specific; let the todo list show progress on long tasks.
 - On a custom agent, use a working folder for repo work, the sandbox for scripts and package installs, and neither for plain Q&A. On the Orchestrator, set a working folder when you want delegated work to land somewhere you can see; stay on it for setup, questions, and delegation.
-- Tool approvals are per-tool, and per agent on the agent's Tools tab (**Tool Approvals** and **Per-Tool Policies**). While cards are skipped for the open chat's agent, the composer shows an **Approvals Off** chip; its popover gives the cause, lists what still asks, and has **Turn Back On** (or **Ask for This Agent** when the global Auto-Allow switch is the cause) and **Open Settings**. A tool call that ran without its card says **Ran without asking** on its row, with the reason on hover; MCP tool rows in Insights show the same note.
+- Tool approvals are per-tool, and per agent under **Tool Settings** on the agent's Tools tab (**Tool Approvals** and **Per-Tool Policies**). While cards are skipped for the open chat's agent, the composer shows an **Approvals Off** chip; its popover gives the cause, lists what still asks, and has **Turn Back On** (or **Ask for This Agent** when the global Auto-Allow switch is the cause) and **Open Settings**. A tool call that ran without its card says **Ran without asking** on its row, with the reason on hover; MCP tool rows in Insights show the same note.
 
 
 ## Choosing a model in chat
 
 Open the model pill to browse Provider and Model columns. Installed Local models come first, followed by active Osaurus Cloud models and connected providers. Inactive Local and Osaurus Cloud entries remain available with an Explore action. Local opens model downloads in Settings; Osaurus Cloud opens the Cloud model browser.
 
-An agent with **Lock Model** on shows a fixed lock chip instead of the pill, and `/model` doesn't open the picker. If the locked model or its provider is missing, a warning above the composer says so and nothing sends until you repair it or change the model in Settings… (⌘,) → Agents → *agent* → Configure → Model.
+An agent with **Lock Model** on shows a fixed lock chip instead of the pill, and `/model` doesn't open the picker. If the locked model or its provider is missing, a warning above the composer says so and nothing sends until you repair it or change the model in Settings… (⌘,) → Agents → *agent* → General → Model.
 
 The Cloud shortlist contains favorites plus the current Cloud model. Use the star to add or remove a favorite in either the shortlist or the full browser. More models opens the same Local or Cloud destination.
 
