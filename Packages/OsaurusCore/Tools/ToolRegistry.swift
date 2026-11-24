@@ -143,7 +143,7 @@ private final class ToolBodyRaceState: @unchecked Sendable {
 /// bootstrap schemas and hot-load full ones later.
 enum ToolSpecTokenEstimator {
     static func estimate(name: String, description: String?, parameters: JSONValue?) -> Int {
-        var total = name.count + (description?.count ?? 0)
+        var total = name.utf8.count + (description?.utf8.count ?? 0)
         if let parameters {
             total += estimateJSONSize(parameters)
         }
@@ -154,7 +154,9 @@ enum ToolSpecTokenEstimator {
     }
 
     /// Recursively estimate serialized JSON size without paying to encode
-    /// every tool during every context-budget refresh.
+    /// every tool during every context-budget refresh. Lengths are UTF-8
+    /// bytes: `String.count` segments graphemes, which hung the main thread
+    /// on large schemas during preview recomposes (APPLE-MACOS-2VT).
     private static func estimateJSONSize(_ value: JSONValue) -> Int {
         switch value {
         case .null:
@@ -162,14 +164,14 @@ enum ToolSpecTokenEstimator {
         case .bool(let value):
             return value ? 4 : 5
         case .number(let value):
-            return String(value).count
+            return String(value).utf8.count
         case .string(let value):
-            return value.count + 2
+            return value.utf8.count + 2
         case .array(let array):
             return array.reduce(2) { $0 + estimateJSONSize($1) + 1 }
         case .object(let object):
             return object.reduce(2) { total, pair in
-                total + pair.key.count + 5 + estimateJSONSize(pair.value)
+                total + pair.key.utf8.count + 5 + estimateJSONSize(pair.value)
             }
         }
     }
