@@ -312,33 +312,34 @@ struct AppConfigurationMigrationTests {
     // `modelUnavailable` every turn, and preflight tool selection
     // silently broke. See GitHub issue #823.
 
-    /// Branch the assertion on the running OS's Foundation
-    /// availability so the test passes on both macOS 26+ (Foundation
-    /// available — must NOT clear) and macOS < 26 (must clear). The
-    /// alternative — mocking `FoundationModelService` — would require
-    /// dependency-injecting through a static, which doesn't justify
-    /// its complexity here.
+    /// Availability is passed in (probed off-main by
+    /// `refreshFoundationModelAvailable`), so both branches are covered
+    /// deterministically regardless of the host Mac.
     @Test
     @MainActor
-    func clearUnavailableFoundation_handlesPersistedFoundationName() {
+    func clearUnavailableFoundation_keepsFoundationWhenAvailable() {
         var input = ChatConfiguration.default
         input.coreModelName = "foundation"
         input.coreModelProvider = nil
-        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input)
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input, isAvailable: true)
+        // macOS 26+ with Apple Intelligence: keep the persisted
+        // value; the user's saved Foundation choice is real.
+        #expect(result.coreModelName == "foundation")
+        #expect(result.coreModelProvider == nil)
+    }
 
-        if FoundationModelService.isDefaultModelAvailable() {
-            // macOS 26+ with Apple Intelligence: keep the persisted
-            // value; the user's saved Foundation choice is real.
-            #expect(result.coreModelName == "foundation")
-            #expect(result.coreModelProvider == nil)
-        } else {
-            // macOS < 26 (or Apple Intelligence disabled): clear the
-            // unrunnable persisted value so the chat-model fallback
-            // takes over and the picker stops showing an orphan
-            // entry.
-            #expect(result.coreModelName == nil)
-            #expect(result.coreModelProvider == nil)
-        }
+    @Test
+    @MainActor
+    func clearUnavailableFoundation_clearsFoundationWhenUnavailable() {
+        var input = ChatConfiguration.default
+        input.coreModelName = "foundation"
+        input.coreModelProvider = nil
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input, isAvailable: false)
+        // macOS < 26 (or Apple Intelligence disabled): clear the
+        // unrunnable persisted value so the chat-model fallback
+        // takes over and the picker stops showing an orphan entry.
+        #expect(result.coreModelName == nil)
+        #expect(result.coreModelProvider == nil)
     }
 
     /// Case-insensitive match on the literal default name so a
@@ -347,15 +348,10 @@ struct AppConfigurationMigrationTests {
     @Test
     @MainActor
     func clearUnavailableFoundation_isCaseInsensitive() {
-        guard !FoundationModelService.isDefaultModelAvailable() else {
-            // Only meaningful on macOS where Foundation isn't available;
-            // when it is, the case-insensitive cleanup is a no-op anyway.
-            return
-        }
         var input = ChatConfiguration.default
         input.coreModelName = "Foundation"
         input.coreModelProvider = nil
-        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input)
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input, isAvailable: false)
         #expect(result.coreModelName == nil)
     }
 
@@ -364,11 +360,10 @@ struct AppConfigurationMigrationTests {
     @Test
     @MainActor
     func clearUnavailableFoundation_trimsWhitespace() {
-        guard !FoundationModelService.isDefaultModelAvailable() else { return }
         var input = ChatConfiguration.default
         input.coreModelName = "  foundation  "
         input.coreModelProvider = nil
-        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input)
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input, isAvailable: false)
         #expect(result.coreModelName == nil)
     }
 
@@ -381,7 +376,7 @@ struct AppConfigurationMigrationTests {
         var input = ChatConfiguration.default
         input.coreModelName = "claude-haiku-4-5"
         input.coreModelProvider = "anthropic"
-        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input)
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input, isAvailable: false)
         #expect(result.coreModelName == "claude-haiku-4-5")
         #expect(result.coreModelProvider == "anthropic")
     }
@@ -393,7 +388,7 @@ struct AppConfigurationMigrationTests {
         var input = ChatConfiguration.default
         input.coreModelName = nil
         input.coreModelProvider = nil
-        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input)
+        let result = AppConfiguration.clearUnavailableFoundationCoreModel(input, isAvailable: false)
         #expect(result.coreModelName == nil)
         #expect(result.coreModelProvider == nil)
     }

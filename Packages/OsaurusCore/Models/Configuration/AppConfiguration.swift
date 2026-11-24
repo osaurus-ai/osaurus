@@ -63,11 +63,24 @@ public final class AppConfiguration: ObservableObject {
         Task.detached(priority: .userInitiated) {
             let available = FoundationModelService.isDefaultModelAvailable()
             await MainActor.run {
+                let appConfig = AppConfiguration.shared
+                // Clear a persisted-but-unrunnable "foundation" core model
+                // here, with the availability probed off-main, instead of in
+                // `loadFromDisk` — that runs inside the lazy `shared`
+                // initializer on the main thread, where the FoundationModels
+                // XPC probe caused multi-second app hangs.
+                let cleaned = AppConfiguration.clearUnavailableFoundationCoreModel(
+                    appConfig.chatConfig,
+                    isAvailable: available
+                )
+                if cleaned != appConfig.chatConfig {
+                    appConfig.updateChatConfig(cleaned)
+                }
                 // Only publish a change; the activation observer fires on
                 // every app switch and must not re-render subscribers for
                 // an unchanged value.
-                guard AppConfiguration.shared.foundationModelAvailable != available else { return }
-                AppConfiguration.shared.foundationModelAvailable = available
+                guard appConfig.foundationModelAvailable != available else { return }
+                appConfig.foundationModelAvailable = available
                 NotificationCenter.default.post(name: .foundationModelAvailabilityChanged, object: nil)
             }
         }
@@ -145,16 +158,12 @@ public final class AppConfiguration: ObservableObject {
     ) -> ChatConfiguration {
         var config = initial
 
-        // Run the unavailable-Foundation cleanup unconditionally — it
-        // fires on every cold start for users on macOS < 26 who still
-        // have the historical `"foundation"` default persisted (root
-        // cause for several #823 reports). Idempotent.
-        config = clearUnavailableFoundationCoreModel(config)
-
-        // Order matters: cleanup above can leave `coreModelName` nil,
-        // which then re-enters the legacy memory.json migration so a
-        // legacy install gets a chance to adopt an explicit chat-side
-        // name before backfill takes over.
+        // NOTE: the unavailable-Foundation cleanup (#823) is NOT run here.
+        // It needs `FoundationModelService.isDefaultModelAvailable()`, an
+        // XPC probe that can block for seconds, and this path runs on the
+        // main thread inside the lazy `AppConfiguration.shared` initializer.
+        // `refreshFoundationModelAvailable()` applies it once the off-main
+        // probe completes (every cold start, and on each app activation).
         if chatJsonNeedsLegacyMigration(rawData) {
             config = migrateCoreModelFromMemoryConfig(into: config)
             config = backfillFoundationCoreModelIfMissing(config)
@@ -187,12 +196,15 @@ public final class AppConfiguration: ObservableObject {
     /// instead of preflight silently failing — see GitHub issue #823.
     /// Idempotent: only touches `coreModelName` when it holds the
     /// literal default name AND Foundation isn't usable.
+    /// `isAvailable` must come from a probe made off the main thread (see
+    /// `refreshFoundationModelAvailable`); this function never probes.
     static func clearUnavailableFoundationCoreModel(
-        _ config: ChatConfiguration
+        _ config: ChatConfiguration,
+        isAvailable: Bool
     ) -> ChatConfiguration {
         let trimmed = config.coreModelName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard trimmed.caseInsensitiveCompare(ChatConfiguration.defaultCoreModelName) == .orderedSame,
-            !FoundationModelService.isDefaultModelAvailable()
+            !isAvailable
         else {
             return config
         }
