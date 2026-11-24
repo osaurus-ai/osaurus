@@ -673,7 +673,7 @@ public enum SubagentJobEvaluator {
         let targetRoutableRemote: Bool =
             targetLocal
             ? false
-            : await MainActor.run { RemoteProviderManager.shared.findService(forModel: target) != nil }
+            : await MainActor.run { RemoteProviderManager.shared.hasRoutableService(forModel: target) }
 
         let missingLocalOrchestrator = ensureResident && !orchestratorLocal
         let targetUnrunnable = !targetLocal && !targetRoutableRemote

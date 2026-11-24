@@ -3799,7 +3799,7 @@ struct AgentDetailView: View {
         guard let model = AgentManager.shared.effectiveModel(for: agent.id) else {
             return false
         }
-        return RemoteProviderManager.shared.findService(forModel: model) != nil
+        return RemoteProviderManager.shared.hasRoutableService(forModel: model)
     }
 
     // MARK: - Bundle export/import (spec §11.1)

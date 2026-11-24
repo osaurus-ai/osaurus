@@ -559,7 +559,7 @@ public actor CoreModelService {
         guard let modelId = configured else { return .unset }
 
         let remoteServices: [ModelService] = await MainActor.run {
-            RemoteProviderManager.shared.connectedServices()
+            RemoteProviderManager.shared.routableServices()
         }
         let route = ModelServiceRouter.resolve(
             requestedModel: modelId,
@@ -794,7 +794,7 @@ public actor CoreModelService {
         onDelta: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
         var remoteServices: [ModelService] = await MainActor.run {
-            RemoteProviderManager.shared.connectedServices()
+            RemoteProviderManager.shared.routableServices()
         }
 
         var route = ModelServiceRouter.resolve(
@@ -808,7 +808,7 @@ public actor CoreModelService {
             if let unavailable = await RemoteProviderManager.shared.awaitService(forModel: model) {
                 throw unavailable
             }
-            remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
+            remoteServices = await MainActor.run { RemoteProviderManager.shared.routableServices() }
             route = ModelServiceRouter.resolve(
                 requestedModel: model, services: localServices, remoteServices: remoteServices)
         }

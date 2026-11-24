@@ -410,7 +410,7 @@ final class ContextCompactionService {
 
         // Resolve the model before building the prompt so an unavailable
         // model fails fast with a clear message.
-        let remoteServices: [ModelService] = RemoteProviderManager.shared.connectedServices()
+        let remoteServices: [ModelService] = RemoteProviderManager.shared.routableServices()
         let route = ModelServiceRouter.resolve(
             requestedModel: modelId,
             services: localServices,

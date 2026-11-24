@@ -123,6 +123,20 @@ public final class RemoteProviderManager: ObservableObject {
         cachedConnectedSpawnModelTargetIndex = nil
     }
 
+    /// Osaurus Swarm pool × model entries, pushed by `SwarmManager`. Swarm
+    /// is a provider on the same picker / routing / spawn / API surfaces as
+    /// a remote provider, but it is not a configured `RemoteProvider`: its
+    /// nodes and pools live in the Swarm library. Not gated on `isOffline`
+    /// because Swarm only uses direct LAN / Thunderbolt / direct paths.
+    private var swarmCatalog: [SwarmCatalogEntry] = [] {
+        didSet { invalidateConnectedSpawnModelTargetIndex() }
+    }
+
+    /// The Swarm routing service while Swarm runs.
+    private var swarmService: SwarmModelService? {
+        didSet { invalidateConnectedSpawnModelTargetIndex() }
+    }
+
     /// Provider IDs held only in memory — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
 
@@ -1273,6 +1287,34 @@ public final class RemoteProviderManager: ObservableObject {
         return Array(services.values)
     }
 
+    /// Every remote-style service a request may route to: connected
+    /// providers plus Osaurus Swarm. Swarm stays routable while offline (it
+    /// never uses the internet path); the providers follow `connectedServices`.
+    func routableServices() -> [ModelService] {
+        var result: [ModelService] = connectedServices()
+        if let swarmService, !swarmCatalog.isEmpty { result.append(swarmService) }
+        return result
+    }
+
+    /// Whether some routable service (a connected provider or a Swarm pool)
+    /// handles `model`.
+    func hasRoutableService(forModel model: String) -> Bool {
+        if findService(forModel: model) != nil { return true }
+        return swarmService?.handles(requestedModel: model) == true
+    }
+
+    /// Install the Swarm pool × model catalog (and the service that routes
+    /// it). An empty catalog removes Swarm from every model surface.
+    func setSwarmCatalog(_ entries: [SwarmCatalogEntry], service: SwarmModelService?) {
+        let changed = entries != swarmCatalog || (service == nil) != (swarmService == nil)
+        swarmCatalog = entries
+        swarmService = service
+        if changed { notifyModelsChanged() }
+    }
+
+    /// The whole Swarm catalog, for picker enrichment.
+    var swarmCatalogEntries: [SwarmCatalogEntry] { swarmCatalog }
+
     /// Get all available models across all connected providers (with prefixes)
     public func allAvailableModels() -> [String] {
         var models: [String] = []
@@ -1389,7 +1431,7 @@ public final class RemoteProviderManager: ObservableObject {
     /// underlying provider states are untouched, so the same models reappear
     /// on the connectivity-recovery edge.
     public func cachedAvailableModels() -> [CachedProviderModels] {
-        guard !isOffline else { return [] }
+        guard !isOffline else { return swarmCachedModels().map { [$0] } ?? [] }
         ensureManagedOsaurusRouterProviderIfNeeded()
         var result: [CachedProviderModels] = []
 
@@ -1412,7 +1454,21 @@ public final class RemoteProviderManager: ObservableObject {
             }
         }
 
+        if let swarm = swarmCachedModels() { result.append(swarm) }
         return result
+    }
+
+    /// Swarm's pool × model ids as one provider group, or nil when Swarm has
+    /// no pools.
+    private func swarmCachedModels() -> CachedProviderModels? {
+        guard swarmService != nil, !swarmCatalog.isEmpty else { return nil }
+        return CachedProviderModels(
+            providerId: SwarmModelIdentity.providerId,
+            providerName: SwarmModelIdentity.providerName,
+            providerType: .openaiLegacy,
+            host: "",
+            models: swarmCatalog.map(\.pickerModelId)
+        )
     }
 
     // MARK: - Paired-peer inference exposure
@@ -1470,10 +1526,27 @@ public final class RemoteProviderManager: ObservableObject {
     /// Current spawn-only remote catalog. A connected state without its live
     /// service is not dispatchable, so it is deliberately omitted.
     func connectedSpawnModelTargets() -> [ConnectedSpawnModelTarget] {
-        guard !isOffline else { return [] }
+        guard !isOffline else { return swarmSpawnModelTargets() }
         return connectedSpawnModelTargets(
             excludingWorkspaceManagedAddresses: Self.currentWorkspaceManagedAddresses()
-        )
+        ) + swarmSpawnModelTargets()
+    }
+
+    /// Swarm pool × model entries as spawn targets: `spawn_model` pools and
+    /// `spawn_agent` overrides reach a pool exactly like a remote provider.
+    private func swarmSpawnModelTargets() -> [ConnectedSpawnModelTarget] {
+        guard swarmService != nil else { return [] }
+        let prefix = SwarmModelIdentity.prefix + "/"
+        return swarmCatalog.compactMap { entry in
+            let unprefixed = String(entry.pickerModelId.dropFirst(prefix.count))
+            guard
+                let id = SpawnRemoteModelIdentity.make(
+                    providerId: SwarmModelIdentity.providerId, modelId: unprefixed)
+            else { return nil }
+            return ConnectedSpawnModelTarget(
+                id: id, providerId: SwarmModelIdentity.providerId, providerName: SwarmModelIdentity.providerName,
+                modelId: unprefixed, pickerModelId: entry.pickerModelId)
+        }
     }
 
     /// Lowercased addresses of teammate WORKSPACE agents. Providers minted by
@@ -1532,7 +1605,7 @@ public final class RemoteProviderManager: ObservableObject {
     /// Memoized: rebuilt only after provider configuration, connection state,
     /// services, offline mode, or the workspace-agent roster changes.
     func connectedSpawnModelTargetIndex() -> ConnectedSpawnModelTargetIndex {
-        guard !isOffline else { return .empty }
+        guard !isOffline else { return ConnectedSpawnModelTargetIndex(targets: swarmSpawnModelTargets()) }
         let workspaceManagedAddresses = Self.currentWorkspaceManagedAddresses()
         if let cached = cachedConnectedSpawnModelTargetIndex,
             cached.workspaceManagedAddresses == workspaceManagedAddresses
@@ -1542,7 +1615,7 @@ public final class RemoteProviderManager: ObservableObject {
         let index = ConnectedSpawnModelTargetIndex(
             targets: connectedSpawnModelTargets(
                 excludingWorkspaceManagedAddresses: workspaceManagedAddresses
-            )
+            ) + swarmSpawnModelTargets()
         )
         cachedConnectedSpawnModelTargetIndex = (workspaceManagedAddresses, index)
         return index
@@ -2233,6 +2306,15 @@ extension RemoteProviderManager {
                 guard exposure.isExposed(id: prefixedId, kind: .remote) else { continue }
                 var model = OpenAIModel(modelName: prefixedId)
                 model.owned_by = provider.name
+                models.append(model)
+            }
+        }
+
+        // Swarm pool models follow the same exposure rule as remote models.
+        if swarmService != nil {
+            for entry in swarmCatalog where exposure.isExposed(id: entry.pickerModelId, kind: .remote) {
+                var model = OpenAIModel(modelName: entry.pickerModelId)
+                model.owned_by = SwarmModelIdentity.providerName
                 models.append(model)
             }
         }
