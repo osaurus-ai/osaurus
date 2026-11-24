@@ -2039,13 +2039,28 @@ enum NavigatorRowMetrics {
 }
 
 /// A navigator row that opens a page: glyph in the icon column, a title,
-/// and an optional count where a chat row shows its age.
-struct NavigatorLinkRow: View {
+/// and an optional count where a chat row shows its age, or a trailing
+/// accessory (a status chip, an external-link arrow) in the same place.
+/// Every sidebar's one-line destinations use it.
+struct NavigatorLinkRow<Trailing: View>: View {
     let icon: String
     let title: String
     var count: Int?
     var isSelected = false
     let action: () -> Void
+    @ViewBuilder var trailing: () -> Trailing
+
+    init(
+        icon: String, title: String, count: Int? = nil, isSelected: Bool = false,
+        action: @escaping () -> Void, @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.icon = icon
+        self.title = title
+        self.count = count
+        self.isSelected = isSelected
+        self.action = action
+        self.trailing = trailing
+    }
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
@@ -2071,6 +2086,9 @@ struct NavigatorLinkRow: View {
                         .monospacedDigit()
                         .foregroundStyle(theme.text.tertiary)
                         .padding(.trailing, NavigatorRowMetrics.trailingInset)
+                } else {
+                    trailing()
+                        .padding(.trailing, NavigatorRowMetrics.trailingInset)
                 }
             }
             .frame(height: NavigatorRowMetrics.rowHeight)
@@ -2081,6 +2099,12 @@ struct NavigatorLinkRow: View {
         .onHover { isHovered = $0 }
         .help(Text(verbatim: title))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+extension NavigatorLinkRow where Trailing == EmptyView {
+    init(icon: String, title: String, count: Int? = nil, isSelected: Bool = false, action: @escaping () -> Void) {
+        self.init(icon: icon, title: title, count: count, isSelected: isSelected, action: action) { EmptyView() }
     }
 }
 
@@ -2147,9 +2171,18 @@ struct NavigatorGroupHeader<Trailing: View>: View {
             .help(help)
             .accessibilityValue(isCollapsed ? Text("Collapsed", bundle: .module) : Text("Expanded", bundle: .module))
             HStack(spacing: theme.space.s4) { trailing(isHovered) }
-                .padding(.trailing, NavigatorRowMetrics.trailingInset)
+                .padding(.trailing, max(0, NavigatorRowMetrics.trailingInset - trailingGlyphInset))
         }
         .onHover { isHovered = $0 }
+    }
+
+    /// The trailing actions are extra-small icon buttons whose glyph sits
+    /// inside a padded square; pulling them out by that padding puts the
+    /// glyph, not the button's empty edge, on the column the rows' ages end on.
+    private var trailingGlyphInset: CGFloat {
+        theme.assignedMetric(
+            SettingsButtonSize.extraSmall.assignment("paddingX"),
+            fallback: SettingsButtonSize.extraSmall.horizontalPadding(theme))
     }
 }
 
@@ -3870,9 +3903,11 @@ private struct SessionRow: View {
     /// Default agent indicator with person icon
     private var defaultAgentIndicator: some View {
         ZStack {
-            Circle()
-                .fill(theme.surface.hover)
-                .frame(width: 24, height: 24)
+            RoundedRectangle(
+                cornerRadius: AgentAvatarView.cornerRadius(side: 24, theme: environmentTheme, enabled: componentEnabled)
+            )
+            .fill(theme.surface.hover)
+            .frame(width: 24, height: 24)
 
             Image(systemName: "person.fill")
                 .glyphSize(.micro, weight: .medium)
@@ -3972,11 +4007,11 @@ private struct SessionRow: View {
 
 // MARK: - Session Activity Ring
 
-/// Ring drawn around a row's 24pt avatar while its run is live. `.working`
-/// continuously rotates an angular-gradient stroke (a steady ring under
-/// Reduce Motion); `.waitingForInput` renders a steady warning ring with a
-/// question-mark badge, matching `BackgroundTaskStatus.waitingForInput`'s
-/// iconography.
+/// Ring drawn around a row's avatar while its run is live, in the avatar's
+/// own outline (a rounded square stays a rounded square). `.working` sweeps
+/// an angular gradient around the ring (a steady ring under Reduce Motion);
+/// `.waitingForInput` renders a steady warning ring with a question-mark
+/// badge, matching `BackgroundTaskStatus.waitingForInput`'s iconography.
 struct SessionActivityRing: View {
     let status: SessionActivityMonitor.Status
 
@@ -3984,39 +4019,45 @@ struct SessionActivityRing: View {
     @Environment(\.isEnabled) private var componentEnabled
     private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isSpinning = false
 
-    private static let diameter: CGFloat = 30
+    private static let gap: CGFloat = 3
     private static let lineWidth: CGFloat = 2
+    private static let period: TimeInterval = 1.1
 
     var body: some View {
+        AvatarActivityOutline(gap: Self.gap) { outline in
+            ring(outline)
+        }
+    }
+
+    @ViewBuilder
+    private func ring(_ outline: RoundedRectangle) -> some View {
         switch status {
         case .working:
             if reduceMotion {
-                ring(theme.status.info.foreground)
+                outline.stroke(theme.status.info.foreground, lineWidth: Self.lineWidth)
             } else {
-                Circle()
-                    .stroke(
+                // The gradient turns, not the shape: a rotating rounded
+                // square would wobble at its corners.
+                TimelineView(.animation) { context in
+                    let turns = context.date.timeIntervalSinceReferenceDate / Self.period
+                    let head = Angle.degrees(turns.truncatingRemainder(dividingBy: 1) * 360)
+                    outline.stroke(
                         AngularGradient(
                             gradient: Gradient(colors: [
                                 theme.status.info.background,
                                 theme.status.info.foreground,
                             ]),
-                            center: .center
+                            center: .center,
+                            startAngle: head,
+                            endAngle: head + .degrees(360)
                         ),
                         style: StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round)
                     )
-                    .frame(width: Self.diameter, height: Self.diameter)
-                    .rotationEffect(.degrees(isSpinning ? 360 : 0))
-                    .animation(
-                        theme.motion.loop(duration: 1.1),
-                        value: isSpinning
-                    )
-                    .onAppear { isSpinning = true }
-                    .onDisappear { isSpinning = false }
+                }
             }
         case .waitingForInput:
-            ring(theme.status.warning.foreground)
+            outline.stroke(theme.status.warning.foreground, lineWidth: Self.lineWidth)
                 .overlay(alignment: .bottomTrailing) {
                     ZStack {
                         // Mask the ring/backdrop behind the badge glyph so it
@@ -4032,11 +4073,29 @@ struct SessionActivityRing: View {
                 }
         }
     }
+}
 
-    private func ring(_ color: Color) -> some View {
-        Circle()
-            .stroke(color, lineWidth: Self.lineWidth)
-            .frame(width: Self.diameter, height: Self.diameter)
+// MARK: - Avatar Activity Outline
+
+/// Lays out a live-activity mark over an avatar (as its overlay): the
+/// avatar's own outline grown by `gap` on every side, so the mark hugs a
+/// rounded-square avatar the way a circle hugs a round one.
+private struct AvatarActivityOutline<Content: View>: View {
+    let gap: CGFloat
+    @ViewBuilder let content: (RoundedRectangle) -> Content
+
+    @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        GeometryReader { proxy in
+            let avatarSide = min(proxy.size.width, proxy.size.height)
+            let side = avatarSide + 2 * gap
+            let radius = AgentAvatarView.cornerRadius(side: avatarSide, theme: theme, enabled: isEnabled) + gap
+            content(RoundedRectangle(cornerRadius: radius))
+                .frame(width: side, height: side)
+                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+        }
     }
 }
 
@@ -4045,7 +4104,7 @@ struct SessionActivityRing: View {
 /// Quiet live-run mark for compact navigator rows and collapsed group
 /// headers: a short comet arc circling a faint track while the run works,
 /// a warning dot when it waits on the user. `ringsAvatar` draws the same
-/// states as a ring around an 18pt avatar instead.
+/// states as a ring around the avatar it overlays instead.
 struct NavigatorActivityIndicator: View {
     let status: SessionActivityMonitor.Status
     var ringsAvatar: Bool = false
@@ -4055,33 +4114,48 @@ struct NavigatorActivityIndicator: View {
     private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var diameter: CGFloat { ringsAvatar ? 22 : 11 }
+    private static let diameter: CGFloat = 11
+    private static let avatarGap: CGFloat = 2
     private static let lineWidth: CGFloat = 1.5
     private static let dotDiameter: CGFloat = 6
 
     var body: some View {
+        Group {
+            if ringsAvatar {
+                AvatarActivityOutline(gap: Self.avatarGap) { outline in
+                    mark(outline)
+                }
+            } else {
+                mark(RoundedRectangle(cornerRadius: Self.diameter / 2))
+                    .frame(width: Self.diameter, height: Self.diameter)
+            }
+        }
+        .animation(reduceMotion ? nil : theme.motion.springAnimation(responseMultiplier: 0.8), value: status)
+        .accessibilityHidden(true)
+    }
+
+    private func mark(_ outline: RoundedRectangle) -> some View {
         ZStack {
             switch status {
             case .working:
                 NavigatorActivityComet(
                     color: theme.status.info.foreground,
-                    diameter: diameter,
+                    outline: outline,
                     lineWidth: Self.lineWidth,
                     isStill: reduceMotion
                 )
                 .transition(transition)
             case .waitingForInput:
-                NavigatorAttentionMark(
-                    color: theme.status.warning.foreground,
-                    diameter: ringsAvatar ? diameter : Self.dotDiameter,
-                    lineWidth: ringsAvatar ? Self.lineWidth : nil
-                )
-                .transition(transition)
+                if ringsAvatar {
+                    NavigatorAttentionMark(color: theme.status.warning.foreground, ring: outline, lineWidth: Self.lineWidth)
+                        .transition(transition)
+                } else {
+                    NavigatorAttentionMark(color: theme.status.warning.foreground)
+                        .frame(width: Self.dotDiameter, height: Self.dotDiameter)
+                        .transition(transition)
+                }
             }
         }
-        .frame(width: diameter, height: diameter)
-        .animation(reduceMotion ? nil : theme.motion.springAnimation(responseMultiplier: 0.8), value: status)
-        .accessibilityHidden(true)
     }
 
     private var transition: AnyTransition {
@@ -4091,77 +4165,76 @@ struct NavigatorActivityIndicator: View {
 
 /// Faint full track plus a ~90° arc that fades in from its tail. The angle
 /// comes from the wall clock, so the spin never restarts on re-render and
-/// every live row turns in phase.
+/// every live row turns in phase. The gradient turns, not the outline, so a
+/// rounded-square track stays put.
 private struct NavigatorActivityComet: View {
     let color: Color
-    let diameter: CGFloat
+    let outline: RoundedRectangle
     let lineWidth: CGFloat
     let isStill: Bool
 
     @Environment(\.theme) private var theme
 
     private static let period: TimeInterval = 1.2
-    private static let arcFraction: CGFloat = 0.25
+    private static let arcFraction: Double = 0.25
 
     var body: some View {
         if isStill {
             ZStack {
                 track
-                Circle()
+                outline
                     .trim(from: 0, to: 0.75)
                     .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
-            .frame(width: diameter, height: diameter)
         } else {
             TimelineView(.animation) { context in
                 let turns = context.date.timeIntervalSinceReferenceDate / Self.period
+                let head = Angle.degrees(turns.truncatingRemainder(dividingBy: 1) * 360)
                 ZStack {
                     track
-                    Circle()
-                        .trim(from: 0, to: Self.arcFraction)
-                        .stroke(
-                            AngularGradient(
-                                gradient: Gradient(colors: [color.opacity(0), color]),
-                                center: .center,
-                                startAngle: .zero,
-                                endAngle: .degrees(360 * Self.arcFraction)
-                            ),
-                            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                        )
-                        .rotationEffect(.degrees(turns.truncatingRemainder(dividingBy: 1) * 360))
+                    outline.stroke(
+                        AngularGradient(
+                            stops: [
+                                .init(color: color.opacity(0), location: 1 - Self.arcFraction),
+                                .init(color: color, location: 1),
+                            ],
+                            center: .center,
+                            startAngle: head,
+                            endAngle: head + .degrees(360)
+                        ),
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                    )
                 }
-                .frame(width: diameter, height: diameter)
             }
         }
     }
 
     private var track: some View {
-        Circle().stroke(theme.rule(around: color), lineWidth: lineWidth)
+        outline.stroke(theme.rule(around: color), lineWidth: lineWidth)
     }
 }
 
-/// Warning dot (or ring, when `lineWidth` is set) that settles in with one
-/// soft pulse on arrival and then holds still: no looping blink.
+/// Warning dot (or ring, when `ring` is set) that settles in with one soft
+/// pulse on arrival and then holds still: no looping blink.
 private struct NavigatorAttentionMark: View {
     let color: Color
-    let diameter: CGFloat
-    var lineWidth: CGFloat? = nil
+    var ring: RoundedRectangle? = nil
+    var lineWidth: CGFloat = 1.5
 
     @Environment(\.theme) private var theme
     @State private var isPulsed = false
 
     var body: some View {
         Group {
-            if let lineWidth {
-                Circle().stroke(color, lineWidth: lineWidth)
+            if let ring {
+                ring.stroke(color, lineWidth: lineWidth)
             } else {
                 Circle().fill(color)
             }
         }
-        .frame(width: diameter, height: diameter)
         // A ring around an avatar is already large; it only breathes.
-        .scaleEffect(isPulsed ? (lineWidth == nil ? 1.35 : 1.1) : 1)
+        .scaleEffect(isPulsed ? (ring == nil ? 1.35 : 1.1) : 1)
         .onAppear {
             guard let rise = theme.motion.timed(.easeOut, duration: 0.18),
                 let settle = theme.motion.timed(.easeOut, duration: 0.32)
@@ -4223,7 +4296,7 @@ struct DontAskAgainToggle: View {
                 .textStyle(.caption)
                 .foregroundColor(theme.text.secondary)
         }
-        .toggleStyle(.checkbox)
+        .settingsCheckbox()
     }
 }
 

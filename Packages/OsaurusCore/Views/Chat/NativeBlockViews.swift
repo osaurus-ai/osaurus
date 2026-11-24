@@ -4,8 +4,8 @@
 //
 //  Pure AppKit views for block types that avoid SwiftUI in table cells.
 //
-//    NativeTypingIndicatorView     — bouncing CALayer dots + memory label
-//    NativePendingToolCallView     — pulsing dot + tool name + scrolling arg preview
+//    NativeTypingIndicatorView     — waving CALayer dots + memory label
+//    NativePendingToolCallView     — orbiting node + shimmering tool title
 //    (NativeArtifactCardView lives in NativeArtifactCardView.swift)
 //
 
@@ -37,11 +37,14 @@ final class NativeTypingIndicatorView: NSView {
     /// RAM / prefill indicators, which describe generation, not the tail.
     private let statusLabel = NSTextField(labelWithString: "")
 
+    /// Hairline between the dots and the RAM / prefill readout.
+    private let metaDivider = NSView()
+
     // MARK: Animation
 
-    nonisolated(unsafe) private var bounceTimer: Timer?
+    private static let waveKey = "typing.wave"
+    private static let wavePeriod: CFTimeInterval = 1.2
     nonisolated(unsafe) private var memoryPollTimer: Timer?
-    private var currentDot = 0
     private var inspectionMinimumHeight: NSLayoutConstraint?
 
     // MARK: State
@@ -67,20 +70,19 @@ final class NativeTypingIndicatorView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     deinit {
-        bounceTimer?.invalidate()
         memoryPollTimer?.invalidate()
     }
 
     /// Stop animations + memory polling when the cell scrolls offscreen or gets reused —
-    /// otherwise every live typing indicator instance keeps firing CABasicAnimation ticks
-    /// into WindowServer regardless of visibility.
+    /// otherwise every live typing indicator instance keeps animating into
+    /// WindowServer regardless of visibility.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
             startAnimation()
             observeMemory()
         } else {
-            bounceTimer?.invalidate(); bounceTimer = nil
+            stopAnimation()
             memoryPollTimer?.invalidate(); memoryPollTimer = nil
         }
     }
@@ -223,6 +225,12 @@ final class NativeTypingIndicatorView: NSView {
         prefillChip.sizingOptions = [.intrinsicContentSize]
         prefillChip.isHidden = true
 
+        metaDivider.wantsLayer = true
+        metaDivider.translatesAutoresizingMaskIntoConstraints = false
+        metaDivider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        metaDivider.heightAnchor.constraint(equalToConstant: 12).isActive = true
+        stack.addArrangedSubview(metaDivider)
+        stack.setCustomSpacing(10, after: metaDivider)
         stack.addArrangedSubview(memoryIcon)
         stack.addArrangedSubview(memoryLabel)
         stack.addArrangedSubview(prefillChip)
@@ -246,6 +254,7 @@ final class NativeTypingIndicatorView: NSView {
 
     private func applyMemoryColors(_ theme: any ThemeProtocol) {
         let secondary = NSColor(theme.text.secondary)
+        metaDivider.layer?.backgroundColor = NSColor(theme.border.default).cgColor
         memoryIcon.contentTintColor = secondary
         memoryLabel.textColor = secondary
         memoryLabel.font = theme.nsFont(.micro, monospacedDigit: true)
@@ -253,27 +262,29 @@ final class NativeTypingIndicatorView: NSView {
     }
 
     private func updateColors(_ theme: any ThemeProtocol) {
-        let primary = NSColor(theme.assignedColor(ThinkingInspectionStyle.key + "accent", fallback: theme.text.primary))
-        let secondary = NSColor(theme.text.tertiary)
-        for (i, dot) in dots.enumerated() {
-            dot.backgroundColor = (i == currentDot ? primary : secondary).cgColor
-        }
+        let accent = NSColor(theme.assignedColor(ThinkingInspectionStyle.key + "accent", fallback: theme.text.primary))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for dot in dots { dot.backgroundColor = accent.cgColor }
+        CATransaction.commit()
         statusLabel.textColor = NSColor(theme.text.secondary)
         statusLabel.font = theme.nsFont(.caption)
         applyMemoryColors(theme)
+        // The row sits where the reply will start, so it draws no box unless
+        // the generation row itself is assigned one.
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(33, "generation", theme)).cgColor
         layer?.borderColor = NSColor(theme.border.default).cgColor
-        layer?.borderWidth = ThinkingInspectionStyle.metric("borderWidth", 0, theme)
-        layer?.cornerRadius = theme.radius.medium
+        layer?.borderWidth = ThinkingInspectionStyle.metric("elements.generation.borderWidth", 0, theme)
+        layer?.cornerRadius = CGFloat(theme.radius.large)
         let height = ThinkingInspectionStyle.statusHeight(theme)
         if inspectionMinimumHeight == nil {
             let c = heightAnchor.constraint(greaterThanOrEqualToConstant: height)
             c.priority = .init(750); c.isActive = true; inspectionMinimumHeight = c
         }
         inspectionMinimumHeight?.constant = height
-        let pad = ThinkingInspectionStyle.metric("padding", theme.space.s0, theme)
+        let pad = ThinkingInspectionStyle.metric("elements.generation.padding", 0, theme)
         let gap = ThinkingInspectionStyle.metric("gap", theme.space.s4, theme)
-        dotStack.spacing = gap; memoryStack?.spacing = gap
+        dotStack.spacing = max(5, gap); memoryStack?.spacing = gap
         for c in constraints {
             let view = c.firstItem as? NSView
             if view === dotStack, c.firstAttribute == .leading { c.constant = pad }
@@ -283,39 +294,42 @@ final class NativeTypingIndicatorView: NSView {
         updatePrefillBadge(scopedPrefill)
     }
 
+    /// A staggered swell-and-fade wave across the three dots, run entirely
+    /// by Core Animation. Reduce Motion holds a static stepped fade instead.
     private func startAnimation() {
-        bounceTimer?.invalidate()
-        bounceTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.bounceDot()
+        let reduceMotion = ThemeMotion.reduceMotionEnabled
+        let now = CACurrentMediaTime()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, dot) in dots.enumerated() {
+            dot.removeAnimation(forKey: Self.waveKey)
+            guard !reduceMotion else {
+                dot.opacity = [0.4, 0.7, 1][index]
+                continue
             }
+            dot.opacity = 1
+            let keyTimes: [NSNumber] = [0, 0.28, 0.56, 1]
+            let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+            scale.values = [0.6, 1.05, 0.6, 0.6]
+            scale.keyTimes = keyTimes
+            let fade = CAKeyframeAnimation(keyPath: "opacity")
+            fade.values = [0.3, 1, 0.3, 0.3]
+            fade.keyTimes = keyTimes
+            let wave = CAAnimationGroup()
+            wave.animations = [scale, fade]
+            wave.duration = Self.wavePeriod
+            wave.repeatCount = .infinity
+            wave.beginTime = now + Double(index) * 0.16
+            wave.fillMode = .backwards
+            wave.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            wave.isRemovedOnCompletion = false
+            dot.add(wave, forKey: Self.waveKey)
         }
+        CATransaction.commit()
     }
 
-    private func bounceDot() {
-        let prev = currentDot
-        currentDot = (currentDot + 1) % 3
-
-        let primary = (theme.map { NSColor($0.assignedColor(ThinkingInspectionStyle.key + "accent", fallback: $0.text.primary)) }) ?? .labelColor
-        let secondary = (theme.map { NSColor($0.text.tertiary) }) ?? .tertiaryLabelColor
-
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(ThemeManager.shared.currentTheme.motion.standardInterval)
-
-        // raise current dot
-        let bounce = CABasicAnimation(keyPath: "position.y")
-        bounce.fromValue = dots[currentDot].position.y
-        bounce.toValue = dots[currentDot].position.y + 4
-        bounce.duration = ThemeManager.shared.currentTheme.motion.quickInterval
-        bounce.autoreverses = true
-        bounce.timingFunction = ThemeManager.shared.currentTheme.motion.timingFunction
-        dots[currentDot].add(bounce, forKey: "bounce")
-        dots[currentDot].backgroundColor = primary.cgColor
-
-        // dim previous
-        dots[prev].backgroundColor = secondary.cgColor
-
-        CATransaction.commit()
+    private func stopAnimation() {
+        for dot in dots { dot.removeAnimation(forKey: Self.waveKey) }
     }
 
     private func isSameTheme(_ t: any ThemeProtocol) -> Bool {
@@ -329,14 +343,12 @@ final class NativePendingToolCallView: NSView {
 
     // MARK: Subviews
 
-    /// Circular running node, matching the completed timeline node
-    /// (status-tinted fill + accent ring) with the category glyph in front.
-    private let node = NSView()
-    private let categoryIcon = NSImageView()
+    /// Running node, matching the tool timeline node, with the category glyph.
+    private let node = ActivityNodeView()
     /// Always running here, so the title shimmers to signal progress.
     private let shimmerLabel = ShimmerLabel()
 
-    private static let nodeSize: CGFloat = 28
+    private static let nodeSize = ActivityNodeStyle.side
 
     // MARK: Init
 
@@ -353,8 +365,10 @@ final class NativePendingToolCallView: NSView {
         super.viewDidMoveToWindow()
         if window != nil {
             shimmerLabel.start()
+            node.setRunning(true)
         } else {
             shimmerLabel.stop()
+            node.setRunning(false)
         }
     }
 
@@ -369,11 +383,9 @@ final class NativePendingToolCallView: NSView {
         let theme = theme.catalogFamily(34)
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "pendingTool", theme)).cgColor
         catalogAssignmentTarget([AgentContentSurfaceAssignments.key(34, "pendingTool")], name: "Pending tool call", theme: theme)
-        layer?.borderColor = NSColor(theme.border.default).cgColor
-        layer?.borderWidth = theme.stroke.default
-        layer?.cornerRadius = theme.radius.medium
-        let pad = ActivityInspectionStyle.metric("padding", theme.space.s16, theme)
-        let gap = ActivityInspectionStyle.metric("gap", theme.space.s10, theme)
+        ActivityNodeStyle.applyCard(layer, theme: theme, borderWidth: ActivityInspectionStyle.metric("borderWidth", 1, theme))
+        let pad = ActivityInspectionStyle.layout("toolHeaderPaddingX", "padding", 12, theme)
+        let gap = ActivityInspectionStyle.layout("toolHeaderIconGap", "gap", theme.space.s8, theme)
         for c in constraints {
             if c.firstItem as? NSView === node, c.firstAttribute == .leading { c.constant = pad }
             if c.firstItem as? NSView === shimmerLabel, c.firstAttribute == .leading { c.constant = gap }
@@ -386,13 +398,13 @@ final class NativePendingToolCallView: NSView {
         // generic gear the substring categorizer would assign.
         let category = ToolCategory.from(toolName: toolName)
         let glyph = SubagentCapabilityRegistry.iconName(forToolName: toolName) ?? category.icon
-        node.layer?.backgroundColor = NSColor(theme.status.info.background).cgColor
-        node.layer?.borderColor = NSColor(theme.status.info.border).cgColor
-        node.layer?.borderWidth = ActivityInspectionStyle.metric("borderWidth", theme.stroke.focus, theme)
+        node.ringWidth = ActivityInspectionStyle.metric("borderWidth", 1, theme)
+        node.cornerRadius = ActivityNodeStyle.cornerRadius(side: Self.nodeSize, theme: theme)
+        node.apply(color: NSColor(theme.status.info.foreground), backing: NSColor(theme.surface.raised))
+        node.setRunning(window != nil)
         let cfg = theme.symbolConfiguration(.caption, weight: .semibold)
-        categoryIcon.image = SymbolImageCache.image(glyph, accessibilityDescription: nil)?
+        node.glyph.image = SymbolImageCache.image(glyph, accessibilityDescription: nil)?
             .withSymbolConfiguration(cfg)
-        categoryIcon.contentTintColor = NSColor(theme.status.info.foreground)
 
         // Always running: shimmer the friendly title to signal progress. The
         // view mirrors the running group row exactly (node + shimmer title), so
@@ -418,16 +430,8 @@ final class NativePendingToolCallView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
 
-        // Circular running node
         node.translatesAutoresizingMaskIntoConstraints = false
-        node.wantsLayer = true
-        node.layer?.cornerRadius = Self.nodeSize / 2
         addSubview(node)
-
-        // Category glyph in the node foreground
-        categoryIcon.translatesAutoresizingMaskIntoConstraints = false
-        categoryIcon.imageScaling = .scaleProportionallyUpOrDown
-        node.addSubview(categoryIcon)
 
         // Shimmering title
         shimmerLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -440,11 +444,6 @@ final class NativePendingToolCallView: NSView {
             node.centerYAnchor.constraint(equalTo: centerYAnchor),
             node.widthAnchor.constraint(equalToConstant: Self.nodeSize),
             node.heightAnchor.constraint(equalToConstant: Self.nodeSize),
-
-            categoryIcon.centerXAnchor.constraint(equalTo: node.centerXAnchor),
-            categoryIcon.centerYAnchor.constraint(equalTo: node.centerYAnchor),
-            categoryIcon.widthAnchor.constraint(equalToConstant: 14),
-            categoryIcon.heightAnchor.constraint(equalToConstant: 14),
 
             shimmerLabel.leadingAnchor.constraint(equalTo: node.trailingAnchor, constant: 10),
             shimmerLabel.centerYAnchor.constraint(equalTo: node.centerYAnchor),

@@ -103,12 +103,19 @@ struct AgentAvatarView: View {
     /// not a number). A pinned radius is set for the library's avatar size
     /// and scales with the avatar, so a hero keeps the same shape as a row.
     private var cornerRadius: CGFloat {
-        let half = resolvedDiameter / 2
+        Self.cornerRadius(side: resolvedDiameter, theme: baseTheme, enabled: baseComponentEnabled)
+    }
+
+    /// The avatar's corner radius at `side` points, for decorations that
+    /// must trace its outline (the sidebar's live-activity ring).
+    static func cornerRadius(side: CGFloat, theme baseTheme: any ThemeProtocol, enabled: Bool) -> CGFloat {
+        let theme = baseTheme.catalogFamily(11, enabled: enabled)
+        let half = side / 2
         let radius = theme.catalogMetric("radius", fallback: .infinity)
         guard radius.isFinite else { return half }
-        let librarySize = theme.catalogMetric("avatarSize", fallback: resolvedDiameter)
+        let librarySize = theme.catalogMetric("avatarSize", fallback: side)
         guard librarySize > 0 else { return min(radius, half) }
-        return min(radius * resolvedDiameter / librarySize, half)
+        return min(radius * side / librarySize, half)
     }
     private var avatarShape: AnyShape {
         AnyShape(RoundedRectangle(cornerRadius: cornerRadius))

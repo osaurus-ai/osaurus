@@ -101,6 +101,15 @@ enum SymbolImageCache {
         return rotated
     }
 
+    /// Gap between a `slot`-wide disclosure frame's trailing edge and the
+    /// right chevron centered in it. Headers pull the frame out by this so
+    /// the glyph, not its empty frame, sits on the card's trailing padding
+    /// and mirrors the leading node.
+    static func chevronTrailingSlack(slot: CGFloat, pointSize: CGFloat, weight: NSFont.Weight) -> CGFloat {
+        guard let chevron = image("chevron.right", pointSize: pointSize, weight: weight) else { return 0 }
+        return max(0, (slot - chevron.size.width) / 2)
+    }
+
     /// Drop all memoized symbols (memory-pressure response). Entries are
     /// re-resolved lazily on next use.
     static func clear() {

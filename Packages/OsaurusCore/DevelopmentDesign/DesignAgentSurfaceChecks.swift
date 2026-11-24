@@ -48,12 +48,12 @@ import SwiftUI
                 return zip([a.redComponent,a.greenComponent,a.blueComponent,a.alphaComponent], [b.redComponent,b.greenComponent,b.blueComponent,b.alphaComponent]).allSatisfy { abs($0 - $1) < 0.005 }
             }
             let call = ToolCallItem(call: .init(id: "surface-check", type: "function", function: .init(name: "read_file", arguments: "{\"sample\":true}")), result: "{\"ok\":true}", duration: 0.4)
-            let row = NativeToolCallRowView()
+            let toolCard = NativeToolCallGroupView()
             func configure(_ theme: any ThemeProtocol) {
-                row.configure(item: call, index: 0, totalCount: 1, isExpanded: true, width: 640, theme: theme, onToggle: {}, onHeightChanged: {})
+                toolCard.configure(calls: [call], expandedIds: [call.call.id], width: 640, theme: theme, isStreaming: false, onToggle: { _ in }, onHeightChanged: {})
             }
             configure(dark)
-            try check(equal(row.layer?.backgroundColor, dark.surface.canvas), "actualExpandedToolCardUsesCanvas")
+            try check(equal(toolCard.layer?.backgroundColor, dark.surface.canvas), "actualExpandedToolCardUsesCanvas")
             let header = InspectorActivityHeaderSurface()
             header.configure(theme: dark, selected: false)
             try check(equal(header.layer?.backgroundColor, dark.surface.canvas), "actualToolHeaderUsesCanvas")
@@ -66,13 +66,13 @@ import SwiftUI
             reasoning.configure(thinking: "Local rendering check.", thinkingLength: nil, width: 640, isStreaming: false, isExpanded: true, duration: 1, theme: dark, blockId: "surface-reasoning", sessionRedactions: [:], onToggle: {}, onHeightChanged: {})
             try check(equal(reasoning.layer?.backgroundColor, dark.surface.canvas), "actualExpandedReasoningUsesCanvas")
             configure(light)
-            try check(equal(row.layer?.backgroundColor, light.surface.canvas), "actualToolUsesIndependentLightCanvas")
+            try check(equal(toolCard.layer?.backgroundColor, light.surface.canvas), "actualToolUsesIndependentLightCanvas")
             let cardKey = AgentContentSurfaceAssignments.key(34, "toolCard")
             let headerKey = AgentContentSurfaceAssignments.key(34, "toolHeader")
             store.assign(cardKey, to: "color.surface.inverse")
             let edited = store.document
             try install(); configure(dark)
-            try check(equal(row.layer?.backgroundColor, dark.assignedColor("color.surface.inverse", fallback: dark.surface.canvas)), "inspectorAssignmentChangesActualToolCard")
+            try check(equal(toolCard.layer?.backgroundColor, dark.assignedColor("color.surface.inverse", fallback: dark.surface.canvas)), "inspectorAssignmentChangesActualToolCard")
             header.configure(theme: dark, selected: false)
             try check(equal(header.layer?.backgroundColor, dark.surface.canvas) && edited.mappings[headerKey] == "color.surface.canvas", "cardEditDoesNotChangeHeader")
             try check(initial.mappings.filter { $0.key.hasPrefix("component.library.32.") } == edited.mappings.filter { $0.key.hasPrefix("component.library.32.") }, "codeBlockAssignmentsStayIndependent")

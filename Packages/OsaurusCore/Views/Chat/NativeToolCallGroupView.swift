@@ -374,7 +374,7 @@ final class RailLineView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        shape.lineWidth = 2
+        shape.lineWidth = 1.5
         shape.lineCap = .round
         shape.fillColor = NSColor.clear.cgColor
         shape.strokeEnd = 1
@@ -482,161 +482,6 @@ final class RailLineView: NSView {
     }
 }
 
-// MARK: - TimelineNodeView
-
-/// The circular timeline node, backed by a `CAShapeLayer` so its ring can be
-/// stroked on progressively (clockwise) the way the rail draws — a plain
-/// `CALayer` border can only appear all-at-once. The shape's `fillColor` is the
-/// translucent status tint (the disc) and its `strokeColor` is the ring; the
-/// category glyph rides on top as a subview. The reveal animates `strokeEnd`
-/// (ring drawing clockwise) and fades the fill in alongside it.
-final class TimelineNodeView: NSView {
-    private static let animationKey = "ring.draw"
-    /// Duration of the clockwise ring trace on reveal.
-    static let ringDrawDuration: CFTimeInterval = 0.34
-
-    private var drawPending = false
-    /// Absolute begin time captured at `drawRing` call site so a deferred
-    /// layout pass can't desync the ring's begin from the icon/title
-    /// animations scheduled in the same configure() call.
-    private var pendingBeginAt: CFTimeInterval = 0
-    /// Target disc fill captured synchronously in `drawRing` before the
-    /// model value is cleared. We must clear immediately so the disc
-    /// doesn't render at the target color in the window between
-    /// `drawRing` and `startDrawIfReady` (which can be deferred via
-    /// layout) — otherwise the disc pops in before the ring traces.
-    private var pendingFillTarget: CGColor?
-
-    /// Backing layer (returned from `makeBackingLayer`) — kept typed so we never
-    /// need to force-cast `layer`.
-    private let shape = CAShapeLayer()
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        shape.lineWidth = 1.5
-        shape.strokeEnd = 1
-        wantsLayer = true
-        // See RailLineView.suppressedActions — same rationale.
-        shape.actions = Self.suppressedActions
-    }
-
-    private static let suppressedActions: [String: CAAction] = [
-        "bounds": NSNull(),
-        "position": NSNull(),
-        "strokeEnd": NSNull(),
-        "strokeColor": NSNull(),
-        "fillColor": NSNull(),
-        "path": NSNull(),
-        "opacity": NSNull(),
-        "hidden": NSNull(),
-        "contents": NSNull(),
-        "transform": NSNull(),
-    ]
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func makeBackingLayer() -> CALayer { shape }
-
-    var fillColor: CGColor? {
-        get { shape.fillColor }
-        set { shape.fillColor = newValue }
-    }
-    var strokeColor: CGColor? {
-        get { shape.strokeColor }
-        set { shape.strokeColor = newValue }
-    }
-    var inspectionStrokeWidth: CGFloat {
-        get { shape.lineWidth }
-        set { shape.lineWidth = newValue; updatePath() }
-    }
-
-    override func layout() {
-        super.layout()
-        updatePath()
-        if drawPending { startDrawIfReady() }
-    }
-
-    private func updatePath() {
-        guard bounds.width > 1 else { return }
-        let inset = shape.lineWidth / 2
-        let rect = bounds.insetBy(dx: inset, dy: inset)
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        let radius = min(rect.width, rect.height) / 2
-        // Start at 12 o'clock and sweep clockwise so `strokeEnd` traces the ring
-        // clockwise. (Flip `clockwise:` if it ends up reading counter-clockwise.)
-        let p = CGMutablePath()
-        p.addArc(
-            center: center,
-            radius: radius,
-            startAngle: .pi / 2,
-            endAngle: .pi / 2 - 2 * .pi,
-            clockwise: true
-        )
-        shape.path = p
-    }
-
-    /// Trace the ring in clockwise (+ fade the fill in) starting at `beginAt`
-    /// (absolute `CACurrentMediaTime()` timeline).
-    func drawRing(beginAt: CFTimeInterval) {
-        if drawPending || shape.animation(forKey: Self.animationKey) != nil { return }
-        drawPending = true
-        pendingBeginAt = beginAt
-        pendingFillTarget = shape.fillColor
-        // Hide the disc + ring synchronously (no implicit fades). Before
-        // this fix, the disc rendered at its target color during the
-        // window between `drawRing` and the deferred `startDrawIfReady`
-        // — which manifested as the colored disc popping in before the
-        // ring traced over it.
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        shape.strokeEnd = 0
-        shape.fillColor = NSColor.clear.cgColor
-        CATransaction.commit()
-        if bounds.width > 1 {
-            startDrawIfReady()
-        } else {
-            needsLayout = true
-        }
-    }
-
-    /// Show the full ring with no animation (load / reuse / already drawn).
-    func showRingFull() {
-        if drawPending || shape.animation(forKey: Self.animationKey) != nil { return }
-        shape.strokeEnd = 1
-    }
-
-    private func startDrawIfReady() {
-        guard drawPending, bounds.width > 1 else { return }
-        drawPending = false
-        let begin = pendingBeginAt
-        let fillTarget = pendingFillTarget ?? shape.fillColor
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.fillMode = .both
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        let fill = CABasicAnimation(keyPath: "fillColor")
-        fill.fromValue = NSColor.clear.cgColor
-        fill.toValue = fillTarget
-        fill.fillMode = .both
-        let group = CAAnimationGroup()
-        group.animations = [stroke, fill]
-        group.duration = Self.ringDrawDuration
-        group.beginTime = begin
-        group.fillMode = .both
-        group.isRemovedOnCompletion = false
-        // Restore model to final state (without triggering implicit fades)
-        // so subsequent property reads / future animations see the right
-        // baseline. The explicit animation drives the presentation.
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        shape.strokeEnd = 1
-        shape.fillColor = fillTarget
-        CATransaction.commit()
-        shape.add(group, forKey: Self.animationKey)
-    }
-}
-
 // MARK: - NativeToolCallGroupView
 
 final class NativeToolCallGroupView: NSView {
@@ -705,8 +550,9 @@ final class NativeToolCallGroupView: NSView {
         onHeightChanged: @escaping () -> Void
     ) {
         let theme = theme.catalogFamily(34)
-        rowStack.spacing = max(0, ActivityInspectionStyle.layout("resultCardsGap", "gap", theme.space.s8, theme))
-        rowStack.catalogAssignmentTarget([ActivityInspectionStyle.key + "elements.layout.resultCardsGap"], name: "Individual tool result cards", theme: theme)
+        layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "toolCard", theme)).cgColor
+        ActivityNodeStyle.applyCard(layer, theme: theme, borderWidth: ActivityInspectionStyle.metric("borderWidth", 1, theme))
+        catalogAssignmentTarget([AgentContentSurfaceAssignments.key(34, "toolCard")], name: "Tool result card", theme: theme)
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
 
@@ -858,14 +704,20 @@ final class NativeToolCallRowView: NSView {
     // MARK: Subviews
 
     private let headerButton = NSButton()
-    /// Category glyph in the node foreground (db cylinder, terminal, file, …).
-    /// The node's ring color carries the status; this carries the tool identity.
-    private let categoryIcon = NSImageView()
     /// Shown in place of `nameLabel` while the call is running (no result yet,
     /// or a `speak` call still playing) — the title shimmers to signal progress.
     private let shimmerLabel = ShimmerLabel()
-    /// Circular timeline node — status-tinted fill + ring, holds the category glyph.
-    private let categoryBg = TimelineNodeView()
+    /// Timeline node — status-tinted fill + ring, orbiting while the call runs.
+    private let categoryBg = ActivityNodeView()
+    /// Category glyph in the node foreground (db cylinder, terminal, file, …).
+    /// The node's ring color carries the status; this carries the tool identity.
+    private var categoryIcon: NSImageView { categoryBg.glyph }
+    /// Hairline above every row but the first: consecutive calls share one card.
+    private let rowDivider = NSView()
+    /// Call id whose running state `applyStatusAndShimmer` last saw, so the
+    /// finish beat plays only on a live running → done transition.
+    private var statusCallId: String?
+    private var statusWasRunning = false
     /// Vertical rail segments connecting consecutive nodes. `railAbove` runs
     /// from the row top to the node top edge, `railBelow` from the node bottom
     /// edge to the row bottom (so it spans expanded content). Both hidden for a
@@ -1170,6 +1022,8 @@ final class NativeToolCallRowView: NSView {
         railBelow.color = railColor
         railAbove.isHidden = index == 0
         railBelow.isHidden = index >= totalCount - 1
+        rowDivider.isHidden = index == 0
+        rowDivider.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
         // A freshly connected segment (streaming append) sweeps in; everything
         // else shows fully. `showFull`/`drawIn` are no-ops mid-draw, so the
         // per-token reconfigures that follow can't interrupt the animation.
@@ -1442,21 +1296,21 @@ final class NativeToolCallRowView: NSView {
         headerButton.constraints.first { $0.firstAttribute == .height }?.constant = height
         separatorView.constraints.first { $0.firstAttribute == .height }?.constant = ActivityInspectionStyle.metric("borderWidth", 1, theme)
         separatorView.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
-        layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "toolCard", theme)).cgColor
-        catalogAssignmentTarget([AgentContentSurfaceAssignments.key(34, "toolCard")], name: "Tool result card", theme: theme)
         contentContainer.wantsLayer = true
         contentContainer.layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "toolContent", theme)).cgColor
-        layer?.borderColor = NSColor(theme.border.subtle).cgColor
-        layer?.borderWidth = ActivityInspectionStyle.metric("borderWidth", 0, theme)
-        layer?.cornerRadius = theme.radius.medium
-        categoryBg.inspectionStrokeWidth = ActivityInspectionStyle.metric("borderWidth", 1.5, theme)
+        categoryBg.ringWidth = ActivityInspectionStyle.metric("borderWidth", 1, theme)
+        categoryBg.cornerRadius = ActivityNodeStyle.cornerRadius(side: Self.nodeSize, theme: theme)
+        let iconGap = ActivityInspectionStyle.layout("toolHeaderIconGap", "gap", theme.space.s8, theme)
         for c in constraints {
             let view = c.firstItem as? NSView
+            if view === rowDivider, c.firstAttribute == .leading { c.constant = pad + Self.nodeSize + iconGap }
             if view === categoryBg, c.firstAttribute == .leading { c.constant = pad }
             if view === categoryBg, c.firstAttribute == .centerY { c.constant = height / 2 }
-            if (view === nameLabel || view === shimmerLabel), c.firstAttribute == .leading { c.constant = ActivityInspectionStyle.layout("toolHeaderIconGap", "gap", theme.space.s8, theme) }
+            if (view === nameLabel || view === shimmerLabel), c.firstAttribute == .leading { c.constant = iconGap }
             if view === argPreviewLabel, c.firstAttribute == .leading { c.constant = ActivityInspectionStyle.layout("toolHeaderMetadataGap", "gap", theme.space.s8, theme) }
-            if view === chevron, c.firstAttribute == .trailing { c.constant = -pad }
+            if view === chevron, c.firstAttribute == .trailing {
+                c.constant = -(pad - SymbolImageCache.chevronTrailingSlack(slot: 12, pointSize: 10, weight: .semibold))
+            }
             if view === separatorView, c.firstAttribute == .top { c.constant = height }
             if view === separatorView, c.firstAttribute == .leading { c.constant = 2 * pad }
             if view === separatorView, c.firstAttribute == .trailing { c.constant = -2 * pad }
@@ -2036,8 +1890,7 @@ final class NativeToolCallRowView: NSView {
         onHeightChanged?()
     }
 
-    /// Diameter of the circular timeline node.
-    private static let nodeSize: CGFloat = 28
+    private static let nodeSize = ActivityNodeStyle.side
     /// Header row height (node + breathing room above/below).
     static let rowHeaderHeight: CGFloat = 48
 
@@ -2053,22 +1906,16 @@ final class NativeToolCallRowView: NSView {
             addSubview(rail)
         }
 
-        // Circular node — a TimelineNodeView whose CAShapeLayer draws both the
-        // tinted disc (fillColor) and the status ring (strokeColor), so the ring
-        // can be traced on clockwise during the reveal. Colors set in configure.
+        rowDivider.translatesAutoresizingMaskIntoConstraints = false
+        rowDivider.wantsLayer = true
+        rowDivider.isHidden = true
+        addSubview(rowDivider)
+
+        // The node's shape layer draws the tinted fill and the status ring, so
+        // the ring can be traced on clockwise during the reveal. Colors set in
+        // `applyStatusAndShimmer`.
         categoryBg.translatesAutoresizingMaskIntoConstraints = false
         addSubview(categoryBg)
-
-        // Category glyph lives inside the node, foreground.
-        categoryIcon.translatesAutoresizingMaskIntoConstraints = false
-        categoryIcon.wantsLayer = true  // animatable for the staged glyph reveal
-        categoryIcon.imageScaling = .scaleProportionallyUpOrDown
-        // Suppress implicit CALayer animations on `contents`/`opacity`/`bounds`
-        // etc. Post-finish cell teardown + redequeue otherwise rebuilds the
-        // image view from zero bounds → 14×14, animating the glyph in over
-        // 0.25s and giving the impression the appearance sequence is replaying.
-        categoryIcon.layer?.actions = Self.suppressedLayerActions
-        categoryBg.addSubview(categoryIcon)
 
         // Shimmering title (running state); overlays the static nameLabel slot.
         shimmerLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -2193,6 +2040,10 @@ final class NativeToolCallRowView: NSView {
         inspectionHeader.translatesAutoresizingMaskIntoConstraints = false
         addSubview(inspectionHeader, positioned: .below, relativeTo: categoryBg)
         NSLayoutConstraint.activate([inspectionHeader.leadingAnchor.constraint(equalTo: leadingAnchor), inspectionHeader.trailingAnchor.constraint(equalTo: trailingAnchor), inspectionHeader.topAnchor.constraint(equalTo: topAnchor), inspectionHeader.heightAnchor.constraint(equalTo: headerButton.heightAnchor)])
+        // The header surface is opaque; the rail and divider run through it.
+        for line in [railAbove, railBelow, rowDivider] {
+            addSubview(line, positioned: .above, relativeTo: inspectionHeader)
+        }
         // self-sizing height constraint
         let h = heightAnchor.constraint(equalToConstant: rowH + 1)
         h.priority = NSLayoutConstraint.Priority(rawValue: 750)
@@ -2212,26 +2063,26 @@ final class NativeToolCallRowView: NSView {
             categoryBg.widthAnchor.constraint(equalToConstant: Self.nodeSize),
             categoryBg.heightAnchor.constraint(equalToConstant: Self.nodeSize),
 
-            categoryIcon.centerXAnchor.constraint(equalTo: categoryBg.centerXAnchor),
-            categoryIcon.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
-            categoryIcon.widthAnchor.constraint(equalToConstant: 14),
-            categoryIcon.heightAnchor.constraint(equalToConstant: 14),
+            rowDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            rowDivider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            rowDivider.topAnchor.constraint(equalTo: topAnchor),
+            rowDivider.heightAnchor.constraint(equalToConstant: 1),
 
             // Shimmer title occupies the same slot as nameLabel (only one shows).
             shimmerLabel.leadingAnchor.constraint(equalTo: categoryBg.trailingAnchor, constant: 10),
             shimmerLabel.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
             shimmerLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
 
-            // Rail: a 2pt vertical line centered on the node. It connects the
-            // node *edges* (not the center) so it never crosses through a circle.
+            // Rail: a vertical line centered on the node, stopping short of
+            // the node's edges.
             railAbove.centerXAnchor.constraint(equalTo: categoryBg.centerXAnchor),
             railAbove.widthAnchor.constraint(equalToConstant: 2),
             railAbove.topAnchor.constraint(equalTo: topAnchor),
-            railAbove.bottomAnchor.constraint(equalTo: categoryBg.topAnchor),
+            railAbove.bottomAnchor.constraint(equalTo: categoryBg.topAnchor, constant: -3),
 
             railBelow.centerXAnchor.constraint(equalTo: categoryBg.centerXAnchor),
             railBelow.widthAnchor.constraint(equalToConstant: 2),
-            railBelow.topAnchor.constraint(equalTo: categoryBg.bottomAnchor),
+            railBelow.topAnchor.constraint(equalTo: categoryBg.bottomAnchor, constant: 3),
             railBelow.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             nameLabel.leadingAnchor.constraint(equalTo: categoryBg.trailingAnchor, constant: 10),
@@ -2509,20 +2360,14 @@ final class NativeToolCallRowView: NSView {
     private func applyStatusAndShimmer() {
         guard let item = currentItem, let theme = lastConfiguredTheme else { return }
         let color = nodeStatusColor(item: item, theme: theme)
-        // Suppress CALayer's default property actions. Setting `fillColor` /
-        // `strokeColor` / `contentTintColor` otherwise spins up implicit
-        // 0.25s fades on the disc and tint, which race the explicit ring /
-        // icon / title appearance animations scheduled in
-        // `playNodeAppearance` and read as the node glitch-popping in.
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        categoryIcon.contentTintColor = color
-        let backing = NSColor(theme.surface.raised)
-        categoryBg.fillColor = (backing.blended(withFraction: 0.14, of: color) ?? backing).cgColor
-        categoryBg.strokeColor = (backing.blended(withFraction: 0.55, of: color) ?? color).cgColor
-        CATransaction.commit()
+        let running = isRunning(item)
+        categoryBg.apply(color: color, backing: NSColor(theme.surface.raised))
+        categoryBg.setRunning(running)
+        if statusCallId == item.call.id, statusWasRunning, !running { categoryBg.playSettle() }
+        statusCallId = item.call.id
+        statusWasRunning = running
 
-        if isRunning(item) {
+        if running {
             let progress = MCPToolProgressRegistry.shared.message(for: item.call.id)
             let titleTracking = theme.assignedTracking(ActivityInspectionStyle.key + "label")
             let titleLineHeight: CGFloat? = theme.assignedLineHeight(ActivityInspectionStyle.key + "label", fallback: 18)
@@ -2554,7 +2399,7 @@ final class NativeToolCallRowView: NSView {
     /// holds each stage hidden until its begin time, so there's no pre-flash and
     /// the per-token reconfigures that follow can't disturb an in-flight reveal.
     private func playNodeAppearance(beginAt begin: CFTimeInterval) {
-        let ringDuration = TimelineNodeView.ringDrawDuration
+        let ringDuration = ActivityNodeView.ringDrawDuration
         let iconDuration: CFTimeInterval = 0.20
         let titleDuration: CFTimeInterval = 0.24
 

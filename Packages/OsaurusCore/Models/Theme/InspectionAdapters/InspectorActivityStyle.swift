@@ -47,7 +47,6 @@ final class InspectorActivityHeaderSurface: NSView {
     }
     private func refresh() {
         guard let theme else { return }
-        layer?.cornerRadius = theme.radius.medium
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, element, theme, state: hovered ? "hover" : selected ? "selected" : "background")).cgColor
     }
     override func updateTrackingAreas() {

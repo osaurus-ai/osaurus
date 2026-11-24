@@ -889,10 +889,12 @@ struct SidebarRowBackground: View {
             .overlay(shape.strokeBorder(stroke, lineWidth: theme.selectionStroke))
     }
 
+    /// Compact chat rows mark selection with the fill alone in both
+    /// appearances: a hairline around a ticked or hovered chat read as a
+    /// bevel against the flat rows beside it.
     private var stroke: Color {
-        guard isSelected else { return .clear }
-        if theme.isDark { return compactChatStyle ? .clear : theme.border.default }
-        return theme.selectionBorder
+        guard isSelected, !compactChatStyle else { return .clear }
+        return theme.isDark ? theme.border.default : theme.selectionBorder
     }
 
     private var fill: Color {

@@ -3199,7 +3199,6 @@ extension AppDelegate {
                 id: requestId,
                 title: announcement.title,
                 message: nil,
-                showsHeaderIcon: false,
                 accessory: AnyView(
                     AnnouncementDialogContent(
                         body: announcement.body,

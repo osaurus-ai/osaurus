@@ -90,10 +90,12 @@ struct ChatBatchBar: View {
         let shape = RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
         HStack(spacing: theme.space.s4) {
             label
+            Spacer(minLength: theme.space.s12)
+            // Every action, Select all included, sits in the trailing group
+            // so the bar reads as a label and one row of buttons.
             if let selectAllCount {
                 SettingsButton(.tertiary, L("Select all \(selectAllCount)"), size: .compact, verbatim: true, action: onSelectAll)
             }
-            Spacer(minLength: theme.space.s8)
             if selectedCount > 0 {
                 switch placement {
                 case .sidebar: sidebarActions

@@ -130,11 +130,11 @@ struct WorkflowsSidebar: View {
     /// Activity, with how many workflows need attention.
     private var activityRow: some View {
         let issues = Self.issueCount(workflows: installed.workflows, automations: overview.automationFacts)
-        return WorkflowsSidebarDestinationRow(
-            title: L("Activity"), icon: "waveform.path.ecg", isSelected: selection == .activity,
-            badge: issues > 0 ? L("\(issues) issues") : nil
+        return NavigatorLinkRow(
+            icon: "waveform.path.ecg", title: L("Activity"), isSelected: selection == .activity,
+            action: { windowState.selectWorkflowsPage(.activity) }
         ) {
-            windowState.selectWorkflowsPage(.activity)
+            if issues > 0 { StatusChip(L("\(issues) issues"), tone: .error) }
         }
     }
 
@@ -368,7 +368,7 @@ struct WorkflowsSidebar: View {
     private func destinationRow(
         _ title: String, icon: String, isSelected: Bool, action: @escaping () -> Void
     ) -> some View {
-        WorkflowsSidebarDestinationRow(title: title, icon: icon, isSelected: isSelected, action: action)
+        NavigatorLinkRow(icon: icon, title: title, isSelected: isSelected, action: action)
     }
 
     private func scrollToTarget(_ proxy: ScrollViewProxy) {
@@ -381,8 +381,15 @@ struct WorkflowsSidebar: View {
     // MARK: Footer
 
     private var footer: some View {
-        WorkflowsSidebarStoreRow { Self.openStore() }
-            .settingsLandingAnchor("workflows.store")
+        NavigatorLinkRow(icon: "storefront", title: L("Osaurus Store"), action: { Self.openStore() }) {
+            Image(systemName: "arrow.up.right")
+                .glyphSize(.micro, weight: .semibold)
+                .foregroundStyle(theme.text.tertiary)
+                .accessibilityHidden(true)
+        }
+        .help(L("Workflows made by others, on store.osaurus.ai"))
+        .accessibilityAddTraits(.isLink)
+        .settingsLandingAnchor("workflows.store")
             .padding(.horizontal, theme.space.s16)
             .padding(.top, theme.space.s8)
             .padding(.bottom, theme.space.s16)
@@ -438,47 +445,6 @@ private struct WorkflowsSidebarGroupHeader<Trailing: View>: View {
     }
 }
 
-/// Home, a workspace or a draft: an icon and one line.
-private struct WorkflowsSidebarDestinationRow: View {
-    @Environment(\.theme) private var theme
-    let title: String
-    let icon: String
-    let isSelected: Bool
-    /// "1 issue", in the error tone.
-    var badge: String? = nil
-    let action: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        HStack(spacing: theme.space.s10) {
-            Image(systemName: icon)
-                .glyphSize(.footnote, weight: .medium)
-                .foregroundStyle(isSelected ? theme.text.primary : theme.text.secondary)
-                .frame(width: theme.space.s16)
-                .accessibilityHidden(true)
-            Text(verbatim: title)
-                .textStyle(.body, weight: 500)
-                .foregroundStyle(theme.text.primary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let badge {
-                StatusChip(badge, tone: .error)
-            }
-        }
-        .padding(.horizontal, theme.space.s10)
-        .padding(.vertical, theme.space.s8)
-        .sidebarRowChrome(isSelected: isSelected, isHovered: isHovered)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: action)
-        .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
-        .help(title)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: badge.map { "\(title), \($0)" } ?? title))
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { action() }
-    }
-}
-
 /// One workflow: how it runs (a dot and a few words), then Automate and Run.
 struct WorkflowsSidebarWorkflowRow: View {
     @Environment(\.theme) private var theme
@@ -504,7 +470,7 @@ struct WorkflowsSidebarWorkflowRow: View {
     }
 
     private func content(going: WorkflowLiveRuns.Summary?) -> some View {
-        HStack(spacing: theme.space.s8) {
+        HStack(spacing: NavigatorRowMetrics.iconGap) {
             Group {
                 if let going {
                     if going.isWaitingOnYou {
@@ -518,12 +484,12 @@ struct WorkflowsSidebarWorkflowRow: View {
                     WorkflowStatusMark(status: row.status)
                 }
             }
-            .frame(width: theme.space.s16, height: theme.space.s16)
+            .frame(width: NavigatorRowMetrics.iconColumn, height: theme.space.s16)
             .help(going?.shortLine ?? WorkflowStatusMark.label(row.status))
             VStack(alignment: .leading, spacing: theme.space.s2) {
                 HStack(spacing: theme.space.s4) {
                     Text(verbatim: row.name)
-                        .textStyle(.body, weight: 500)
+                        .componentInspectionText(41, role: .label, fallback: .caption, weight: 500, theme: theme)
                         .foregroundStyle(theme.text.primary)
                         .lineLimit(1)
                     if row.isPublished {
@@ -535,7 +501,7 @@ struct WorkflowsSidebarWorkflowRow: View {
                     }
                 }
                 Text(verbatim: going?.shortLine ?? row.subtitle)
-                    .textStyle(.caption)
+                    .componentInspectionText(41, role: .caption, fallback: .micro, theme: theme)
                     .foregroundStyle(subtitleInk(going))
                     .lineLimit(1)
             }
@@ -547,8 +513,10 @@ struct WorkflowsSidebarWorkflowRow: View {
             .accessibilityAction(named: Text("Run now", bundle: .module)) { onRun() }
             if showsActions { actions }
         }
-        .padding(.horizontal, theme.space.s10)
-        .padding(.vertical, theme.space.s8)
+        .padding(.leading, NavigatorRowMetrics.leadingInset)
+        .padding(.trailing, NavigatorRowMetrics.trailingInset)
+        .padding(.vertical, theme.space.s4)
+        .frame(minHeight: NavigatorRowMetrics.rowHeight)
         .sidebarRowChrome(isSelected: isSelected, isHovered: isHovered)
         .contentShape(Rectangle())
         .onTapGesture(perform: onOpen)
@@ -643,41 +611,5 @@ struct WorkflowStatusMark: View {
         case .automated: return L("Runs on its own")
         case .manual: return L("Run by hand")
         }
-    }
-}
-
-/// The Store row: workflows made by others, on the website.
-private struct WorkflowsSidebarStoreRow: View {
-    @Environment(\.theme) private var theme
-    let action: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        HStack(spacing: theme.space.s10) {
-            Image(systemName: "storefront")
-                .glyphSize(.footnote, weight: .medium)
-                .foregroundStyle(theme.text.secondary)
-                .frame(width: theme.space.s16)
-                .accessibilityHidden(true)
-            Text("Osaurus Store", bundle: .module)
-                .textStyle(.body, weight: 500)
-                .foregroundStyle(theme.text.primary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "arrow.up.right")
-                .glyphSize(.micro, weight: .semibold)
-                .foregroundStyle(theme.text.tertiary)
-                .accessibilityHidden(true)
-        }
-        .padding(.horizontal, theme.space.s10)
-        .padding(.vertical, theme.space.s8)
-        .sidebarRowChrome(isSelected: false, isHovered: isHovered)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: action)
-        .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
-        .help(L("Workflows made by others, on store.osaurus.ai"))
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isLink)
-        .accessibilityAction { action() }
     }
 }

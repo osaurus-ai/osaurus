@@ -43,6 +43,7 @@ struct ImportGuideSheet: View {
     @ObservedObject private var pref = ImportGuidePreference.shared
     /// Accordion state: the one provider whose export recipe is expanded.
     @State private var expandedProviderId: String?
+    @State private var hoveredProviderId: String?
 
     private let contentWidth: CGFloat = 420
 
@@ -97,15 +98,25 @@ struct ImportGuideSheet: View {
             )
             .textStyle(.bodySmall)
             .foregroundColor(theme.text.secondary)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
-            .padding(.bottom, theme.space.s12)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, theme.space.s14)
 
-            VStack(spacing: theme.space.s6) {
-                ForEach(providers) { provider in
+            VStack(spacing: theme.space.s0) {
+                ForEach(Array(providers.enumerated()), id: \.element.id) { index, provider in
+                    if index > 0 { SettingsGroupDivider() }
                     providerRow(provider)
                 }
             }
+            .background(
+                RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                    .fill(theme.surface.subtle)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                    .stroke(theme.border.default, lineWidth: theme.stroke.default)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous))
 
             Text(
                 "Then choose the downloaded file below. You can select several files at once.",
@@ -113,8 +124,8 @@ struct ImportGuideSheet: View {
             )
             .textStyle(.caption)
             .foregroundColor(theme.text.tertiary)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, theme.space.s12)
 
             ThemeHairlineDivider()
@@ -160,11 +171,12 @@ struct ImportGuideSheet: View {
                         .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
-                .padding(.horizontal, theme.space.s12)
-                .padding(.vertical, theme.space.s8)
+                .padding(.horizontal, theme.space.s16)
+                .padding(.vertical, theme.space.s10)
                 .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
+            .onHover { hoveredProviderId = $0 ? provider.id : (hoveredProviderId == provider.id ? nil : hoveredProviderId) }
 
             if isExpanded {
                 HStack(alignment: .top, spacing: theme.space.s10) {
@@ -186,19 +198,12 @@ struct ImportGuideSheet: View {
                         .localizedHelp("Open export page")
                     }
                 }
-                .padding(.horizontal, theme.space.s12)
-                .padding(.bottom, theme.space.s10)
+                .padding(.horizontal, theme.space.s16)
+                .padding(.bottom, theme.space.s12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .fill(theme.surface.hover)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .stroke(isExpanded ? theme.border.strong : theme.border.default, lineWidth: theme.stroke.default)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
+        .background(isExpanded || hoveredProviderId == provider.id ? theme.surface.hover : Color.clear)
+        .animation(theme.motion.quick, value: hoveredProviderId)
     }
 }

@@ -505,9 +505,8 @@ private struct SidebarItemView: View {
             }
         }
         .frame(width: 44, height: 40)
-        .background(collapsedBackground)
-        .overlay(collapsedBorder)
-        .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
+        .sidebarRowChrome(isSelected: isSelected, isHovered: isHovering)
+        .animation(theme.motion.standard, value: isSelected)
         .help(item.label)
     }
 
@@ -522,22 +521,6 @@ private struct SidebarItemView: View {
             )
             .frame(width: 8, height: 8)
             .offset(x: 12, y: -12)
-    }
-
-    private var collapsedBackground: some View {
-        RoundedRectangle(cornerRadius: theme.radius.medium)
-            .fill(
-                isSelected
-                    ? theme.surface.selected
-                    : (isHovering ? theme.surface.hover : Color.clear)
-            )
-    }
-
-    private var collapsedBorder: some View {
-        RoundedRectangle(cornerRadius: theme.radius.medium)
-            .stroke(
-                isSelected ? (theme.isDark ? theme.border.default : theme.selectionBorder) : Color.clear,
-                lineWidth: theme.selectionStroke)
     }
 
     // MARK: Expanded State
@@ -575,8 +558,8 @@ private struct SidebarItemView: View {
         }
         .padding(.horizontal, isProminent ? theme.space.s10 : theme.space.s12)
         .padding(.vertical, isProminent ? theme.space.s8 : theme.space.s10)
-        .background(expandedBackground)
-        .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
+        .sidebarRowChrome(isSelected: isSelected, isHovered: isHovering)
+        .animation(theme.motion.standard, value: isSelected)
     }
 
     private func expandedBadge(count: Int) -> some View {
@@ -590,35 +573,6 @@ private struct SidebarItemView: View {
             .background(
                 Capsule().fill(
                     item.badgeHighlight ? theme.action.primary.default.background : theme.surface.pressed))
-    }
-
-    private var expandedBackground: some View {
-        // Every `SidebarItemView` lives inside a parent `VStack` + `ForEach`
-        // and was previously registering `.matchedGeometryEffect(id:"sidebar_selection",
-        // in: namespace)` inside the `isSelected` branch. SwiftUI requires that
-        // exactly one view own a given (id, namespace) pair at a time, but during
-        // selection transitions the outgoing selected row and the incoming one
-        // can briefly both be `isSelected == true`, tripping a Swift runtime
-        // precondition in Debug builds (EXC_BREAKPOINT at the geometry-effect
-        // source check). Release builds compile the precondition away, which is
-        // why the DMG looked fine while Xcode builds crashed on Settings open.
-        //
-        // Switching to a plain conditional fill + `.animation()` keeps the
-        // selected-highlight visual (cross-fade between selected / hover / none)
-        // without the single-source invariant. We lose the cross-row pill slide,
-        // which was subtle enough that it's not worth the crash surface.
-        RoundedRectangle(cornerRadius: theme.radius.medium)
-            .fill(
-                isSelected
-                    ? theme.surface.selected
-                    : (isHovering ? theme.surface.hover : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: theme.radius.medium)
-                    .strokeBorder(isSelected ? theme.selectionBorder : Color.clear, lineWidth: theme.selectionStroke)
-            )
-            .animation(theme.motion.standard, value: isSelected)
-            .animation(theme.motion.quick, value: isHovering)
     }
 }
 

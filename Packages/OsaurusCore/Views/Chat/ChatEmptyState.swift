@@ -346,13 +346,15 @@ struct ChatEmptyState: View {
                 .offset(y: hasAppeared ? 0 : 20)
                 .animation(theme.motion.springAnimation.delay(0.1), value: hasAppeared)
 
+                // Body type under the title: an agent's description runs a
+                // sentence or two and must not compete with the greeting.
                 Text(subtitleText, bundle: .module)
-                    .textStyle(.heading)
+                    .textStyle(.body)
                     .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 560)
+                    .frame(maxWidth: 460)
                     .transition(.opacity)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
@@ -388,21 +390,18 @@ struct ChatEmptyState: View {
                 }
             }
 
-            if let discoveryCard {
-                DiscoveryCardView(
-                    card: discoveryCard,
-                    onOpen: { onOpenDiscovery?(discoveryCard.item) },
-                    onDismiss: { onDismissDiscovery?(discoveryCard.item) }
+            if discoveryCard != nil || (setUpLeft > 0 && onOpenSetUp != nil) {
+                GreetingSetupCard(
+                    discovery: discoveryCard,
+                    onOpenDiscovery: { if let discoveryCard { onOpenDiscovery?(discoveryCard.item) } },
+                    onDismissDiscovery: { if let discoveryCard { onDismissDiscovery?(discoveryCard.item) } },
+                    setUpLeft: setUpLeft,
+                    onOpenSetUp: onOpenSetUp,
+                    onSkipSetUp: onSkipSetUp
                 )
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 12)
                 .animation(theme.motion.springAnimation.delay(0.24), value: hasAppeared)
-            }
-
-            if setUpLeft > 0, let onOpenSetUp {
-                SetUpOsaurusLink(left: setUpLeft, onOpen: onOpenSetUp, onSkip: onSkipSetUp)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .animation(theme.motion.springAnimation.delay(0.28), value: hasAppeared)
             }
 
             if !effectiveQuickActions.isEmpty {
@@ -1520,108 +1519,119 @@ private struct ChatEmptyStateNoModels: View {
     }
 }
 
+// MARK: - Greeting Setup Card
+
+/// Setup under the greeting, as one card: the next discovery to try (open
+/// it, or dismiss it for good) over a footer with what is left in Set Up
+/// Osaurus and Skip setup, which stops offering setup in new chats. Either
+/// half shows alone when the other has nothing to offer.
+struct GreetingSetupCard: View {
+    let discovery: DiscoveryCard?
+    var onOpenDiscovery: () -> Void = {}
+    var onDismissDiscovery: () -> Void = {}
+    let setUpLeft: Int
+    var onOpenSetUp: (() -> Void)?
+    var onSkipSetUp: (() -> Void)?
+
+    @State private var isDiscoveryHovered = false
+    @State private var isSetUpHovered = false
+    @Environment(\.theme) private var theme
+
+    private var showsSetUp: Bool { setUpLeft > 0 && onOpenSetUp != nil }
+
+    var body: some View {
+        VStack(spacing: theme.space.s0) {
+            if let discovery {
+                discoveryRow(discovery)
+            }
+            if discovery != nil, showsSetUp {
+                ThemeHairlineDivider()
+            }
+            if showsSetUp {
+                setUpFooter
+            }
+        }
+        .frame(maxWidth: 420)
+        .settingsChrome(.card)
+        .padding(.top, theme.space.s4)
+    }
+
+    /// The whole row opens the walkthrough; its hover wash sits inset from
+    /// the card's edge so the card's own corners stay clean.
+    private func discoveryRow(_ card: DiscoveryCard) -> some View {
+        HStack(spacing: theme.space.s8) {
+            Button(action: onOpenDiscovery) {
+                HStack(spacing: theme.space.s10) {
+                    SettingsIconTile(icon: card.icon, size: 28)
+                        .clipShape(RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous))
+                    Text(card.title)
+                        .textStyle(.label, weight: 500)
+                        .foregroundColor(theme.text.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: theme.space.s4)
+                    Image(systemName: "chevron.right")
+                        .glyphSize(.tiny, weight: .semibold)
+                        .foregroundColor(isDiscoveryHovered ? theme.text.secondary : theme.text.tertiary)
+                }
+                .padding(.leading, theme.space.s8)
+                .padding(.vertical, theme.space.s8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .onHover { isDiscoveryHovered = $0 }
+            .accessibilityHint(Text("Opens a short walkthrough", bundle: .module))
+
+            SettingsIconButton("xmark", help: L("Dismiss"), size: .extraSmall, role: .tertiary, action: onDismissDiscovery)
+                .accessibilityLabel(Text("Dismiss", bundle: .module))
+        }
+        .padding(.trailing, theme.space.s6)
+        .settingsChrome(isDiscoveryHovered ? .hover : nil)
+        .padding(theme.space.s4)
+        .animation(theme.motion.quick, value: isDiscoveryHovered)
+    }
+
+    /// Progress leading, Skip setup trailing, both in caption type so the
+    /// footer stays quieter than the discovery above it.
+    private var setUpFooter: some View {
+        HStack(spacing: theme.space.s8) {
+            Button {
+                onOpenSetUp?()
+            } label: {
+                HStack(spacing: theme.space.s6) {
+                    Image(systemName: "checklist")
+                        .glyphSize(.footnote, weight: .medium)
+                    Text(String(format: L("Set Up Osaurus: %lld left"), setUpLeft))
+                        .textStyle(.caption, weight: 500)
+                }
+                .foregroundColor(isSetUpHovered ? theme.text.primary : theme.text.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .onHover { isSetUpHovered = $0 }
+            .accessibilityHint(Text("Lists what is left to set up", bundle: .module))
+
+            Spacer(minLength: theme.space.s8)
+
+            if let onSkipSetUp {
+                SettingsButton(.tertiary, "Skip setup", size: .compact, help: "Stop suggesting setup in new chats", action: onSkipSetUp)
+                    .accessibilityHint(Text("Stop suggesting setup in new chats", bundle: .module))
+            }
+        }
+        .padding(.leading, theme.space.s12)
+        .padding(.trailing, theme.space.s6)
+        .padding(.vertical, theme.space.s6)
+    }
+}
+
 // MARK: - Quick Action Button (shared by Chat & Work empty states)
 
 /// One compact suggestion pill: glyph + single-line label in a capsule.
 /// Sized to its content so a wrapping flow can pack any number of actions
 /// into tidy centered rows.
-/// One discovery under the greeting: tap to open it, or dismiss it for good.
-struct DiscoveryCardView: View {
-    let card: DiscoveryCard
-    let onOpen: () -> Void
-    let onDismiss: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-        HStack(spacing: theme.space.s8) {
-            Button(action: onOpen) {
-                HStack(spacing: theme.space.s8) {
-                    SettingsIconTile(icon: card.icon, size: 24)
-                        .clipShape(RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous))
-                    Text(card.title)
-                        .textStyle(.caption, weight: 500)
-                        .foregroundColor(theme.text.primary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-            .accessibilityHint(Text("Opens a short walkthrough", bundle: .module))
-
-            SettingsIconButton("xmark", help: L("Dismiss"), size: .extraSmall, action: onDismiss)
-                .accessibilityLabel(Text("Dismiss", bundle: .module))
-        }
-        .padding(.horizontal, theme.space.s12)
-        .padding(.vertical, theme.space.s8)
-        .frame(maxWidth: 420)
-        .background(
-            shape.fill(theme.action.secondary[isHovered ? .hover : .default].background)
-                .overlay(
-                    shape.strokeBorder(
-                        isHovered ? theme.border.strong : theme.action.border, lineWidth: theme.stroke.default))
-        )
-        .onHover { isHovered = $0 }
-        .padding(.top, theme.space.s4)
-    }
-}
-
-/// The quiet link under the greeting to what is left in Set Up Osaurus,
-/// and Skip setup beside it, which stops offering setup in new chats.
-struct SetUpOsaurusLink: View {
-    let left: Int
-    let onOpen: () -> Void
-    var onSkip: (() -> Void)? = nil
-
-    @State private var isHovered = false
-    @State private var isSkipHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: theme.space.s8) {
-            Button(action: onOpen) {
-                HStack(spacing: theme.space.s4) {
-                    Image(systemName: "checklist")
-                        .glyphSize(.footnote, weight: .medium)
-                    Text(String(format: L("Set Up Osaurus: %lld left"), left))
-                        .textStyle(.caption, weight: 500)
-                }
-                .foregroundColor(isHovered ? theme.text.primary : theme.text.secondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-            .onHover { isHovered = $0 }
-            .accessibilityHint(Text("Lists what is left to set up", bundle: .module))
-
-            if let onSkip {
-                Text(verbatim: "·")
-                    .textStyle(.caption)
-                    .foregroundColor(theme.text.tertiary)
-                    .accessibilityHidden(true)
-                Button(action: onSkip) {
-                    Text("Skip setup", bundle: .module)
-                        .textStyle(.caption)
-                        .foregroundColor(isSkipHovered ? theme.text.primary : theme.text.tertiary)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .onHover { isSkipHovered = $0 }
-                .help(Text("Stop suggesting setup in new chats", bundle: .module))
-                .accessibilityHint(Text("Stop suggesting setup in new chats", bundle: .module))
-            }
-        }
-        .padding(.top, theme.space.s2)
-    }
-}
-
 struct QuickActionButton: View {
     let action: AgentQuickAction
     let onTap: (String) -> Void
