@@ -290,6 +290,25 @@ struct OnboardingPlanTests {
     }
 
     @Test
+    func store_writesOffTheMainThread_inOrder() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("plan-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        await MainActor.run {
+            let store = OnboardingPlanStore(fileURL: url)
+            var last = OnboardingPlan(sessionId: UUID())
+            for pathId in ["keeper", "planner", "researcher"] {
+                last = OnboardingPlan(sessionId: UUID())
+                last.select(pathId: pathId)
+                store.save(last)
+            }
+            #expect(store.load() == last, "the last save wins")
+            store.save(last)
+            store.clear()
+            #expect(store.load() == nil, "a clear after a save leaves no plan")
+        }
+    }
+
+    @Test
     func aStoredPlan_fromBeforeTheKeepStepWasRetired_loadsWithoutIt() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("plan-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }

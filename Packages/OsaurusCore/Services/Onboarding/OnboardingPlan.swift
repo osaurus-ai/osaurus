@@ -266,13 +266,21 @@ final class OnboardingPlanStore {
 
     var fileURL: URL
 
+    /// Disk I/O runs here, never on the main thread: a slow disk (a large
+    /// local model loading, say) can hold an atomic write's `open()` for
+    /// seconds. Serial, so saves and clears land in the order they were made.
+    private let ioQueue = DispatchQueue(label: "com.dinoki.osaurus.onboarding-plan", qos: .utility)
+
     init(fileURL: URL = OsaurusPaths.config().appendingPathComponent("onboarding-plan.json")) {
         self.fileURL = fileURL
     }
 
+    /// Waits for queued writes, so it always reads the latest saved plan.
+    /// Callers read once and cache the result.
     func load() -> OnboardingPlan? {
-        guard let data = try? Data(contentsOf: fileURL),
-            var plan = try? JSONDecoder().decode(OnboardingPlan.self, from: data)
+        let url = fileURL
+        let data = ioQueue.sync { try? Data(contentsOf: url) }
+        guard let data, var plan = try? JSONDecoder().decode(OnboardingPlan.self, from: data)
         else { return nil }
         plan.dropRetiredSteps()
         return plan
@@ -282,14 +290,20 @@ final class OnboardingPlanStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(plan) else { return }
-        try? FileManager.default.createDirectory(
-            at: fileURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try? data.write(to: fileURL, options: .atomic)
+        let url = fileURL
+        ioQueue.async {
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     func clear() {
-        try? FileManager.default.removeItem(at: fileURL)
+        let url = fileURL
+        ioQueue.async {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }
