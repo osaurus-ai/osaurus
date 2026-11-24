@@ -385,7 +385,7 @@ let package = Package(
         // vmlx-swift#784 keeps Inkling sliding-window KV bounded during decode and in stored prefixes.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "76393bfd341f8a2cc484f2d65b465b2eed5e48b6"
+            revision: "20557c82c7afc9cd10c5c5160a0805157619b88b"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the
