@@ -54,6 +54,69 @@ enum NearbyTransferError: LocalizedError, Equatable {
     }
 }
 
+/// Limits how many files this Mac copies from each nearby host at once. A
+/// host serves `slotsPerHost` files at a time and refuses the rest as busy,
+/// so copies past the limit wait here, first come first served, rather than
+/// being refused and fetched from Hugging Face instead.
+actor NearbyHostGate {
+    static let shared = NearbyHostGate()
+    /// Must match `MAX_UPLOADS` in osaurus-models-net.
+    static let slotsPerHost = 4
+
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
+    private let slotsPerHost: Int
+    private var holders: [String: Int] = [:]
+    private var waiters: [String: [Waiter]] = [:]
+
+    init(slotsPerHost: Int = NearbyHostGate.slotsPerHost) {
+        self.slotsPerHost = slotsPerHost
+    }
+
+    /// Waits for a slot on `hostId`. Every successful acquire needs one
+    /// `release`; a cancelled wait throws and holds nothing.
+    func acquire(_ hostId: String) async throws {
+        try Task.checkCancellation()
+        if holders[hostId, default: 0] < slotsPerHost, waiters[hostId, default: []].isEmpty {
+            holders[hostId, default: 0] += 1
+            return
+        }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters[hostId, default: []].append(Waiter(id: id, continuation: continuation))
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id, hostId: hostId) }
+        }
+    }
+
+    /// Hands the slot to the next waiter, or frees it.
+    func release(_ hostId: String) {
+        if var queue = waiters[hostId], !queue.isEmpty {
+            let next = queue.removeFirst()
+            waiters[hostId] = queue.isEmpty ? nil : queue
+            next.continuation.resume()
+            return
+        }
+        let remaining = holders[hostId, default: 0] - 1
+        holders[hostId] = remaining > 0 ? remaining : nil
+    }
+
+    func holderCount(_ hostId: String) -> Int { holders[hostId, default: 0] }
+    func waiterCount(_ hostId: String) -> Int { waiters[hostId]?.count ?? 0 }
+
+    private func cancelWaiter(_ id: UUID, hostId: String) {
+        guard var queue = waiters[hostId], let index = queue.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = queue.remove(at: index)
+        waiters[hostId] = queue.isEmpty ? nil : queue
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+}
+
 private final class TransferProgressRelay: TransferProgress, @unchecked Sendable {
     private let handler: @Sendable (Int64) -> Void
     init(_ handler: @escaping @Sendable (Int64) -> Void) { self.handler = handler }
@@ -75,10 +138,17 @@ enum NearbyFileDownloader {
         return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
     }
 
+    /// Seconds to wait before asking a busy host again.
+    static func busyRetryDelay(attempt: Int) -> Double {
+        min(10, pow(2, Double(max(0, attempt - 1))))
+    }
+
     /// Copies `path` of `source` to `destination`, validating it against
     /// `size` and `digest` before replacing anything. `onProgress` gets the
     /// file's received byte count. Cancelling the calling task stops the
-    /// transfer and keeps the partial file.
+    /// transfer and keeps the partial file. A busy host (serving other Macs)
+    /// is asked again until it has room, so a copy that can come from the
+    /// nearby Mac never turns into an internet download just for waiting.
     static func download(
         node: ModelShareNode,
         source: NearbySource,
@@ -86,40 +156,42 @@ enum NearbyFileDownloader {
         size: Int64,
         digest: ModelFileDigest,
         to destination: URL,
+        gate: NearbyHostGate = .shared,
         onProgress: @escaping @Sendable (Int64) -> Void
     ) async throws {
         let fm = FileManager.default
         try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         let part = partURL(for: destination)
-        var offset = resumableBytes(for: destination)
-        if offset > size {
-            try? fm.removeItem(at: part)
-            offset = 0
-        }
-        if offset > 0 { onProgress(offset) }
-        if offset < size || !fm.fileExists(atPath: part.path) {
-            let transfer: FileTransfer
-            do {
-                transfer = try node.startDownload(
-                    host: source.hostId,
-                    model: source.itemId,
-                    path: path,
-                    destination: part.path,
-                    offset: UInt64(offset),
-                    progress: TransferProgressRelay(onProgress)
-                )
-            } catch let error as ModelShareError {
-                throw NearbyTransferError(error, hostName: source.hostName)
+        var busyAttempts = 0
+        copying: while true {
+            var offset = resumableBytes(for: destination)
+            if offset > size {
+                try? fm.removeItem(at: part)
+                offset = 0
             }
+            if offset > 0 { onProgress(offset) }
+            guard offset < size || !fm.fileExists(atPath: part.path) else { break copying }
+
+            try await gate.acquire(source.hostId)
+            let outcome: Result<Void, Error>
             do {
-                _ = try await withTaskCancellationHandler {
-                    try await transfer.wait()
-                } onCancel: {
-                    transfer.cancel()
-                }
-            } catch let error as ModelShareError {
+                try await receive(node: node, source: source, path: path, into: part, offset: offset, onProgress: onProgress)
+                outcome = .success(())
+            } catch {
+                outcome = .failure(error)
+            }
+            await gate.release(source.hostId)
+
+            switch outcome {
+            case .success:
+                break copying
+            case .failure(let error as ModelShareError):
                 if Task.isCancelled { throw CancellationError() }
-                throw NearbyTransferError(error, hostName: source.hostName)
+                guard case .Busy = error else { throw NearbyTransferError(error, hostName: source.hostName) }
+                busyAttempts += 1
+                try await Task.sleep(for: .seconds(busyRetryDelay(attempt: busyAttempts)))
+            case .failure(let error):
+                throw error
             }
         }
         try Task.checkCancellation()
@@ -130,6 +202,32 @@ enum NearbyFileDownloader {
         try Task.checkCancellation()
         try ModelFileIntegrity.commit(staged: part, to: destination)
         onProgress(size)
+    }
+
+    /// One request for the rest of `path`, appending to `part` from `offset`.
+    /// Throws the host's `ModelShareError` unmapped so the caller can tell a
+    /// busy host from one that's gone.
+    private static func receive(
+        node: ModelShareNode,
+        source: NearbySource,
+        path: String,
+        into part: URL,
+        offset: Int64,
+        onProgress: @escaping @Sendable (Int64) -> Void
+    ) async throws {
+        let transfer = try node.startDownload(
+            host: source.hostId,
+            model: source.itemId,
+            path: path,
+            destination: part.path,
+            offset: UInt64(offset),
+            progress: TransferProgressRelay(onProgress)
+        )
+        _ = try await withTaskCancellationHandler {
+            try await transfer.wait()
+        } onCancel: {
+            transfer.cancel()
+        }
     }
 }
 

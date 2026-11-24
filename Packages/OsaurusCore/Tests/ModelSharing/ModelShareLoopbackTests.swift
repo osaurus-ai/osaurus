@@ -195,6 +195,51 @@ struct ModelShareLoopbackTests {
         }
     }
 
+    /// Three models of three files each pulled at once from one host, which
+    /// serves four files at a time: every copy waits its turn and none fails
+    /// as busy (which the download services turn into a Hub download).
+    private func copyConcurrently(_ pair: Pair, count: Int, gate: NearbyHostGate) async throws {
+        let (digest, size) = try expected("model.safetensors", in: pair.model)
+        let node = pair.receiver
+        let source = pair.source
+        let destinations = (0 ..< count).map {
+            pair.root.appendingPathComponent("receiver/model-\($0 / 3)/file-\($0 % 3).safetensors")
+        }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for destination in destinations {
+                group.addTask {
+                    try await NearbyFileDownloader.download(
+                        node: node,
+                        source: source,
+                        path: "model.safetensors",
+                        size: size,
+                        digest: digest,
+                        to: destination,
+                        gate: gate
+                    ) { _ in }
+                }
+            }
+            try await group.waitForAll()
+        }
+        for destination in destinations {
+            #expect(try Data(contentsOf: destination) == Self.weights)
+        }
+    }
+
+    @Test func manyConcurrentCopiesQueueForTheHost() async throws {
+        try await withPair { pair in
+            try await copyConcurrently(pair, count: 9, gate: .shared)
+            #expect(await NearbyHostGate.shared.holderCount(pair.source.hostId) == 0)
+        }
+    }
+
+    /// Another Mac can fill the host's slots too; a refused copy asks again.
+    @Test func busyHostIsAskedAgain() async throws {
+        try await withPair { pair in
+            try await copyConcurrently(pair, count: 9, gate: NearbyHostGate(slotsPerHost: 9))
+        }
+    }
+
     @Test func mismatchedBytesAreDiscarded() async throws {
         try await withPair { pair in
             let (_, size) = try expected("model.safetensors", in: pair.model)
