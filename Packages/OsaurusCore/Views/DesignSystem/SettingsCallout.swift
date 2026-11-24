@@ -18,6 +18,10 @@ struct SettingsCallout<Actions: View>: View {
     /// Catalog keys.
     let title: String
     let message: String
+    /// Render `message` as plain text instead of a catalog key. Required for
+    /// text from outside the app (a peer's name, an engine or network error):
+    /// a catalog key interprets Markdown, so such text could inject links.
+    var verbatimMessage: Bool
     /// Status tone for the glyph and surface; nil draws a neutral surface.
     var tone: ThemeStatusKind?
     /// Someone's own words (a reviewer's note), shown verbatim and set off
@@ -29,6 +33,7 @@ struct SettingsCallout<Actions: View>: View {
         icon: String,
         title: String,
         message: String,
+        verbatimMessage: Bool = false,
         tone: ThemeStatusKind? = nil,
         quote: String? = nil,
         @ViewBuilder actions: () -> Actions = { EmptyView() }
@@ -36,9 +41,14 @@ struct SettingsCallout<Actions: View>: View {
         self.icon = icon
         self.title = title
         self.message = message
+        self.verbatimMessage = verbatimMessage
         self.tone = tone
         self.quote = quote
         self.actions = actions()
+    }
+
+    private var messageText: Text {
+        verbatimMessage ? Text(verbatim: message) : Text(LocalizedStringKey(message), bundle: .module)
     }
 
     private var tint: Color? {
@@ -57,7 +67,7 @@ struct SettingsCallout<Actions: View>: View {
                     .assignedTypography("component.library.18.label", fallback: SettingsFont.sectionTitle)
                     .foregroundColor(theme.text.primary)
                 if !message.isEmpty {
-                    Text(LocalizedStringKey(message), bundle: .module)
+                    messageText
                         .assignedTypography("component.library.18.caption", fallback: SettingsFont.caption)
                         .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)

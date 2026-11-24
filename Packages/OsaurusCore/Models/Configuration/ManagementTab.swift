@@ -74,6 +74,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case delegation
     case models
     case providers
+    case swarm
     case modelDefaults
     case imageGeneration
     case agents
@@ -136,6 +137,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .permissions: .privacy
         case .browser: .computerUse
         case .connect: .devices
+        case .swarm: .providers
         default: nil
         }
     }
@@ -149,6 +151,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .privacy: [.permissions]
         case .computerUse: [.browser]
         case .devices: [.connect]
+        case .providers: [.swarm]
         default: []
         }
     }
@@ -206,6 +209,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .connect: "iphone.radiowaves.left.and.right"
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
+        case .swarm: "circle.hexagongrid.fill"
         case .modelDefaults: "slider.horizontal.3"
         case .agents: "person.2.fill"
         case .agentChannels: "bubble.left.and.bubble.right.fill"
@@ -250,6 +254,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .connect: L("Mobile")
         case .models: L("Local Models")
         case .providers: L("Providers")
+        case .swarm: L("Osaurus Swarm")
         case .modelDefaults: L("Model Defaults")
         case .agents: L("Agents")
         case .agentChannels: L("Channels")
@@ -297,6 +302,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .permissions: L("macOS access Osaurus has been granted: Accessibility, Microphone, Calendar and more.")
         case .browser: L("Browser sessions agents drive on your behalf.")
         case .connect: L("The iPhone paired with a 6-digit code, and keeping this Mac reachable for it.")
+        case .swarm: L("Your own Macs as private inference nodes: pair them, install models, group them into pools.")
         default: ""
         }
     }

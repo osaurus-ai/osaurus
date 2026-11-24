@@ -35,12 +35,13 @@
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Osaurus can capture screenshots and system audio only when you grant Screen Recording access.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Osaurus uses the local network to sync your chats with your other devices, to connect to agents running on them, and to share model files with Macs nearby.</string>
+	<string>Osaurus uses the local network to sync your chats with your other devices, to connect to agents running on them, to share model files with Macs nearby, and to find and run models on your Osaurus Swarm nodes.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_osaurus-mobile._tcp</string>
 		<string>_osaurus-sync._udp</string>
 		<string>_osaurus-models._udp</string>
+		<string>_osaurus-swarm._udp</string>
 	</array>
 	<key>CFBundleDocumentTypes</key>
 	<array>

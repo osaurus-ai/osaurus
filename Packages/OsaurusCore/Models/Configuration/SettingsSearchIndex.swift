@@ -291,6 +291,7 @@ public enum SettingsSearchIndex {
         "models.overview",
         "modelDefaults.overview",
         "providers.overview",
+        "providers.swarm",
         "knowledge.overview",
         "projects.overview",
         "tools.overview",
@@ -4335,6 +4336,128 @@ public enum SettingsSearchIndex {
             title: "Providers",
             keywords: ["cloud models", "provider", "api key", "openai", "anthropic", "openrouter", "xai"],
             declarativeSection: "providers"
+        ),
+        .init(
+            id: "providers.swarm",
+            tab: .swarm,
+            title: "Osaurus Swarm",
+            keywords: ["swarm", "inference nodes", "private inference", "resource pools", "your devices"],
+            disambiguation:
+                "Providers → Osaurus Swarm: pair your own Macs as model nodes and group them into pools. Not Devices (chat sync) or Nearby Macs (model file sharing)."
+        ),
+        .init(
+            id: "providers.swarm.addNode",
+            tab: .swarm,
+            section: "Nodes",
+            title: "Add Node",
+            keywords: ["pair node", "swarm pairing code", "add swarm node"],
+            subTab: "Nodes"
+        ),
+        .init(
+            id: "providers.swarm.nodes",
+            tab: .swarm,
+            section: "Nodes",
+            title: "Nodes",
+            keywords: ["swarm nodes", "paired nodes", "node hardware", "node status"],
+            subTab: "Nodes"
+        ),
+        .init(
+            id: "providers.swarm.installModel",
+            tab: .swarm,
+            section: "Nodes",
+            title: "Install a Model",
+            keywords: ["hugging face link", "install model on node", "copy from another node", "node models"],
+            subTab: "Nodes"
+        ),
+        .init(
+            id: "providers.swarm.library",
+            tab: .swarm,
+            section: "Nodes",
+            title: "Model Library",
+            keywords: ["node model library", "load model on node", "unload model on node"],
+            subTab: "Nodes"
+        ),
+        .init(
+            id: "providers.swarm.preheat",
+            tab: .swarm,
+            section: "Nodes",
+            title: "Keep Loaded",
+            keywords: ["preheat", "keep model loaded on node", "warm model"],
+            subTab: "Nodes",
+            disambiguation: "Per node and model in Osaurus Swarm. Not Server → Keep Model in Memory."
+        ),
+        .init(
+            id: "providers.swarm.deleteModel",
+            tab: .swarm,
+            section: "Nodes",
+            title: "Delete from Node",
+            keywords: ["delete swarm model", "free node disk"],
+            subTab: "Nodes"
+        ),
+        .init(
+            id: "providers.swarm.removeNode",
+            tab: .swarm,
+            section: "Nodes",
+            title: "Remove Node",
+            keywords: ["unpair node", "revoke node", "forget node"],
+            subTab: "Nodes"
+        ),
+        .init(
+            id: "providers.swarm.pools",
+            tab: .swarm,
+            section: "Pools",
+            title: "Pools",
+            keywords: ["swarm pools", "resource pool", "node pool"],
+            subTab: "Pools"
+        ),
+        .init(
+            id: "providers.swarm.newPool",
+            tab: .swarm,
+            section: "Pools",
+            title: "New Pool",
+            keywords: ["create swarm pool", "add pool"],
+            subTab: "Pools"
+        ),
+        .init(
+            id: "providers.swarm.poolName",
+            tab: .swarm,
+            section: "Pools",
+            title: "Pool Name",
+            keywords: ["rename pool"],
+            subTab: "Pools"
+        ),
+        .init(
+            id: "providers.swarm.leaseDuration",
+            tab: .swarm,
+            section: "Pools",
+            title: "Lease Duration",
+            keywords: ["swarm lease", "lease time", "node lease"],
+            subTab: "Pools"
+        ),
+        .init(
+            id: "providers.swarm.maxQueueWait",
+            tab: .swarm,
+            section: "Pools",
+            title: "Max Queue Wait",
+            keywords: ["pool busy", "queue timeout"],
+            subTab: "Pools"
+        ),
+        .init(
+            id: "providers.swarm.contextLength",
+            tab: .swarm,
+            section: "Pools",
+            title: "Context Length",
+            keywords: ["pool context length", "swarm context"],
+            subTab: "Pools",
+            disambiguation: "A Swarm pool's context length. Not Server → Context Window Cap."
+        ),
+        .init(
+            id: "providers.swarm.activity",
+            tab: .swarm,
+            section: "Activity",
+            title: "Activity",
+            keywords: ["active leases", "swarm queue", "node token speed", "swarm errors"],
+            subTab: "Activity"
         ),
         .init(
             id: "knowledge.overview",

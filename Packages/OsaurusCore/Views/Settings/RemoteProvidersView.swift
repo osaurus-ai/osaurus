@@ -12,6 +12,7 @@ struct RemoteProvidersView: View {
     @ObservedObject private var badgeStore = ManagementBadgeStore.shared
     @ObservedObject private var manager = RemoteProviderManager.shared
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var swarm = SwarmManager.shared
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: any ThemeProtocol { themeManager.currentTheme }
@@ -56,6 +57,10 @@ struct RemoteProvidersView: View {
                             connectivityCenterView
                         }
                         providerListView
+                    }
+                    // Osaurus Swarm: only in builds that have a Swarm backend.
+                    if swarm.isRunning {
+                        ManagementChildLinks(parent: .providers, title: L("Your Devices"))
                     }
                 }
             }

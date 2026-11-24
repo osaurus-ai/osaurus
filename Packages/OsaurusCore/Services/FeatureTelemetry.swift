@@ -815,6 +815,7 @@ enum FeatureTelemetry {
         case .access: return "access"
         case .devices: return "devices"
         case .connect: return "connect"
+        case .swarm: return "swarm"
         case .insights: return "insights"
         case .modelDefaults: return "model_defaults"
         case .keys: return "keys"

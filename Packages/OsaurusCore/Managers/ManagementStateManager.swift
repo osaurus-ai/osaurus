@@ -135,6 +135,9 @@ public final class ManagementStateManager: ObservableObject {
     /// One-shot request to focus a tab inside `KeysView` (raw value of
     /// `KeysTab`, e.g. "appKeys"). `KeysView` resets it after applying.
     @Published public var keysSubTabRequest: String?
+    /// Settings-search landing for Providers → Osaurus Swarm: the tab
+    /// (`SwarmSettingsTab.rawValue`) to open.
+    @Published public var swarmSubTabRequest: String?
 
     /// One-shot request to focus a specific sub-tab inside `ImageGenerationView`
     /// (raw value of `ImageGenerationTab`, e.g. "Models"). `ImageGenerationView`
