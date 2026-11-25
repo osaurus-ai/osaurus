@@ -7205,6 +7205,12 @@
             "value" : "Suche nach neuen Modellen…"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新しいモデルを確認中…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -44226,6 +44232,12 @@
             "value" : "Add reaction"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "リアクションを追加"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -53468,6 +53480,12 @@
             "value" : "Allowed Rooms"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "許可されたルーム"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -53609,6 +53627,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Zulassungsliste"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "許可リスト"
           }
         },
         "ko" : {
@@ -60962,6 +60986,12 @@
             "value" : "Genehmigen & Senden"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "承認して送信"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -65184,6 +65214,12 @@
             "value" : "Authorized Senders"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "認可された送信者"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -66177,6 +66213,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Auto-Senden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自動送信"
           }
         },
         "ko" : {
@@ -67954,6 +67996,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Autonomie"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自律性"
           }
         },
         "ko" : {
@@ -78144,6 +78192,12 @@
             "value" : "Kopplung abbrechen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ペアリングをキャンセル"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -78504,6 +78558,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cannot attach %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@を添付できません"
           }
         },
         "ko" : {
@@ -79907,6 +79967,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ordner ändern"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "フォルダを変更"
           }
         },
         "ko" : {
@@ -81496,6 +81562,12 @@
             "value" : "Kanalgeheimnis"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "チャンネルシークレット"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -82047,6 +82119,12 @@
             "value" : "Chart saved"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "チャートを保存しました"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -82532,6 +82610,12 @@
             "value" : "Chat umbenannt"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "チャットの名前を変更しました"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -82601,6 +82685,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chat-Titel"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "チャットタイトル"
           }
         },
         "ko" : {
@@ -83680,6 +83770,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Check Configuration"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "設定を確認"
           }
         },
         "ko" : {
@@ -86626,6 +86722,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ordner wählen…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "フォルダを選択…"
           }
         },
         "ko" : {
@@ -91927,6 +92029,12 @@
             "value" : "Code in die Zwischenablage kopiert"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コードをクリップボードにコピーしました"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -92414,6 +92522,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Collapse"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "折りたたむ"
           }
         },
         "ko" : {
@@ -100886,6 +101000,12 @@
             "value" : "Kontextbudget"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンテキスト上限"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -103022,6 +103142,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Diagnose kopieren"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "診断情報をコピー"
           }
         },
         "ko" : {
@@ -110447,6 +110573,12 @@
             "value" : "Credits added"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "クレジットを追加しました"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -116285,6 +116417,12 @@
             "value" : "Account löschen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アカウントを削除"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -116557,6 +116695,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Delete Connection?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "接続を削除しますか？"
           }
         },
         "ko" : {
@@ -116838,6 +116982,12 @@
             "value" : "Delete message"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "メッセージを削除"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -116966,6 +117116,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Anbieter loeschen?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プロバイダーを削除しますか？"
           }
         },
         "ko" : {
@@ -121814,6 +121970,12 @@
             "value" : "Discord settings saved"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord設定を保存しました"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -125422,6 +125584,12 @@
             "value" : "Downloading %@"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@をダウンロード中"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -125789,6 +125957,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wird heruntergeladen …"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ダウンロード中…"
           }
         },
         "ko" : {
@@ -131989,6 +132163,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Verschlüsselung aktivieren"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "暗号化を有効にする"
           }
         },
         "ko" : {
@@ -143594,6 +143774,12 @@
             "value" : "Factory Reset Osaurus?"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurusを初期化しますか？"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -147336,6 +147522,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Find in conversation"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "会話内を検索"
           }
         },
         "ko" : {
@@ -156439,6 +156631,12 @@
             "value" : "Guten Tag"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "こんにちは"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -156508,6 +156706,12 @@
             "value" : "Guten Abend"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "こんばんは"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -156575,6 +156779,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Guten Morgen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "おはようございます"
           }
         },
         "ko" : {
@@ -157030,6 +157240,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zugriff erlauben"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アクセスを許可"
           }
         },
         "ko" : {
@@ -160367,6 +160583,12 @@
             "value" : "Erweiterte Einstellungen ausblenden"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "詳細設定を非表示"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -160573,6 +160795,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Details ausblenden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "詳細を非表示"
           }
         },
         "ko" : {
@@ -160792,6 +161020,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Angeheftete Chats ausblenden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ピン留めしたチャットを非表示"
           }
         },
         "ko" : {
@@ -166206,6 +166440,12 @@
             "value" : "Image generation cancelled."
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "画像生成がキャンセルされました"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -166375,6 +166615,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Image generation produced no image."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "画像が生成されませんでした"
           }
         },
         "ko" : {
@@ -166656,6 +166902,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Image saved"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "画像を保存しました"
           }
         },
         "ko" : {
@@ -179445,6 +179697,12 @@
             "value" : "Key invalid"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "キーが無効です"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -184792,6 +185050,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Verknüpfe dein WhatsApp-Konto"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "WhatsAppアカウントを連携"
           }
         },
         "ko" : {
@@ -196657,6 +196921,12 @@
             "value" : "Mitglieder"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "メンバー"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -198706,6 +198976,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nachricht gesendet."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "メッセージを送信しました"
           }
         },
         "ko" : {
@@ -203654,6 +203930,12 @@
             "value" : "Weitere Aktionen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "その他のアクション"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -204000,6 +204282,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Weitere Tabs"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "その他のタブ"
           }
         },
         "ko" : {
@@ -204368,6 +204656,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "In Projekt verschieben"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プロジェクトに移動"
           }
         },
         "ko" : {
@@ -205618,6 +205912,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Name (optional)"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "名前（任意）"
           }
         },
         "ko" : {
@@ -207354,6 +207654,12 @@
             "value" : "Benötigt deine Eingabe"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "入力が必要です"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -208894,6 +209200,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "New Command"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新規コマンド"
           }
         },
         "ko" : {
@@ -210646,6 +210958,12 @@
             "value" : "Kein Konto verknüpft"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アカウント未連携"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -210881,6 +211199,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Noch keine Aktivität"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アクティビティはまだありません"
           }
         },
         "ko" : {
@@ -212716,6 +213040,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Noch keine Chats"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "チャットはまだありません"
           }
         },
         "ko" : {
@@ -216405,6 +216735,12 @@
             "value" : "No matching channels"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "一致するチャンネルがありません"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -216478,6 +216814,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Keine passenden Dateien"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "一致するファイルがありません"
           }
         },
         "ko" : {
@@ -217217,6 +217559,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kein Modell ausgewählt"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "モデル未選択"
           }
         },
         "ko" : {
@@ -226460,6 +226808,12 @@
             "value" : "Nichts zum Zurücksetzen."
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "元に戻すものはありません"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -232955,6 +233309,12 @@
             "value" : "KI-Chat öffnen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "AIチャットを開く"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -234005,6 +234365,12 @@
             "value" : "In neuem Fenster öffnen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新しいウィンドウで開く"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -234201,6 +234567,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Messages öffnen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "メッセージを開く"
           }
         },
         "ko" : {
@@ -240991,6 +241363,12 @@
             "value" : "Keine Credits mehr"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "クレジット不足"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -242970,6 +243348,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Pairing-Code kopiert"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ペアリングコードをコピーしました"
           }
         },
         "ko" : {
@@ -250658,6 +251042,12 @@
             "value" : "Angeheftet"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ピン留め済み"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -254224,6 +254614,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Power & Sleep"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電源とスリープ"
           }
         },
         "ko" : {
@@ -271388,6 +271784,12 @@
             "value" : "Ratenlimits"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "レート制限"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -275652,6 +276054,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Letzte Aktivität"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "最近のアクティビティ"
           }
         },
         "ko" : {
@@ -280887,6 +281295,12 @@
             "value" : "Remote-Modelle"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "リモートモデル"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -281731,6 +282145,12 @@
             "value" : "Gerät entfernen …"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "デバイスを削除…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -281841,6 +282261,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Aus der Zulassungsliste entfernen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "許可リストから削除"
           }
         },
         "ko" : {
@@ -281978,6 +282404,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Aus Projekt entfernen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プロジェクトから削除"
           }
         },
         "ko" : {
@@ -282464,6 +282896,12 @@
             "value" : "Remove reaction"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "リアクションを削除"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -282912,6 +283350,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Remove Webhook"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Webhookを削除"
           }
         },
         "ko" : {
@@ -289462,6 +289906,12 @@
             "value" : "Reset All Sessions"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "すべてのセッションをリセット"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -290940,6 +291390,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Neustart erforderlich"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再起動が必要です"
           }
         },
         "ko" : {
@@ -292438,6 +292894,12 @@
             "value" : "Resume download"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ダウンロードを再開"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -293870,6 +294332,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Datei zurücksetzen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ファイルを元に戻す"
           }
         },
         "ko" : {
@@ -297854,6 +298322,12 @@
             "value" : "Diagnose ausführen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "診断を実行"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -298409,6 +298883,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "LLMs lokal ausführen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "LLMをローカルで実行"
           }
         },
         "ko" : {
@@ -303913,6 +304393,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Speichern & Wiederherstellen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保存して再生成"
           }
         },
         "ko" : {
@@ -309673,6 +310159,12 @@
             "value" : "Search messages"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "メッセージを検索"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -310986,6 +311478,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sucht"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "検索中"
           }
         },
         "ko" : {
@@ -313034,6 +313532,12 @@
             "value" : "Select a working folder"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "作業フォルダを選択"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -313471,6 +313975,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Modell auswählen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "モデルを選択"
           }
         },
         "ko" : {
@@ -313998,6 +314508,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Send & Receive"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "送受信"
           }
         },
         "ko" : {
@@ -314630,6 +315146,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Send message"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "メッセージを送信"
           }
         },
         "ko" : {
@@ -316699,6 +317221,12 @@
             "value" : "Server läuft"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サーバー実行中"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -316868,6 +317396,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Servereinstellungen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サーバー設定"
           }
         },
         "ko" : {
@@ -318790,6 +319324,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Einstellungen erfolgreich gespeichert"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "設定を保存しました"
           }
         },
         "ko" : {
@@ -322466,6 +323006,12 @@
             "value" : "Erweiterte Einstellungen anzeigen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "詳細設定を表示"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -323115,6 +323661,12 @@
             "value" : "Vollständigen Text anzeigen"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "全文を表示"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -323563,6 +324115,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Angeheftete Chats einblenden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ピン留めしたチャットを表示"
           }
         },
         "ko" : {
@@ -327205,6 +327763,12 @@
             "value" : "Signing in..."
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サインイン中…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -327370,6 +327934,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Signing Secret"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "署名シークレット"
           }
         },
         "ko" : {
@@ -329258,6 +329828,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Slack settings saved"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Slack設定を保存しました"
           }
         },
         "ko" : {
@@ -338954,6 +339530,12 @@
             "value" : "Submit"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "送信"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -344301,6 +344883,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Telegram settings saved"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Telegram設定を保存しました"
           }
         },
         "ko" : {
@@ -350217,6 +350805,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "The current model is text-only."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "現在のモデルはテキスト専用です"
           }
         },
         "ko" : {
@@ -362006,6 +362600,12 @@
             "value" : "Dieser Ordner ist leer"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このフォルダは空です"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -367718,6 +368318,12 @@
             "value" : "Gedanke"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "思考"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -372284,6 +372890,12 @@
             "value" : "Transcribe audio to text"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "音声をテキストに変換"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -374954,6 +375566,12 @@
             "value" : "Einschalten"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "オンにする"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -375372,6 +375990,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Turn on receiving"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "受信をオンにする"
           }
         },
         "ko" : {
@@ -376343,6 +376967,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tippanzeigen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "入力中インジケータ"
           }
         },
         "ko" : {
@@ -377638,6 +378268,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wird getrennt..."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "連携解除中…"
           }
         },
         "ko" : {
@@ -379858,6 +380494,12 @@
             "value" : "Update API key"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "APIキーを更新"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -381376,6 +382018,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nutzung"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用量"
           }
         },
         "ko" : {
@@ -385637,6 +386285,12 @@
             "value" : "Wird überprüft …"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "検証中…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -386287,6 +386941,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Alle anzeigen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "すべてを表示"
           }
         },
         "ko" : {
@@ -388374,6 +389034,12 @@
             "value" : "Waiting for a Discord message..."
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discordのメッセージを待機中…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -388504,6 +389170,12 @@
             "value" : "Waiting for a Slack message..."
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Slackのメッセージを待機中…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -388576,6 +389248,12 @@
             "value" : "Waiting for a Telegram message..."
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Telegramのメッセージを待機中…"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -388636,6 +389314,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Warte auf eine WhatsApp-Nachricht..."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "WhatsAppのメッセージを待機中…"
           }
         },
         "ko" : {
@@ -389501,6 +390185,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wartet auf deine Genehmigung"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "承認待ち"
           }
         },
         "ko" : {
@@ -394476,6 +395166,12 @@
             "value" : "WhatsApp-Einstellungen gespeichert"
           }
         },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "WhatsApp設定を保存しました"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
@@ -399091,6 +399787,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Arbeitet"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "処理中"
           }
         },
         "ko" : {
