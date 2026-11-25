@@ -546,7 +546,10 @@ Escalation rules:
 - **Key chords** that submit, delete or end something escalate to
   `consequential`: ⌘Return / ⌘Enter, ⌘Delete / ⌘⌦ (Move to Trash), ⌘Q with
   any other modifiers (quit, ⇧ log out, ⌃ lock screen), and ⌥⌘Esc (Force
-  Quit). They confirm under `trusted` too.
+  Quit). They confirm under `trusted` too. A `press_key` whose `modifiers`
+  hold anything but a modifier name (say `key: "command", modifiers: ["q"]`)
+  is rejected back to the model before the gate, so the chord that is
+  classified is the chord that is pressed.
 - Plus per-app recipe signals.
 
 It can only raise the effect, never lower it.

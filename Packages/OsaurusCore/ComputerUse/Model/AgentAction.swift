@@ -412,6 +412,22 @@ extension AgentAction {
     /// Most presses one `press_key` may repeat.
     public static let maxKeyRepeat = 20
 
+    /// Names `press_key` accepts in `modifiers`; `parseModifierFlags` maps each.
+    public static let modifierNames: Set<String> = [
+        "cmd",
+        "command",
+        "shift",
+        "option",
+        "opt",
+        "alt",
+        "control",
+        "ctrl",
+        "fn",
+        "function",
+        "capslock",
+        "caps",
+    ]
+
     private static func targetSchema(
         _ description: String, markDescription: String, describeDescription: String, pointDescription: String
     ) -> JSONValue {
@@ -886,6 +902,13 @@ extension AgentAction {
             }
             if let repeatCount, !(1 ... Self.maxKeyRepeat).contains(repeatCount) {
                 return "press_key's `repeat` must be between 1 and \(Self.maxKeyRepeat)."
+            }
+            // The gate classifies the chord the model wrote, so a modifier the
+            // driver would drop must fail here rather than press a different key.
+            if let stray = modifiers.first(where: { !Self.modifierNames.contains($0.lowercased()) }) {
+                return "`\(stray)` isn't a modifier. Put the main key in `key` and only "
+                    + "cmd, shift, option, control or fn in `modifiers` "
+                    + "(Command-Q is key \"q\" with modifiers [\"cmd\"])."
             }
             return nil
         case .scroll:

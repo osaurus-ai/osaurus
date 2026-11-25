@@ -230,6 +230,12 @@ final class AgentActionDecodeTests: XCTestCase {
         XCTAssertTrue(invalidReason(#"{"verb":"press_key"}"#)?.contains("key") ?? false)
     }
 
+    func testPressKeyRejectsAKeyInModifiers() {
+        let reason = invalidReason(#"{"verb":"press_key","key":"command","modifiers":["q"]}"#)
+        XCTAssertTrue(reason?.contains("`q` isn't a modifier") ?? false, "got: \(reason ?? "nil")")
+        XCTAssertEqual(decoded(#"{"verb":"press_key","key":"q","modifiers":["Cmd","shift"]}"#)?.key, "q")
+    }
+
     func testScrollRequiresDirection() {
         XCTAssertTrue(invalidReason(#"{"verb":"scroll"}"#)?.contains("direction") ?? false)
     }
