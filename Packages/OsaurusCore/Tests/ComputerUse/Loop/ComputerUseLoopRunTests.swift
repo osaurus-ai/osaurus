@@ -680,6 +680,36 @@ final class ComputerUseLoopRunTests: XCTestCase {
         )
     }
 
+    /// Live finding: Calculator quit while its approval card was up; after
+    /// Approve the click must not be posted, nor retried at the old frame.
+    func testTargetThatQuitDuringApprovalReceivesNoInput() async {
+        let d = driver([el("field", "textfield", "Note", value: "")])
+        let results = ToolResultLog()
+        let script = ComputerUseLoop.scriptedProvider([
+            AgentAction(verb: .type, text: "hello", note: "fill note"),
+            AgentAction(verb: .giveUp, reason: "app is gone"),
+        ])
+        let result = await run(
+            d,
+            provider: { input in
+                await results.record(input.lastToolResult)
+                return try await script(input)
+            },
+            confirm: { _ in
+                await d.markExited(pid: 4242)
+                return true
+            }
+        )
+        XCTAssertEqual(result.metrics.confirmsRequested, 1)
+        XCTAssertEqual(result.metrics.coordinateFallbacks, 0)
+        let elementActions = await d.elementActions
+        let coordinateActions = await d.coordinateActions
+        XCTAssertTrue(elementActions.isEmpty)
+        XCTAssertTrue(coordinateActions.isEmpty)
+        let seen = await results.results.compactMap { $0 }
+        XCTAssertTrue(seen.contains { $0.contains("no longer running") }, "\(seen)")
+    }
+
     /// Stop between two batched steps: the first ran, the second is not posted.
     func testStopInsideBatchHaltsRemainingSteps() async {
         let d = driver([el("a", "button", "A"), el("b", "button", "B")])

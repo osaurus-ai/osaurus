@@ -170,13 +170,11 @@ final class ScreenshotController: @unchecked Sendable {
             image = await captureWindow(windowId: windowId)
             bounds = captureBoundsForWindowId(windowId)
         }
-        if image == nil, options.windowId == nil {
-            if options.pid == nil, options.allDisplays != true, let displayIndex = options.displayIndex {
+        if image == nil, Self.capturesDisplay(options) {
+            if options.allDisplays != true, let displayIndex = options.displayIndex {
                 image = await captureDisplay(at: displayIndex)
                 bounds = displayBounds(at: displayIndex)
             } else {
-                // `allDisplays` and a pid without a capturable window both fall
-                // back to the main display.
                 image = await captureFullScreen()
                 bounds = CGDisplayBounds(CGMainDisplayID())
             }
@@ -262,6 +260,13 @@ final class ScreenshotController: @unchecked Sendable {
             savedPath: savedPath,
             bounds: bounds
         )
+    }
+
+    /// Only an unscoped request captures a display. A request for a window or
+    /// an app with no capturable window (it quit, or its windows are tiny)
+    /// gets nothing: the display would show whatever other app is there.
+    static func capturesDisplay(_ options: ScreenshotOptions) -> Bool {
+        options.windowId == nil && options.pid == nil
     }
 
     /// Cut `region` (screen points) out of `image`, which shows `bounds`.

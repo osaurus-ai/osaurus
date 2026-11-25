@@ -1002,22 +1002,10 @@ public enum ComputerUseLoop {
                 // recycled) process; per-pid posting into that "succeeds" and
                 // the model spends its step budget acting into a void.
                 if await driver.isRunning(pid: pid) == false {
-                    let name = currentApp ?? "The app"
-                    feed.emit(
-                        SubagentActivityEvent(
-                            step: step + 1,
-                            kind: .blocked,
-                            title: "\(name) is no longer running",
-                            detail: "pid \(pid) exited; input was not posted"
-                        )
-                    )
+                    toolResult = targetExited(app: currentApp, pid: pid, feed: feed, step: step + 1)
                     currentPid = nil
                     lastView = nil
                     lastSnapshot = nil
-                    toolResult =
-                        "\(name) is no longer running (it quit or relaunched since it was opened), so "
-                        + "the action was not performed. Use `open` to attach to it again, then re-check "
-                        + "the view before continuing."
                     advancedStep = false
                     break
                 }
@@ -2101,6 +2089,22 @@ public enum ComputerUseLoop {
         )
     }
 
+    /// Report a target whose process exited, and tell the model how to recover.
+    static func targetExited(app: String?, pid: Int32, feed: SubagentFeed, step: Int) -> String {
+        let name = app ?? "The app"
+        feed.emit(
+            SubagentActivityEvent(
+                step: step,
+                kind: .blocked,
+                title: "\(name) is no longer running",
+                detail: "pid \(pid) exited; input was not posted"
+            )
+        )
+        return "\(name) is no longer running (it quit or relaunched since it was opened), so "
+            + "the action was not performed. Use `open` to attach to it again, then re-check "
+            + "the view before continuing."
+    }
+
     /// The driver result of one act, or why it couldn't be attempted.
     struct PerformedAct {
         var result: CUActionResult?
@@ -2134,6 +2138,11 @@ public enum ComputerUseLoop {
         feed: SubagentFeed,
         step: Int
     ) async -> PerformedAct {
+        // The target can quit while an approval card is up or between batch
+        // steps, after the pre-gate check passed.
+        if await driver.isRunning(pid: pid) == false {
+            return PerformedAct(message: targetExited(app: lastSnapshot?.app, pid: pid, feed: feed, step: step))
+        }
         metrics.actsAttempted += 1
         let elementCenter = element.map { CGPoint(x: $0.center.x, y: $0.center.y) }
         var result: CUActionResult
@@ -2243,7 +2252,9 @@ public enum ComputerUseLoop {
         //     then re-issue the edit in pid context (`typeText` with no id),
         //     since an id-addressed edit can't survive a stale ref. set_value
         //     and clear are expressed as a wholesale replace (clear = empty).
-        if (result.removed || result.stale), let element {
+        // A ref that died with its process is not a stale ref: the old frame
+        // now belongs to whatever window is underneath.
+        if (result.removed || result.stale), let element, await driver.isRunning(pid: pid) != false {
             let center = element.center
             let cx = Double(center.x)
             let cy = Double(center.y)

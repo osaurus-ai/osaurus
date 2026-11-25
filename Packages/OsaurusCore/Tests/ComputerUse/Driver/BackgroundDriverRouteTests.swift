@@ -31,10 +31,11 @@ final class BackgroundDriverRouteTests: XCTestCase {
         skyLightAvailable: Bool,
         chromium: Bool = false,
         skyLightAccepted: Bool = true,
-        windowUnderPoint: CGWindowID? = nil
+        windowUnderPoint: CGWindowID? = nil,
+        visible: Bool = true
     ) -> BackgroundDriver {
         var t = BackgroundDriver.Transports.live
-        t.isWindowServerVisible = { _ in true }
+        t.isWindowServerVisible = { _ in visible }
         t.skyLightAvailable = { skyLightAvailable }
         t.skyLightPost = { event, _ in
             spy.skyLight += 1; spy.events.append(event); return skyLightAccepted
@@ -46,6 +47,28 @@ final class BackgroundDriverRouteTests: XCTestCase {
         t.windowAt = { _, _ in windowUnderPoint }
         t.pause = { _ in }
         return BackgroundDriver(transports: t)
+    }
+
+    /// A pid that quit has no WindowServer connection: nothing is posted, and
+    /// no input kind claims it was delivered.
+    func testInputForAnExitedPidFailsWithoutPosting() {
+        let spy = TransportSpy()
+        let driver = makeDriver(spy: spy, skyLightAvailable: true, visible: false)
+        let point = CGPoint(x: 10, y: 10)
+
+        let results = [
+            driver.click(pid: 4242, point: point),
+            driver.doubleClick(pid: 4242, point: point),
+            driver.move(pid: 4242, to: point),
+            driver.type(pid: 4242, text: "hi"),
+            driver.pressKey(pid: 4242, keyCode: 0),
+            driver.scroll(pid: 4242, direction: .down, at: point),
+            driver.drag(pid: 4242, from: point, to: CGPoint(x: 80, y: 80)),
+        ]
+
+        XCTAssertTrue(results.allSatisfy { !$0.success }, "\(results.map(\.error))")
+        XCTAssertTrue(spy.events.isEmpty)
+        XCTAssertTrue(spy.focusedWindows.isEmpty, "focus must not be routed to a dead pid")
     }
 
     func testCocoaKeyPressUsesOnlyPublicPerPidEvenWhenSkyLightExists() {

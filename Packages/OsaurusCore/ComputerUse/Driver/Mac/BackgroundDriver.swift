@@ -268,6 +268,13 @@ final class BackgroundDriver: @unchecked Sendable {
         return .perPid
     }
 
+    /// `route` drops events for a pid with no WindowServer connection (it
+    /// quit, or never had a GUI), so input for one must not report success.
+    private func undeliverable(_ pid: pid_t) -> InputResult? {
+        guard !transports.isWindowServerVisible(pid) else { return nil }
+        return .fail("pid \(pid) has no WindowServer connection (the app may have quit); input was not posted")
+    }
+
     private func record(route: InputRoute) {
         routeLock.lock()
         _lastRoute = route
@@ -288,6 +295,7 @@ final class BackgroundDriver: @unchecked Sendable {
         clickCount: Int = 1,
         windowId: CGWindowID? = nil
     ) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
         let window = windowId ?? transports.windowAt(pid, point)
         transports.focusWithoutRaise(pid, window)
 
@@ -373,6 +381,7 @@ final class BackgroundDriver: @unchecked Sendable {
     /// Move the pointer to `point` in `pid`'s window without clicking, as
     /// a short approach so hover tracking sees motion into the target.
     func move(pid: pid_t, to point: CGPoint, windowId: CGWindowID? = nil) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
         let window = windowId ?? transports.windowAt(pid, point)
         for at in [CGPoint(x: point.x - 6, y: point.y - 6), point] {
             guard
@@ -414,6 +423,7 @@ final class BackgroundDriver: @unchecked Sendable {
     /// Type a string of text. Per-pid routing means the user can keep typing
     /// in their own focused app while we type into `pid`.
     func type(pid: pid_t, text: String) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
         prepareForKeyboard(pid: pid)
         for char in text {
             if let result = typeCharacter(pid: pid, char: char), !result.success {
@@ -445,6 +455,7 @@ final class BackgroundDriver: @unchecked Sendable {
 
     /// Press a single key with optional modifiers, routed to `pid`.
     func pressKey(pid: pid_t, keyCode: CGKeyCode, modifiers: CGEventFlags = []) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
         prepareForKeyboard(pid: pid)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
             let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
@@ -471,6 +482,7 @@ final class BackgroundDriver: @unchecked Sendable {
         amount: Int32 = 3,
         at point: CGPoint? = nil
     ) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
         let deltaX: Int32
         let deltaY: Int32
         switch direction {
@@ -523,6 +535,7 @@ final class BackgroundDriver: @unchecked Sendable {
         button: MouseButton = .left,
         windowId: CGWindowID? = nil
     ) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
         let downType: CGEventType
         let dragType: CGEventType
         let upType: CGEventType

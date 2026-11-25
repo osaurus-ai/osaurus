@@ -213,6 +213,16 @@ app is reported and `currentPid` cleared instead of "succeeding" into a dead
 pid), and `open` reports **not ready** — rather than "Opened X" — when the
 readiness poll exhausted its budget *and* the follow-up capture is empty.
 
+The liveness check runs again in `performAct`, after the gate, because the
+target can quit while its approval card is up. A dead target also skips the
+stale-ref coordinate retry (its old frame now belongs to whatever window is
+underneath), `BackgroundDriver` fails input for a pid with no WindowServer
+connection instead of reporting it delivered, and a capture scoped to an app
+or window returns nothing rather than widening to the main display. Live
+finding: Calculator quit during a card, and after Approve the run retried the
+click at the old frame and handed the model a full-screen capture showing the
+user's Music window.
+
 ### Confirm cards need a surface
 
 The confirm/consent card is rendered by `ComputerUseConfirmOverlay`, mounted in
