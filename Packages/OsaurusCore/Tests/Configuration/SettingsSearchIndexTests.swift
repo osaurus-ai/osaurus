@@ -366,4 +366,31 @@ struct SettingsSearchIndexTests {
         let filler = (0 ..< SettingsSearchIndex.maxMessageWords).map { "zqxfiller\($0)" }.joined(separator: " ")
         #expect(SettingsSearchIndex.relevant(toMessage: filler + " transcription").isEmpty)
     }
+
+    /// A row is findable by its on-screen label in a locale that has one:
+    /// the Korean title of `server.proxy` hits at title rank, the way the
+    /// English title does in the current locale.
+    @Test func localizedTitleIsSearchableInItsLocale() {
+        let ko = Locale(identifier: "ko")
+        let hits = SettingsSearchIndex.searchScored("전역 프록시", locale: ko)
+        #expect(hits.first?.entry.id == "server.proxy")
+        #expect(hits.first?.rank == 0)
+        #expect(SettingsSearchIndex.search("전역 프록시", locale: ko).map(\.id).contains("server.proxy"))
+    }
+
+    /// The same query in a locale without that label must not leak the
+    /// Korean hit, and English matching is unchanged.
+    @Test func localizedSearchDoesNotLeakAcrossLocales() {
+        let en = Locale(identifier: "en")
+        #expect(SettingsSearchIndex.search("전역 프록시", locale: en).isEmpty)
+        #expect(SettingsSearchIndex.search("Global Proxy", locale: en).map(\.id).contains("server.proxy"))
+        #expect(SettingsSearchIndex.search("Global Proxy").map(\.id).contains("server.proxy"))
+    }
+
+    /// A partial query in the label's language also hits: non-English
+    /// labels tokenize coarsely, so token/substring matching matters.
+    @Test func localizedPartialQueryMatches() {
+        let ko = Locale(identifier: "ko")
+        #expect(SettingsSearchIndex.search("프록시", locale: ko).map(\.id).contains("server.proxy"))
+    }
 }

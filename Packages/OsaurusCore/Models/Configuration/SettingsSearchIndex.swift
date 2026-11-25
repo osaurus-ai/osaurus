@@ -92,6 +92,12 @@ public enum SettingsSearchIndex {
         searchScored(query).map(\.entry)
     }
 
+    /// `search` in an explicit locale (tests, diagnostics). The public
+    /// entry point above uses the language the UI is shown in.
+    static func search(_ query: String, locale: Locale) -> [SettingsSearchEntry] {
+        searchScored(query, locale: locale).map(\.entry)
+    }
+
     /// One `search` hit with its match tier: 0 title, 1 section or keyword,
     /// 2 tab label, 3 typo-tolerant title, 4 typo-tolerant section/keyword.
     public struct ScoredHit: Sendable, Hashable {
@@ -101,6 +107,14 @@ public enum SettingsSearchIndex {
 
     /// `search` with the rank kept, in the same order.
     public static func searchScored(_ query: String) -> [ScoredHit] {
+        searchScored(query, locale: nil)
+    }
+
+    /// `searchScored` with the catalog resolved in `locale`, or in the
+    /// language `L()` shows the rows in when nil: rows whose on-screen label
+    /// is translated become findable by that label, at the same rank the
+    /// English title/section would earn.
+    static func searchScored(_ query: String, locale: Locale?) -> [ScoredHit] {
         let prepared = SearchService.PreparedQuery(query)
         guard !prepared.tokens.isEmpty else { return [] }
 
@@ -109,12 +123,16 @@ public enum SettingsSearchIndex {
         }
         // Tab labels are localized, so they are prepared per search.
         var tabLabels: [ManagementTab: SearchService.PreparedTarget] = [:]
+        let localized = localizedFields(for: locale)
 
         var ranked: [(entry: SettingsSearchEntry, rank: Int)] = []
         for (entry, fields) in zip(catalog, searchFields) {
-            if matches(fields.title) {
+            let localizedFields = localized?[entry.id]
+            if matches(fields.title) || (localizedFields?.title).map(matches) == true {
                 ranked.append((entry, 0))
-            } else if matches(fields.section) || fields.keywords.contains(where: matches) {
+            } else if matches(fields.section) || fields.keywords.contains(where: matches)
+                || (localizedFields?.section).map(matches) == true
+            {
                 ranked.append((entry, 1))
             } else {
                 let tab = tabLabels[entry.tab] ?? SearchService.PreparedTarget(entry.tab.label)
@@ -124,7 +142,7 @@ public enum SettingsSearchIndex {
         }
         if ranked.count < 3 {
             let strictIDs = Set(ranked.map(\.entry.id))
-            ranked += typoTolerantMatches(prepared.tokens).filter { !strictIDs.contains($0.entry.id) }
+            ranked += typoTolerantMatches(prepared.tokens, locale: locale).filter { !strictIDs.contains($0.entry.id) }
         }
         // Stable sort by rank, preserving declaration order within a rank.
         return
@@ -205,7 +223,9 @@ public enum SettingsSearchIndex {
 
     /// Every query word must be in a title (rank 3) or section/keyword (rank 4)
     /// word, exactly or within `typoBudget` edits.
-    private static func typoTolerantMatches(_ tokens: [String]) -> [(entry: SettingsSearchEntry, rank: Int)] {
+    private static func typoTolerantMatches(
+        _ tokens: [String], locale: Locale?
+    ) -> [(entry: SettingsSearchEntry, rank: Int)] {
         guard tokens.contains(where: { typoBudget(for: $0) > 0 }) else { return [] }
         let prepared = tokens.map { (scalars: Array($0.unicodeScalars), budget: typoBudget(for: $0)) }
 
@@ -218,11 +238,13 @@ public enum SettingsSearchIndex {
             }
         }
 
+        let localized = localizedFields(for: locale)
         var ranked: [(entry: SettingsSearchEntry, rank: Int)] = []
         for (entry, fields) in zip(catalog, searchFields) {
-            if covers(fields.titleWords) {
+            let localizedFields = localized?[entry.id]
+            if covers(fields.titleWords) || localizedFields.map({ covers($0.titleWords) }) == true {
                 ranked.append((entry, 3))
-            } else if covers(fields.allWords) {
+            } else if covers(fields.allWords) || localizedFields.map({ covers($0.allWords) }) == true {
                 ranked.append((entry, 4))
             }
         }
@@ -248,6 +270,69 @@ public enum SettingsSearchIndex {
             keywords: entry.keywords.map { .init($0) },
             titleWords: titleWords,
             allWords: titleWords + otherWords.map { Array($0.unicodeScalars) })
+    }
+
+    /// One entry's title/section resolved in a non-current locale, prepared
+    /// the same way as `SearchFields`. Only rows whose resolved label
+    /// actually differs from the English catalog string get one.
+    private struct LocalizedFields {
+        let title: SearchService.PreparedTarget
+        let section: SearchService.PreparedTarget
+        /// Title words, then with section words, for typo-tolerant matching.
+        let titleWords: [[Unicode.Scalar]]
+        let allWords: [[Unicode.Scalar]]
+    }
+
+    private static let localizedFieldsLock = NSLock()
+    /// Resolved fields per locale, keyed by `Locale.identifier` (or a fixed
+    /// key for the display language); an empty map is cached too (English,
+    /// or a locale with no translated labels yet) so resolution happens at
+    /// most once per locale per process.
+    nonisolated(unsafe) private static var localizedFieldsCache: [String: [String: LocalizedFields]] = [:]
+
+    /// Localized match fields for `locale` (nil: the display language), or
+    /// nil when the locale adds nothing over the English fields.
+    private static func localizedFields(for locale: Locale?) -> [String: LocalizedFields]? {
+        let key = locale?.identifier ?? "\u{0}display"
+        localizedFieldsLock.lock()
+        let cached = localizedFieldsCache[key]
+        localizedFieldsLock.unlock()
+        if let cached { return cached.isEmpty ? nil : cached }
+
+        var resolved: [String: LocalizedFields] = [:]
+        for entry in catalog {
+            let title = resolveCatalogString(entry.title, locale: locale)
+            let section = resolveCatalogString(entry.section, locale: locale)
+            guard title != entry.title || section != entry.section else { continue }
+            let titleWords = SearchService.tokenize(title).map { Array($0.unicodeScalars) }
+            let sectionWords = SearchService.tokenize(section).map { Array($0.unicodeScalars) }
+            resolved[entry.id] = LocalizedFields(
+                title: .init(title),
+                section: .init(section),
+                titleWords: titleWords,
+                allWords: titleWords + sectionWords)
+        }
+        localizedFieldsLock.lock()
+        localizedFieldsCache[key] = resolved
+        localizedFieldsLock.unlock()
+        return resolved.isEmpty ? nil : resolved
+    }
+
+    /// A catalog string is the localization key itself (the settings-catalog
+    /// rule: titles are the exact UI titles), and the UI resolves it through
+    /// the same bundle, so resolving it here yields the on-screen label.
+    private static func resolveCatalogString(_ key: String, locale: Locale?) -> String {
+        // The display language goes through `L()` itself: it is what the rows
+        // show, and a `LocalizedStringResource` costs about a millisecond per
+        // key, too slow for the ~1,000 catalog strings on a keystroke.
+        guard let locale else { return L(String.LocalizationValue(key)) }
+        // `String(localized:bundle:locale:)` falls back to the bundle's
+        // preferred localization instead of selecting `locale` (verified
+        // empirically in tests); LocalizedStringResource honors it.
+        var resource = LocalizedStringResource(
+            String.LocalizationValue(key), table: "Localizable", bundle: .atURL(Bundle.module.bundleURL))
+        resource.locale = locale
+        return String(localized: resource)
     }
 
     /// Short words must match exactly: one typo in "tts" is another word.
