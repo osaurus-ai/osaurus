@@ -22,7 +22,6 @@ Packages/OsaurusEvals/
     AgentChannels/      — deterministic agent/MCP channel and tool-policy fixtures
     AgentLoop/          — E2E agentic outcomes in a seeded workspace (LLM)
     AgentLoopFrontier/  — harder agent-loop tasks for the local-vs-frontier proof lane (LLM)
-    AppleScript/        — AppleScript tool discipline: scripted CI lane + live lane (LLM or scripted)
     ArchitectInline/    — architect_handoff: draft latency, run, keep offer and Save, hand back past the deadline (LLM; hand-back row no LLM)
     ArgumentCoercion/   — ArgumentCoercion.{stringArray,int,bool} pinning
     CapabilityClaims/   — agent-loop "do you have X" behaviour + LLM judge (LLM)
@@ -30,6 +29,7 @@ Packages/OsaurusEvals/
     CacheProof/         — live prefix/KV/L2 cache behavior and telemetry (LLM)
     ComputerUse/        — single-action gate / effect classification (no LLM)
     ComputerUseLoop/    — E2E Computer Use over a scripted screen (LLM or scripted)
+    ComputerUseGrounding/ — point-in-box accuracy per coordinate frame on synthetic screens, tok/s (LLM or scripted)
     Orchestrator/       — Orchestrator routing: answer, status, state, configurator/architect handoffs + judge (LLM)
     Configurator/       — hidden Configurator: read/write config tools, grounded Settings paths + judge (LLM)
     HTTPAPI/            — live HTTP chat/agent-run request behavior (LLM)
@@ -639,13 +639,13 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `orchestrator` | yes | `runDefaultAgentCase` | `expect.defaultAgent` |
 | `configurator` | yes | `runDefaultAgentCase` (`ConfiguratorEvaluator`) | `expect.defaultAgent` |
 | `default_agent` | yes | `runDefaultAgentCase` (legacy alias of `orchestrator`) | `expect.defaultAgent` |
-| `judge_calibration` | yes⁵ | `runJudgeCalibrationCase` | `expect.judgeCalibration` |
-| `micro_perf` | yes⁶ | `runMicroPerfCase` | `expect.microPerf` |
+| `judge_calibration` | yes⁴ | `runJudgeCalibrationCase` | `expect.judgeCalibration` |
+| `micro_perf` | yes⁵ | `runMicroPerfCase` | `expect.microPerf` |
 | `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
 | `computer_use` | no | `runComputerUseCase` | `expect.computerUse` |
 | `computer_use_loop` | yes¹ | `runComputerUseLoopCase` | `expect.computerUseLoop` |
+| `computer_use_grounding` | yes¹ | `runComputerUseGroundingCase` | `expect.computerUseGrounding` |
 | `subagent` | mixed³ | `runSubagentCase` | `expect.subagent` |
-| `apple_script` | mixed⁴ | `runAppleScriptCase` | `expect.appleScript` |
 | `screen_context` | no² | `runScreenContextCase` | `expect.screenContext` |
 | `schema` | no | `runSchemaCase` | `expect.schema` |
 | `tool_envelope` | no | `runToolEnvelopeCase` | `expect.toolEnvelope` |
@@ -653,21 +653,19 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `prefix_hash` | no | `runPrefixHashCase` | `expect.prefixHash` |
 | `argument_coercion` | no | `runArgumentCoercionCase` | `expect.argumentCoercion` |
 | `sandbox_diagnostics` | no | `runSandboxDiagnosticsCase` | `expect.sandboxDiagnostics` |
-| `architect_inline` | yes⁷ | `runArchitectInlineCase` | `expect.architectInline` |
+| `architect_inline` | yes⁶ | `runArchitectInlineCase` | `expect.architectInline` |
 
-¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam.
+¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam. `computer_use_grounding` likewise calls the model unless the case sets `scriptedFrame`.
 
 ² `screen_context` deterministic matchers are model-free (CI-safe); an optional per-case `rubric` is graded by an LLM judge **only** when a strong/explicit judge resolves (`JUDGE_MODEL` or a `*_API_KEY`), so CI stays free.
 
 ³ `subagent` is mixed: the `scripted` lane (and the deterministic `computer_use` scripted-driver cases) drive the `SubagentSession` host with **no model call** (CI-safe), while the live lanes — `spawn`, `image`, and model-driven `computer_use` — exercise the real kinds on the run model and **skip** when their host (model / delegation / image model) isn't configured.
 
-⁴ `apple_script` is mixed: cases with canned `scriptedCalls` run **model-free** through a mock executor (CI-safe), while live cases drive the run model and skip without an AppleScript-capable host; the optional rubric is graded only when a strong judge resolves.
+⁴ `judge_calibration` calls only the **judge** LLM (one call per case, no run-model loop): the fixture is a frozen assistant reply plus conditions with known correct verdicts, and the case scores whether the resolved judge reproduces them — so swapping `JUDGE_MODEL` is itself a measurable, diffable change. With no strong judge resolved it self-judges with the run model, which is a useful row in its own right (it measures the local model *as* a judge).
 
-⁵ `judge_calibration` calls only the **judge** LLM (one call per case, no run-model loop): the fixture is a frozen assistant reply plus conditions with known correct verdicts, and the case scores whether the resolved judge reproduces them — so swapping `JUDGE_MODEL` is itself a measurable, diffable change. With no strong judge resolved it self-judges with the run model, which is a useful row in its own right (it measures the local model *as* a judge).
+⁵ `micro_perf` is the dedicated perf lane: a FIXED prompt (`query` × `promptRepeat`) decoded to a FIXED length (`maxTokens`), `reps` times in one warm process after one unmeasured warm-up, reported as **median ± stdev** (decode tok/s, steady-state TTFT, warm-prefix prefill, wall/rep) — the stable row for `history.jsonl` trends that behaviour rows (varying prompt/decode sizes) can't provide. No tools, no system prompt, no judge, temperature 0; decode speed comes from the runtime's authoritative stats hint, with a clearly-labelled `~est` chars/4 fallback in notes (never in telemetry) for hint-less paths. Optional `minDecodeTokensPerSecond` / `maxTtftMs` floors exist but the recommended gate is the diff/history trend, since absolute numbers are machine-specific.
 
-⁶ `micro_perf` is the dedicated perf lane: a FIXED prompt (`query` × `promptRepeat`) decoded to a FIXED length (`maxTokens`), `reps` times in one warm process after one unmeasured warm-up, reported as **median ± stdev** (decode tok/s, steady-state TTFT, warm-prefix prefill, wall/rep) — the stable row for `history.jsonl` trends that behaviour rows (varying prompt/decode sizes) can't provide. No tools, no system prompt, no judge, temperature 0; decode speed comes from the runtime's authoritative stats hint, with a clearly-labelled `~est` chars/4 fallback in notes (never in telemetry) for hint-less paths. Optional `minDecodeTokensPerSecond` / `maxTtftMs` floors exist but the recommended gate is the diff/history trend, since absolute numbers are machine-specific.
-
-⁷ `architect_inline` is mixed: rows that set `holdDraft` score the hand back with no model (CI-safe); the rest draft and run on the run model.
+⁶ `architect_inline` is mixed: rows that set `holdDraft` score the hand back with no model (CI-safe); the rest draft and run on the run model.
 
 The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. The LLM-driven domains (`agent_loop`, `capability_claims`, `orchestrator`, `configurator`, `judge_calibration`, `micro_perf`, and the live lanes of the mixed domains) burn tokens; keep them off CI.
 
@@ -966,6 +964,8 @@ Scene field notes (`expect.computerUseLoop`):
 - `clickFailures` — element-addressed clicks fail as a stale/removed ref this many times before succeeding (the Electron failure). A coordinate click — the loop's fallback — always lands, so this exercises coordinate-fallback recovery.
 - `revealAfterCaptures` — a revealed element stays hidden for this many further captures (async load), so the model must `wait`/`observe` for it.
 - `revealOnScroll` — the element is below the fold until the loop performs a `scroll`.
+- `options` — titles the `select` verb can pick on this element (matched case-insensitively). `select` on an element without `options` fails, as on a control that opens no list.
+- `vision` — `"local"` runs the loop as for an on-device image model: frames attach from the first turn (pixels by default), and `screenshot` / `zoom` / `target.point` can be used. `"none"` keeps every pixel from the model. Unset, a model-driven case uses the model's own vision posture (image support, local bundle frame budget, cloud-vision consent off) and a scripted case gets no images. Screenshots render the scene at 600×400 pixels for the 1200×800 window; element *i* spans x 40–240, y 60 + 40·*i* to 88 + 40·*i* in screen points.
 - `preset` — `AutonomyPreset` raw value for the gate (default `autonomous`, which auto-runs every effect). The runner auto-approves confirmations.
 - `expectOutcome` — `RunOutcome` short names that pass (`done`/`gaveUp`/`stepCapReached`/`deadEnd`/`interrupted`/`failed`); default `["done"]`.
 - `successValues` / `successClicked` / `failIfClicked` — final-state value predicates, required clicks, and forbidden clicks (the safety lever, e.g. "Archive, do not Delete").
@@ -974,6 +974,7 @@ Scene field notes (`expect.computerUseLoop`):
 - `scoredMinSteps` / `scoredMaxSteps` — step-efficiency floor / ceiling, scored against the loop's productive step count. The ceiling catches thrashing; the floor catches a scene solvable too cheaply.
 - `expectVerbsInOrder` — verbs that must appear, in this relative order (a subsequence, gaps allowed), in the executed verb trace. Encodes a required plan shape, e.g. `["scroll","click"]`.
 - `scoredMaxModelTokens` — cost ceiling on total model tokens (prompt + completion, summed across every step). Scripted runs spend `0`, so this only bites a live model that reaches the goal but over-spends. The report always prints `tokens=…` and `latencyMs=…` alongside the step telemetry.
+- `minConfirms` / `maxConfirms` / `maxActsAttempted` — bounds on gate confirms requested and driver acts attempted (e.g. `maxActsAttempted: 0` proves a run only looked).
 - `scriptedActions` — see above; when present the model is never called.
 
 The suite covers (under `Suites/ComputerUseLoop/`): `type-into-field`, `compose-and-send`, `toggle-switch`, `reveal-then-set`, `archive-not-delete`, `read-and-report`, `impossible-give-up` (live-model planning), plus the new `scroll-to-find`, `press-key-submit`, `replace-note`, `find-among-duplicates` (live-model, new verbs / large+duplicate trees) and the deterministic, model-free `recover-after-invalid`, `recover-after-driver-error`, `async-wait-load`, `drag-reorder` (scripted). See `Suites/ComputerUseLoop/README.md` for the full per-case map.

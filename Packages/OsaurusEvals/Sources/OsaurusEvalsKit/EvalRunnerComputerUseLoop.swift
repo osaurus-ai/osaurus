@@ -129,6 +129,18 @@ extension EvalRunner {
             }
         }
 
+        let vision: VisionContext
+        switch exp.vision {
+        case "local":
+            vision = VisionContext(modelAcceptsImages: true, modelIsLocal: true, cloudConsent: false)
+        case "none":
+            vision = .none
+        default:
+            vision =
+                scriptedProvider == nil
+                ? await MainActor.run { VisionContext.resolved(for: modelId) }.withConsent(false) : .none
+        }
+
         let started = Date()
         let result = await ComputerUseLoop.run(
             goal: testCase.query,
@@ -141,7 +153,7 @@ extension EvalRunner {
             confirmUnavailable: confirmUnavailable,
             limits: limits,
             policySummary: "",
-            vision: .none,
+            vision: vision,
             sessionId: "eval-cu-\(testCase.id)",
             nextAction: scriptedProvider
         )
@@ -309,6 +321,29 @@ extension EvalRunner {
                 feedTitles.contains { $0.localizedCaseInsensitiveContains(needle) },
                 pass: "feed reported '\(needle)'",
                 fail: "no feed event title contained '\(needle)' (titles: \(feedTitles))"
+            )
+        }
+
+        // 10. Gate and act counts.
+        if let minConfirms = exp.minConfirms {
+            check(
+                metrics.confirmsRequested >= minConfirms,
+                pass: "confirms ok: \(metrics.confirmsRequested) ≥ \(minConfirms)",
+                fail: "confirms \(metrics.confirmsRequested) < \(minConfirms)"
+            )
+        }
+        if let maxConfirms = exp.maxConfirms {
+            check(
+                metrics.confirmsRequested <= maxConfirms,
+                pass: "confirms ok: \(metrics.confirmsRequested) ≤ \(maxConfirms)",
+                fail: "confirms \(metrics.confirmsRequested) > \(maxConfirms)"
+            )
+        }
+        if let maxActs = exp.maxActsAttempted {
+            check(
+                metrics.actsAttempted <= maxActs,
+                pass: "acts ok: \(metrics.actsAttempted) ≤ \(maxActs)",
+                fail: "acts \(metrics.actsAttempted) > \(maxActs)"
             )
         }
 

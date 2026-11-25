@@ -98,7 +98,7 @@ struct EvalMatrixTests {
                 outcome: .passed, notes: [], modelId: "m", latencyMs: 0
             ),
             .init(
-                id: "apple_script.live-value-query", label: "live", domain: "apple_script",
+                id: "subagent.image-edit-live", label: "edit", domain: "subagent",
                 query: nil, outcome: .failed, notes: [], modelId: "m", latencyMs: 0
             ),
             .init(
@@ -118,9 +118,8 @@ struct EvalMatrixTests {
         #expect(col.chatModelScored == 1)
         #expect(col.subsystemPassed == 1)
         #expect(col.subsystemScored == 2)
-        #expect(EvalMatrixBuilder.isSubsystemCase(id: "apple_script.live-value-query", domain: "apple_script"))
         #expect(EvalMatrixBuilder.isSubsystemCase(id: "subagent.image-generate-live", domain: "subagent"))
-        #expect(!EvalMatrixBuilder.isSubsystemCase(id: "apple_script.scripted-value-query", domain: "apple_script"))
+        #expect(!EvalMatrixBuilder.isSubsystemCase(id: "subagent.spawn-scripted", domain: "subagent"))
     }
 
     @Test func marketHarnessMetricsAggregateAgentLoopEfficiencyAndDelivery() {

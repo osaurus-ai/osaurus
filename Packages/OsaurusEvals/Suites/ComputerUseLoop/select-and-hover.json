@@ -1,0 +1,24 @@
+{
+  "id": "computer_use_loop.select-and-hover",
+  "domain": "computer_use_loop",
+  "label": "CU loop • select picks a listed option; hover only moves the pointer",
+  "query": "Set the Priority to High.",
+  "notes": "Deterministic (scripted-model) case for `hover` and `select`: hovering over the Priority control posts a pointer move and changes nothing; `select` with option \"high\" picks the listed High option (case-insensitive) in one step instead of a click-to-open then click-the-item pair.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Settings",
+      "maxSteps": 5,
+      "elements": [
+        { "id": "priority", "role": "popupbutton", "label": "Priority", "value": "Low", "options": ["Low", "Medium", "High"] }
+      ],
+      "successValues": [{ "id": "priority", "equals": "High" }],
+      "expectVerbsInOrder": ["hover", "select"],
+      "scriptedActions": [
+        "{\"verb\":\"hover\",\"target\":{\"mark\":1},\"note\":\"point at the control\"}",
+        "{\"verb\":\"select\",\"target\":{\"mark\":1},\"option\":\"high\",\"note\":\"pick High\"}",
+        "{\"verb\":\"done\",\"reason\":\"Priority is High\"}"
+      ]
+    }
+  }
+}

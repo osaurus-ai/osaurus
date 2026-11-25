@@ -160,11 +160,11 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     public let perDomain: [String: EvalMatrixDomainCell]
     public let totalPassed: Int
     public let totalScored: Int
-    /// Passed/scored excluding subsystem rows (AppleScript live/liveProof +
-    /// live image subagent) — the chat-model attributable column.
+    /// Passed/scored excluding subsystem rows (live image subagent) — the
+    /// chat-model attributable column.
     public let chatModelPassed: Int
     public let chatModelScored: Int
-    /// Passed/scored for subsystem-only rows (AppleScript-16B + image stack).
+    /// Passed/scored for subsystem-only rows (image stack).
     public let subsystemPassed: Int
     public let subsystemScored: Int
     /// Mean decode tok/s across telemetered rows for this model.
@@ -713,13 +713,9 @@ public enum EvalMatrixBuilder {
         ]
     }
 
-    /// True when a case belongs on the subsystem scoreboard (AppleScript-16B
-    /// live/liveProof lanes + live image subagent), not the chat-model column.
+    /// True when a case belongs on the subsystem scoreboard (live image
+    /// subagent), not the chat-model column.
     public static func isSubsystemCase(id: String, domain: String) -> Bool {
-        if domain == "apple_script" {
-            let lower = id.lowercased()
-            return lower.contains("liveproof") || lower.contains(".live-")
-        }
         if domain == "subagent", id.hasPrefix("subagent.image-") {
             return true
         }

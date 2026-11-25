@@ -1,0 +1,15 @@
+{
+  "id": "computer_use_grounding.scripted-unit",
+  "domain": "computer_use_grounding",
+  "label": "CU grounding • scoring adopts 0–1 for answers written in 0–1",
+  "query": "Click the named button on each synthetic screen.",
+  "notes": "Model-free. Answers are synthesized at each target's center on a 0–1 scale. Only the 0–1 reading may hit.",
+  "fixtures": {},
+  "expect": {
+    "computerUseGrounding": {
+      "scriptedFrame": "normalizedUnit",
+      "expectFrame": "normalizedUnit",
+      "minHitFraction": 1.0
+    }
+  }
+}

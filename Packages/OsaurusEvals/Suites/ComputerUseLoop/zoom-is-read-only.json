@@ -1,0 +1,30 @@
+{
+  "id": "computer_use_loop.zoom-is-read-only",
+  "domain": "computer_use_loop",
+  "label": "CU loop • screenshot and zoom only look",
+  "query": "What does the Status line say?",
+  "notes": "Deterministic (scripted-model) case: `screenshot` and `zoom` are read-only. The run takes a screenshot, zooms into the top-left of it, and reports. Nothing is posted to the app, no confirm is requested, and the close-up is reported in the feed.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Monitor",
+      "maxSteps": 5,
+      "preset": "balanced",
+      "vision": "local",
+      "elements": [
+        { "id": "status", "role": "statictext", "label": "Status", "value": "All systems normal" },
+        { "id": "restart", "role": "button", "label": "Restart" }
+      ],
+      "failIfClicked": ["restart"],
+      "finalSummaryContains": ["All systems normal"],
+      "maxActsAttempted": 0,
+      "maxConfirms": 0,
+      "feedTitleContains": ["Zoomed in"],
+      "scriptedActions": [
+        "{\"verb\":\"screenshot\",\"note\":\"look\"}",
+        "{\"verb\":\"zoom\",\"region\":{\"x\":0,\"y\":0,\"width\":300,\"height\":120},\"note\":\"read the status line\"}",
+        "{\"verb\":\"done\",\"reason\":\"Status: All systems normal\"}"
+      ]
+    }
+  }
+}

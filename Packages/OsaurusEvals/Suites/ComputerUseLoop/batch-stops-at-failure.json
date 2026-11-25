@@ -1,0 +1,31 @@
+{
+  "id": "computer_use_loop.batch-stops-at-failure",
+  "domain": "computer_use_loop",
+  "label": "CU loop • a batch stops at the first step that fails",
+  "query": "Fill in the name, set the size to Large, and submit.",
+  "notes": "Deterministic (scripted-model) case for the `batch` contract: steps run in order and the batch stops at the first one that fails. The Size control here has no option list, so `select` fails; Submit, the step after it, must not run. The name edit before the failure stands. The model then gives up with the reason.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Forms",
+      "maxSteps": 4,
+      "elements": [
+        { "id": "name", "role": "textfield", "label": "Name", "value": "", "editable": true },
+        { "id": "size", "role": "popupbutton", "label": "Size", "value": "Small" },
+        { "id": "submit", "role": "button", "label": "Submit", "onClick": { "setValues": [{ "id": "status", "value": "Submitted" }] } },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "Draft" }
+      ],
+      "expectOutcome": ["gaveUp"],
+      "successValues": [
+        { "id": "name", "equals": "Ada" },
+        { "id": "status", "equals": "Draft" }
+      ],
+      "failIfClicked": ["submit"],
+      "expectVerbsInOrder": ["set_value", "select"],
+      "scriptedActions": [
+        "{\"verb\":\"batch\",\"actions\":[{\"verb\":\"set_value\",\"target\":{\"mark\":1},\"text\":\"Ada\"},{\"verb\":\"select\",\"target\":{\"mark\":2},\"option\":\"Large\"},{\"verb\":\"click\",\"target\":{\"mark\":3}}],\"note\":\"fill and submit\"}",
+        "{\"verb\":\"give_up\",\"reason\":\"the Size control has no option list\"}"
+      ]
+    }
+  }
+}

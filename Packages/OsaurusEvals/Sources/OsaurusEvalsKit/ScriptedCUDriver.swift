@@ -19,8 +19,12 @@
 //  CI-safe apart from the model call itself.
 //
 
+import CoreGraphics
+import CoreText
 import Foundation
+import ImageIO
 import OsaurusCore
+import UniformTypeIdentifiers
 
 public actor ScriptedCUDriver: MacDriver {
 
@@ -51,6 +55,8 @@ public actor ScriptedCUDriver: MacDriver {
         var revealCountdown: Int?
         /// Below the fold until the loop scrolls.
         let revealOnScroll: Bool
+        /// Titles `select` can pick (scene `options`).
+        let options: [String]?
     }
 
     // MARK: - State
@@ -78,6 +84,8 @@ public actor ScriptedCUDriver: MacDriver {
     public private(set) var executedVerbs: [String] = []
     /// Element ids that received at least one click.
     public private(set) var clickedIds: Set<String> = []
+    /// Element ids the pointer hovered over.
+    public private(set) var hoveredIds: Set<String> = []
 
     // MARK: - Init
 
@@ -103,7 +111,8 @@ public actor ScriptedCUDriver: MacDriver {
                 clickFailuresRemaining: max(0, element.clickFailures ?? 0),
                 revealAfterCaptures: max(0, element.revealAfterCaptures ?? 0),
                 revealCountdown: nil,
-                revealOnScroll: element.revealOnScroll ?? false
+                revealOnScroll: element.revealOnScroll ?? false,
+                options: element.options
             )
         }
         // Seed focus on the first AX-visible editable field so a model that
@@ -237,9 +246,13 @@ public actor ScriptedCUDriver: MacDriver {
     }
 
     public func screenshot(pid: Int32?, windowId: Int?, annotate: Bool) async -> CUImage? {
-        // A real (tiny) PNG so the vision path receives decodable bytes; the
-        // scripted tree is still the source of truth for what's actionable.
-        Self.sampleImage
+        renderImage(tier: .vision, region: Self.windowFrame, scale: Self.frameScale)
+    }
+
+    public func zoom(pid: Int32, region: CUScreenRegion) async -> CUImage? {
+        let area = CGRect(x: region.x, y: region.y, width: region.w, height: region.h).intersection(Self.windowFrame)
+        guard !area.isNull, area.width >= 1, area.height >= 1 else { return nil }
+        return renderImage(tier: .vision, region: area, scale: 1)
     }
 
     public func narrate(_ note: String, step: Int?, total: Int?) async {}
@@ -268,6 +281,26 @@ public actor ScriptedCUDriver: MacDriver {
         case .clearField(let id):
             executedVerbs.append("clear")
             return applyEdit(id: id, value: "")
+        case .adjust:
+            executedVerbs.append("adjust")
+            return .failure("The scripted world has no adjustable controls.")
+        case .selectOption(let id, let option):
+            executedVerbs.append("select")
+            guard let index = cells.firstIndex(where: { $0.id == id }), !cells[index].hidden else {
+                return CUActionResult(success: false, error: "Element not found.", removed: true)
+            }
+            guard let options = cells[index].options else {
+                return .failure("This control doesn't open a list of options. Click it, then click the option.")
+            }
+            let want = option.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard let picked = options.first(where: { $0.lowercased() == want }) else {
+                return .failure(
+                    "No single option matches \"\(option)\". Options: \(options.joined(separator: ", "))."
+                )
+            }
+            cells[index].value = picked
+            focusedId = id
+            return .ok(delta: focusDelta())
         case .pressKey(_, let key, let modifiers):
             executedVerbs.append("press_key")
             // No global key bindings in the scripted world. The one binding a
@@ -290,14 +323,18 @@ public actor ScriptedCUDriver: MacDriver {
     public func coordinate(_ action: CUCoordinateAction) async -> CUActionResult {
         switch action {
         case .click(let x, let y, _, _, _):
-            // Map a raw coordinate click back to the nearest visible element
-            // center. This is the loop's stale-ref fallback path, so a
-            // coordinate click ALWAYS lands (ignores `clickFailures`) — that's
-            // exactly the recovery the fallback exists to provide.
-            if let hit = nearestVisible(toX: x, y: y) {
+            // A coordinate click lands on whatever element contains the point
+            // (the loop's stale-ref fallback clicks an element's center, and a
+            // `target.point` click its own spot). It ignores `clickFailures` —
+            // that's the recovery the fallback exists to provide.
+            if let hit = visibleCell(atX: x, y: y) {
                 return applyClick(id: hit, viaCoordinate: true)
             }
             executedVerbs.append("click")
+            return .ok()
+        case .move(let x, let y, _):
+            executedVerbs.append("hover")
+            if let hit = visibleCell(atX: x, y: y) { hoveredIds.insert(hit) }
             return .ok()
         case .scroll:
             executedVerbs.append("scroll")
@@ -392,23 +429,89 @@ public actor ScriptedCUDriver: MacDriver {
         return true
     }
 
-    private func nearestVisible(toX x: Double, y: Double) -> String? {
-        // The most permissive tier — a coordinate click targets something the
-        // model already saw, so tier gating shouldn't hide it from the hit test.
-        let visible = cells.enumerated().filter { isRendered($0.element, tier: .vision) }
-        guard !visible.isEmpty else { return nil }
-        // Element layout mirrors `makeSnapshot`: a vertical stack, so match
-        // on the row whose center y is closest.
-        var best: (id: String, distance: Double)?
-        for (index, cell) in visible {
-            let centerY = Double(60 + index * 40 + 14)
-            let centerX = Double(40 + 100)
-            let distance = abs(centerY - y) + abs(centerX - x) * 0.01
-            if best == nil || distance < best!.distance {
-                best = (cell.id, distance)
-            }
+    /// The visible cell whose frame contains the point. The most permissive
+    /// tier: a coordinate targets something the model already saw.
+    private func visibleCell(atX x: Double, y: Double) -> String? {
+        for (index, cell) in cells.enumerated() where isRendered(cell, tier: .vision) {
+            if Self.frame(index: index).contains(CGPoint(x: x, y: y)) { return cell.id }
         }
-        return best?.id
+        return nil
+    }
+
+    // MARK: - Layout
+
+    /// The scripted window, in screen points.
+    static let windowFrame = CGRect(x: 0, y: 0, width: 1200, height: 800)
+    /// Pixels per point of a full screenshot (a 600×400 frame).
+    static let frameScale: CGFloat = 0.5
+
+    /// Cell `index`'s frame: a vertical stack in declaration order.
+    static func frame(index: Int) -> CGRect {
+        CGRect(x: 40, y: 60 + index * 40, width: 200, height: 28)
+    }
+
+    /// Draw the cells rendered at `tier` that fall inside `region` (points)
+    /// as a PNG at `scale` pixels per point.
+    private func renderImage(tier: CaptureTier, region: CGRect, scale: CGFloat) -> CUImage? {
+        let width = max(1, Int((region.width * scale).rounded()))
+        let height = max(1, Int((region.height * scale).rounded()))
+        guard
+            let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else { return nil }
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        // Top-left origin in screen points.
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: scale, y: -scale)
+        context.translateBy(x: -region.minX, y: -region.minY)
+        let font = CTFontCreateWithName("Helvetica" as CFString, 13, nil)
+        for (index, cell) in cells.enumerated() where isRendered(cell, tier: tier) {
+            let rect = Self.frame(index: index)
+            context.setFillColor(CGColor(red: 0.93, green: 0.94, blue: 0.96, alpha: 1))
+            context.fill(rect)
+            context.setStrokeColor(CGColor(red: 0.55, green: 0.57, blue: 0.62, alpha: 1))
+            context.setLineWidth(1)
+            context.stroke(rect)
+            let text = [cell.label, cell.value].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ": ")
+            guard !text.isEmpty else { continue }
+            let attributed = NSAttributedString(
+                string: text,
+                attributes: [
+                    NSAttributedString.Key(kCTFontAttributeName as String): font,
+                    NSAttributedString.Key(kCTForegroundColorAttributeName as String):
+                        CGColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1),
+                ]
+            )
+            let line = CTLineCreateWithAttributedString(attributed)
+            context.saveGState()
+            context.translateBy(x: rect.minX + 6, y: rect.midY + 4.5)
+            context.scaleBy(x: 1, y: -1)
+            context.textPosition = .zero
+            CTLineDraw(line, context)
+            context.restoreGState()
+        }
+        guard let image = context.makeImage() else { return nil }
+        let data = NSMutableData()
+        guard
+            let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil)
+        else { return nil }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return CUImage(
+            base64: (data as Data).base64EncodedString(),
+            mimeType: "image/png",
+            width: width,
+            height: height,
+            region: CUScreenRegion(x: region.minX, y: region.minY, w: region.width, h: region.height)
+        )
     }
 
     private func focusDelta() -> CUFocusDelta {
@@ -451,17 +554,17 @@ public actor ScriptedCUDriver: MacDriver {
                     windowId: 1,
                     focused: cell.id == focusedId,
                     enabled: true,
-                    x: 40,
-                    y: 60 + index * 40,
-                    w: 200,
-                    h: 28,
+                    x: Int(Self.frame(index: index).minX),
+                    y: Int(Self.frame(index: index).minY),
+                    w: Int(Self.frame(index: index).width),
+                    h: Int(Self.frame(index: index).height),
                     actions: []
                 )
             )
         }
-        // SOM / vision captures carry a real (tiny) decodable PNG, not an empty
-        // placeholder, so the vision attachment path has genuine bytes.
-        let pixels = tier == .ax ? nil : Self.sampleImage
+        // SOM / vision captures carry a rendering of the scene with its
+        // screen region, so points in it map back to the cells.
+        let pixels = tier == .ax ? nil : renderImage(tier: tier, region: Self.windowFrame, scale: Self.frameScale)
         return CUSnapshot(
             snapshotId: snapshotCounter,
             pid: pid,
@@ -476,14 +579,4 @@ public actor ScriptedCUDriver: MacDriver {
             image: pixels
         )
     }
-
-    /// A real 1×1 PNG (transparent) so SOM/vision snapshots and `screenshot`
-    /// carry decodable bytes rather than an empty-string placeholder.
-    private static let sampleImage = CUImage(
-        base64:
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
-        mimeType: "image/png",
-        width: 1,
-        height: 1
-    )
 }

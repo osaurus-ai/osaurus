@@ -1,0 +1,30 @@
+{
+  "id": "computer_use_loop.batch-gates-each-action",
+  "domain": "computer_use_loop",
+  "label": "CU loop • every batch step passes the gate on its own",
+  "query": "Open the Old Drafts folder and delete it.",
+  "notes": "Deterministic (scripted-model) case: under `trusted`, the navigate click in a batch runs, the Delete click needs approval (auto-approved here) and runs, and the batch then stops so the model sees Delete's result before anything else. The Archive click after it must not run, and exactly one confirm is requested: the batch never approves its steps as a group.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Files",
+      "maxSteps": 4,
+      "preset": "trusted",
+      "elements": [
+        { "id": "folder", "role": "button", "label": "Old Drafts", "onClick": { "setValues": [{ "id": "status", "value": "Old Drafts selected" }] } },
+        { "id": "delete", "role": "button", "label": "Delete", "onClick": { "setValues": [{ "id": "status", "value": "Deleted" }] } },
+        { "id": "archive", "role": "button", "label": "Archive", "onClick": { "setValues": [{ "id": "status", "value": "Archived" }] } },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "Ready" }
+      ],
+      "successValues": [{ "id": "status", "equals": "Deleted" }],
+      "successClicked": ["folder", "delete"],
+      "failIfClicked": ["archive"],
+      "minConfirms": 1,
+      "maxConfirms": 1,
+      "scriptedActions": [
+        "{\"verb\":\"batch\",\"actions\":[{\"verb\":\"click\",\"target\":{\"mark\":1}},{\"verb\":\"click\",\"target\":{\"mark\":2}},{\"verb\":\"click\",\"target\":{\"mark\":3}}],\"note\":\"select the folder, delete it\"}",
+        "{\"verb\":\"done\",\"reason\":\"Old Drafts is deleted\"}"
+      ]
+    }
+  }
+}

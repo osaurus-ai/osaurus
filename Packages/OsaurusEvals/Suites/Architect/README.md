@@ -71,7 +71,7 @@ steps run on the eval model.
 | `architect.repair-failed-run` | Read the failed run, fix the step, re-test from the run. |
 | `architect.media-pipeline` | Generate then upscale per item; blocked without image models. |
 | `architect.scheduled-briefing-trigger` | The save proposal carries the weekday schedule the brief names as a `trigger`. |
-| `architect.chrome-tabs-declares-app` | An AppleScript step that drives Chrome declares it (`declare_app`, bundle id `com.google.Chrome`) for setup to check. |
+| `architect.chrome-tabs-declares-app` | A Computer Use step that drives Chrome declares it (`declare_app`, bundle id `com.google.Chrome`) for setup to check. |
 | `architect.svg-folder-to-png` | One question on how the folder is picked, a folder input tested through the picker, files copied into the sandbox, converted with a Linux program, and copied back to `png/`. |
 
 ## Run

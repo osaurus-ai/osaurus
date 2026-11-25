@@ -1,0 +1,15 @@
+{
+  "id": "computer_use_grounding.scripted-pixels",
+  "domain": "computer_use_grounding",
+  "label": "CU grounding • scoring adopts pixels for answers written in pixels",
+  "query": "Click the named button on each synthetic screen.",
+  "notes": "Model-free. Answers are synthesized at each target's center in image pixels. Only the pixel reading may hit.",
+  "fixtures": {},
+  "expect": {
+    "computerUseGrounding": {
+      "scriptedFrame": "pixels",
+      "expectFrame": "pixels",
+      "minHitFraction": 1.0
+    }
+  }
+}
