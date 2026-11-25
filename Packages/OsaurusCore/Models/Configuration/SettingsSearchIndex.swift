@@ -1189,7 +1189,8 @@ public enum SettingsSearchIndex {
             ],
             subTab: "cache",
             disambiguation:
-                "Lowers every model's chat window. Not Memory Budget, not Orchestrator max output tokens, not KV retention."
+                "Lowers every model's chat window. A custom agent can set a lower cap of its own (agents[].generation_settings.context_length_cap); the tighter of the two applies. Not Memory Budget, not Orchestrator max output tokens, not KV retention.",
+            declarativeSection: "chat"
         ),
         .init(
             id: "settings.server.contextMetadataFallback",

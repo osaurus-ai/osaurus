@@ -65,6 +65,9 @@ struct AgentGenerationDraft: Equatable {
     var thinking = "inherit"
     var reasoningEffort = ""
     var speculation = "inherit"
+    /// Preserved across editor saves. The editor has no control for it;
+    /// dropping it would wipe a cap set by `osaurus config apply`.
+    var contextLengthCap: Int?
 
     init(temperature: Float? = nil, maxTokens: Int? = nil, settings: AgentGenerationSettings? = nil) {
         self.temperature = .init(temperature.map { String($0) })
@@ -79,6 +82,7 @@ struct AgentGenerationDraft: Equatable {
         thinking = settings?.enableThinking.map { $0 ? "on" : "off" } ?? "inherit"
         reasoningEffort = settings?.reasoningEffort ?? ""
         speculation = settings?.speculativeDecoding.map { $0 ? "on" : "off" } ?? "inherit"
+        contextLengthCap = settings?.contextLengthCap
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         stop = .init(settings?.stop.flatMap { try? encoder.encode($0) }.map { String(decoding: $0, as: UTF8.self) })
@@ -104,6 +108,9 @@ struct AgentGenerationDraft: Equatable {
             reasoningEffort = latest.reasoningEffort
         }
         if speculation == previous.speculation { speculation = latest.speculation }
+        if contextLengthCap == previous.contextLengthCap {
+            contextLengthCap = latest.contextLengthCap
+        }
     }
 
     var overrideCount: Int {
@@ -166,7 +173,8 @@ struct AgentGenerationDraft: Equatable {
             enableThinking: thinking == "inherit" ? nil : thinking == "on",
             reasoningEffort: reasoningEffort.isEmpty ? nil : reasoningEffort,
             templateKwargs: kwargs,
-            speculativeDecoding: speculation == "inherit" ? nil : speculation == "on"
+            speculativeDecoding: speculation == "inherit" ? nil : speculation == "on",
+            contextLengthCap: contextLengthCap
         )
         try settings.validate()
         return Values(temperature: temperature, maxTokens: maxTokens, settings: settings.isEmpty ? nil : settings)

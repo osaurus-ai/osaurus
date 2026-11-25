@@ -86,7 +86,7 @@ Template parameters (JSON) passes an object to a supporting model's own chat tem
 - `/workflow-name` opens one of the agent's workflows: its run form in Workflows.
 - Voice: the mic button dictates locally (see the Voice topic); the speaker button reads replies aloud when TTS is enabled.
 - Clipboard monitoring (Settings → Chat → Behavior) offers recently copied text as context.
-- Context window cap (how much history fits) is Settings… (⌘,) → Server → Server Settings → Cache → Context Window Cap, not the Chat page (Chat → Advanced has a link that jumps there). The composer Context Budget popover is read-only.
+- Context window cap (how much history fits) is Settings… (⌘,) → Server → Server Settings → Cache → Context Window Cap, not the Chat page (Chat → Advanced has a link that jumps there). The same global cap is `chat.context_length_cap`. A custom agent can set a lower cap with `agents[].generation_settings.context_length_cap`; that agent runs at the tighter of the two, and the composer Context Budget popover names which one decided. The popover is read-only.
 
 ## Tips
 

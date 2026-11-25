@@ -86,8 +86,8 @@ public struct DelegatedRunContract: Sendable, Equatable {
     /// and exact tool schemas (the composer's own reservation values — no
     /// fixed overhead guess), whether the target agent runs with tools, and the
     /// context window the dispatched session would otherwise resolve
-    /// (`AgentLoopBudget.resolveContextWindow`: bundle window ∩ the user's
-    /// context-length cap). The derived position ceiling only ever TIGHTENS
+    /// (`AgentLoopBudget.resolveContextWindow`: bundle window ∩ the agent's
+    /// context-length cap ∩ the global cap). The derived position ceiling only ever TIGHTENS
     /// that resolved window. All token math rounds UP (chars/4 × 1.5
     /// safety = chars × 3 / 8, ceiling) — the same conversion
     /// `SubagentChildRequestEstimate` uses. Chat-template scaffolding is

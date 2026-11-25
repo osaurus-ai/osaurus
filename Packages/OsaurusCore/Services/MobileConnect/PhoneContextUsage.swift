@@ -97,7 +97,11 @@ enum PhoneContextUsage {
             )
         }
 
-        let resolution = model.map { AgentLoopBudget.resolveContextWindowResolutionSync(modelId: $0) }
+        let agentCap = AgentLoopBudget.storedAgentContextLengthCap(for: agentId)
+        let resolution = model.map {
+            AgentLoopBudget.resolveContextWindowResolutionSync(
+                modelId: $0, agentContextLengthCap: agentCap)
+        }
         let window = resolution?.tokens
         let disabled = breakdown.disable.flatMap { info -> AutoDisabled? in
             guard info.disabledTools || info.disabledMemory else { return nil }

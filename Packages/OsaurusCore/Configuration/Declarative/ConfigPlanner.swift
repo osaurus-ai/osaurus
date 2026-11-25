@@ -458,6 +458,10 @@ enum ConfigPlanner {
         if let section = document.configurator {
             checkRange(section.temperature, 0.0...2.0, "configurator.temperature", &issues)
         }
+        if let section = document.chat {
+            checkRange(
+                section.contextLengthCap, 2_048...4_194_304, "chat.context_length_cap", &issues)
+        }
         if let section = document.app, case .value(let text) = section.hotkey,
             case .failure(let error) = HotkeyText.parse(text),
             text != ConfigExporter.currentHotkeyText()
@@ -485,6 +489,13 @@ enum ConfigPlanner {
                 checkRange(entry.maxTokens, 1...10_000_000, "agents[\(entry.name)].max_tokens", &issues)
                 do { try entry.generationSettings.valueOrNil?.validate() }
                 catch { issues.append("agents[\(entry.name)].generation_settings: \(error.localizedDescription)") }
+                if let cap = entry.generationSettings.valueOrNil?.contextLengthCap,
+                    !(2_048...4_194_304).contains(cap)
+                {
+                    issues.append(
+                        "agents[\(entry.name)].generation_settings.context_length_cap: "
+                            + "must be in 2048...4194304.")
+                }
                 checkRuntimeReference(
                     entry.runtime, claudeCode: entry.claudeCode, label: "agents[\(entry.name)]",
                     document: document, prune: prune, into: &issues)
@@ -1278,6 +1289,9 @@ enum ConfigPlanner {
             "clipboard_monitoring", desired: desired.clipboardMonitoring,
             current: current.clipboardMonitoring, into: &changes)
         diff("keep_mac_awake", desired: desired.keepMacAwake, current: current.keepMacAwake, into: &changes)
+        diff(
+            "context_length_cap", desired: desired.contextLengthCap,
+            current: current.contextLengthCap, into: &changes)
         guard !changes.isEmpty else { return }
         actions.append(ConfigPlanAction(section: "chat", target: "chat", kind: .update, changes: changes))
     }

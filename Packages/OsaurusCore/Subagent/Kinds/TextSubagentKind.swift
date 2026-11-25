@@ -682,7 +682,7 @@ final class TextSubagentKind:
         self.residencyPlan = resolved.decision.plan
         if isDelegatedAgentTarget {
             // Same window resolution the dispatched chat session performs —
-            // bundle window ∩ user context-length cap — tightened into the
+            // bundle window ∩ the agent's cap ∩ the global cap — tightened into the
             // enforced delegated contract. Reservations are measured from
             // what the dispatched session ACTUALLY runs, not proxies: the
             // wrapped delegated prompt (`delegatedPrompt` — the exact seed
@@ -692,7 +692,8 @@ final class TextSubagentKind:
             // reserves). Execution mode mirrors the dispatched session's:
             // sandbox when the agent has autonomous exec, else none.
             let window = await AgentLoopBudget.resolveContextWindow(
-                modelId: resolved.model)
+                modelId: resolved.model,
+                agentContextLengthCap: agent.generationSettings?.contextLengthCap)
             let dispatchedPrompt = AgentDelegationDispatcher.delegatedPrompt(
                 input: input)
             let composed = await SystemPromptComposer.composeChatContext(

@@ -205,7 +205,11 @@ final class HiddenAgentHandoffKind: SubagentKind, SubagentPostAdmissionResidency
     }
 
     private func deriveRunContract(model: String, scope: SubagentScope) async {
-        let window = await AgentLoopBudget.resolveContextWindow(modelId: model)
+        let agentCap = await MainActor.run {
+            AgentLoopBudget.storedAgentContextLengthCap(for: target.agentId)
+        }
+        let window = await AgentLoopBudget.resolveContextWindow(
+            modelId: model, agentContextLengthCap: agentCap)
         let specs = resolvedSpecs
         let (budgets, toolTokens) = await MainActor.run {
             (SpawnFanOutPolicy.effectiveBudgets(scope: scope), ToolRegistry.shared.totalEstimatedTokens(for: specs))
@@ -331,6 +335,9 @@ final class HiddenAgentHandoffKind: SubagentKind, SubagentPostAdmissionResidency
             deadline: Date().addingTimeInterval(target.wallClockSeconds),
             sessionId: "handoff-\(target.capability.id)-\(UUID().uuidString)",
             temperature: resolvedTemperature,
+            generationSettings: await MainActor.run {
+                AgentManager.shared.effectiveGenerationSettings(for: target.agentId)
+            },
             enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
             reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
             isInterrupted: { interrupt.isInterrupted },

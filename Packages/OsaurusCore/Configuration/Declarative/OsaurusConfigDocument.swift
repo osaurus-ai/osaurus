@@ -340,9 +340,9 @@ extension ModelDefaultsSection: Codable {
 
 // MARK: - Chat
 
-/// Everyday switches from the Chat settings page. Sampling, tool attempts,
-/// and the context cap stay in the Settings UI.
-public struct ChatSection: Codable, Equatable, Sendable {
+/// Everyday switches from the Chat settings page, plus the global context
+/// window cap. Sampling and tool attempts stay in the Settings UI.
+public struct ChatSection: Equatable, Sendable {
     public var smoothStreaming: Bool?
     /// Group Thinking & Tool Activity.
     public var groupActivity: Bool?
@@ -355,6 +355,10 @@ public struct ChatSection: Codable, Equatable, Sendable {
     public var clipboardMonitoring: Bool?
     /// Keep Mac Awake While Agents Run.
     public var keepMacAwake: Bool?
+    /// Global Context Window Cap, in tokens. Absent leaves the stored cap
+    /// unchanged; null clears it so every agent follows its model (and its
+    /// own cap, when set).
+    public var contextLengthCap: ConfigField<Int> = .absent
 
     /// `UserDefaults` keys shared with the `@AppStorage` switches on the
     /// Chat page and their runtime readers.
@@ -381,6 +385,35 @@ public struct ChatSection: Codable, Equatable, Sendable {
         case followUpSuggestions = "follow_up_suggestions"
         case clipboardMonitoring = "clipboard_monitoring"
         case keepMacAwake = "keep_mac_awake"
+        case contextLengthCap = "context_length_cap"
+    }
+}
+
+extension ChatSection: Codable {
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        smoothStreaming = try c.decodeIfPresent(Bool.self, forKey: .smoothStreaming)
+        groupActivity = try c.decodeIfPresent(Bool.self, forKey: .groupActivity)
+        expandThinking = try c.decodeIfPresent(Bool.self, forKey: .expandThinking)
+        spellCheck = try c.decodeIfPresent(Bool.self, forKey: .spellCheck)
+        autoTitles = try c.decodeIfPresent(Bool.self, forKey: .autoTitles)
+        followUpSuggestions = try c.decodeIfPresent(Bool.self, forKey: .followUpSuggestions)
+        clipboardMonitoring = try c.decodeIfPresent(Bool.self, forKey: .clipboardMonitoring)
+        keepMacAwake = try c.decodeIfPresent(Bool.self, forKey: .keepMacAwake)
+        contextLengthCap = try c.configField(Int.self, forKey: .contextLengthCap)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(smoothStreaming, forKey: .smoothStreaming)
+        try c.encodeIfPresent(groupActivity, forKey: .groupActivity)
+        try c.encodeIfPresent(expandThinking, forKey: .expandThinking)
+        try c.encodeIfPresent(spellCheck, forKey: .spellCheck)
+        try c.encodeIfPresent(autoTitles, forKey: .autoTitles)
+        try c.encodeIfPresent(followUpSuggestions, forKey: .followUpSuggestions)
+        try c.encodeIfPresent(clipboardMonitoring, forKey: .clipboardMonitoring)
+        try c.encodeIfPresent(keepMacAwake, forKey: .keepMacAwake)
+        try c.encode(configField: contextLengthCap, forKey: .contextLengthCap)
     }
 }
 

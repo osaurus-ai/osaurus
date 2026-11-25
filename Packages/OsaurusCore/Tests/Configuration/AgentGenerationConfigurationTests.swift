@@ -103,7 +103,8 @@ struct AgentGenerationConfigurationTests {
         let fields = try #require(group["properties"] as? [String: Any])
         #expect(Set(fields.keys) == Set([
             "top_p", "top_k", "min_p", "repetition_penalty", "frequency_penalty",
-            "presence_penalty", "seed", "stop", "enable_thinking", "reasoning_effort", "template_kwargs", "speculative_decoding",
+            "presence_penalty", "seed", "stop", "enable_thinking", "reasoning_effort", "template_kwargs",
+            "speculative_decoding", "context_length_cap",
         ]))
         let kwargs = try #require(fields["template_kwargs"] as? [String: Any])
         #expect(kwargs["type"] as? [String] == ["object", "null"])

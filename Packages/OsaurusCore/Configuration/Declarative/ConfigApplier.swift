@@ -509,6 +509,9 @@ enum ConfigApplier {
         if let v = desired.autoTitles { config.autoGenerateChatTitles = v }
         if let v = desired.followUpSuggestions { config.generateFollowUpSuggestions = v }
         if let v = desired.clipboardMonitoring { config.enableClipboardMonitoring = v }
+        if desired.contextLengthCap.isSpecified {
+            config.contextLengthCap = desired.contextLengthCap.valueOrNil
+        }
         if config != previous { ChatConfigurationStore.save(config) }
         return ConfigApplyResult(section: "chat", target: "chat", status: .done)
     }

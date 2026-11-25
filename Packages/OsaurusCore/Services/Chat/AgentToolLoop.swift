@@ -713,13 +713,18 @@ enum AgentLoopBudget {
         case bundleMetadata
         case providerMetadata
         case metadataFallback
-        /// The user's cap was lower than the model's window, so it decided the
-        /// number. Distinct from the metadata sources so the chip and logs can
-        /// say WHY the window is smaller than the bundle advertises.
+        /// The global Context Window Cap was lower than the model's window, so
+        /// it decided the number. Distinct from the metadata sources so the
+        /// chip and logs can say WHY the window is smaller than the bundle
+        /// advertises.
         case userCap
+        /// This agent's own cap was the tightest limit. Distinct from
+        /// `userCap` so the chip can name the agent rather than the global
+        /// setting when only that agent is constrained.
+        case agentCap
     }
 
-    /// Applies the user's context cap to a resolved window.
+    /// Applies the global cap and, when set, the agent's own cap.
     ///
     /// One helper, called by both resolver twins, because the sync and async
     /// paths feed different surfaces — the send gate and context chip use the
@@ -727,15 +732,46 @@ enum AgentLoopBudget {
     /// honoured by only one of them would mean the number a user sees and the
     /// number their agents actually run under disagree.
     ///
+    /// The effective window is `min(agent cap, global cap, model window)`.
     /// Only ever lowers. A cap above the model's window is ignored rather than
     /// obeyed: the weights cannot honour it, so raising it produces incoherent
-    /// output instead of more context.
+    /// output instead of more context. A nil or non-positive cap inherits.
+    /// When both caps lower the window by the same amount, the agent is the
+    /// source the chip names.
+    static func applyingContextCaps(
+        _ resolution: ContextWindowResolution,
+        globalCap: Int?,
+        agentCap: Int?
+    ) -> ContextWindowResolution {
+        var tightest: (tokens: Int, source: ContextWindowSource)?
+        let candidates: [(Int?, ContextWindowSource)] = [
+            (agentCap, .agentCap),
+            (globalCap, .userCap),
+        ]
+        for (rawCap, source) in candidates {
+            guard let cap = rawCap, cap > 0, cap < resolution.tokens else { continue }
+            if let current = tightest, cap >= current.tokens { continue }
+            tightest = (cap, source)
+        }
+        guard let tightest else { return resolution }
+        return ContextWindowResolution(tokens: tightest.tokens, source: tightest.source)
+    }
+
+    /// Global-cap-only entry point. Callers that also have an agent cap use
+    /// `applyingContextCaps`.
     static func applyingUserCap(
         _ resolution: ContextWindowResolution,
         cap: Int?
     ) -> ContextWindowResolution {
-        guard let cap, cap > 0, cap < resolution.tokens else { return resolution }
-        return ContextWindowResolution(tokens: cap, source: .userCap)
+        applyingContextCaps(resolution, globalCap: cap, agentCap: nil)
+    }
+
+    /// The agent's stored cap, or nil when that agent inherits. Built-in
+    /// agents have no generation settings, so they inherit.
+    @MainActor
+    static func storedAgentContextLengthCap(for agentId: UUID?) -> Int? {
+        guard let agentId else { return nil }
+        return AgentManager.shared.effectiveGenerationSettings(for: agentId)?.contextLengthCap
     }
 
     struct ContextWindowResolution: Equatable, Sendable {
@@ -764,12 +800,17 @@ enum AgentLoopBudget {
     /// finally the user-configured unknown-metadata fallback. This is THE
     /// definition of "how big is the window" — the UI uses
     /// `resolveContextWindowSync`, which must stay behavior-identical.
-    static func resolveContextWindow(modelId: String) async -> Int {
-        (await resolveContextWindowResolution(modelId: modelId)).tokens
+    static func resolveContextWindow(
+        modelId: String,
+        agentContextLengthCap: Int? = nil
+    ) async -> Int {
+        (await resolveContextWindowResolution(
+            modelId: modelId, agentContextLengthCap: agentContextLengthCap)).tokens
     }
 
     static func resolveContextWindowResolution(
-        modelId: String
+        modelId: String,
+        agentContextLengthCap: Int? = nil
     ) async -> ContextWindowResolution {
         if foundationModelIds.contains(modelId) {
             return ContextWindowResolution(
@@ -779,26 +820,27 @@ enum AgentLoopBudget {
         }
         let cap = await MainActor.run { ChatConfigurationStore.load().contextLengthCap }
         if let info = ModelInfo.load(modelId: modelId), let ctx = info.model.contextLength {
-            return applyingUserCap(
-                ContextWindowResolution(tokens: ctx, source: .bundleMetadata), cap: cap)
+            return applyingContextCaps(
+                ContextWindowResolution(tokens: ctx, source: .bundleMetadata),
+                globalCap: cap, agentCap: agentContextLengthCap)
         }
         if let providerContext = await MainActor.run(body: {
             providerContextWindow(modelId: modelId)
         }) {
-            return applyingUserCap(
+            return applyingContextCaps(
                 ContextWindowResolution(
                     tokens: providerContext,
                     source: .providerMetadata
-                ), cap: cap)
+                ), globalCap: cap, agentCap: agentContextLengthCap)
         }
         return await MainActor.run {
-            applyingUserCap(
+            applyingContextCaps(
                 ContextWindowResolution(
                     tokens:
                         ChatConfigurationStore.load().contextLength
                         ?? fallbackContextWindow,
                     source: .metadataFallback
-                ), cap: cap)
+                ), globalCap: cap, agentCap: agentContextLengthCap)
         }
     }
 
@@ -806,13 +848,18 @@ enum AgentLoopBudget {
     /// computed properties (the context chip and send gate). Same
     /// resolution order, same values.
     @MainActor
-    static func resolveContextWindowSync(modelId: String) -> Int {
-        resolveContextWindowResolutionSync(modelId: modelId).tokens
+    static func resolveContextWindowSync(
+        modelId: String,
+        agentContextLengthCap: Int? = nil
+    ) -> Int {
+        resolveContextWindowResolutionSync(
+            modelId: modelId, agentContextLengthCap: agentContextLengthCap).tokens
     }
 
     @MainActor
     static func resolveContextWindowResolutionSync(
-        modelId: String
+        modelId: String,
+        agentContextLengthCap: Int? = nil
     ) -> ContextWindowResolution {
         if foundationModelIds.contains(modelId) {
             return ContextWindowResolution(
@@ -827,23 +874,24 @@ enum AgentLoopBudget {
         // cold cache falls through to the conservative store/fallback value.
         let cap = ChatConfigurationStore.load().contextLengthCap
         if let info = ModelInfo.loadCachedOrWarm(modelId: modelId), let ctx = info.model.contextLength {
-            return applyingUserCap(
-                ContextWindowResolution(tokens: ctx, source: .bundleMetadata), cap: cap)
+            return applyingContextCaps(
+                ContextWindowResolution(tokens: ctx, source: .bundleMetadata),
+                globalCap: cap, agentCap: agentContextLengthCap)
         }
         if let providerContext = providerContextWindow(modelId: modelId) {
-            return applyingUserCap(
+            return applyingContextCaps(
                 ContextWindowResolution(
                     tokens: providerContext,
                     source: .providerMetadata
-                ), cap: cap)
+                ), globalCap: cap, agentCap: agentContextLengthCap)
         }
-        return applyingUserCap(
+        return applyingContextCaps(
             ContextWindowResolution(
                 tokens:
                     ChatConfigurationStore.load().contextLength
                     ?? fallbackContextWindow,
                 source: .metadataFallback
-            ), cap: cap)
+            ), globalCap: cap, agentCap: agentContextLengthCap)
     }
 
     /// Synchronous cache-only provider lookup used by both the async runtime
@@ -1659,11 +1707,20 @@ enum AgentToolLoop {
     /// wrong thing. The resolver already records `.userCap`, so the surface
     /// can point at the setting that actually decided the number.
     static func overBudgetMessage(windowSource: AgentLoopBudget.ContextWindowSource?) -> String {
-        guard windowSource == .userCap else { return overBudgetMessage }
-        return
-            "Context window cannot fit this request. The limit in force is your "
-            + "Context Window Cap (Settings → Server → Server Settings → Cache → Context Window Cap (tokens)), "
-            + "not the model's own window — raise or clear it, or shorten the input."
+        switch windowSource {
+        case .userCap:
+            return
+                "Context window cannot fit this request. The limit in force is your "
+                + "Context Window Cap (Settings → Server → Server Settings → Cache → Context Window Cap (tokens)), "
+                + "not the model's own window — raise or clear it, or shorten the input."
+        case .agentCap:
+            return
+                "Context window cannot fit this request. The limit in force is this agent's "
+                + "context length cap (agents[].generation_settings.context_length_cap), "
+                + "not the model's own window — raise or clear it, or shorten the input."
+        default:
+            return overBudgetMessage
+        }
     }
 
     // MARK: - Default parallel batch executor

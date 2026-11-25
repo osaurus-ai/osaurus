@@ -152,6 +152,7 @@ enum ConfigExporter {
         section.followUpSuggestions = chat.generateFollowUpSuggestions
         section.clipboardMonitoring = chat.enableClipboardMonitoring
         section.keepMacAwake = AgentRunPowerManager.isKeepAwakeEnabled()
+        section.contextLengthCap = chat.contextLengthCap.map { .value($0) } ?? .null
         return section
     }
 

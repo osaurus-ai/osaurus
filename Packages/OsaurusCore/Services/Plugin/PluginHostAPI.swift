@@ -989,7 +989,8 @@ final class PluginHostContext: @unchecked Sendable {
         // never bloats plugin requests.
 
         let engine = engineFactory()
-        let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
+        let budgetMgr = await createBudgetManager(
+            for: enriched, maxIterations: options.maxIterations, agentId: resolvedAgentId)
         return PreparedInference(
             enriched: enriched,
             options: options,
@@ -1380,7 +1381,8 @@ final class PluginHostContext: @unchecked Sendable {
 
     private static func createBudgetManager(
         for inf: EnrichedInference,
-        maxIterations: Int
+        maxIterations: Int,
+        agentId: UUID? = nil
     ) async -> ContextBudgetManager? {
         guard maxIterations > 1 else { return nil }
 
@@ -1389,7 +1391,11 @@ final class PluginHostContext: @unchecked Sendable {
         // for THIS request's tool schema, not the whole registry — the
         // model only ever sees the request's toolset, so reserving for
         // every registered tool would starve the history budget.
-        let contextLength = await AgentLoopBudget.resolveContextWindow(modelId: inf.request.model)
+        let agentCap = await MainActor.run {
+            AgentLoopBudget.storedAgentContextLengthCap(for: agentId)
+        }
+        let contextLength = await AgentLoopBudget.resolveContextWindow(
+            modelId: inf.request.model, agentContextLengthCap: agentCap)
         let toolTokens = await MainActor.run {
             ToolRegistry.shared.totalEstimatedTokens(for: inf.tools ?? [])
         }

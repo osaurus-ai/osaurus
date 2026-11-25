@@ -298,8 +298,14 @@ public enum CapabilityClaimsEvaluator {
             ?? ChatConfigurationStore.load().coreModelIdentifier
             ?? "foundation"
         let priorMessages = conversation?.priorMessages ?? []
+        let agentCap = await MainActor.run {
+            AgentLoopBudget.storedAgentContextLengthCap(for: resolvedAgentId)
+        }
         let contextWindow: Int? =
-            conversation == nil ? nil : await AgentLoopBudget.resolveContextWindow(modelId: resolvedModel)
+            conversation == nil
+            ? nil
+            : await AgentLoopBudget.resolveContextWindow(
+                modelId: resolvedModel, agentContextLengthCap: agentCap)
         func withPriorTurns(_ system: ChatMessage, _ current: [ChatMessage]) -> [ChatMessage] {
             let messages = [system] + priorMessages + current
             guard let contextWindow else { return messages }
