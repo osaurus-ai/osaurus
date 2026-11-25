@@ -280,6 +280,15 @@ public final class ComputerUsePromptQueue: ObservableObject {
 
     // MARK: - Teardown
 
+    /// Deny every pending prompt for `toolCallId` as soon as `interrupt` trips,
+    /// whichever control tripped it (feed Stop, takeover pill, Esc). Returns
+    /// the observer to remove when the run ends.
+    nonisolated static func cancelOnInterrupt(_ interrupt: InterruptToken, toolCallId: String) -> UUID {
+        interrupt.observeInterrupt {
+            Task { @MainActor in ComputerUsePromptQueue.shared.cancelAll(forToolCallId: toolCallId) }
+        }
+    }
+
     /// Deny + clear every pending prompt (confirm + consent) for a run and drop
     /// its "approve remaining" thresholds. Called on interrupt / teardown, and
     /// by the feed's Stop control so Stop works even while a card is up.

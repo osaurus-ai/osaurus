@@ -243,6 +243,28 @@ final class ComputerUsePresenterTests: XCTestCase {
         XCTAssertFalse(controller.isActive, "a torn-down controller never comes back")
     }
 
+    @MainActor
+    func testMissedHeartbeatsTearDownTheTakeover() async throws {
+        var now = Date(timeIntervalSince1970: 1_000)
+        let controller = TakeoverController(locksTarget: false, clock: { now }, onStop: {})
+        controller.begin(goal: "g")
+        defer { controller.end() }
+        XCTAssertTrue(controller.isActive)
+
+        now += TakeoverController.watchdogSeconds - 1
+        controller.heartbeat()
+        now += TakeoverController.watchdogSeconds - 1
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertTrue(controller.isActive, "a heartbeat inside the window keeps the takeover up")
+
+        now += 2
+        for _ in 0..<20 where !controller.isTornDown {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(controller.isTornDown, "no heartbeat for longer than the watchdog ends the takeover")
+        XCTAssertFalse(controller.isActive)
+    }
+
     // MARK: - Window locator
 
     func testBestMatchPrefersLargestOverlap() {

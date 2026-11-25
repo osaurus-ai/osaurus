@@ -624,6 +624,31 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertTrue(coordinateActions.isEmpty)
     }
 
+    /// Stop withdraws a card nobody answered: the run ends as stopped, not as
+    /// the user declining the action.
+    func testStopWithdrawingTheCardEndsAsStoppedNotDeclined() async {
+        let d = driver([el("field", "textfield", "Note", value: "")])
+        let token = InterruptToken()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .type, text: "hello", note: "fill note")
+            ]),
+            confirm: { _ in
+                token.interrupt()
+                return false
+            },
+            interrupt: token
+        )
+        guard case .interrupted = result.outcome else {
+            return XCTFail("Expected interrupted; got \(result.outcome)")
+        }
+        XCTAssertEqual(result.metrics.confirmsRequested, 1)
+        XCTAssertEqual(result.metrics.confirmsDeclined, 0)
+        let elementActions = await d.elementActions
+        XCTAssertTrue(elementActions.isEmpty)
+    }
+
     /// Stop between two batched steps: the first ran, the second is not posted.
     func testStopInsideBatchHaltsRemainingSteps() async {
         let d = driver([el("a", "button", "A"), el("b", "button", "B")])

@@ -613,9 +613,12 @@ Vivaldi / Opera).
   `ActionPreview` (structured app / action / target / expandable typed-text
   fields, with an optional "don't ask again for similar actions in this app"
   for the run) through the single-slot `ComputerUsePromptQueue`, which also
-  hosts the just-in-time cloud-vision consent card. A [Stop] control interrupts
-  the run (`InterruptToken`) **and** resolves any pending card, so Stop works
-  even while a confirmation is up. Stop also cancels the in-flight model step,
+  hosts the just-in-time cloud-vision consent card. Every Stop — the feed's
+  [Stop], the takeover pill, Esc — interrupts the run (`InterruptToken`), and
+  the interrupt withdraws the run's pending cards
+  (`ComputerUsePromptQueue.cancelOnInterrupt`), so Stop works even while a
+  confirmation is up and ends the run as stopped, not declined. Stop also
+  cancels the in-flight model step,
   and the gate re-checks the token after every clear (including a late
   Approve), so no input is posted once Stop is pressed — not the action the
   model was deciding, and not the rest of a batch.
@@ -705,7 +708,7 @@ memory. Sampling comes from the bundle's `generation_config.json`.
 
 | Bundle | Loop, live rows | Grounding | Decode | Peak | Listed |
 |---|---|---|---|---|---|
-| `mlx-community/Qwen3-VL-8B-Instruct-4bit` | 13/15 (scripted 23/23) | normalized 0–1000, 5/5 | 33.1 tok/s | 13.9 GB | yes |
+| `mlx-community/Qwen3-VL-8B-Instruct-4bit` | 13/15 (scripted 23/23) | normalized 0–1000, 5/5 | 32.8 tok/s | 11.1 GB | yes |
 | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 10/15, one forbidden click | normalized 0–1000, 5/5 | 44.8 tok/s | 8.2 GB | no |
 
 The 8B's two failures are planning: in `find-among-duplicates` it clicked

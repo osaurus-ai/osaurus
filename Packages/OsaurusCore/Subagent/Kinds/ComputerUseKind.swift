@@ -330,9 +330,11 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
         loopStarted = true
         let toolCallId = scope.toolCallId
         // The confirm/consent overlay drains off `ComputerUsePromptQueue`; clear
-        // any pending prompts for this run when it ends (mirrors the old tool's
-        // defer). The host only unregisters the feed + interrupt.
+        // any pending prompts for this run on Stop and when it ends (mirrors the
+        // old tool's defer). The host only unregisters the feed + interrupt.
+        let promptCancel = ComputerUsePromptQueue.cancelOnInterrupt(interrupt, toolCallId: toolCallId)
         defer {
+            interrupt.removeInterruptObserver(promptCancel)
             Task { @MainActor in
                 ComputerUsePromptQueue.shared.cancelAll(forToolCallId: toolCallId)
             }

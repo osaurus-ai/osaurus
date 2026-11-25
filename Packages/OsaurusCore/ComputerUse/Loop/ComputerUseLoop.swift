@@ -1573,12 +1573,13 @@ public enum ComputerUseLoop {
             advancedStep: &advancedStep,
             abort: &abort,
             metrics: &metrics,
+            interrupt: interrupt,
             feed: feed,
             step: step
         )
         // A Stop that landed during the model step or the approval card must
         // win over the action it was racing: nothing is posted after Stop.
-        if cleared, interrupt.isInterrupted || Task.isCancelled {
+        if interrupt.isInterrupted || Task.isCancelled {
             advancedStep = false
             abort = .interrupted
             return false
@@ -1597,6 +1598,7 @@ public enum ComputerUseLoop {
         advancedStep: inout Bool,
         abort: inout RunOutcome?,
         metrics: inout ComputerUseRunMetrics,
+        interrupt: InterruptToken,
         feed: SubagentFeed,
         step: Int
     ) async -> Bool {
@@ -1671,6 +1673,8 @@ public enum ComputerUseLoop {
                 feed.emit(SubagentActivityEvent(step: step, kind: .confirmed, title: "Approved: \(label)"))
                 return true
             }
+            // Stop withdraws the card; that is not the user declining the action.
+            if interrupt.isInterrupted || Task.isCancelled { return false }
             ComputerUseTraceLog.recordGateResolution(
                 step: step,
                 action: label,
