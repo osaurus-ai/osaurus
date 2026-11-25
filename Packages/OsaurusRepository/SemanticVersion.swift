@@ -59,10 +59,14 @@ public struct SemanticVersion: Codable, Hashable, Comparable, CustomStringConver
     private static func comparePrerelease(_ l: String, _ r: String) -> Int {
         let lParts = l.split(separator: ".").map(String.init)
         let rParts = r.split(separator: ".").map(String.init)
-        let count = max(lParts.count, rParts.count)
+        // SemVer 2.0.0 §11.4: compare identifiers left to right over the shared
+        // length only. Padding the shorter set with "" inverts the ordering,
+        // because "" reads as non-numeric and loses to any numeric identifier
+        // (e.g. it made "alpha" outrank "alpha.1").
+        let count = min(lParts.count, rParts.count)
         for i in 0 ..< count {
-            let li = i < lParts.count ? lParts[i] : ""
-            let ri = i < rParts.count ? rParts[i] : ""
+            let li = lParts[i]
+            let ri = rParts[i]
             let lIsNum = Int(li) != nil
             let rIsNum = Int(ri) != nil
             if lIsNum && rIsNum {
@@ -76,6 +80,11 @@ public struct SemanticVersion: Codable, Hashable, Comparable, CustomStringConver
             } else if li != ri {
                 return li < ri ? -1 : 1
             }
+        }
+        // §11.4.4: when all preceding identifiers are equal, the larger set of
+        // pre-release fields has the higher precedence.
+        if lParts.count != rParts.count {
+            return lParts.count < rParts.count ? -1 : 1
         }
         return 0
     }
