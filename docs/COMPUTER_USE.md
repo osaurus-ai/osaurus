@@ -99,8 +99,10 @@ Each iteration starts with the model's **decision** over the latest `AgentView`,
 then runs only the phases the chosen verb needs:
 
 1. **Perceive** — the focused app is captured as an `AgentView`: a numbered list
-   of actionable elements (each with a `mark`), optionally with an annotated
-   screenshot. The view marks elements that changed since the last step with `*`.
+   of actionable elements (each with a `mark`). For a model whose frames reach
+   it without asking, a screenshot with the same mark numbers drawn on it comes
+   with every view (see [Pixels by default](#pixels-by-default)). The view marks
+   elements that changed since the last step with `*`.
    An initial perceive runs before the loop; afterward perception refreshes
    inside the verbs that need it (`observe`, and the verify after a mutation).
 2. **Decide** — the model is pinned to the `agent_action` tool with a forced
@@ -127,8 +129,29 @@ then runs only the phases the chosen verb needs:
 | `maxRepeatedActions` | 4 | Identical actions in a row before the run is treated as stalled. |
 | `maxInferenceRetries` | 2 | Retries for a failed inference call before the step errors. |
 | `modelStepTimeoutSeconds` | 90 | Per-step budget for the model's `agent_action` decision. |
-| `wallClockSeconds` | 300 | Wall-clock budget for the run's own work. Time the user spends on a confirm card or cloud-vision consent prompt is credited back, so a slow approval never becomes "Reached the time limit". |
+| `wallClockSeconds` | 20 s × `maxSteps`, at least 300 (480 at the default 24 steps) | Wall-clock budget for the run's own work. It grows with the step cap because a local vision model spends 7–15 s per step, so a long `max_steps` run isn't cut off by a fixed clock. Time the user spends on a confirm card or cloud-vision consent prompt is credited back, so a slow approval never becomes "Reached the time limit". |
 | `requireVerifiedChangeForDone` | `true` | A `done` after at least one acting step is only accepted once a verify (or a later `observe` / `wait`) saw the view change. The model gets one challenge to look again; a second unproven `done` ends the run as `gaveUp`. Scripted evals that only exercise gate/parse contracts may turn it off. |
+| `contextPositions` | the model's resolved window | History-window ceiling. Every step's history is trimmed to it, and the runtime checks the tokenized request against it (`AdmissionPositionLimit`), so RAM admission can price exactly this number. Set by `ComputerUseKind`; see below. |
+
+### Memory admission
+
+A local Computer Use run goes through the same RAM-safety admission as other
+local subagents (Settings → Agents → Delegation → Check Memory Before
+Delegating). `ComputerUseKind` adopts `SubagentContextAdmission`:
+
+- It prices `contextPositions`, which starts at the model's resolved context
+  window (the bundle's window capped by the user's context-length setting).
+  It never prices an unbounded model-wide estimate.
+- When even that one run would not fit, admission fits the window to the
+  memory left, never below `ComputerUseLoop.minimumStepPositions`. That
+  minimum covers one step: the system prompt and goal, the action schema,
+  one screenshot at the image estimator's per-image ceiling (image models
+  only; at most one screenshot is ever in context), one view listing at the
+  delegated per-turn tool-result allowance, and one response.
+- A fitted run keeps fewer earlier steps in history. It does not lose any
+  step, output, or time limit.
+- If the minimum does not fit either, the run is refused before any model
+  memory is allocated, and the refusal shows the numbers it used.
 
 ### Outcomes (`RunOutcome`)
 
@@ -169,29 +192,65 @@ card nobody can answer until the wall clock.
 
 `ComputerUse/Model/AgentAction.swift`. The model fills **one** `agent_action`
 per step (never the raw driver primitives). Elements are addressed by the
-`mark` number from the current view, or a natural-language `target.describe`
-fallback that the `TargetResolver` matches.
+`mark` number from the current view, a natural-language `target.describe`
+fallback that the `TargetResolver` matches, or a `target.point` in the latest
+screenshot.
 
 | Verb | Baseline effect | Needs |
 |------|-----------------|-------|
 | `observe` | read | — (fresh look) |
 | `find` | read | `query` and/or `roles` |
 | `wait` | read | — (optional `seconds`, capped) |
+| `screenshot` | read | — (captures and attaches a frame; needs an image-capable model and Screen Recording) |
+| `zoom` | read | `region` `{x, y, width, height}` in the latest screenshot, in the model's [grounding frame](#grounding-profiles) |
 | `click` | navigate | `target` |
 | `double_click` | navigate | `target` |
 | `right_click` | navigate | `target` |
+| `hover` | navigate | `target` (moves the pointer only) |
 | `scroll` | navigate | `direction` |
+| `select` | navigate | `target` (popup, menu button, or combo box) + `option` title |
 | `open` | navigate | `app` |
 | `type` | edit | `text` (+ optional `target`, `replace`) |
 | `set_value` | edit | `target` + `text` |
 | `clear` | edit | `target` |
 | `drag` | edit | `target` + `to` |
-| `press_key` | edit | `key` (+ optional `modifiers`) |
+| `press_key` | edit | `key` (+ optional `modifiers`, `repeat` 1–20) |
+| `batch` | read (each step is gated on its own) | `actions`: 1–8 acting steps |
 | `done` | read | `reason` (success summary) |
 | `give_up` | read | `reason` (why not) |
 
 The verb sets a **baseline** effect; the classifier can only ever escalate it
 (never lower it).
+
+**Screenshot points.** `target.point` is `{x, y}` or `[x, y]` (the schema
+declares both; the array is how Qwen-VL grounding writes it) in the last frame the model
+was shown (origin top-left), written in the model's
+[grounding frame](#grounding-profiles): pixels of that frame, or 0–1000 or 0–1
+of its width and height. A model with no profile can't use points or `zoom`.
+The loop converts the point to frame pixels, maps it to screen points through
+the frame's screen region (`CUImage.region`), then hit-tests the
+captured AX elements and takes the smallest one containing the point. The gate
+classifies the action by that element, so a point on a Delete button confirms
+as a delete whatever `describe` says. A point on no known element leaves the
+classifier with no label, which escalates the click to an edit (the ambiguous
+click rule). `set_value`, `clear`, and `select` need an element under the
+point. After a `zoom`, points refer to the close-up until the next screenshot.
+
+**`zoom`** crops the region from a fresh full-resolution window capture (at
+most 1568 pixels on the long edge) and attaches it. **`hover`** posts a
+window-bound per-pid `mouseMoved`, so the user's pointer does not move.
+**`select`** sets a combo box's value and reads it back. For other controls it
+opens the control (`AXPress` or `AXShowMenu`), picks the one enabled menu item
+whose title matches (exact, then unique prefix, then unique substring), and,
+for a popup that shows a value, reads it back. A miss lists the real options.
+
+**`batch`** runs up to 8 acting steps (click, double_click, right_click, hover,
+select, drag, type, set_value, clear, press_key, scroll) in order against the
+view the model saw. Each step passes the gate on its own. The batch stops at
+the first step that can't be resolved, is declined, or fails, and after any
+step that needed approval, so the model sees an approved action's result
+before anything else runs. One verify capture follows the last step that ran.
+Single-action calls stay valid, so small local models can ignore `batch`.
 
 ## Perception ladder
 
@@ -203,17 +262,96 @@ can't carry the step:
 | Tier | What it captures | Permission |
 |------|------------------|------------|
 | `ax` | Accessibility tree only, no pixels. Fastest. | Accessibility |
-| `som` | Set-of-mark: AX tree **+** screenshot with element-id numbers drawn on every actionable element. **Default capture mode.** | + Screen Recording |
-| `vision` | Un-annotated screenshot for vision-first models that ground on pixels (the AX tree is still gathered for element ids). | + Screen Recording |
+| `som` | Set-of-mark: AX tree **+** screenshot. The loop draws each element's `mark` number on the frame (`FramePreparer`), so the image and the element list use the same numbers and internal element ids never reach the image. | + Screen Recording |
+| `vision` | The same screenshot without marks, for when the marks get in the way of reading the screen (the AX tree is still gathered for element ids). | + Screen Recording |
+
+Both pixel tiers capture the window at full backing resolution, up to a 1568 px
+long edge, honor `interactiveOnly`, and wait for an Electron/Chromium tree the
+same way `ax` does.
 
 `CaptureRouter` decides the next tier. In production it escalates when a target
 can't be resolved (`targetUnresolved`) or the AX tree comes back empty
 (`axEmpty` — Electron / custom-drawn UI); `nextTier` advances strictly by tier
-and treats the reason as informational. The `EscalationReason` enum also defines
-`pixelsRequested` (a recipe or the model needs the pixels), but that case is
-currently exercised only in tests. **Without Screen Recording the router stays
+and treats the reason as informational. The model's `screenshot` verb asks for
+pixels directly (`pixelsRequested`). **Without Screen Recording the router stays
 on `ax`** — there is nothing to escalate to, so the loop must work with the AX
 tree or `give_up`.
+
+### Pixels by default
+
+`ComputerUse/Loop/ComputerUseLoop.swift` (`restingTier`), `ComputerUse/Perception/FrameBudget.swift`, `ComputerUse/Perception/FramePreparer.swift`
+
+A run rests at `som` instead of `ax` when its frames reach the model without
+asking (`VisionContext.attachesPixelsByDefault`): the model takes images,
+Screen Recording is on, and the model is on-device or the user already allowed
+cloud vision. That run sends a marked screenshot with the first view and with
+every verify, and drops back to `som` (not `ax`) once a target resolves. A
+remote model without consent rests at `ax`, so default perception never raises
+the cloud-vision prompt; the prompt still appears when the run escalates or the
+model calls `screenshot`.
+
+Before a frame is attached, `FramePreparer` fits it to the run's `FrameBudget`
+(it only ever shrinks) and draws the marks:
+
+- **`FrameBudget.standard`** — at most 1568 px on the long edge and about
+  1.15 MP, the size frontier vision models take without resizing again.
+- **Local bundles** narrow it from `preprocessor_config.json`
+  (`FrameBudget.resolve(modelDirectory:)`, read once at run start into
+  `VisionContext.frameBudget`). A processor that declares `merge_size` resizes
+  on a `patch_size × merge_size` grid with a pixel cap in `max_pixels` or
+  `size.longest_edge` (both a pixel count, the way the runtime reads them), so
+  both sides are snapped down to that grid and the cap applies when it is
+  smaller. Any other processor's `size.longest_edge` is an edge length. A
+  bundle without the file keeps `standard`.
+
+Fitting to the model's own grid means the runtime doesn't resize the frame
+again, so the image a `target.point` is read against is the image the model saw.
+The frame keeps its `region`, and `ScreenshotPointing` maps points through the
+fitted size. Marks are drawn only on `som` frames, for the elements whose
+boxes fall inside the frame. Each one is a red outline with the mark number in
+a tag at its top-left corner. On the cloud path the marks are drawn **after**
+`FrameScrubber` (`ScrubbedFrame.withMarks`): a mark is a harness-generated
+number and box, so nothing from the screen goes back over a masked region, and
+`.allText` masking doesn't hide the numbers.
+
+### Grounding profiles
+
+`ComputerUse/Perception/GroundingProfile.swift`, `GroundingCalibration.swift`, `GroundingCalibrationStore.swift`
+
+Models write coordinates in different frames: pixels of the image they were
+shown, 0–1000 of its width and height, or 0–1. Reading a 0–1000 answer as
+pixels clicks the wrong place, so each run carries a `GroundingProfile`
+(`VisionContext.grounding`) next to its `FrameBudget`, and the loop reads
+`target.point` and zoom regions through it. The action schema, system prompt,
+and image note name the frame in use.
+
+`VisionContext.resolved(for:)` settles the profile once per run, in this order:
+
+1. **Declared** by the bundle's own metadata: `jang_config.json` with
+   `{"grounding": {"coordinate_frame": "…"}}` (or
+   `capabilities.grounding.coordinate_frame`).
+2. **Stated** in `preprocessor_config.json`, `config.json`, or
+   `generation_config.json` in the same shape.
+3. **Calibrated** once per bundle. When nothing states a frame, the run's first
+   act is `GroundingCalibration`: the model sees five synthetic app screens,
+   sized to its budget and far from 1000 px on a side, and is asked to click a
+   named button. The screens have no element list, so the calibration
+   schema offers only `click` with a `target.point`; it and the prompt name
+   no convention, so the model answers in its trained frame. Each answer is scored under every frame, and
+   the target boxes are placed so no two frames can both hit. A frame is
+   adopted only when it alone hits at least two thirds of the screens. The
+   outcome is cached in `computer-use-grounding.json` under the cache
+   directory, keyed by model id, a hash of the bundle's config and template
+   files, and the budget. Any change to those calibrates again. The feed shows
+   the check and its result with token/s.
+4. **Marks only** when calibration finds no consistent frame (or is
+   interrupted). The model addresses elements by `mark` and `describe`;
+   `target.point` and `zoom` return a typed refusal instead of a guess.
+
+Hosted models point in pixels of the image they were sent
+(`GroundingProfile.providerPixels`). A model whose only grounding is its own
+action grammar (its own click syntax rather than `agent_action`) isn't
+coerced into this schema; it stays off the Computer Use model catalog.
 
 ## Cloud-vision boundary (local-first)
 
@@ -264,8 +402,9 @@ scrubbing:
 
 A frame is only ever attached to a model request when **the model accepts
 images** (`ComputerUseTool.modelAcceptsImages`: local VLM detection / media
-capabilities, or the remote router's advertised vision support) and the
-perception ladder has escalated past `ax`.
+capabilities, or the remote router's advertised vision support) and the capture
+ran above `ax`: by default for a run that [rests at `som`](#pixels-by-default),
+otherwise after an escalation or a `screenshot` / `zoom`.
 
 ## Screen context (chat)
 
@@ -429,7 +568,10 @@ Vivaldi / Opera).
   for the run) through the single-slot `ComputerUsePromptQueue`, which also
   hosts the just-in-time cloud-vision consent card. A [Stop] control interrupts
   the run (`InterruptToken`) **and** resolves any pending card, so Stop works
-  even while a confirmation is up.
+  even while a confirmation is up. Stop also cancels the in-flight model step,
+  and the gate re-checks the token after every clear (including a late
+  Approve), so no input is posted once Stop is pressed — not the action the
+  model was deciding, and not the rest of a batch.
 
 ## Telemetry
 
@@ -468,6 +610,7 @@ feeds the eval harness, which the shipped telemetry intentionally never sends.
 | `~/.osaurus/config/computer-use.json` | `AutonomyPolicy` (global preset + per-app overrides + allowlist), via `ComputerUsePolicyStore`. |
 | `UserDefaults` `ai.osaurus.computeruse.cloudVisionConsent` | Persisted cloud-vision opt-in (default `false`). |
 | `UserDefaults` `ai.osaurus.computeruse.cloudVisionPIIOnly` | Cloud screenshot redaction mode: `false` (default) = `.allText` (mask everything), `true` = `.pii` (mask only detected sensitive text). |
+| `~/.osaurus/cache/computer-use-grounding.json` | Per-bundle grounding calibration outcomes (`GroundingCalibrationStore`): frame or marks only, hits per frame, date. Safe to delete; the next run calibrates again. |
 | `Agent.settings.computerUseEnabled` / `computerUseCeiling` / `screenContextEnabled` | Per-agent enablement + autonomy ceiling + screen-context opt-in (in the agent JSON). `screenContextEnabled` defaults `true` and is gated by `computerUseEnabled`. |
 
 ## Testing & evals
@@ -486,7 +629,16 @@ feeds the eval harness, which the shipped telemetry intentionally never sends.
   confirm surface exists. Both suites are in `make evals-deterministic`
   (`floors.json` pass rate 1.0); that lane sets
   `OSAURUS_EVALS_SCRIPTED_ONLY=1` so the suite's live-model cases skip and no
-  model is loaded. See its [README](../Packages/OsaurusEvals/Suites/ComputerUseLoop/README.md).
+  model is loaded. Live-model cases run with the model's own vision posture
+  (`VisionContext.resolved(for:)`, cloud-vision consent off), so an image
+  model gets marked frames by default exactly as in chat. See its
+  [README](../Packages/OsaurusEvals/Suites/ComputerUseLoop/README.md).
+- **Grounding eval suite** — `Packages/OsaurusEvals/Suites/ComputerUseGrounding/`
+  shows a model the calibration screens and scores point-in-box accuracy per
+  coordinate frame with decode token/s (`ComputerUseGroundingProbe`). Its
+  `scriptedFrame` rows are model-free and in `make evals-deterministic`; the
+  live row is the grounding proof for a Computer Use catalog model. See its
+  [README](../Packages/OsaurusEvals/Suites/ComputerUseGrounding/README.md).
 - **Local web-form proof** — `Packages/OsaurusCore/Tests/ComputerUse/Fixtures/WebForm/`
   plus `ComputerUseEvidencePackTests` prove a deterministic form-fill path
   through the real loop using `MockMacDriver`; evidence is generated by
@@ -505,7 +657,7 @@ OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 OSAURUS_TEST_ROOT=/tmp/osaurus-test make te
 | Action envelope | `ComputerUse/Model/AgentAction.swift`, `AgentView.swift` |
 | Driver | `ComputerUse/Driver/MacDriver.swift`, `NativeMacDriver.swift`, `MockMacDriver.swift`, `Driver/Mac/*` |
 | Target resolution | `ComputerUse/Resolver/TargetResolver.swift` |
-| Perception / vision | `ComputerUse/Perception/CaptureRouter.swift`, `CloudVisionConsent.swift`, `FrameScrubber.swift`, `VisionAttachment.swift` |
+| Perception / vision | `ComputerUse/Perception/CaptureRouter.swift`, `CloudVisionConsent.swift`, `FrameScrubber.swift`, `VisionAttachment.swift`, `FrameBudget.swift`, `FramePreparer.swift`, `GroundingProfile.swift`, `GroundingCalibration.swift`, `GroundingCalibrationStore.swift`, `GroundingProbe.swift` |
 | Screen context (chat) | `ComputerUse/Perception/ScreenContextDistiller.swift`, `ScreenContextSnapshot.swift`, `FrontmostAppTracker.swift`, `Services/Chat/SystemPromptComposer.swift` (`injectScreenContextPrefix`); per-agent gate `Agent.settings.screenContextEnabled` resolved in `AgentManager.effectiveCapabilities` |
 | Policy / gate | `ComputerUse/Policy/EffectClass.swift`, `EffectClassifier.swift`, `AutonomyPolicy.swift`, `Gate.swift`, `ComputerUseGate.swift`, `ComputerUsePolicyStore.swift` |
 | Recipes | `ComputerUse/Recipes/AppRecipe.swift` |

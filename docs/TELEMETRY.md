@@ -122,7 +122,7 @@ are skipped. Only the message *role* is inspected — never the content.)
 
 | Property | Type | Values / meaning |
 |----------|------|------------------|
-| `source` | string | The originating surface. Direct requests: `chat_ui`, `http_api`, `plugin`, `p2p`, `channel`, `agent`, `evaluation`, `scheduled`, `schedule`, `watcher`, `webhook`, `email`, `automation`, `self_schedule`, `tool`, or `system`. Model calls made on behalf of something else take precedence, in this order: `workflow` (a step of a workflow run), `subagent` (a delegated helper, Computer Use, or AppleScript loop), `synced_device` (a run hosted for another of the person's devices) |
+| `source` | string | The originating surface. Direct requests: `chat_ui`, `http_api`, `plugin`, `p2p`, `channel`, `agent`, `evaluation`, `scheduled`, `schedule`, `watcher`, `webhook`, `email`, `automation`, `self_schedule`, `tool`, or `system`. Model calls made on behalf of something else take precedence, in this order: `workflow` (a step of a workflow run), `subagent` (a delegated helper or Computer Use loop), `synced_device` (a run hosted for another of the person's devices) |
 | `model_source` | string | `foundation` (Apple on-device), `local` (MLX), or `remote` |
 | `provider_type` | string | `foundation`, `mlx`, or the remote provider type enum (`openai`, `anthropic`, `gemini`, `azureOpenAI`, `openResponses`, `openAICodex`, `osaurus`) |
 | `model` | string | The exact model id — **only** for `foundation`/`local` (curated, non-identifying). Omitted for remote. |

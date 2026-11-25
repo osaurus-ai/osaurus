@@ -271,7 +271,7 @@ All keys except `name` are optional. These are the ones a bundle is likely to us
 | `model` | `foundation` (Apple's on-device model), a local model id, or `<provider>/<model>` for a cloud provider the user has set up. Omit it to use the user's current model. See `strictness` above. |
 | `model_locked` | `true` locks the agent's chats to `model` (set automatically by `strictness: always`). |
 | `temperature`, `max_tokens` | Sampling overrides. Omit them to use the model's own defaults. |
-| `capabilities` | Per-agent switches: `tools_enabled`, `memory_enabled`, `search_memory_enabled`, `web_search_enabled`, `knowledge_enabled`, `db_enabled`, `self_scheduling_enabled`, `computer_use_enabled`, `browser_use_enabled`, `image_enabled`, `applescript_enabled`, `speak_enabled`, `render_chart_enabled`, `relay_enabled`, and `apple_apps` (a list such as `["calendar", "reminders"]`). |
+| `capabilities` | Per-agent switches: `tools_enabled`, `memory_enabled`, `search_memory_enabled`, `web_search_enabled`, `knowledge_enabled`, `db_enabled`, `self_scheduling_enabled`, `computer_use_enabled`, `browser_use_enabled`, `image_enabled`, `speak_enabled`, `render_chart_enabled`, `relay_enabled`, and `apple_apps` (a list such as `["calendar", "reminders"]`). |
 | `skills` | The skill allow-list (below). |
 | `tools` | `mode: manual` with `enabled` is the exact tool list (below). `mode: auto` lets Osaurus pick tools per message. |
 | `mcp_servers` | `enabled` gives the agent **every** tool of the named servers; `disabled` removes them. |

@@ -83,7 +83,6 @@ agents: # custom agents (never the Default agent)
       browser_use_enabled: false # HIGH RISK when enabled
       computer_use_enabled: false # HIGH RISK when enabled
       image_enabled: false # image generation/editing lives on custom agents
-      applescript_enabled: false # AppleScript / mac_query lives on custom agents
       apple_apps: [] # built-in Apple app tools; full list replaces the set.
       # calendar | reminders | contacts | notes | mail | messages | maps | music | shortcuts
       # (mail / messages / shortcuts act on your behalf — the plan card flags them)

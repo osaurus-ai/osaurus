@@ -116,7 +116,7 @@ On the MCP routes the token binds the agent's identity, so tools behave as they 
 - `osaurus_config` (configuration changes) is refused unless the runtime grants it, and only ever runs for the Default agent. Today that means the Default agent on Claude Code with **Allow Osaurus configuration changes** on.
 - Always refused: `spawn_agent` (it starts a worker on the agent's built-in model, which a harness agent doesn't have; the Default agent delegates with `run_workflow`), the built-in loop's control tools (`todo`, `complete`, `speak`, and `clarify` for any agent but the Architect), and `prompt_working_folder` (it would restart the harness mid-turn).
 - Never listed for a Claude Code agent: the capability loaders (`capabilities*`, since Claude Code's tool list is fixed at launch, granted tools are listed directly), `configurator_handoff` and `architect_handoff` (they run a sub-loop on a built-in model), and tools whose result only becomes a chat card inside Osaurus's own loop (`share_artifact`, `image`, `video`, `render_chart`).
-- Refused with an "external harness" error: Computer Use, Browser Use, AppleScript, and Mac query. They run Osaurus's own sub-loop on the agent's model, which a harness agent doesn't have.
+- Refused with an "external harness" error: Computer Use and Browser Use. They run Osaurus's own sub-loop on the agent's model, which a harness agent doesn't have.
 - A revoked or unknown token presented on the bridge header is rejected; it never falls back to unauthenticated loopback access.
 
 A `POST /mcp/call` body is `{"name": "<tool>", "arguments": {…}}`. `osaurus mcp` forwards the client's id for the call (Claude Code's `_meta["claudecode/toolUseId"]`) as `X-Osaurus-Tool-Call-Id`, so Osaurus can tie the call to the tool row the chat shows: a live run attaches to it, and when the call ends the row shows the arguments Osaurus received and the result it returned (kept per chat, newest 200 calls, each field cut at 64,000 characters, dropped when the chat's harness closes). A call can run as long as its tool does (`workflow_test` runs a whole workflow), so don't put a short timeout on it. `osaurus mcp` waits 15 minutes by default; set `OSAURUS_MCP_CALL_TIMEOUT` (seconds) to change that.
@@ -187,7 +187,7 @@ The per-agent settings below are the agent's **Claude Code Options**: on a custo
 
 - `spawn_agent` delegation to a harness agent. Harness agents are left out of the Orchestrator's roster.
 - `/agents/{id}/run`.
-- Computer Use, Browser Use, and AppleScript targeting a harness agent.
+- Computer Use and Browser Use targeting a harness agent.
 - Apple app tools called directly by a custom agent on Claude Code (they stay external-only); the Default agent reaches them by handing the request to an agent that has them.
 - `clarify` for agents other than the Architect, and Osaurus tools in non-Architect Pi runs.
 
