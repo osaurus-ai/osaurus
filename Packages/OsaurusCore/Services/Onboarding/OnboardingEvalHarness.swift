@@ -18,7 +18,7 @@ public enum OnboardingEvalHarness {
     public static let checks = [
         "opening", "plan_from_state", "zero_model_run", "step_control", "no_self_completion", "team_settings",
         "tool_budget", "isolation", "bundled_references", "default_workflows", "prepared_reads", "held_on_bridge",
-        "skip_setup", "seeded_state", "wording", "prompt_budget", "discovery", "bundled_contracts",
+        "delegated_on_bridge", "skip_setup", "seeded_state", "wording", "prompt_budget", "discovery", "bundled_contracts",
     ]
 
     @MainActor
@@ -37,6 +37,7 @@ public enum OnboardingEvalHarness {
         case "default_workflows": defaultWorkflows(&probe)
         case "prepared_reads": preparedReads(&probe)
         case "held_on_bridge": heldOnBridge(&probe)
+        case "delegated_on_bridge": await delegatedOnBridge(&probe)
         case "skip_setup": skipSetup(&probe)
         case "seeded_state": seededState(&probe)
         case "wording": wording(&probe)
@@ -475,6 +476,69 @@ public enum OnboardingEvalHarness {
             "a denial links Settings"
         )
         probe.expect(!asks(denied).isEmpty, "a denial leaves the other asks usable")
+    }
+
+    /// Continue before the local model lands: work delegated to a teammate
+    /// pinned to it runs on the Cloud stand-in, a locked teammate and the
+    /// personal asks wait, and the download landing ends the bridge.
+    @MainActor
+    static func delegatedOnBridge(_ probe: inout Probe) async {
+        let local = "mlx-eval/raptor-\(UUID().uuidString)"
+        let router = ModelPickerItem(
+            id: "osaurus/deepseek-v4-1-flash", displayName: "DeepSeek V4.1 Flash",
+            source: .remote(providerName: "Osaurus", providerId: RemoteProviderManager.osaurusRouterProviderId),
+            inputPriceMicroPerMTok: 100_000, outputPriceMicroPerMTok: 300_000, contextLength: 65_536,
+            supportsToolCalling: true)
+        let downloading: (String) -> DownloadState? = { $0 == local ? .downloading(progress: 0.3) : nil }
+
+        let agent = Agent(name: "Bridge Eval \(UUID().uuidString)", systemPrompt: "")
+        AgentManager.shared.add(agent)
+        AgentManager.shared.updateDefaultModel(for: agent.id, model: local)
+        probe.expect(
+            LocalSetupBridge.runModel(forAgent: agent.id, items: [router], downloadState: downloading) == router.id,
+            "a teammate pinned to the downloading model runs on the stand-in")
+        probe.expect(AgentManager.shared.effectiveModel(for: agent.id) == local, "the pin stays on the local model")
+        AgentManager.shared.updateModelLocked(for: agent.id, locked: true)
+        probe.expect(
+            LocalSetupBridge.runModel(forAgent: agent.id, items: [router], downloadState: downloading) == local,
+            "a locked teammate never moves to the stand-in")
+        _ = await AgentManager.shared.delete(id: agent.id)
+        let landed = ModelPickerItem(id: local, displayName: "Raptor", source: .local)
+        probe.expect(
+            LocalSetupBridge.runModel(for: local, items: [router, landed], downloadState: { _ in .completed }) == local,
+            "once the download lands, work is back on the local model")
+
+        var env = SetupChecker.Environment(
+            registeredToolNames: [],
+            modelCatalog: ConfigModelReference.Catalog(
+                localModelIds: ["foundation"],
+                providers: [.init(prefix: "osaurus", name: "Osaurus", models: ["deepseek-v4-1-flash"])]),
+            isPermissionGranted: { _ in true }, bookmarkResolves: { _ in true }, knowledgeCollectionExists: { _ in true })
+        env.defaultModel = local
+        env.defaultModelDownloading = true
+        env.bridgeModel = LocalSetupBridge.standIn(for: local, items: [router], downloadState: downloading)
+        env.bridgeableTemplateIDs = LocalSetupBridge.bridgeableTemplateIDs
+        func blocked(_ template: Template) -> Bool {
+            SetupChecker.check(template, bindings: InstallBindings(), subjectId: template.id, environment: env)
+                .blocking.contains { $0.kind == .model }
+        }
+        for id in LocalSetupBridge.bridgeableTemplateIDs {
+            guard let template = TeamSeeder.bundledDefaultWorkflows().first(where: { $0.id == id }) else {
+                probe.expect(false, "\(id): its workflow exists")
+                continue
+            }
+            probe.expect(!blocked(template), "\(template.name): its writer runs on the stand-in")
+        }
+        for ask in OnboardingPaths.all.flatMap(\.asks) where ask.readsPersonalData {
+            guard let id = ask.workflowId,
+                let template = PreparedAskCatalog.installed(id: id, environment: env)?.template
+                    ?? TeamSeeder.bundledDefaultWorkflows().first(where: { $0.id == id })
+            else {
+                probe.expect(false, "\(ask.id): its workflow exists")
+                continue
+            }
+            probe.expect(blocked(template), "\(ask.id): waits for the private model")
+        }
     }
 
     static func skipSetup(_ probe: inout Probe) {

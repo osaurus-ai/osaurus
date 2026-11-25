@@ -38,9 +38,11 @@ enum PreparedAskCatalog {
 
     /// The ask as a run-ready workflow. Its writer stays on this Mac unless
     /// the model it would run on is not local, as with the default workflows.
+    /// A local default still downloading is local: the ask waits for it.
     static func installed(id: UUID, environment env: SetupChecker.Environment = .live()) -> InstalledWorkflow? {
         guard var template = template(id: id) else { return nil }
-        if let slot = template.requirements.models.first(where: { $0.locality == .localOnly }),
+        if !env.defaultModelDownloading,
+            let slot = template.requirements.models.first(where: { $0.locality == .localOnly }),
             let model = env.defaultModel, !SetupChecker.canBind(model, to: slot, environment: env)
         {
             template = TeamSeeder.allowingCloudWriter(template)

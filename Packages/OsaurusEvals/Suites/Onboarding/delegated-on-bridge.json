@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.delegated-on-bridge",
+  "domain": "onboarding",
+  "label": "onboarding • delegated work runs on the stand-in while the local model downloads",
+  "query": "delegated_on_bridge",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "delegated_on_bridge"
+    }
+  }
+}
