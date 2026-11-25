@@ -1,0 +1,25 @@
+{
+  "generator" : "swift-winrt",
+  "notes" : [
+    "Restrict projections to the minimum namespaces needed by HeliosWindowsBridge.",
+    "Do not leak projected WinRT types into Helios/swiftcrossui."
+  ],
+  "package" : "HeliosWindowsBridge",
+  "projectionScope" : [
+    {
+      "capability" : "clipboard",
+      "namespace" : "Windows.ApplicationModel.DataTransfer",
+      "serviceInterface" : "ClipboardService"
+    },
+    {
+      "capability" : "external_link",
+      "namespace" : "Windows.System",
+      "serviceInterface" : "ExternalLinkService"
+    },
+    {
+      "capability" : "file_picker",
+      "namespace" : "Windows.Storage.Pickers",
+      "serviceInterface" : "FilePickerService"
+    }
+  ]
+}
