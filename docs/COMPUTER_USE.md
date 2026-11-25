@@ -695,6 +695,28 @@ feeds the eval harness, which the shipped telemetry intentionally never sends.
 OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 OSAURUS_TEST_ROOT=/tmp/osaurus-test make test
 ```
 
+### Local model proof
+
+A bundle is listed under Local Models → Computer Use (`ComputerUseModelCatalog`)
+only after it scores at least 12 of the 15 live rows of the loop suite with no
+click on a `failIfClicked` control, passes the grounding suite, and runs a
+Computer Use turn in the app. Each row records decode token/s and peak
+memory. Sampling comes from the bundle's `generation_config.json`.
+
+| Bundle | Loop, live rows | Grounding | Decode | Peak | Listed |
+|---|---|---|---|---|---|
+| `mlx-community/Qwen3-VL-8B-Instruct-4bit` | 13/15 (scripted 23/23) | normalized 0–1000, 5/5 | 33.1 tok/s | 13.9 GB | yes |
+| `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 10/15, one forbidden click | normalized 0–1000, 5/5 | 44.8 tok/s | 8.2 GB | no |
+
+The 8B's two failures are planning: in `find-among-duplicates` it clicked
+Checkout again after the result listed `"browsing" → "ordered"`, and in
+`read-and-report` it kept observing a view that showed the ticket number. The
+4B fails twice on the `agent_action` shape, twice by repeating a click that
+changed nothing, and clicks the forbidden Send in `impossible-give-up`.
+UI-TARS and Holo1 bundles carry no tool-calling template or metadata naming
+their own action syntax, so they are not candidates. Qwen3-VL-30B-A3B
+(`qwen3_vl_moe`) does not load in vMLX yet.
+
 ## Code map
 
 | Area | Files |

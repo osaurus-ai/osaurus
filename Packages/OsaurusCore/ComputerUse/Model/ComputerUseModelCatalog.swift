@@ -41,7 +41,7 @@ enum ComputerUseModelCatalog {
                 isTopSuggestion: true,
                 useCase: .vision
             ),
-            proof: nil
+            proof: "docs/COMPUTER_USE.md#local-model-proof"
         ),
         Candidate(
             model: MLXModel(
