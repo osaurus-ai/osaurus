@@ -46,15 +46,17 @@ public struct CronParser: Sendable {
 
     /// calculate the next matching date after the reference date
     public func nextDate(after referenceDate: Date) -> Date? {
-        let calendar = Calendar.current
+        nextDate(after: referenceDate, calendar: .current)
+    }
+
+    func nextDate(after referenceDate: Date, calendar: Calendar) -> Date? {
 
         // start checking from the next minute
         guard let start = calendar.date(byAdding: .minute, value: 1, to: referenceDate) else { return nil }
 
-        // truncate to the minute
-        var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: start)
-        components.second = 0
-        guard var current = calendar.date(from: components) else { return nil }
+        // Keep the actual occurrence of a repeated hour. Rebuilding its local
+        // components can choose the first occurrence and move before the reference.
+        guard var current = calendar.dateInterval(of: .minute, for: start)?.start else { return nil }
 
         // limit search to 5 years to prevent infinite loops
         let limit = calendar.date(byAdding: .year, value: 5, to: current)!
@@ -130,10 +132,9 @@ public struct CronParser: Sendable {
     }
 
     private func firstOfNextHour(_ date: Date, calendar: Calendar) -> Date {
-        var comps = calendar.dateComponents([.year, .month, .day, .hour], from: date)
-        comps.minute = 0
-        comps.second = 0
-        return calendar.date(from: comps)!
+        // Reconstructing the second repeated hour as local components can
+        // return the first occurrence, making the search loop forever at a DST fold.
+        calendar.dateInterval(of: .hour, for: date)!.start
     }
 
     // MARK: - Parser Logic
