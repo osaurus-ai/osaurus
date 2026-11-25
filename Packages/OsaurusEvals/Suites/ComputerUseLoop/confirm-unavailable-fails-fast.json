@@ -8,6 +8,7 @@
   "expect": {
     "computerUseLoop": {
       "app": "Notes",
+      "targetApp": "Notes",
       "maxSteps": 4,
       "preset": "balanced",
       "confirmUnavailable": true,

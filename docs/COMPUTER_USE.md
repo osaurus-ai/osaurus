@@ -45,7 +45,21 @@ gate allows the action, and whether the action actually landed.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `goal` | yes | The complete task in plain language, naming the app when it matters. |
+| `app` | no | The app to work in, by name or bundle id. Set it whenever the task names or implies an app. |
 | `max_steps` | no | Safety cap on perceive→act cycles. Default `24`, clamped to `[1, 100]`. |
+
+- **Where a run starts.** `ComputerUseLoop.settleTarget` fixes the target
+  before anything is perceived, and before the shield is drawn. With `app`,
+  the app is opened in the background (it does not take the front) after the
+  same gate as an `open` action clears it. A rejected or declined open ends the
+  run without acting. Without `app`, the candidate is the frontmost app, or
+  the app the user was on before switching to Osaurus. The user is asked
+  "Take over <app>?" on an approval card. Saying no ends the run as `declined`
+  (tool outcome `declined`, envelope `userDenied`) with nothing perceived or
+  clicked. When no card can be shown, or there is no candidate app, the run
+  ends `gaveUp` and tells the caller to name the app in `app`. The answer is
+  recorded in `ComputerUseRunMetrics.takeoverApproved`. It is not counted with
+  per-action confirms.
 
 - **Gating.** Registered as a global built-in so the runtime can execute it and
   ChatView can intercept its feed, but `SystemPromptComposer` strips it

@@ -57,6 +57,8 @@ asserts each scripted case passes.
 | `open-not-ready-fails` | `open` whose readiness poll exhausted (`openNotReady`) + empty capture is reported "not ready", not "Opened" |
 | `confirm-pause-extends-deadline` | a 1.2s user delay on the confirm card inside a 1s wall clock still ends `done` — confirm time is credited back (`wallClockSeconds`, `confirmDelaySeconds`) |
 | `confirm-unavailable-fails-fast` | no surface can render the confirm card (`confirmUnavailable`) → gated action does not run, run ends `gaveUp` with the reason |
+| `target-app-opened-behind` | the `app` argument (`targetApp`) opens the app before the first step, with no takeover question, and the click lands there (`expectVerbsInOrder: [open, click]`) |
+| `takeover-declined` | no `app`: the user declines "Take over Mail?" (`declineTakeover`) → run ends `declined` with nothing perceived or clicked (`maxActsAttempted: 0`) |
 | `return-submit-verified` | type → Return on the focused field applies the element's `onReturn` effect (two verified changes), so the following `done` is evidence-backed and the run ends `done` |
 | `batch-stops-at-failure` | a `batch` runs its steps in order and stops at the first failure (`select` on a control with no option list); the step after it never runs, the edit before it stands |
 | `batch-gates-each-action` | under `trusted`, each batch step passes the gate on its own: the navigate click runs, Delete confirms once and runs, then the batch stops before Archive (`minConfirms`/`maxConfirms: 1`) |
@@ -65,7 +67,7 @@ asserts each scripted case passes.
 | `select-and-hover` | `hover` posts a pointer move only; `select` picks a listed option (element `options`) case-insensitively in one step |
 | `pixels-by-default` | with `vision: local` the first decision already carries a marked screenshot, so a `target.point` click works without a `screenshot` step |
 
-Scene knobs added for these: `openNotReady`, `wallClockSeconds`,
+Scene knobs added for these: `openNotReady`, `targetApp`, `declineTakeover`, `wallClockSeconds`,
 `confirmDelaySeconds`, `confirmUnavailable`, `requireVerifiedChangeForDone`,
 `vision` (`"local"` attaches screenshots as for an on-device image model,
 `"none"` keeps every pixel from the model; unset, a model-driven case uses the

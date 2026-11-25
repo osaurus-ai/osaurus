@@ -1003,6 +1003,7 @@ final class ComputerUseEvidencePackTests: XCTestCase {
         let driver = MockMacDriver(
             availability: MacDriverAvailability(accessibility: true, screenRecording: true, skyLight: true),
             apps: [CUAppListing(pid: pid, bundleId: "com.apple.TextEdit", name: "TextEdit", active: false, hidden: false)],
+            activeWindow: CUActiveWindow(pid: 1, app: "Finder", title: "Desktop", x: 0, y: 0, w: 800, h: 600),
             snapshots: [pid: [snapshot, snapshot]]
         )
 

@@ -71,6 +71,9 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
     let capability = SubagentCapabilityRegistry.computerUse
 
     private let goal: String
+    /// The app the caller named; `nil` means the frontmost app, once the user
+    /// agrees to hand it over.
+    private let app: String?
     private let limits: RunLimits
     /// Eval seam (nil in production). When set, `resolveModel`/`run` use the
     /// injected model + scripted driver/gate instead of the live desktop.
@@ -112,8 +115,9 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
     /// so this bounds only the pre-unload wait, not the run.
     private static let residencyIdleWaitSeconds = 120
 
-    init(goal: String, limits: RunLimits, evalHarness: ComputerUseEvalHarness? = nil) {
+    init(goal: String, app: String? = nil, limits: RunLimits, evalHarness: ComputerUseEvalHarness? = nil) {
         self.goal = goal
+        self.app = app
         self.limits = limits
         self.evalHarness = evalHarness
     }
@@ -306,6 +310,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
                 feed: feed,
                 interrupt: interrupt,
                 confirm: { _ in true },
+                targetApp: app,
                 limits: limits,
                 policySummary: "",
                 vision: evalHarness.vision,
@@ -364,6 +369,19 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
                         : "no chat window is open to show the approval card"
                 }
             },
+            targetApp: app,
+            confirmTakeover: { appName in
+                await ComputerUsePromptQueue.shared.requestConfirmation(
+                    ActionPreview(
+                        appName: appName,
+                        actionLabel: L("Take over"),
+                        targetLabel: nil,
+                        effect: .navigate,
+                        note: L("Computer Use will work in this app until it finishes or you press Stop.")
+                    ),
+                    toolCallId: toolCallId
+                )
+            },
             limits: limits,
             policySummary: config.policySummary,
             vision: config.vision,
@@ -405,6 +423,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             )
         case .interrupted:
             throw SubagentError.userDenied("Computer Use was stopped by the user.")
+        case .declined:
+            throw SubagentError.userDenied(result.outcome.summary)
         case .gaveUp, .deadEnd, .stepCapReached, .failed:
             throw SubagentError.executionFailed(message: result.outcome.summary, retryable: false)
         }

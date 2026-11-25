@@ -3210,6 +3210,13 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// the capture right after it is empty — the "app launched but exposed
         /// no window in time" shape the loop must report as a failed open.
         public let openNotReady: Bool?
+        /// The `app` argument of `computer_use`: the run opens it in the
+        /// background before the first step. nil → the run starts in the
+        /// frontmost app after the takeover question.
+        public let targetApp: String?
+        /// When true, the user answers no to "Take over <app>?". Only asked
+        /// when `targetApp` is nil.
+        public let declineTakeover: Bool?
         /// `RunLimits.requireVerifiedChangeForDone`. nil → the production
         /// default (true). Set false only for scenes that intentionally
         /// exercise gate/parse contracts with a static tree.
@@ -3257,6 +3264,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             confirmDelaySeconds: Double? = nil,
             confirmUnavailable: Bool? = nil,
             openNotReady: Bool? = nil,
+            targetApp: String? = nil,
+            declineTakeover: Bool? = nil,
             requireVerifiedChangeForDone: Bool? = nil,
             minUnverifiedActs: Int? = nil,
             minVerifyChanged: Int? = nil,
@@ -3286,6 +3295,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.confirmDelaySeconds = confirmDelaySeconds
             self.confirmUnavailable = confirmUnavailable
             self.openNotReady = openNotReady
+            self.targetApp = targetApp
+            self.declineTakeover = declineTakeover
             self.requireVerifiedChangeForDone = requireVerifiedChangeForDone
             self.minUnverifiedActs = minUnverifiedActs
             self.minVerifyChanged = minVerifyChanged

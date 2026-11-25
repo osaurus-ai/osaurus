@@ -67,6 +67,7 @@ extension EvalRunner {
             return true
         }
         let confirmIsUnavailable = exp.confirmUnavailable ?? false
+        let declinesTakeover = exp.declineTakeover ?? false
         let confirmUnavailable: @Sendable () async -> String? = {
             confirmIsUnavailable ? "no chat window is open to show the approval card" : nil
         }
@@ -151,6 +152,8 @@ extension EvalRunner {
             interrupt: interrupt,
             confirm: confirm,
             confirmUnavailable: confirmUnavailable,
+            targetApp: exp.targetApp,
+            confirmTakeover: { _ in !declinesTakeover },
             limits: limits,
             policySummary: "",
             vision: vision,
@@ -447,6 +450,7 @@ extension EvalRunner {
         case .stepCapReached: return "stepCapReached"
         case .deadEnd: return "deadEnd"
         case .interrupted: return "interrupted"
+        case .declined: return "declined"
         case .failed: return "failed"
         }
     }

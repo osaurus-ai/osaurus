@@ -102,6 +102,8 @@ public enum RunOutcome: Sendable, Equatable {
     case stepCapReached
     case deadEnd(reason: String)
     case interrupted
+    /// The user said no to Computer Use taking over the app it would start in.
+    case declined(app: String)
     case failed(reason: String)
 
     public var isSuccess: Bool { if case .done = self { return true } else { return false } }
@@ -113,6 +115,7 @@ public enum RunOutcome: Sendable, Equatable {
         case .stepCapReached: return L("Stopped: reached the step limit before finishing.")
         case .deadEnd(let r): return L("Stopped: \(r)")
         case .interrupted: return L("Stopped by user.")
+        case .declined(let app): return L("The user declined letting Computer Use take over \(app).")
         case .failed(let r): return L("Failed: \(r)")
         }
     }
@@ -243,6 +246,12 @@ public enum ComputerUseLoop {
         /// that reason instead of parking on `confirm` until the wall clock.
         /// `nil` (the default) means confirms are presentable.
         confirmUnavailable: @escaping @Sendable () async -> String? = { nil },
+        /// The app to work in (name or bundle id). It is opened behind the
+        /// user's work and cleared by the same gate as an `open` action.
+        targetApp: String? = nil,
+        /// Asked, with the app's name, before a run without `targetApp`
+        /// takes over the frontmost app.
+        confirmTakeover: @escaping @Sendable (String) async -> Bool = { _ in true },
         limits: RunLimits = RunLimits(),
         policySummary: String = "",
         vision: VisionContext = .none,
@@ -277,6 +286,8 @@ public enum ComputerUseLoop {
             confirm: confirm,
             requestCloudVisionConsent: requestCloudVisionConsent,
             confirmUnavailable: confirmUnavailable,
+            targetApp: targetApp,
+            confirmTakeover: confirmTakeover,
             limits: limits,
             policySummary: policySummary,
             vision: vision,
@@ -305,6 +316,8 @@ public enum ComputerUseLoop {
         confirm: @escaping @Sendable (ActionPreview) async -> Bool,
         requestCloudVisionConsent: @escaping @Sendable () async -> CloudVisionConsentChoice,
         confirmUnavailable: @escaping @Sendable () async -> String?,
+        targetApp: String?,
+        confirmTakeover: @escaping @Sendable (String) async -> Bool,
         limits: RunLimits,
         policySummary: String,
         vision: VisionContext,
@@ -335,6 +348,38 @@ public enum ComputerUseLoop {
             let choice = await requestCloudVisionConsent()
             userWaitCredit.add(Date().timeIntervalSince(began))
             return choice
+        }
+        let timedTakeover: @Sendable (String) async -> Bool = { app in
+            let began = Date()
+            await presenter.confirmPending(true)
+            let approved = await confirmTakeover(app)
+            await presenter.confirmPending(false)
+            userWaitCredit.add(Date().timeIntervalSince(began))
+            return approved
+        }
+        var metrics = ComputerUseRunMetrics()
+
+        // Settle where the run works before anything is perceived or locked.
+        var currentPid: Int32?
+        switch await settleTarget(
+            targetApp: targetApp,
+            driver: driver,
+            gate: gate,
+            confirm: timedConfirm,
+            confirmUnavailable: confirmUnavailable,
+            confirmTakeover: timedTakeover,
+            interrupt: interrupt,
+            metrics: &metrics,
+            feed: feed
+        ) {
+        case .pid(let pid):
+            currentPid = pid
+        case .refused(let outcome):
+            feed.emit(
+                SubagentActivityEvent(step: 0, kind: .outcome, title: outcome.summary, success: false)
+            )
+            feed.finish(success: false, summary: outcome.summary)
+            return ComputerUseRunResult(outcome: outcome, metrics: metrics)
         }
         // Default path drives the live ChatEngine; an injected `nextAction`
         // (tests / scripted-model evals) drives the loop deterministically and
@@ -373,7 +418,6 @@ public enum ComputerUseLoop {
         // Capture availability once: it gates the escalation ladder (som/vision
         // need Screen Recording) for the whole run.
         let availability = await driver.availability()
-        var metrics = ComputerUseRunMetrics()
         // The tier the next AX-resolution capture runs at. Escalates when a target
         // won't resolve; drops back to the resting tier once one does.
         var currentTier = restingTier(vision: vision, availability: availability)
@@ -397,16 +441,6 @@ public enum ComputerUseLoop {
         )
         let watermark = CompactionWatermark()
 
-        // Driver state. Seed the target from the frontmost app, but never
-        // Osaurus itself: `activeWindow()` returns nil when we're frontmost (we
-        // can't — and must not — perceive our own UI). Fall back to the app the
-        // user was on right before switching to Osaurus (the same working-app
-        // hint screen context uses) so a task started from the chat window still
-        // has a sensible target instead of none.
-        var currentPid: Int32? = await driver.activeWindow()?.pid
-        if currentPid == nil {
-            currentPid = await FrontmostAppTracker.shared.lastNonSelfPid
-        }
         var currentApp: String? = nil
         var lastView: AgentView? = nil
         var lastSnapshot: CUSnapshot? = nil
@@ -1816,6 +1850,108 @@ public enum ComputerUseLoop {
         return
             "Matches (these are now your current view — address them by mark; `observe` to see everything "
             + "again):\n" + view.renderForModel()
+    }
+
+    // MARK: - Target
+
+    private enum SettledTarget {
+        case pid(Int32)
+        case refused(RunOutcome)
+    }
+
+    /// The app a run starts in. A named app is opened behind the user's work
+    /// and cleared by the same gate as an `open` action. Without a name the
+    /// run may only take the frontmost app (never Osaurus: `activeWindow()`
+    /// is nil while we're in front, so it falls back to the app the user was
+    /// on before switching to Osaurus) once the user says yes.
+    private static func settleTarget(
+        targetApp: String?,
+        driver: MacDriver,
+        gate: ComputerUseGating,
+        confirm: @escaping @Sendable (ActionPreview) async -> Bool,
+        confirmUnavailable: @escaping @Sendable () async -> String?,
+        confirmTakeover: @escaping @Sendable (String) async -> Bool,
+        interrupt: InterruptToken,
+        metrics: inout ComputerUseRunMetrics,
+        feed: SubagentFeed
+    ) async -> SettledTarget {
+        if let app = targetApp?.trimmingCharacters(in: .whitespacesAndNewlines), !app.isEmpty {
+            let action = AgentAction(verb: .open, app: app)
+            let effect = EffectClassifier.classify(
+                action: action,
+                appName: app,
+                recipeSignals: AppRecipes.signals(for: app)
+            )
+            metrics.recordEffect(effect)
+            let decision = await gate.evaluate(action: action, effect: effect, appName: app, targetLabel: app)
+            if case .reject(let reason) = decision {
+                return .refused(.gaveUp(reason: "Computer Use may not open \(app): \(reason)."))
+            }
+            var toolResult = ""
+            var advanced = true
+            var abort: RunOutcome? = nil
+            guard
+                await applyGate(
+                    decision,
+                    action: action,
+                    effect: effect,
+                    appName: app,
+                    confirm: confirm,
+                    confirmUnavailable: confirmUnavailable,
+                    toolResult: &toolResult,
+                    advancedStep: &advanced,
+                    abort: &abort,
+                    metrics: &metrics,
+                    interrupt: interrupt,
+                    feed: feed,
+                    step: 0
+                )
+            else {
+                return .refused(abort ?? .declined(app: app))
+            }
+            switch await handleOpen(action: action, driver: driver, feed: feed, step: 0) {
+            case .opened(let pid, _, _, _, _):
+                return .pid(pid)
+            case .failure(let message):
+                return .refused(.gaveUp(reason: "Could not open \(app): \(message)"))
+            }
+        }
+
+        let candidate: (pid: Int32, name: String)?
+        if let window = await driver.activeWindow() {
+            candidate = (window.pid, window.app)
+        } else if let pid = await FrontmostAppTracker.shared.lastNonSelfPid {
+            candidate = (pid, await FrontmostAppTracker.shared.lastNonSelfAppName ?? "the app you were using")
+        } else {
+            candidate = nil
+        }
+        guard let candidate else {
+            return .refused(
+                .gaveUp(reason: "No app to work in. Name the app in `app`, or bring it to the front and try again.")
+            )
+        }
+        if let reason = await confirmUnavailable() {
+            metrics.confirmsUnpresentable += 1
+            return .refused(
+                .gaveUp(
+                    reason:
+                        "Taking over \(candidate.name) needs the user's approval, but \(reason). "
+                        + "Name the app in `app` instead."
+                )
+            )
+        }
+        feed.emit(
+            SubagentActivityEvent(step: 0, kind: .confirmRequested, title: "Take over \(candidate.name)?")
+        )
+        let approved = await confirmTakeover(candidate.name)
+        if interrupt.isInterrupted || Task.isCancelled { return .refused(.interrupted) }
+        metrics.takeoverApproved = approved
+        guard approved else {
+            feed.emit(SubagentActivityEvent(step: 0, kind: .denied, title: "Declined: take over \(candidate.name)"))
+            return .refused(.declined(app: candidate.name))
+        }
+        feed.emit(SubagentActivityEvent(step: 0, kind: .confirmed, title: "Approved: take over \(candidate.name)"))
+        return .pid(candidate.pid)
     }
 
     // MARK: - Open

@@ -1,0 +1,27 @@
+{
+  "id": "computer_use_loop.target-app-opened-behind",
+  "domain": "computer_use_loop",
+  "label": "CU loop • a named app is opened before the first step and worked in",
+  "query": "Press 7 in Calculator.",
+  "notes": "Deterministic (scripted-model) case for the `app` argument: the run opens the named app in the background before the model's first step, so the trace starts with `open` even though the model never asked for one, no takeover question is asked (`declineTakeover` is set, so asking one would end the run declined and fail the case), and the click lands in that app.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Calculator",
+      "targetApp": "Calculator",
+      "declineTakeover": true,
+      "maxSteps": 4,
+      "elements": [
+        { "id": "seven", "role": "button", "label": "7", "onClick": { "setValues": [{ "id": "display", "value": "7" }] } },
+        { "id": "display", "role": "statictext", "label": "Display", "value": "0" }
+      ],
+      "successValues": [{ "id": "display", "equals": "7" }],
+      "successClicked": ["seven"],
+      "expectVerbsInOrder": ["open", "click"],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"mark\":1},\"note\":\"press 7\"}",
+        "{\"verb\":\"done\",\"reason\":\"The display shows 7.\"}"
+      ]
+    }
+  }
+}

@@ -49,6 +49,14 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
                         + "Example: \"In System Settings, turn on Night Shift from sunset to sunrise.\""
                 ),
             ]),
+            "app": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "The app to work in, by name or bundle id (e.g. \"Calculator\", \"com.apple.Safari\"). "
+                        + "Set it whenever the task names or implies an app: it is opened in the background "
+                        + "and targeted. Without it, the user is asked before the frontmost app is taken over."
+                ),
+            ]),
             "max_steps": .object([
                 "type": .string("integer"),
                 "description": .string(
@@ -119,6 +127,7 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         case .deadEnd: return "dead_end"
         case .stepCapReached: return "step_cap"
         case .interrupted: return "interrupted"
+        case .declined: return "declined"
         case .failed: return "failed"
         }
     }
@@ -148,6 +157,21 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
             )
         }
 
+        var app: String? = nil
+        if let raw = args["app"], !(raw is NSNull) {
+            guard let appName = raw as? String else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`app` must be a string.",
+                    field: "app",
+                    expected: "app name or bundle id",
+                    tool: name
+                )
+            }
+            let trimmed = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+            app = trimmed.isEmpty ? nil : trimmed
+        }
+
         // Limits: honour an explicit `max_steps`, clamped to a sane range.
         var limits = RunLimits()
         if let raw = args["max_steps"], !(raw is NSNull) {
@@ -167,7 +191,7 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         // Model resolution, the per-action gate + confirm overlay, the live
         // feed, the interrupt token, and the compact result all run through the
         // shared `SubagentSession` host via `ComputerUseKind`.
-        let kind = ComputerUseKind(goal: goal, limits: limits)
+        let kind = ComputerUseKind(goal: goal, app: app, limits: limits)
         let envelope = await SubagentSession.run(kind, tool: name)
         // Funnel: a run that reached the loop already emitted its own
         // `computer_use_run`. Anything else that came back as a failure was a

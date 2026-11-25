@@ -238,6 +238,7 @@ final class ComputerUseLoopRunTests: XCTestCase {
                 return true
             },
             confirmUnavailable: { "no chat window is open to show the approval card" },
+            targetApp: "Mail",
             limits: RunLimits(wallClockSeconds: 30),
             sessionId: "cu-test",
             nextAction: ComputerUseLoop.scriptedProvider([
@@ -253,6 +254,152 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertEqual(result.metrics.confirmsRequested, 0)
         let clicks = await d.elementActions
         XCTAssertTrue(clicks.isEmpty, "The gated action must not run")
+        let opens = await d.openCalls
+        XCTAssertTrue(opens.isEmpty, "The gated open must not run")
+    }
+
+    // MARK: - Target app
+
+    /// A named app is opened in the background before the first perceive,
+    /// and the run works in it rather than in whatever is in front.
+    func testNamedAppIsOpenedBehindAndTargeted() async {
+        let pid: Int32 = 5150
+        func calculator(_ id: Int, display: String) -> CUSnapshot {
+            CUSnapshot(
+                snapshotId: id, pid: pid, app: "Calculator", focusedWindow: "Calculator", tier: .ax,
+                truncated: false,
+                windows: [CUWindowSummary(id: 1, title: "Calculator", focused: true, x: 0, y: 0, w: 300, h: 400)],
+                elements: [el("seven", "button", "7"), el("display", "statictext", "Display", value: display)],
+                image: nil
+            )
+        }
+        let before = calculator(1, display: "0")
+        let after = calculator(2, display: "7")
+        let d = MockMacDriver(
+            availability: MacDriverAvailability(accessibility: true, screenRecording: true, skyLight: true),
+            apps: [CUAppListing(pid: pid, bundleId: "com.apple.calculator", name: "Calculator", active: false, hidden: false)],
+            activeWindow: CUActiveWindow(pid: 999, app: "Google Chrome", title: "Inbox", x: 0, y: 0, w: 800, h: 600),
+            snapshots: [pid: [before, before, after]]
+        )
+        let takeoverAsked = TakeoverAskCounter()
+        let result = await ComputerUseLoop.run(
+            goal: "Press 7",
+            modelId: "test-model",
+            driver: d,
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous, allowlist: ["Calculator"])),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "Press 7"),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            targetApp: "Calculator",
+            confirmTakeover: { _ in
+                await takeoverAsked.increment()
+                return true
+            },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1), note: "7"),
+                AgentAction(verb: .done, reason: "pressed"),
+            ])
+        )
+        XCTAssertTrue(result.outcome.isSuccess, "got \(result.outcome)")
+        let opens = await d.openCalls
+        XCTAssertEqual(opens.map(\.identifier), ["Calculator"])
+        XCTAssertEqual(opens.first?.background, true, "The target must open behind the user's work")
+        let clicks = await d.elementActions
+        guard case .click(let id, _, _)? = clicks.first, clicks.count == 1 else {
+            return XCTFail("Expected one click; got \(clicks)")
+        }
+        XCTAssertEqual(id, "seven", "The click must land in the named app's view, not the frontmost app")
+        let asked = await takeoverAsked.value
+        XCTAssertEqual(asked, 0, "A named app needs no takeover question")
+    }
+
+    /// Without a named app, the user is asked before the frontmost app is
+    /// taken over; saying no ends the run with nothing done.
+    func testDeclinedTakeoverEndsTheRunWithNoActions() async {
+        let d = driver([el("send", "button", "Send")])
+        let result = await ComputerUseLoop.run(
+            goal: "Send it",
+            modelId: "test-model",
+            driver: d,
+            gate: HardwiredGate(),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "Send it"),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            confirmTakeover: { app in app != "Demo" },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: { _ in
+                XCTFail("The model must not be asked for a step after a declined takeover")
+                return nil
+            }
+        )
+        guard case .declined(let app) = result.outcome else {
+            return XCTFail("Expected declined; got \(result.outcome)")
+        }
+        XCTAssertEqual(app, "Demo", "The question names the frontmost app")
+        XCTAssertEqual(result.metrics.takeoverApproved, false)
+        XCTAssertEqual(result.metrics.confirmsDeclined, 0, "The takeover answer is not an action confirm")
+        let clicks = await d.elementActions
+        XCTAssertTrue(clicks.isEmpty)
+        let captures = await d.captureCount
+        XCTAssertEqual(captures, 0, "Nothing is perceived before the user agrees")
+    }
+
+    /// Nothing in front and no named app: the run refuses instead of guessing.
+    func testNoTargetAppGivesUpWithoutActing() async {
+        let d = MockMacDriver(
+            availability: MacDriverAvailability(accessibility: true, screenRecording: true, skyLight: true),
+            apps: [],
+            snapshots: [:]
+        )
+        let result = await ComputerUseLoop.run(
+            goal: "Do something",
+            modelId: "test-model",
+            driver: d,
+            gate: HardwiredGate(),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "Do something"),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([AgentAction(verb: .done, reason: "x")])
+        )
+        guard case .gaveUp(let reason) = result.outcome else {
+            return XCTFail("Expected gaveUp; got \(result.outcome)")
+        }
+        XCTAssertTrue(reason.contains("`app`"), "The refusal must name the fix; got: \(reason)")
+    }
+
+    /// The takeover question can't be shown: refuse with the reason instead
+    /// of taking the frontmost app unasked.
+    func testTakeoverConfirmUnavailableGivesUp() async {
+        let d = driver([el("send", "button", "Send")])
+        let result = await ComputerUseLoop.run(
+            goal: "Send it",
+            modelId: "test-model",
+            driver: d,
+            gate: HardwiredGate(),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "Send it"),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            confirmUnavailable: { "no chat window is open to show the approval card" },
+            confirmTakeover: { _ in
+                XCTFail("The takeover card must not be awaited when it can't be shown")
+                return true
+            },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([AgentAction(verb: .done, reason: "x")])
+        )
+        guard case .gaveUp(let reason) = result.outcome else {
+            return XCTFail("Expected gaveUp; got \(result.outcome)")
+        }
+        XCTAssertTrue(reason.contains("no chat window is open"), "got: \(reason)")
+        XCTAssertEqual(result.metrics.confirmsUnpresentable, 1)
+        let clicks = await d.elementActions
+        XCTAssertTrue(clicks.isEmpty)
     }
 
     /// Time the user spends on a confirm card is credited back to the wall
@@ -867,6 +1014,11 @@ private actor ModelStepInputRecorder {
 }
 
 private struct TestInferenceError: Error {}
+
+private actor TakeoverAskCounter {
+    private(set) var value = 0
+    func increment() { value += 1 }
+}
 
 /// Confirms every action, so tests can exercise the confirm seam with a
 /// read-effect click that `HardwiredGate` would otherwise auto-run.
