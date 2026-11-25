@@ -93,7 +93,7 @@ public enum SettingsSearchIndex {
     }
 
     /// `search` in an explicit locale (tests, diagnostics). The public
-    /// entry point above always uses the app's current locale.
+    /// entry point above uses the language the UI is shown in.
     static func search(_ query: String, locale: Locale) -> [SettingsSearchEntry] {
         searchScored(query, locale: locale).map(\.entry)
     }
@@ -107,13 +107,14 @@ public enum SettingsSearchIndex {
 
     /// `search` with the rank kept, in the same order.
     public static func searchScored(_ query: String) -> [ScoredHit] {
-        searchScored(query, locale: .current)
+        searchScored(query, locale: nil)
     }
 
-    /// `searchScored` with the catalog resolved in `locale`: rows whose
-    /// on-screen label is translated become findable by that label, at the
-    /// same rank the English title/section would earn.
-    static func searchScored(_ query: String, locale: Locale) -> [ScoredHit] {
+    /// `searchScored` with the catalog resolved in `locale`, or in the
+    /// language `L()` shows the rows in when nil: rows whose on-screen label
+    /// is translated become findable by that label, at the same rank the
+    /// English title/section would earn.
+    static func searchScored(_ query: String, locale: Locale?) -> [ScoredHit] {
         let prepared = SearchService.PreparedQuery(query)
         guard !prepared.tokens.isEmpty else { return [] }
 
@@ -223,7 +224,7 @@ public enum SettingsSearchIndex {
     /// Every query word must be in a title (rank 3) or section/keyword (rank 4)
     /// word, exactly or within `typoBudget` edits.
     private static func typoTolerantMatches(
-        _ tokens: [String], locale: Locale = .current
+        _ tokens: [String], locale: Locale?
     ) -> [(entry: SettingsSearchEntry, rank: Int)] {
         guard tokens.contains(where: { typoBudget(for: $0) > 0 }) else { return [] }
         let prepared = tokens.map { (scalars: Array($0.unicodeScalars), budget: typoBudget(for: $0)) }
@@ -283,15 +284,16 @@ public enum SettingsSearchIndex {
     }
 
     private static let localizedFieldsLock = NSLock()
-    /// Resolved fields per locale, keyed by `Locale.identifier`; an empty
-    /// map is cached too (English, or a locale with no translated labels
-    /// yet) so resolution happens at most once per locale per process.
+    /// Resolved fields per locale, keyed by `Locale.identifier` (or a fixed
+    /// key for the display language); an empty map is cached too (English,
+    /// or a locale with no translated labels yet) so resolution happens at
+    /// most once per locale per process.
     nonisolated(unsafe) private static var localizedFieldsCache: [String: [String: LocalizedFields]] = [:]
 
-    /// Localized match fields for `locale`, or nil when the locale adds
-    /// nothing over the English fields.
-    private static func localizedFields(for locale: Locale) -> [String: LocalizedFields]? {
-        let key = locale.identifier
+    /// Localized match fields for `locale` (nil: the display language), or
+    /// nil when the locale adds nothing over the English fields.
+    private static func localizedFields(for locale: Locale?) -> [String: LocalizedFields]? {
+        let key = locale?.identifier ?? "\u{0}display"
         localizedFieldsLock.lock()
         let cached = localizedFieldsCache[key]
         localizedFieldsLock.unlock()
@@ -319,7 +321,11 @@ public enum SettingsSearchIndex {
     /// A catalog string is the localization key itself (the settings-catalog
     /// rule: titles are the exact UI titles), and the UI resolves it through
     /// the same bundle, so resolving it here yields the on-screen label.
-    private static func resolveCatalogString(_ key: String, locale: Locale) -> String {
+    private static func resolveCatalogString(_ key: String, locale: Locale?) -> String {
+        // The display language goes through `L()` itself: it is what the rows
+        // show, and a `LocalizedStringResource` costs about a millisecond per
+        // key, too slow for the ~1,000 catalog strings on a keystroke.
+        guard let locale else { return L(String.LocalizationValue(key)) }
         // `String(localized:bundle:locale:)` falls back to the bundle's
         // preferred localization instead of selecting `locale` (verified
         // empirically in tests); LocalizedStringResource honors it.
