@@ -145,11 +145,11 @@ struct HuggingFaceTokenBanner: View {
                     icon: "bolt.horizontal.circle",
                     title: "Faster model downloads",
                     message: "A free Hugging Face token raises rate limits so models download faster. You can add one later in Vault → App Keys.",
-                    tone: .info,
-                    onDismiss: { withAnimation(theme.motion.quick) { dismissed = true } }
+                    tone: .info
                 ) {
                     SettingsButton(.secondary, "Add Token", icon: "plus", size: .compact) { showAddSheet = true }
                 }
+                .dismissible { withAnimation(theme.motion.quick) { dismissed = true } }
             }
         }
         .sheet(isPresented: $showAddSheet) {

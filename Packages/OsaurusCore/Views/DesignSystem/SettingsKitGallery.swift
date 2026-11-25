@@ -352,9 +352,9 @@ SettingsCallout(
                     icon: "bolt.horizontal.circle",
                     title: "Dismissible callout",
                     message: "An optional suggestion the user can close.",
-                    tone: .info,
-                    onDismiss: {}
+                    tone: .info
                 )
+                .dismissible {}
             }
         }
         private var preservedDrillInRows: some View {
