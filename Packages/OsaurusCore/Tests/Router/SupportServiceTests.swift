@@ -521,11 +521,17 @@ struct SupportServiceTests {
         let h = makeHarness([list([thread("a")])], hasOpenThreads: true)
         defer { h.tearDown() }
 
+        // Main-actor tasks start in creation order, so the second and third
+        // callers arrive while the first one's request is still queued.
+        // `async let` children hop from the global pool in no fixed order,
+        // and `.helpOpened` refetches once the first request has finished.
         let service = h.service
-        async let first: Void = service.refreshIfDue(trigger: .helpOpened)
-        async let second: Void = service.refreshIfDue(trigger: .helpOpened)
-        async let third: Void = service.refreshIfDue(trigger: .launch)
-        _ = await (first, second, third)
+        let callers = [
+            Task { await service.refreshIfDue(trigger: .helpOpened) },
+            Task { await service.refreshIfDue(trigger: .helpOpened) },
+            Task { await service.refreshIfDue(trigger: .launch) },
+        ]
+        for caller in callers { await caller.value }
 
         #expect(h.script.listCalls == 1)
         #expect(!h.service.isRefreshing)
