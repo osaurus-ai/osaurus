@@ -340,6 +340,11 @@ final class SyncStatusModel: ObservableObject {
                 Result { try core.pairingOffer(ttlMs: ttl) }
             }.value
             guard let self, attempt == self.pairingAttempt else { return }
+            // A confirmation or a finished pairing that arrived meanwhile wins over the new code.
+            switch self.pairing {
+            case .idle, .offering: break
+            default: return
+            }
             switch result {
             case let .success(offer):
                 self.pairing = .offering(offer)
