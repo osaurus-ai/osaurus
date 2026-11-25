@@ -95492,6 +95492,34 @@
         }
       }
     },
+    "Computer Use will work in this app until it finishes or you press Stop." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer Use arbeitet in dieser App, bis es fertig ist oder du auf „Stopp“ drückst."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer Use는 작업을 마치거나 중지를 누를 때까지 이 앱에서 작동합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer Use будет работать в этом приложении, пока не закончит или пока вы не нажмёте «Остановить»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer Use 会在此应用中工作，直到完成或你按下“停止”。"
+          }
+        }
+      }
+    },
     "Computer Use needs the Accessibility permission. Grant it in System Settings." : {
 
     },
@@ -342639,6 +342667,34 @@
     "Take Down…" : {
 
     },
+    "Take over" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Übernehmen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제어하기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Взять управление"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接管"
+          }
+        }
+      }
+    },
     "Take over Relay on %@" : {
       "localizations" : {
         "de" : {
@@ -357842,6 +357898,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "是否开启使用数据由你决定。它只发送匿名统计，例如大家完成了哪些设置步骤，绝不包含你的聊天、提示词、文件或密钥。"
+          }
+        }
+      }
+    },
+    "The user declined letting Computer Use take over %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Nutzer hat abgelehnt, dass Computer Use %@ übernimmt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용자가 Computer Use의 %@ 제어를 거부했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пользователь не разрешил Computer Use взять управление %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用户拒绝让 Computer Use 接管 %@。"
           }
         }
       }

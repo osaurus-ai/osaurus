@@ -617,14 +617,15 @@ enum LocalVisionEvidence {
     /// `files` (1…M all present, a single M), in shard order; the same rule
     /// vMLX's loader applies to a JANG bundle whose index is stale.
     static func completeNumberedShardFamily(_ files: [URL]) -> [URL]? {
-        let regex = try! NSRegularExpression(pattern: #"^model-(\d+)-of-(\d+)\.safetensors$"#)
         var byTotal: [Int: [Int: URL]] = [:]
         for file in files {
             let name = file.lastPathComponent
-            guard let match = regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
-                let indexRange = Range(match.range(at: 1), in: name),
-                let totalRange = Range(match.range(at: 2), in: name),
-                let index = Int(name[indexRange]), let total = Int(name[totalRange])
+            guard name.hasPrefix("model-"), name.hasSuffix(".safetensors") else { continue }
+            let numbers = name.dropFirst("model-".count).dropLast(".safetensors".count)
+                .components(separatedBy: "-of-")
+            guard numbers.count == 2,
+                numbers.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } }),
+                let index = Int(numbers[0]), let total = Int(numbers[1])
             else { continue }
             byTotal[total, default: [:]][index] = file
         }
