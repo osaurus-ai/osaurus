@@ -111,13 +111,46 @@ struct MCPBundleManifest: Codable {
         let (_, _, env) = getEntryPoint()
         var resolved: [String: String] = [:]
         for (key, value) in (env ?? [:]) {
-            if value.hasPrefix("${env:"), value.hasSuffix("}") {
-                let envVar = String(value.dropFirst(6).dropLast(1))
-                resolved[key] = ProcessInfo.processInfo.environment[envVar] ?? ""
-            } else {
-                resolved[key] = value
-            }
+            resolved[key] = MCPBundleManifest.substituteEnvTokens(
+                value,
+                environment: ProcessInfo.processInfo.environment
+            )
         }
         return resolved
+    }
+
+    /// Substitute every `${env:NAME}` token found anywhere in `value` with the
+    /// corresponding entry from `environment`. Unset variables resolve to the
+    /// empty string (preserving the prior whole-value behavior). Literal text
+    /// surrounding a token is left intact, so embedded tokens
+    /// (`"https://${env:HOST}/path"`) and multiple tokens (`"${env:A}:${env:B}"`)
+    /// both resolve correctly. A value containing no token is returned unchanged.
+    static func substituteEnvTokens(_ value: String, environment: [String: String]) -> String {
+        guard value.contains("${env:") else { return value }
+        let pattern = #"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return value }
+
+        let ns = value as NSString
+        let fullRange = NSRange(location: 0, length: ns.length)
+        var result = ""
+        var cursor = 0
+        for match in regex.matches(in: value, range: fullRange) {
+            let tokenRange = match.range
+            let nameRange = match.range(at: 1)
+            // Copy literal text preceding this token.
+            if tokenRange.location > cursor {
+                result += ns.substring(
+                    with: NSRange(location: cursor, length: tokenRange.location - cursor)
+                )
+            }
+            let name = ns.substring(with: nameRange)
+            result += environment[name] ?? ""
+            cursor = tokenRange.location + tokenRange.length
+        }
+        // Copy any trailing literal text after the last token.
+        if cursor < ns.length {
+            result += ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
+        }
+        return result
     }
 }
