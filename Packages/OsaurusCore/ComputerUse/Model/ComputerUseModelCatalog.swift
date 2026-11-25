@@ -68,9 +68,12 @@ enum ComputerUseModelCatalog {
     }
 
     /// The model as installed (with its external location when it lives
-    /// outside the Models Directory), or `nil` when it is not on disk.
+    /// outside the Models Directory, and the bundle's size on disk rather than
+    /// a parameter-count estimate), or `nil` when it is not on disk.
     static func installedCopy(of model: MLXModel) -> MLXModel? {
-        if model.isDownloaded { return model }
+        if model.isDownloaded {
+            return model.withDownloadSize(MLXModel.localBundleDownloadSizeBytes(at: model.localDirectory))
+        }
         guard let externalDirectory = ExternalModelLocator.path(forId: model.id) else { return nil }
         let external = MLXModel(
             id: model.id,
@@ -82,6 +85,7 @@ enum ComputerUseModelCatalog {
             bundleDirectory: externalDirectory,
             externalSource: ExternalModelLocator.Source.customModelFolder.rawValue
         )
-        return external.isDownloaded ? external : nil
+        guard external.isDownloaded else { return nil }
+        return external.withDownloadSize(MLXModel.localBundleDownloadSizeBytes(at: externalDirectory))
     }
 }
