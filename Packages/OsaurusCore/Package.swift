@@ -5,6 +5,12 @@ import Foundation
 // Runtime design library ships in every build; the editor/verification catalog is opt-in.
 let designInspectorBuild = ProcessInfo.processInfo.environment["OSAURUS_DESIGN_INSPECTOR_BUILD"] == "1"
 
+// Osaurus Swarm master library (private), vendored into Packages/Vendor/OsaurusSwarm by
+// scripts/update-osaurus-swarm.sh and gitignored. A checkout without it builds normally
+// with the Swarm feature hidden (Swift code gates on `#if canImport(OsaurusSwarm)`).
+let osaurusSwarmVendored = FileManager.default.fileExists(
+    atPath: Context.packageDirectory + "/../Vendor/OsaurusSwarm/Package.swift")
+
 let package = Package(
     name: "OsaurusCore",
     defaultLocalization: "en",
@@ -427,7 +433,7 @@ let package = Package(
         // 6.29 is the first release whose concurrency API (`Worker`, `File`,
         // `ViewModelInstance`) is the supported data-binding path.
         .package(url: "https://github.com/rive-app/rive-ios", from: "6.29.0"),
-    ],
+    ] + (osaurusSwarmVendored ? [.package(path: "../Vendor/OsaurusSwarm")] : []),
     targets: [
         // Vendored SQLCipher 4.6.1 amalgamation (CommonCrypto
         // provider, FTS5 enabled). See `SQLCipher/README.md` for
@@ -574,7 +580,7 @@ let package = Package(
                 .product(name: "Aptabase", package: "aptabase-swift"),
                 .product(name: "Sentry", package: "sentry-cocoa"),
                 .product(name: "RiveRuntime", package: "rive-ios"),
-            ],
+            ] + (osaurusSwarmVendored ? [.product(name: "OsaurusSwarm", package: "OsaurusSwarm")] : []),
             path: ".",
             exclude: ["Tests", "DesignLibraryTests", "SQLCipher", "ObjCSupport", "PluginHost", "JSHost"]
                 + (designInspectorBuild ? [] : ["DevelopmentDesign"]),

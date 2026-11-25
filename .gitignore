@@ -188,3 +188,8 @@ helpers/osaurus-wa/osaurus-wa
 # Copied next to the package so MLX can find it under `swift test`, where
 # Bundle.main is Xcode's xctest rather than the built app.
 **/default.metallib
+
+## Osaurus Swarm master library (private). Vendored locally by
+## scripts/update-osaurus-swarm.sh; never committed to this public repo.
+Packages/Vendor/OsaurusSwarm/
+Packages/Vendor/OsaurusSwarm.version
