@@ -30,7 +30,7 @@ public final class AppConfiguration: ObservableObject {
         // model daemon, and the first touch of `shared` happens on the main
         // thread during launch — probe off-main and publish the result.
         self.foundationModelAvailable = false
-        refreshFoundationModelAvailable()
+        refreshFoundationModelAvailable(clearingUnavailableCoreModel: true)
         // Apple Intelligence can be toggled in System Settings (and the model
         // finishes downloading) while Osaurus is running. Re-probe whenever
         // the user comes back so the model picker, the "Use Foundation"
@@ -51,6 +51,7 @@ public final class AppConfiguration: ObservableObject {
     public func reloadChatConfig() {
         chatConfig = Self.loadFromDisk()
         NotificationCenter.default.post(name: .appConfigurationChanged, object: nil)
+        refreshFoundationModelAvailable(clearingUnavailableCoreModel: true)
     }
 
     public func updateChatConfig(_ config: ChatConfiguration) {
@@ -59,7 +60,9 @@ public final class AppConfiguration: ObservableObject {
         NotificationCenter.default.post(name: .appConfigurationChanged, object: nil)
     }
 
-    public func refreshFoundationModelAvailable() {
+    /// `clearingUnavailableCoreModel` is only for the load paths: a transient
+    /// `modelNotReady` seen on app activation must not erase the saved choice.
+    public func refreshFoundationModelAvailable(clearingUnavailableCoreModel: Bool = false) {
         Task.detached(priority: .userInitiated) {
             let available = FoundationModelService.isDefaultModelAvailable()
             await MainActor.run {
@@ -69,12 +72,14 @@ public final class AppConfiguration: ObservableObject {
                 // `loadFromDisk` — that runs inside the lazy `shared`
                 // initializer on the main thread, where the FoundationModels
                 // XPC probe caused multi-second app hangs.
-                let cleaned = AppConfiguration.clearUnavailableFoundationCoreModel(
-                    appConfig.chatConfig,
-                    isAvailable: available
-                )
-                if cleaned != appConfig.chatConfig {
-                    appConfig.updateChatConfig(cleaned)
+                if clearingUnavailableCoreModel {
+                    let cleaned = AppConfiguration.clearUnavailableFoundationCoreModel(
+                        appConfig.chatConfig,
+                        isAvailable: available
+                    )
+                    if cleaned != appConfig.chatConfig {
+                        appConfig.updateChatConfig(cleaned)
+                    }
                 }
                 // Only publish a change; the activation observer fires on
                 // every app switch and must not re-render subscribers for
@@ -162,8 +167,8 @@ public final class AppConfiguration: ObservableObject {
         // It needs `FoundationModelService.isDefaultModelAvailable()`, an
         // XPC probe that can block for seconds, and this path runs on the
         // main thread inside the lazy `AppConfiguration.shared` initializer.
-        // `refreshFoundationModelAvailable()` applies it once the off-main
-        // probe completes (every cold start, and on each app activation).
+        // `refreshFoundationModelAvailable(clearingUnavailableCoreModel:)`
+        // applies it once the off-main probe completes after a load.
         if chatJsonNeedsLegacyMigration(rawData) {
             config = migrateCoreModelFromMemoryConfig(into: config)
             config = backfillFoundationCoreModelIfMissing(config)
