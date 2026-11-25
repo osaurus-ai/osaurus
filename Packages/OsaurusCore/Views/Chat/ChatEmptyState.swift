@@ -1395,8 +1395,7 @@ private struct ChatEmptyStateNoModels: View {
                 .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
             HStack(spacing: theme.space.s8) {
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner(size: .small)
                 Text("Getting your models ready…", bundle: .module)
                     .textStyle(.heading)
                     .foregroundColor(theme.text.secondary)
