@@ -383,9 +383,12 @@ let package = Package(
         // offsets, fp8 NaN handling, single-rounding biased GEMV, temp-file + rename saves) and sweeps the save temps
         // a killed cache store leaves behind.
         // vmlx-swift#784 keeps Inkling sliding-window KV bounded during decode and in stored prefixes.
+        // Integration pin (main 9bda77d3 + vmlx-swift#797): a Qwen3-VL prefix restored from the L2 disk cache
+        // prefills its suffix at the cache offset (it restarted at position 0 and the model recited its prompt),
+        // and a text prompt after an image no longer decodes with the image's M-RoPE delta.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "9bda77d39efd80a6b6e383dda949473fa2de8122"
+            revision: "36ae6ef764184a93a6d7b67a98443446aae8a8e8"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the

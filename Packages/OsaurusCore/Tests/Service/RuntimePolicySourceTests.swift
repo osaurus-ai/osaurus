@@ -846,7 +846,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "9bda77d39efd80a6b6e383dda949473fa2de8122"
+        let expectedRuntimeHardenedRevision = "36ae6ef764184a93a6d7b67a98443446aae8a8e8"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -3167,6 +3167,33 @@ struct RuntimePolicySourceTests {
         )
         #expect(committedWait.lowerBound < managerMark.lowerBound)
         #expect(cancelPrecommit.lowerBound < managerMark.lowerBound)
+    }
+
+    /// The previous turn's idle timer must not unload the model while a new chat turn is still in preflight: the
+    /// turn's task takes its residency hold before any other work, and the hold re-resolves the idle policy (which
+    /// drops the pending timer) only after it is registered.
+    @Test("a chat turn holds its model before its preflight starts")
+    func chatTurnHoldsItsModelBeforePreflight() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        let beginBody = try Self.functionBody("func beginTurnResidencyHold(", in: runtime)
+        let register = try #require(beginBody.range(of: "conversationHolds.register(hold, model: name)"))
+        let reschedule = try #require(beginBody.range(of: "await scheduleIdleResidency(for: name)"))
+        #expect(register.lowerBound < reschedule.lowerBound)
+
+        let taskStart = try #require(chatView.range(of: "currentTask = Task { @MainActor [weak self] in"))
+        let hold = try #require(
+            chatView.range(
+                of: "await ModelRuntime.shared.beginTurnResidencyHold(modelName: turnModelId)",
+                range: taskStart.upperBound ..< chatView.endIndex))
+        let release = try #require(
+            chatView.range(
+                of: "await ModelRuntime.shared.releaseConversationResidencyHold(turnHold)",
+                range: hold.upperBound ..< chatView.endIndex))
+        let firstWork = try #require(
+            chatView.range(of: "ChatTurnGenerationControls.captureForSend(", range: taskStart.upperBound ..< chatView.endIndex))
+        #expect(hold.lowerBound < firstWork.lowerBound)
+        #expect(release.lowerBound < firstWork.lowerBound, "released from a defer at the top of the task")
     }
 
     @Test("RuntimeConfig snapshot does not hop to MainActor before model load")
