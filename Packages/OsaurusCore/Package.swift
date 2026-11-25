@@ -388,7 +388,7 @@ let package = Package(
         // and a text prompt after an image no longer decodes with the image's M-RoPE delta.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "fde5bab77489f95d1c5c7d805547f51a36f790bf"
+            revision: "22e11974b904770ec83fbdf84b076003c43fa313"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the
