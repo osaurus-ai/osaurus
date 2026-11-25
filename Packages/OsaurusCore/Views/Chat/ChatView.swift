@@ -7987,6 +7987,17 @@ final class ChatSession: ObservableObject {
         let storedTurnModelOptions = storedTurnOptions
 
         currentTask = Task { @MainActor [weak self] in
+            let turnHold: ConversationResidencyHold?
+            if let turnModelId {
+                turnHold = await ModelRuntime.shared.beginTurnResidencyHold(modelName: turnModelId)
+            } else {
+                turnHold = nil
+            }
+            defer {
+                if let turnHold {
+                    Task { await ModelRuntime.shared.releaseConversationResidencyHold(turnHold) }
+                }
+            }
             guard let self else { return }
             guard self.isRunActive(runId) else { return }
             // Freeze prompt-affecting controls only after recovering a saved

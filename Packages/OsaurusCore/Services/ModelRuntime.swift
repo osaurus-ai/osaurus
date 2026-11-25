@@ -1226,6 +1226,24 @@ public actor ModelRuntime {
         return hold
     }
 
+    /// Holds a chat turn's local model from the turn's first line. The loop's own hold covers a model only from its
+    /// first generation, and the work before that (reasoning capture, folder restore, prompt and context assembly)
+    /// can outlast the idle timer the previous turn started: the timer then unloaded the model under the new turn,
+    /// which paid a reload and a full re-prefill. Registering the hold re-resolves the idle policy to `.never`, which
+    /// drops that pending timer; an unload already committed is left to finish. Returns nil for a model that is
+    /// neither resident nor installed locally. Release with `releaseConversationResidencyHold` on every exit.
+    func beginTurnResidencyHold(modelName: String) async -> ConversationResidencyHold? {
+        guard let name = residentKey(matching: modelName) ?? ModelManager.findInstalledModel(named: modelName)?.name
+        else { return nil }
+        let hold = ConversationResidencyHold()
+        conversationHolds.register(hold, model: name)
+        genLog.info(
+            "conversationHold: turn id=\(String(hold.id.uuidString.prefix(8)), privacy: .public) model=\(name, privacy: .public)"
+        )
+        await scheduleIdleResidency(for: name)
+        return hold
+    }
+
     /// Test/diagnostic view: whether a running conversation loop holds `name`.
     func isHeldByConversation(_ name: String) -> Bool {
         conversationHolds.holds(name)

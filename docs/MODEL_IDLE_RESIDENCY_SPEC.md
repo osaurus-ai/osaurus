@@ -329,6 +329,7 @@ git diff --check
 | Same model receives another API request before timeout | Existing timer cancels; new timeout starts after the second stream releases. |
 | Stream is cancelled by Stop button | Lease releases; idle timer starts after cancellation cleanup completes. |
 | Timer fires while another stream holds a lease | Timer exits without unloading; the later stream schedules a fresh timer on release. |
+| Chat turn sent while the previous turn's timer runs | The turn holds its local model from its first line (`ModelRuntime.beginTurnResidencyHold`), which drops the pending timer, so preflight before the first generation cannot unload it; the timer restarts when the turn ends. |
 | Strict mode loads a different model | Other model unloads immediately through existing strict eviction path. |
 | Manual multi-model plus 30-minute policy | Each resident model unloads independently after its own idle timeout. |
 | Never policy | Idle timers do not unload; manual unload and clear-all still work. |

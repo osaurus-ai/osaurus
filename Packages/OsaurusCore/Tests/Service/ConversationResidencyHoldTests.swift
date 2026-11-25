@@ -97,6 +97,75 @@ struct ConversationResidencyHoldTests {
         #expect(await ModelRuntime.shared.isHeldByConversation(model) == false)
     }
 
+    /// Live finding (Qwen3-VL-8B, idle setting 30 s): a follow-up sent 13 s after the previous turn released its hold
+    /// spent 20 s in preflight before its first generation, and the previous turn's timer unloaded the model under it
+    /// (reload, then a full re-prefill). The turn's own hold now covers that window.
+    @Test("a chat turn holds its local model from its first line, across its loop, until the turn ends")
+    func turnHoldCoversPreflight() async throws {
+        try await ChatHistoryTestStorage.run {
+            try await withCatalog([
+                MLXModel(
+                    id: "turn-hold-fixture/Turn-Hold-Model-4bit", name: "Turn Hold", description: "fixture",
+                    downloadURL: "https://example.invalid/turn-hold")
+            ]) {
+                let model = "turn-hold-model-4bit"
+                let turn = try #require(
+                    await ModelRuntime.shared.beginTurnResidencyHold(modelName: "Turn-Hold-Model-4bit"))
+                #expect(await ModelRuntime.shared.isHeldByConversation(model), "held before any generation")
+
+                var seen: [(String, ConversationResidencyHold?, Bool)] = []
+                _ = try await AgentToolLoop.run(
+                    policy: policy(), state: AgentTaskState(),
+                    hooks: hooks(model: model, steps: [.finalResponse], record: { seen.append(($0, $1, $2)) }))
+                #expect(seen.first?.1?.id != turn.id, "the loop takes its own hold inside the turn's")
+                #expect(await ModelRuntime.shared.isHeldByConversation(model), "the loop's exit does not free the turn")
+
+                await ModelRuntime.shared.releaseConversationResidencyHold(turn)
+                #expect(await ModelRuntime.shared.isHeldByConversation(model) == false)
+                #expect(turn.isActive == false)
+            }
+        }
+    }
+
+    @Test("a model that is neither resident nor installed gets no turn hold")
+    func remoteModelGetsNoTurnHold() async throws {
+        try await ChatHistoryTestStorage.run {
+            try await withCatalog([]) {
+                let hold = await ModelRuntime.shared.beginTurnResidencyHold(modelName: "provider/remote-only-model")
+                #expect(hold == nil)
+                #expect(await ModelRuntime.shared.isHeldByConversation("remote-only-model") == false)
+            }
+        }
+    }
+
+    /// A deterministic installed-model catalog for `body` (same override `LocalModelDetectionTests` uses). Runs
+    /// inside `ChatHistoryTestStorage.run`, which holds the lock the scan overrides are mutated under.
+    private func withCatalog(_ models: [MLXModel], _ body: () async throws -> Void) async throws {
+        let prevScan = ModelManager.scanLocalModelsOverrideForTests
+        let prevWait = ModelManager.localModelsScanWaitLimitOverrideForTests
+        let prevExternal = ExternalModelLocator.testRootsOverride
+        ExternalModelLocator.testRootsOverride = []
+        ExternalModelLocator.invalidateInMemory()
+        _ = ExternalModelLocator.rescan()
+        ModelManager.localModelsScanWaitLimitOverrideForTests = 2.0
+        ModelManager.scanLocalModelsOverrideForTests = { _ in models }
+        ModelManager.invalidateLocalModelsCache()
+        defer {
+            ModelManager.scanLocalModelsOverrideForTests = prevScan
+            ModelManager.localModelsScanWaitLimitOverrideForTests = prevWait
+            ExternalModelLocator.testRootsOverride = prevExternal
+            ExternalModelLocator.invalidateInMemory()
+            ModelManager.invalidateLocalModelsCache()
+        }
+        _ = ModelManager.localModelsSnapshotNonBlocking()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !ModelManager.isLocalModelsCacheWarm, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(ModelManager.isLocalModelsCacheWarm, "Fixture scan did not publish its catalog")
+        try await body()
+    }
+
     @Test("bookkeeping: overlapping loops free a model only when the last one ends; a released hold never re-registers")
     func bookkeeping() {
         var holds = ConversationResidencyHolds()
