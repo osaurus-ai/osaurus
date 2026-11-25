@@ -25,6 +25,7 @@ Files worker choice per model in `Suites/Orchestrator`
 | `default_workflows` | Seven workflows, read only, no required input except Research Brief's topic, six steps at most. |
 | `prepared_reads` | Each card ask is a fixed read under a teammate, dates from a code step, started by workflow id. |
 | `held_on_bridge` | Personal asks wait on the bridge; a provider gets a disclosure; a denial links Settings. |
+| `delegated_on_bridge` | While the local model downloads, a teammate pinned to it runs on the Cloud stand-in (a locked one does not), Research Brief's writer runs there too, every personal ask waits, and the landed download ends the bridge. |
 | `skip_setup` | Skip setup ends setup from every step, the walkthrough ends at the first task, and a stored plan with a retired step still settles. |
 | `seeded_state` | The handover holds facts and leaves the walkthrough behind. |
 | `wording` | No tool or role names, no request to go offline, one question per opening. |

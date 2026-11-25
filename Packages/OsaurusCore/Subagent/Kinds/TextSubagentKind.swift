@@ -674,8 +674,10 @@ final class TextSubagentKind:
             // A target locked to its model ignores the launcher's override.
             honorConfiguredOverride: !targetIsLocked,
             // Carry this exact model into the child so admission and execution
-            // both honor the launcher's configured agent-target override.
-            defaultModel: { AgentManager.shared.effectiveModel(for: targetAgentId) }
+            // both honor the launcher's configured agent-target override. A
+            // local model still downloading runs on its Cloud stand-in unless
+            // the target is locked to it.
+            defaultModel: { LocalSetupBridge.runModel(forAgent: targetAgentId) }
         )
         self.residencyPlan = resolved.decision.plan
         if isDelegatedAgentTarget {

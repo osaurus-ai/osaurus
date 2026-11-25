@@ -365587,6 +365587,12 @@
     "This slot is local only, so %@ (a cloud model) cannot be bound to it. Choose a model that runs on this Mac." : {
 
     },
+    "This slot is local only, so it waits for %@ to finish downloading." : {
+
+    },
+    "This slot waits for %@ to finish downloading." : {
+
+    },
     "This source does not support that mode." : {
       "localizations" : {
         "de" : {

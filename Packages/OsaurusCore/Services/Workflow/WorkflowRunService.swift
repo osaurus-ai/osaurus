@@ -48,6 +48,7 @@ public final class WorkflowRunService {
         let env = SetupChecker.Environment.live()
         var out: [String: String] = [:]
         for slot in template.requirements.models {
+            let slot = SetupChecker.runSlot(slot, templateID: template.id, environment: env)
             if let model = SetupChecker.resolvedModel(for: slot, bindings: bindings, environment: env) {
                 out[slot.slot] = model
             }
