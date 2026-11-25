@@ -142,12 +142,8 @@ read -ra DET_SUITES <<< "${DET_SUITES:-AgentChannels ArgumentCoercion Capability
 # the run model, so it lands real `subagent` rows in the cross-model matrix.
 # Override with a space-separated LLM_SUITES env var to scope a run, e.g.
 # LLM_SUITES="Subagent ComputerUseLoop SandboxFrontier" for a subagent-focused matrix.
-# `AppleScript` runs all AppleScript flows through the one AppleScriptLoop: its
-# scripted cases are model-independent (identical per model) while the live lanes
-# (real-model + mock/real executor) vary with the run model, so it lands real
-# `apple_script` rows in the cross-model matrix (same rationale as `Subagent`).
 # `read -ra` splits the override/default into the array (SC2206-clean, bash 3.2-safe).
-read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentDB AgentLoop AgentLoopFrontier AppleScript CacheProof CapabilityClaims ComputerUseLoop DefaultAgent HTTPAPI Memory MicroPerf PromptInjection ReasoningChannel SandboxFrontier Subagent}"
+read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentDB AgentLoop AgentLoopFrontier CacheProof CapabilityClaims ComputerUseLoop DefaultAgent HTTPAPI Memory MicroPerf PromptInjection ReasoningChannel SandboxFrontier Subagent}"
 
 log() { printf '[opt-loop] %s\n' "$*"; }
 
@@ -433,9 +429,7 @@ run_suites_batch() {
 # LLM suites that boot the Apple Containerization VM — split out of the batch
 # so with_sandbox_lock can serialize them across the parallel lanes. The VM is
 # the only host-global resource worth a lock: ComputerUseLoop drives an
-# in-process scripted world, and AppleScript's single real-executor case
-# writes a fixed-content scratch note (identical across lanes — a concurrent
-# write is benign), so serializing those suites would only cost the local
+# in-process scripted world, so serializing it would only cost the local
 # lane an extra model load for no safety gain.
 SANDBOX_VM_SUITES="SandboxFrontier"
 

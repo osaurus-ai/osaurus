@@ -1,6 +1,6 @@
 //
 //  AppleScriptExecutor.swift
-//  OsaurusCore — AppleScript Computer Use
+//  OsaurusCore — Apple app tools
 //
 //  In-process `NSAppleScript` execution with a hard timeout watchdog. Running
 //  the script in-process (rather than shelling out to `osascript`) is
@@ -33,13 +33,8 @@
 //  permitted" status) back to the model. There is no output coercion or fake
 //  success — a failing script returns its actual error so the model can correct.
 //
-//  JXA (JavaScript for Automation) runs through the same serial queue and
-//  watchdog via OSAKit's `OSAScript` with the JavaScript OSA component —
-//  identical outcome mapping, different language runtime.
-//
 
 import Foundation
-import OSAKit
 
 /// Structured outcome of one `NSAppleScript` execution. `output` is the
 /// coerced textual result on success; the error fields carry the real
@@ -80,6 +75,19 @@ enum AppleScriptExecutor {
     /// `errAEEventNotPermitted` — the target app's Automation permission is not
     /// granted for this process. The failed send auto-triggers the OS dialog.
     static let permissionDeniedErrorNumber = -1743
+
+    /// System Events' assistive-access denials: `-25211`
+    /// (`kAXErrorAPIDisabled`) and `1002` ("not allowed to send keystrokes").
+    private static let accessibilityDenialErrorNumbers: Set<Int> = [-25211, 1002]
+
+    /// Whether a runtime error is an Accessibility denial rather than the
+    /// `-1743` Automation denial. Both are user grants, not script bugs.
+    static func isAccessibilityDenial(errorNumber: Int?, errorMessage: String?) -> Bool {
+        if let errorNumber, accessibilityDenialErrorNumbers.contains(errorNumber) { return true }
+        guard let message = errorMessage?.lowercased() else { return false }
+        return message.contains("assistive access")
+            || message.contains("not allowed to send keystrokes")
+    }
 
     /// Default per-script wall-clock budget. Generous enough for an app to
     /// launch and reply, bounded so a hung script can't stall the loop.
@@ -191,7 +199,6 @@ enum AppleScriptExecutor {
 
     static func run(
         source: String,
-        language: AppleScriptLanguage = .appleScript,
         timeout: TimeInterval = defaultTimeoutSeconds,
         queueWait: TimeInterval = maxQueueWaitSeconds,
         skipIf: (@Sendable () -> Bool)? = nil
@@ -238,12 +245,7 @@ enum AppleScriptExecutor {
                 // Fresh autorelease pool per run: the OSA components and AE
                 // descriptors are autoreleased, and this queue's thread is
                 // long-lived across many runs.
-                let result = autoreleasepool {
-                    switch language {
-                    case .appleScript: return executeSynchronously(source: source)
-                    case .javascript: return executeJavaScriptSynchronously(source: source)
-                    }
-                }
+                let result = autoreleasepool { executeSynchronously(source: source) }
                 resumer.resume(result)
             }
 
@@ -263,109 +265,6 @@ enum AppleScriptExecutor {
                     )
                 }
             }
-        }
-    }
-
-    /// Compile `source` WITHOUT executing it — the confirm-gate dry run. A
-    /// compile sends no Apple Events and mutates nothing; it only proves the
-    /// syntax. Returns the `.compileError` result to feed back to the model
-    /// when the script cannot compile, and `nil` when it compiles fine — or
-    /// when the check couldn't complete inside `timeout` (never block or fail
-    /// the flow on the checker itself; the executor still reports the real
-    /// compile outcome at run time).
-    static func compileCheck(
-        source: String,
-        language: AppleScriptLanguage = .appleScript,
-        timeout: TimeInterval = 10
-    ) async -> AppleScriptExecutionResult? {
-        let result: AppleScriptExecutionResult = await withCheckedContinuation { continuation in
-            let resumer = AppleScriptSingleResume(continuation)
-            // Compiles send no Apple events themselves, but they share the
-            // serial queue with runs — the heartbeat keeps a compile queued
-            // behind a parked send from waiting on a reply that can only be
-            // delivered by main-runloop wakeups.
-            beginMainRunLoopHeartbeat()
-            executionQueue.async {
-                defer { endMainRunLoopHeartbeat() }
-                guard !resumer.isResumed else { return }
-                let outcome = autoreleasepool { compileSynchronously(source: source, language: language) }
-                resumer.resume(outcome)
-            }
-            if timeout > 0, timeout.isFinite {
-                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
-                    resumer.resume(
-                        AppleScriptExecutionResult(
-                            status: .timedOut,
-                            output: nil,
-                            errorNumber: nil,
-                            errorMessage: nil
-                        )
-                    )
-                }
-            }
-        }
-        return result.status == .compileError ? result : nil
-    }
-
-    /// Synchronous compile-only pass for either OSA language. `.success` when
-    /// the source compiles, `.compileError` (with the real error fields) when
-    /// it doesn't, `.runtimeError` when the OSA component itself is missing.
-    private static func compileSynchronously(
-        source: String,
-        language: AppleScriptLanguage
-    ) -> AppleScriptExecutionResult {
-        let ok = AppleScriptExecutionResult(
-            status: .success,
-            output: nil,
-            errorNumber: nil,
-            errorMessage: nil
-        )
-        switch language {
-        case .appleScript:
-            guard let script = NSAppleScript(source: source) else {
-                return AppleScriptExecutionResult(
-                    status: .compileError,
-                    output: nil,
-                    errorNumber: nil,
-                    errorMessage: "The AppleScript could not be initialized."
-                )
-            }
-            var compileError: NSDictionary?
-            if !script.compileAndReturnError(&compileError) {
-                let fields = errorFields(compileError)
-                return AppleScriptExecutionResult(
-                    status: .compileError,
-                    output: nil,
-                    errorNumber: fields.number,
-                    errorMessage: fields.message ?? "The AppleScript failed to compile."
-                )
-            }
-            return ok
-        case .javascript:
-            guard
-                let osaLanguage = OSALanguage(
-                    forName: AppleScriptLanguage.javascript.osaLanguageName
-                )
-            else {
-                return AppleScriptExecutionResult(
-                    status: .runtimeError,
-                    output: nil,
-                    errorNumber: nil,
-                    errorMessage: nil
-                )
-            }
-            let script = OSAScript(source: source, language: osaLanguage)
-            var compileError: NSDictionary?
-            if !script.compileAndReturnError(&compileError) {
-                let fields = errorFields(compileError)
-                return AppleScriptExecutionResult(
-                    status: .compileError,
-                    output: nil,
-                    errorNumber: fields.number,
-                    errorMessage: fields.message ?? "The JXA script failed to compile."
-                )
-            }
-            return ok
         }
     }
 
@@ -404,10 +303,7 @@ enum AppleScriptExecutor {
             // recovery instead of a rewrite.
             let isPermission =
                 fields.number == permissionDeniedErrorNumber
-                || AppleScriptAccessibility.isAccessibilityDenial(
-                    errorNumber: fields.number,
-                    errorMessage: fields.message
-                )
+                || isAccessibilityDenial(errorNumber: fields.number, errorMessage: fields.message)
             return AppleScriptExecutionResult(
                 status: isPermission ? .permissionRequired : .runtimeError,
                 output: nil,
@@ -424,76 +320,11 @@ enum AppleScriptExecutor {
         )
     }
 
-    /// Synchronous compile + execute for a JXA (JavaScript for Automation)
-    /// source via OSAKit's `OSAScript` with the JavaScript OSA component. Same
-    /// outcome mapping as the AppleScript path: real compile error, real
-    /// runtime error (with the permission statuses recognized), or the coerced
-    /// return-value descriptor on success.
-    private static func executeJavaScriptSynchronously(source: String) -> AppleScriptExecutionResult {
-        guard let language = OSALanguage(forName: AppleScriptLanguage.javascript.osaLanguageName)
-        else {
-            // The JavaScript OSA component ships with macOS; its absence is an
-            // environment fault worth reporting honestly, not a script bug.
-            return AppleScriptExecutionResult(
-                status: .runtimeError,
-                output: nil,
-                errorNumber: nil,
-                errorMessage:
-                    "JavaScript for Automation is not available on this system (no JavaScript OSA "
-                    + "component)."
-            )
-        }
-        let script = OSAScript(source: source, language: language)
-
-        var compileError: NSDictionary?
-        if !script.compileAndReturnError(&compileError) {
-            let fields = errorFields(compileError)
-            return AppleScriptExecutionResult(
-                status: .compileError,
-                output: nil,
-                errorNumber: fields.number,
-                errorMessage: fields.message ?? "The JXA script failed to compile."
-            )
-        }
-
-        var executeError: NSDictionary?
-        let descriptor = script.executeAndReturnError(&executeError)
-        if let executeError {
-            let fields = errorFields(executeError)
-            let isPermission =
-                fields.number == permissionDeniedErrorNumber
-                || AppleScriptAccessibility.isAccessibilityDenial(
-                    errorNumber: fields.number,
-                    errorMessage: fields.message
-                )
-            return AppleScriptExecutionResult(
-                status: isPermission ? .permissionRequired : .runtimeError,
-                output: nil,
-                errorNumber: fields.number,
-                errorMessage: fields.message ?? "The JXA script failed while running."
-            )
-        }
-
-        return AppleScriptExecutionResult(
-            status: .success,
-            output: coerceOutput(descriptor),
-            errorNumber: nil,
-            errorMessage: nil
-        )
-    }
-
-    /// Extract the error number + message from either error-dictionary shape:
-    /// `NSAppleScript` keys (`NSAppleScriptErrorNumber`/`…Message`) or OSAKit's
-    /// `OSAScript` keys (`OSAScriptErrorNumberKey`/`OSAScriptErrorMessageKey`).
+    /// Extract the `NSAppleScript` error number + message.
     private static func errorFields(_ dict: NSDictionary?) -> (number: Int?, message: String?) {
         guard let dict else { return (nil, nil) }
-        let number =
-            (dict[NSAppleScript.errorNumber] as? Int)
-            ?? (dict[OSAScriptErrorNumberKey] as? Int)
-        let rawMessage =
-            (dict[NSAppleScript.errorMessage] as? String)
-            ?? (dict[OSAScriptErrorMessageKey] as? String)
-            ?? (dict[OSAScriptErrorBriefMessageKey] as? String)
+        let number = dict[NSAppleScript.errorNumber] as? Int
+        let rawMessage = dict[NSAppleScript.errorMessage] as? String
         let message = rawMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (number, (message?.isEmpty ?? true) ? nil : message)
     }
@@ -662,15 +493,6 @@ private final class AppleScriptSingleResume: @unchecked Sendable {
     }
 
     private var started = false
-
-    /// Whether the continuation has already been resumed (by the worker or the
-    /// timeout watchdog). Read by the serial queue to skip work for a request
-    /// that timed out while queued.
-    var isResumed: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return resumed
-    }
 
     /// Whether the worker began executing the script.
     var hasStarted: Bool {
