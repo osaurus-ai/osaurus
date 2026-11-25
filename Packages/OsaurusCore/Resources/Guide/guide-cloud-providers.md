@@ -10,14 +10,15 @@ Osaurus can use cloud or peer inference providers alongside local models. Your c
 
 ## Adding a provider
 
-- Settings… (⌘,) → Providers → Add Provider → pick a preset or Custom → Save.
+- Settings… (⌘,) → Providers → **Add Provider** (or a row under **Add More**) → pick a sign-in (OpenAI, xAI, OpenRouter) or **Use an API Key** (presets, Ollama, or a custom endpoint). A sign-in opens your browser; the provider is added once you finish there.
 - Presets: Anthropic, Azure OpenAI Foundry, AtlasCloud, OpenAI, Google (Gemini), xAI, DeepSeek, Fireworks AI, Mistral, MiniMax, Venice AI, OpenRouter, and Ollama. Osaurus Router is also supported. Custom works with any OpenAI-, Anthropic-, or Open Responses-format API.
 - Or ask the default Osaurus assistant in chat to add a provider — API keys are entered through a secure native sheet that stores them straight to the macOS Keychain (never through chat text).
 
 ## Provider settings
 
 - Name, Host, Protocol, Port, Base Path, Auth Type (**No Auth** / **API Key**), Enabled, Timeout, and custom headers (secret headers go to Keychain). Providers added in the sheet connect automatically; there is no Auto-connect control.
-- Connection states on each card: Connected (green), Connecting, Disconnected, Disabled, Error (red). Non-secret config is stored in `~/.osaurus/providers/remote.json`.
+- **Your Providers** shows each provider as a card with its status (**Connected**, **Connecting…**, **Needs Attention**, **Not Connected**, **Off**) and how it signs in (subscription, API key, running on this Mac, or another Mac running Osaurus). A connected card also shows when it connected, how many models are ready, how many can look at images or think step by step, and roughly how many pages the longest-reading model takes in at once, followed by its models by name (**Show All** for long lists; hover a model for its id and what it can do). Click the header (or ⋯ → **Edit…**) to change it; the switch turns it off without deleting it; ⋯ also has **Reconnect** and **Delete…**. A provider that needs attention says why in plain words with **Fix…** or **Try Again**.
+- With Developer Tools on, the page adds **Connection Diagnostics** (status, issue filters, **Reconnect All**, **Copy Report**), each row's diagnostic checks, and ⋯ → **Copy Diagnostics**. Non-secret config is stored in `~/.osaurus/providers/remote.json`.
 
 ## Using remote models
 

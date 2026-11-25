@@ -350,7 +350,8 @@ final class LanguageCatalogSource: LocalModelCatalogSource {
                 }
             )
         }
-        guard scope != .onThisMac else { return nil }
+        // Nearby models come from another Mac, not Hugging Face.
+        guard scope != .onThisMac, scope != .nearby else { return nil }
         return AnyView(HuggingFaceTokenBanner())
     }
     override var isRefreshing: Bool { modelManager.isLoadingSuggested }

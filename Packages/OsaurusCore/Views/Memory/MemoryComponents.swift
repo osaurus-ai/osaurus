@@ -14,68 +14,79 @@ func pluralizedMemory(_ count: Int, _ singular: String, _ plural: String? = nil)
     count == 1 ? "1 \(singular)" : "\(count) \(plural ?? "\(singular)s")"
 }
 
-// MARK: - Pinned Facts Panel
+// MARK: - Pinned Facts Section
 
-struct PinnedFactsPanel: View {
+/// The agent page's Pinned Facts group: search in the header, one row per
+/// fact, and a Show All row past the preview limit.
+struct PinnedFactsSection: View {
     @Environment(\.theme) private var inheritedTheme
     private var theme: any ThemeProtocol { inheritedTheme }
 
     let facts: [PinnedFact]
     let onDelete: (String) -> Void
 
+    private static let previewLimit = 10
+    private static let searchThreshold = 5
+
     @State private var searchText = ""
+    @State private var showsAll = false
 
     /// Debounced filter result. Previously a body computed property,
     /// which meant `localizedCaseInsensitiveContains` ran across every
     /// fact for every keystroke (and for every parent-publish that
-    /// caused this panel's body to re-evaluate). The `.task(id:)`
+    /// caused this view's body to re-evaluate). The `.task(id:)`
     /// modifier below recomputes only after a 150 ms idle window.
     @State private var filteredFacts: [PinnedFact] = []
 
+    private var caption: String? {
+        guard !facts.isEmpty else { return nil }
+        guard !searchText.isEmpty else { return "\(facts.count)" }
+        return facts.count == 1
+            ? L("\(filteredFacts.count) of 1 fact")
+            : L("\(filteredFacts.count) of \(facts.count) facts")
+    }
+
+    private var displayedFacts: [PinnedFact] {
+        showsAll ? filteredFacts : Array(filteredFacts.prefix(Self.previewLimit))
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.s8) {
-            SearchField(text: $searchText, placeholder: "Search pinned facts...", fillsAvailableWidth: true)
-
-            HStack {
-                Text(
-                    facts.count == 1
-                        ? L("\(filteredFacts.count) of 1 fact")
-                        : L("\(filteredFacts.count) of \(facts.count) facts")
-                )
-                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
-                .foregroundColor(theme.text.tertiary)
-                Spacer()
+        SettingsSection(
+            title: "Pinned Facts",
+            caption: caption,
+            subtitle: "Facts promoted from your chats once they come up often enough. The agent always keeps these in mind."
+        ) {
+            if facts.count > Self.searchThreshold {
+                SearchField(text: $searchText, placeholder: "Search pinned facts...")
             }
-
-            if filteredFacts.isEmpty {
-                HStack {
-                    Spacer()
-                    Text("No matching facts", bundle: .module)
-                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.caption)
-                        .foregroundColor(theme.text.tertiary)
-                    Spacer()
-                }
-                .padding(.vertical, theme.space.s16)
+        } content: {
+            if facts.isEmpty {
+                SettingsEmptyState(inline: "pin.slash", title: "No pinned facts yet")
+            } else if filteredFacts.isEmpty {
+                SettingsEmptyState(inline: "magnifyingglass", title: "No matching facts")
             } else {
-                ScrollView {
-                    LazyVStack(spacing: theme.space.s0) {
-                        ForEach(filteredFacts) { fact in
-                            PinnedFactRow(
-                                fact: fact,
-                                onDelete: { onDelete(fact.id) }
-                            )
+                ForEach(displayedFacts) { fact in
+                    PinnedFactRow(fact: fact, onDelete: { onDelete(fact.id) })
+                }
+                if filteredFacts.count > Self.previewLimit {
+                    HStack {
+                        SettingsButton(
+                            .tertiary,
+                            showsAll ? L("Show Less") : L("Show All \(filteredFacts.count)"),
+                            size: .compact,
+                            verbatim: true
+                        ) {
+                            withAnimation(theme.motion.quick) { showsAll.toggle() }
                         }
+                        Spacer()
                     }
                 }
-                .frame(maxHeight: 320)
             }
         }
-        .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
-        .settingsChrome(.control)
         .onAppear { recomputeFilter() }
         .onChange(of: facts.count) { _, _ in recomputeFilter() }
         .task(id: searchText) {
-            // 150 ms debounce keeps the panel responsive without
+            // 150 ms debounce keeps the list responsive without
             // re-running the localized contains over the whole pinned-
             // facts collection on every keystroke. We still rerun
             // immediately on `facts` mutations (above) so an add/
@@ -99,6 +110,8 @@ struct PinnedFactsPanel: View {
 
 // MARK: - Pinned Fact Row
 
+/// A grouped row: the fact as the title, salience, use count, tags and date
+/// beneath, and a delete button revealed on hover.
 struct PinnedFactRow: View {
     @Environment(\.theme) private var inheritedTheme
     private var theme: any ThemeProtocol { inheritedTheme }
@@ -115,57 +128,41 @@ struct PinnedFactRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.s6) {
-            HStack(spacing: theme.space.s8) {
-                // Salience bar
-                HStack(spacing: theme.space.s2) {
-                    ForEach(0 ..< 5, id: \.self) { idx in
-                        RoundedRectangle(cornerRadius: theme.radius.small)
-                            .fill(
-                                Double(idx) / 5.0 < fact.salience
-                                    ? salienceColor : theme.surface.hover
-                            )
-                            .frame(width: 4, height: 8)
+        HStack(alignment: .center, spacing: theme.space.s12) {
+            SettingsRowText {
+                Text(fact.content)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } description: {
+                HStack(spacing: theme.space.s6) {
+                    // Salience bar
+                    HStack(spacing: theme.space.s2) {
+                        ForEach(0 ..< 5, id: \.self) { idx in
+                            RoundedRectangle(cornerRadius: theme.radius.small)
+                                .fill(
+                                    Double(idx) / 5.0 < fact.salience
+                                        ? salienceColor : theme.surface.hover
+                                )
+                                .frame(width: 4, height: 8)
+                        }
                     }
-                }
-
-                Text(String(format: "%.0f%%", fact.salience * 100))
-                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
-                    .foregroundColor(theme.text.tertiary)
-
-                if fact.useCount > 0 {
-                    Text("· used \(fact.useCount)×", bundle: .module)
-                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
-                        .foregroundColor(theme.text.tertiary)
-                }
-
-                Spacer()
-
-                SettingsIconButton("trash", help: "Delete", size: .compact, isDestructive: true, action: onDelete)
-                    .opacity(isHovering ? 1 : 0)
-                    .accessibilityHidden(!isHovering)
-            }
-
-            Text(fact.content)
-                .catalogTypography(.body, theme: theme, fallback: SettingsFont.caption)
-                .foregroundColor(theme.text.secondary)
-                .lineLimit(3)
-
-            HStack(spacing: theme.space.s6) {
-                if !fact.tags.isEmpty {
+                    Text(String(format: "%.0f%%", fact.salience * 100))
+                    if fact.useCount > 0 {
+                        Text("· used \(fact.useCount)×", bundle: .module)
+                    }
+                    Text(verbatim: "· \(fact.createdAt)")
+                        .lineLimit(1)
                     ForEach(fact.tags.prefix(3), id: \.self) { tag in
                         StatusChip(tag, tone: .neutral)
                     }
                 }
-                Spacer()
-                Text(fact.createdAt)
-                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
-                    .foregroundColor(theme.text.tertiary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            SettingsIconButton("trash", help: "Delete", size: .compact, isDestructive: true, action: onDelete)
+                .opacity(isHovering ? 1 : 0)
+                .accessibilityHidden(!isHovering)
         }
-        .padding(.vertical, theme.space.s8)
-        .padding(.horizontal, theme.space.s8)
-        .settingsChrome(isHovering ? .hover : nil)
         .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(theme.motion.quick) {
@@ -182,6 +179,8 @@ struct PinnedFactRow: View {
 
 // MARK: - Episode Row
 
+/// A grouped row: the summary as the title, date, size, salience and topics
+/// beneath.
 struct EpisodeRow: View {
     @Environment(\.theme) private var inheritedTheme
     private var theme: any ThemeProtocol { inheritedTheme }
@@ -191,35 +190,24 @@ struct EpisodeRow: View {
     var body: some View {
         let tokenLabel =
             episode.tokenCount == 1 ? L("1 token") : L("\(episode.tokenCount) tokens")
-        VStack(alignment: .leading, spacing: theme.space.s4) {
-            HStack(spacing: theme.space.s8) {
-                Text(tokenLabel)
-                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
-                    .foregroundColor(theme.text.tertiary)
-
-                Text("· salience \(String(format: "%.0f%%", episode.salience * 100))", bundle: .module)
-                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
-                    .foregroundColor(theme.text.tertiary)
-
-                Spacer()
-
-                Text(episode.conversationAt)
-                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
-                    .foregroundColor(theme.text.tertiary)
-            }
-
+        SettingsRowText {
             Text(episode.summary)
-                .catalogTypography(.body, theme: theme, fallback: SettingsFont.caption)
-                .foregroundColor(theme.text.secondary)
-
-            if !episode.topicsCSV.isEmpty {
-                Text("topics: \(episode.topicsCSV)")
-                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
-                    .foregroundColor(theme.text.tertiary)
-                    .lineLimit(1)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        } description: {
+            HStack(spacing: theme.space.s6) {
+                Text(verbatim: episode.conversationAt)
+                Text(verbatim: "· \(tokenLabel)")
+                Text("· salience \(String(format: "%.0f%%", episode.salience * 100))", bundle: .module)
+                if !episode.topicsCSV.isEmpty {
+                    Text(verbatim: "· \(episode.topicsCSV)")
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
+            .lineLimit(1)
         }
-        .padding(.vertical, theme.space.s6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "Episode: \(episode.summary). \(tokenLabel), \(episode.conversationAt)"

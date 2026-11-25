@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  The per-agent skill allow-list (`Agent.skillNames`, `agents[].skills`)
-//  in Abilities → Tools. Off: the agent sees every installed skill. On:
+//  as a row of Abilities → Tools → Tool Settings. Off: the agent sees every installed skill. On:
 //  only the ticked ones, in the prompt manifest, `capabilities_load` and
 //  slash commands. Entries for skills not installed here stay on the list
 //  and are flagged, so a bundle's agent picks its skill up once it lands.
@@ -17,9 +17,6 @@ struct AgentSkillAllowListCard: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
     @State private var showingPicker = false
-
-    /// Matches the Auto-discover card above it.
-    private static let glyphTileSize: CGFloat = 26
 
     private var agent: Agent? { agentManager.agent(for: agentId) }
 
@@ -42,48 +39,33 @@ struct AgentSkillAllowListCard: View {
     }
 
     var body: some View {
-        HStack(spacing: theme.space.s12) {
-            Image(systemName: "lightbulb")
-                .glyphSize(.label, weight: .semibold)
-                .foregroundColor(isLimited ? theme.text.link : theme.text.secondary)
-                .frame(width: Self.glyphTileSize, height: Self.glyphTileSize)
-                .settingsChrome(isLimited ? .selected : .inset)
-
-            VStack(alignment: .leading, spacing: theme.space.s2) {
-                Text("Limit to selected skills", bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
-                Text(summary)
-                    .textStyle(.footnote)
-                    .foregroundColor(theme.text.tertiary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer()
-
-            if isLimited {
-                SettingsButton(.tertiary, "Choose Skills…", size: .compact) {
-                    showingPicker = true
+        SettingsRow(
+            title: "Limit to selected skills",
+            description: summary,
+            anchorId: "agents.skills",
+            verbatimDescription: true
+        ) {
+            HStack(spacing: theme.space.s10) {
+                if isLimited {
+                    SettingsButton(.tertiary, "Choose Skills…", size: .compact) {
+                        showingPicker = true
+                    }
+                    .popover(isPresented: $showingPicker, arrowEdge: .bottom) {
+                        picker
+                    }
                 }
-                .popover(isPresented: $showingPicker, arrowEdge: .bottom) {
-                    picker
-                }
-            }
 
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { isLimited },
-                    set: { setLimited($0) }
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { isLimited },
+                        set: { setLimited($0) }
+                    )
                 )
-            )
-            .settingsSwitch()
-            .accessibilityLabel(Text("Limit to selected skills", bundle: .module))
+                .settingsSwitch()
+                .accessibilityLabel(Text("Limit to selected skills", bundle: .module))
+            }
         }
-        .padding(theme.space.s12)
-        .settingsChrome(.surface)
-        .settingsLandingAnchor("agents.skills")
     }
 
     private var picker: some View {

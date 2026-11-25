@@ -72,6 +72,9 @@ final class WorkflowInstallCoordinator: ObservableObject {
         var keys: [String: DownloadKey] = [:]
         var attempts: [String: Int] = [:]
         var retryAt: [String: Date] = [:]
+        /// Model slots the person chose to set up after the install. They
+        /// don't hold it back; the workflow installs reading Needs setup.
+        var deferredSlots: Set<String> = []
 
         // Recomputed every tick; not saved.
         /// Byte-weighted, 0...1.
@@ -112,6 +115,8 @@ final class WorkflowInstallCoordinator: ObservableObject {
         /// Drops a rail wizard parked on the same workflow: one owner per
         /// install.
         var clearParked: @MainActor (WorkflowSetupSubject) -> Void = { _ in }
+        /// Marks an installed workflow Needs setup (a deferred model slot).
+        var flagNeedsSetup: @MainActor (UUID) -> Void = { _ in }
         /// Where jobs are saved; nil keeps them in memory only.
         var storeURL: URL?
         var now: @MainActor () -> Date = { Date() }
@@ -170,12 +175,12 @@ final class WorkflowInstallCoordinator: ObservableObject {
     /// Starts installing `subject` with the plan's items. A workflow already
     /// being installed keeps its job.
     @discardableResult
-    func start(_ subject: WorkflowSetupSubject, items: [Item]) -> UUID {
+    func start(_ subject: WorkflowSetupSubject, items: [Item], deferring deferredSlots: Set<String> = []) -> UUID {
         if let existing = job(forTemplate: subject.template.id) { return existing.id }
         environment.clearParked(subject)
         let job = Job(
             id: UUID(), subject: subject, items: items, states: Dictionary(uniqueKeysWithValues: items.map { ($0.id, .waiting) }),
-            phase: .running)
+            phase: .running, deferredSlots: deferredSlots)
         jobs.append(job)
         tick()
         ensureTicking()
@@ -424,7 +429,9 @@ final class WorkflowInstallCoordinator: ObservableObject {
             return nil
         }
         let report = environment.check(job.subject)
-        guard !report.hasBlockers else {
+        let deferred = job.deferredSlots
+        let isDeferred = { (item: SetupItem) in item.kind == .model && deferred.contains(item.value) }
+        guard report.blocking.allSatisfy(isDeferred) else {
             job.phase = .needsYou
             return report
         }
@@ -433,6 +440,7 @@ final class WorkflowInstallCoordinator: ObservableObject {
                 job.phase = .failed(L("The workflow could not be installed."))
                 return report
             }
+            if report.hasBlockers { environment.flagNeedsSetup(installedID) }
             job.phase = .done(installedID: installedID)
             job.progress = 1
         } catch {
@@ -537,6 +545,7 @@ final class WorkflowInstallCoordinator: ObservableObject {
         var phase: Phase
         var started: Set<String>
         var keys: [String: DownloadKey]
+        var deferredSlots: Set<String>?
 
         init(_ job: Job) {
             id = job.id
@@ -551,6 +560,7 @@ final class WorkflowInstallCoordinator: ObservableObject {
             phase = job.phase
             started = job.started
             keys = job.keys
+            deferredSlots = job.deferredSlots.isEmpty ? nil : job.deferredSlots
         }
 
         /// Work that was in flight starts over (the services skip what
@@ -559,7 +569,9 @@ final class WorkflowInstallCoordinator: ObservableObject {
             var subject = WorkflowSetupSubject(mode: mode, template: template, bindings: bindings, name: name)
             subject.agentStepsAllowed = agentStepsAllowed
             subject.source = source
-            var job = Job(id: id, subject: subject, items: items, states: states, phase: phase, started: started, keys: keys)
+            var job = Job(
+                id: id, subject: subject, items: items, states: states, phase: phase, started: started, keys: keys,
+                deferredSlots: deferredSlots ?? [])
             for item in items where job.state(of: item) == .working {
                 job.states[item.id] = .waiting
                 job.keys[item.id] = nil
@@ -671,6 +683,7 @@ extension WorkflowInstallCoordinator.Environment {
                 state.pendingSetupSubject = nil
                 ParkedWorkflowSetupWatcher.shared.stop()
             },
+            flagNeedsSetup: { InstalledWorkflowStore.shared.setNeedsSetup(true, id: $0) },
             storeURL: OsaurusPaths.workflows().appendingPathComponent("installs.json"))
     }
 }

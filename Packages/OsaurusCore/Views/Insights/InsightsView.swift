@@ -441,7 +441,10 @@ private struct InsightsGlanceStrip: View {
 
             if summary.totalCount > 0 {
                 if summary.remoteCount > 0 {
-                    splitBar
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
+                        splitBar
+                        splitLegend
+                    }
                     destinationsDisclosure
                 } else {
                     HStack(spacing: theme.space.s6) {
@@ -497,6 +500,40 @@ private struct InsightsGlanceStrip: View {
             }
         }
         .frame(height: 5)
+        .accessibilityElement()
+        .accessibilityLabel(Text(splitSummary))
+    }
+
+    private var localShareCount: Int { summary.totalCount - summary.remoteCount }
+
+    private var splitSummary: String {
+        String(
+            format: L("%d stayed on this Mac, %d left this Mac"),
+            localShareCount, summary.remoteCount
+        )
+    }
+
+    private var splitLegend: some View {
+        HStack(spacing: theme.space.s16) {
+            legendItem(color: theme.border.strong, label: L("Stayed on this Mac"), count: localShareCount)
+            legendItem(color: theme.status.info.foreground, label: L("Left this Mac"), count: summary.remoteCount)
+            Spacer(minLength: 0)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func legendItem(color: Color, label: String, count: Int) -> some View {
+        HStack(spacing: theme.space.s6) {
+            Image(systemName: "circle.fill")
+                .glyphSize(.tiny, weight: .semibold)
+                .foregroundColor(color)
+            Text(label)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
+            Text("\(count)")
+                .font(SettingsFont.smallLabel.monospacedDigit())
+                .foregroundColor(theme.text.tertiary)
+        }
     }
 
     private var destinationsDisclosure: some View {

@@ -21,7 +21,7 @@ struct ManagementBadgeStoreTests {
         observedChannelCount: Int? = nil
     ) -> [ManagementTab: Int] {
         ManagementBadgeStore.mainActorCounts(
-            connectedInferenceProviders: 3,
+            providers: 3,
             tools: 12,
             skills: 4,
             customCommands: 2,
@@ -72,6 +72,15 @@ struct ManagementBadgeStoreTests {
         #expect(c[.sandbox] == nil)
         // Nothing ever computes an Identity count.
         #expect(c[.identity] == nil)
+    }
+
+    @Test("Providers badge counts what the Providers page lists: no managed router, no model-less paired agent")
+    func providersBadgeMatchesPage() {
+        #expect(!RemoteProviderManager.isUserFacing(providerType: .osaurusRouter, discoveredModels: ["a"]))
+        #expect(!RemoteProviderManager.isUserFacing(providerType: .osaurus, discoveredModels: []))
+        #expect(RemoteProviderManager.isUserFacing(providerType: .osaurus, discoveredModels: ["a"]))
+        #expect(RemoteProviderManager.isUserFacing(providerType: .openAICodex, discoveredModels: []))
+        #expect(RemoteProviderManager.isUserFacing(providerType: .anthropic, discoveredModels: []))
     }
 
     @Test("background-resolved tabs are the ones carried between recomputes")

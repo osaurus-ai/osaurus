@@ -1,20 +1,17 @@
 import SwiftUI
 
 /// Per-custom-agent display preference. It never changes generation.
+/// A row of the Advanced Settings group; the group draws the surface.
 struct AgentResponseMetricsToggle: View {
     @Binding var isOn: Bool
-    @Environment(\.theme) private var theme
 
     var body: some View {
         SettingsToggle(
             title: "Show Response Metrics",
-            description:
-                "Show measured token count, tokens per second and timings below responses. Metrics remain available in Inspect response.",
+            description: "Show token count, tokens per second and timing under each response. Inspect response always has them.",
             anchorId: "agents.showResponseMetrics",
             isOn: $isOn
         )
         .accessibilityIdentifier("agent.showResponseMetrics")
-        .padding(.horizontal, theme.space.s12)
-        .settingsChrome(.surface)
     }
 }

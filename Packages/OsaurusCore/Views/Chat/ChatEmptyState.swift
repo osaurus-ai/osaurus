@@ -1268,8 +1268,27 @@ private struct ChatEmptyStateNoModels: View {
     var onRetryConnection: (() async -> Void)? = nil
 
     @ObservedObject private var modelManager = ModelManager.shared
+    @ObservedObject private var providerManager = RemoteProviderManager.shared
+    @ObservedObject private var pickerCache = ModelPickerItemCache.shared
     @Environment(\.theme) private var theme
     @State private var isRetryingConnection = false
+    @State private var preparingTimedOut = false
+
+    /// Past this, a provider that still hasn't answered is treated as
+    /// unreachable rather than slow.
+    private static let preparingTimeout: Duration = .seconds(12)
+
+    /// Models are still on their way: the picker hasn't finished its first
+    /// pass, or an enabled provider is connecting or hasn't been tried yet.
+    private var isPreparing: Bool {
+        guard !preparingTimedOut, !isRetryingConnection else { return false }
+        if !pickerCache.isLoaded { return true }
+        return providerManager.configuration.providers.contains { provider in
+            guard provider.enabled else { return false }
+            guard let state = providerManager.providerStates[provider.id] else { return true }
+            return state.isConnecting || (!state.isConnected && state.lastError == nil)
+        }
+    }
 
     /// Active download info (model ID and progress) if any download is in progress
     private var activeDownload: (modelId: String, progress: Double)? {
@@ -1302,10 +1321,23 @@ private struct ChatEmptyStateNoModels: View {
     }
 
     var body: some View {
+        content
+            .animation(theme.motion.standard, value: isPreparing)
+            .task {
+                try? await Task.sleep(for: Self.preparingTimeout)
+                preparingTimedOut = true
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if isDownloading {
             downloadingState
         } else if let failure = failedDownload {
             failedDownloadState(failure)
+        } else if isPreparing {
+            preparingState
+                .transition(.opacity)
         } else if !OnboardingService.shared.shouldShowOnboarding {
             // Onboarding finished but no model is reachable — most commonly
             // the managed Osaurus connection failed (offline, server hiccup).
@@ -1349,6 +1381,28 @@ private struct ChatEmptyStateNoModels: View {
             .offset(y: hasAppeared ? 0 : 12)
             .scaleEffect(hasAppeared ? 1 : 0.97)
             .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
+        }
+        .padding(.horizontal, theme.space.s40)
+    }
+
+    /// Launch is still finding models: a quiet avatar and spinner instead of
+    /// an error the user can't act on yet.
+    private var preparingState: some View {
+        VStack(spacing: theme.space.s14) {
+            defaultWelcomeAvatar()
+                .opacity(hasAppeared ? 1 : 0)
+                .scaleEffect(hasAppeared ? 1 : 0.85)
+                .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
+
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner(size: .small)
+                Text("Getting your models ready…", bundle: .module)
+                    .textStyle(.heading)
+                    .foregroundColor(theme.text.secondary)
+            }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 12)
+            .animation(theme.motion.springAnimation.delay(0.1), value: hasAppeared)
         }
         .padding(.horizontal, theme.space.s40)
     }

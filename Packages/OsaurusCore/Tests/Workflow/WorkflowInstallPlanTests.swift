@@ -112,6 +112,49 @@ struct WorkflowInstallPlanTests {
         #expect(p.items.first?.covers == ["model:a", "model:b"])
     }
 
+    @Test
+    func choosingAnotherModelDropsTheDownloadAndAsks() {
+        let t = template { $0.models = [ModelRequirement(slot: "write", preferred: "org/m")] }
+        let unusable = item(.model, "write")
+        let report = SetupReport(subjectId: t.id, items: [unusable])
+        let p = plan(t, [unusable], inputs: chat("org/m", size: 4_000))
+        #expect(p.chatSlots == ["chat:org/m": ["write"]])
+
+        let choosing = p.withoutDownloads(for: ["write"], deferring: [], report: report)
+        #expect(choosing.items.isEmpty)
+        #expect(choosing.questions == [unusable])
+        #expect(choosing.questionSteps() == [.models])
+        #expect(choosing.totalBytes == 0)
+    }
+
+    @Test
+    func skippingAModelDropsTheDownloadWithoutAsking() {
+        let t = template { $0.models = [ModelRequirement(slot: "write", preferred: "org/m")] }
+        let noModel = item(.model, "write", hasNoModel: true)
+        let report = SetupReport(subjectId: t.id, items: [noModel])
+        let skipped = plan(t, [noModel], inputs: chat("org/m")).withoutDownloads(for: [], deferring: ["write"], report: report)
+
+        #expect(skipped.items.isEmpty)
+        #expect(skipped.questions.isEmpty)
+    }
+
+    @Test
+    func aSharedDownloadStaysForTheSlotStillUsingIt() {
+        let t = template {
+            $0.models = [
+                ModelRequirement(slot: "a", preferred: "org/m", strictness: .always),
+                ModelRequirement(slot: "b", preferred: "org/m", strictness: .always),
+            ]
+        }
+        let issues = [item(.model, "a"), item(.model, "b")]
+        let report = SetupReport(subjectId: t.id, items: issues)
+        let p = plan(t, issues, inputs: chat("org/m")).withoutDownloads(for: [], deferring: ["a"], report: report)
+
+        #expect(p.items.map(\.id) == ["chat:org/m"])
+        #expect(p.items.first?.covers == ["model:b"])
+        #expect(p.questions.isEmpty)
+    }
+
     // MARK: - Media models
 
     @Test

@@ -14,7 +14,7 @@ Osaurus ships nine: Web Researcher, Content Summarizer, Mac Automator, Personal 
 
 ## Using skills
 
-- Skills load on demand automatically during chat — no toggles. Installing a skill puts it in the library for every custom agent; a custom agent can narrow that with **Limit to selected skills** (Agents → the agent → Abilities → Tools).
+- Skills load on demand automatically during chat — no toggles. Installing a skill puts it in the library for every custom agent; a custom agent can narrow that with **Limit to selected skills** (Agents → the agent → Abilities → Tools → **Tool Settings**).
 - Type `/skill-name` in chat to force-load one for a single message.
 - Exception: the built-in Osaurus configuration agent does not use skills (it answers questions from its built-in guide instead).
 
