@@ -304,13 +304,23 @@
       "computer_use.send-button-consequential",
       "computer_use.trusted-edit-autoruns"
     ],
+    "ComputerUseGrounding": [
+      "computer_use_grounding.point-in-box",
+      "computer_use_grounding.scripted-normalized1000",
+      "computer_use_grounding.scripted-pixels",
+      "computer_use_grounding.scripted-unit"
+    ],
     "ComputerUseLoop": [
       "computer_use_loop.archive-not-delete",
       "computer_use_loop.async-wait-load",
+      "computer_use_loop.audit-labels-name-the-element",
+      "computer_use_loop.batch-gates-each-action",
+      "computer_use_loop.batch-stops-at-failure",
       "computer_use_loop.combobox-select-live",
       "computer_use_loop.compose-and-send",
       "computer_use_loop.confirm-pause-extends-deadline",
       "computer_use_loop.confirm-unavailable-fails-fast",
+      "computer_use_loop.coordinate-click-classified",
       "computer_use_loop.done-without-verify-rejected",
       "computer_use_loop.drag-reorder",
       "computer_use_loop.find-among-duplicates",
@@ -318,6 +328,7 @@
       "computer_use_loop.invalid-mark-recovery",
       "computer_use_loop.multi-toggle-precise-live",
       "computer_use_loop.open-not-ready-fails",
+      "computer_use_loop.pixels-by-default",
       "computer_use_loop.press-key-submit",
       "computer_use_loop.read-and-report",
       "computer_use_loop.read-two-values-report-live",
@@ -328,12 +339,16 @@
       "computer_use_loop.reveal-then-set",
       "computer_use_loop.scripted-precise-toggle",
       "computer_use_loop.scroll-to-find",
+      "computer_use_loop.select-and-hover",
       "computer_use_loop.som-escalation-click",
       "computer_use_loop.som-escalation-live",
+      "computer_use_loop.takeover-declined",
+      "computer_use_loop.target-app-opened-behind",
       "computer_use_loop.toggle-switch",
       "computer_use_loop.type-into-field",
       "computer_use_loop.unverified-act-reported",
-      "computer_use_loop.web-form-proof-lab"
+      "computer_use_loop.web-form-proof-lab",
+      "computer_use_loop.zoom-is-read-only"
     ],
     "Configurator": [
       "configurator.agent-activate",
