@@ -69,7 +69,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         },
         remoteServicesProvider: @escaping @Sendable () async -> [ModelService] = {
             await MainActor.run {
-                RemoteProviderManager.shared.connectedServices().map { $0 as ModelService }
+                RemoteProviderManager.shared.routableServices()
             }
         },
         reasoningCapabilityProvider:

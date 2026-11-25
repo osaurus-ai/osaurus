@@ -64,6 +64,11 @@ extension HTTPHandler {
     }
 
     static func localRuntimeHTTPStatus(for error: Error) -> HTTPResponseStatus {
+        if let swarm = error as? SwarmError {
+            // `swarm_pool_busy` and a lost lease are retryable capacity
+            // failures (503); engine refusals keep the engine's own status.
+            return HTTPResponseStatus(statusCode: swarm.httpStatus)
+        }
         if error is CancellationError {
             return HTTPResponseStatus(statusCode: 499, reasonPhrase: "Client Closed Request")
         }
@@ -88,6 +93,9 @@ extension HTTPHandler {
     }
 
     static func openAIErrorType(for error: Error) -> String {
+        if let swarm = error as? SwarmError {
+            return swarm.code
+        }
         if error is CancellationError {
             return "request_cancelled"
         }

@@ -338,7 +338,9 @@ final class ModelPickerItemCache: ObservableObject {
             routerMetadata: { manager.osaurusRouterMetadata(for: $0) },
             remoteContextLength: {
                 manager.customProviderContextLength(providerId: $0, unprefixedModelId: $1)
-            }
+            },
+            swarmEntries: Dictionary(
+                manager.swarmCatalogEntries.map { ($0.pickerModelId, $0) }, uniquingKeysWith: { a, _ in a })
         )
         options.append(contentsOf: remote.items)
         for provider in manager.cachedMediaModels() {
@@ -410,7 +412,8 @@ final class ModelPickerItemCache: ObservableObject {
         remoteContextLength: (UUID, String) -> Int? = { _, _ in nil },
         anthropicModelInfo: (UUID, String) -> AnthropicModelInfo? = {
             AnthropicModelCatalog.info(providerId: $0, modelId: $1)
-        }
+        },
+        swarmEntries: [String: SwarmCatalogEntry] = [:]
     ) -> (items: [ModelPickerItem], reasoningCapabilities: [String: ModelReasoningCapabilities]) {
         var items: [ModelPickerItem] = []
         var capabilities: [String: ModelReasoningCapabilities] = [:]
@@ -426,7 +429,11 @@ final class ModelPickerItemCache: ObservableObject {
                 // Osaurus Router models carry pricing/provider/context metadata;
                 // enrich the picker row when we have it, otherwise fall back to a
                 // plain remote item (e.g. before the catalog has loaded).
-                if isOsaurusRouter,
+                if providerInfo.providerId == SwarmModelIdentity.providerId,
+                    let entry = swarmEntries[modelId]
+                {
+                    item = .fromSwarmEntry(entry)
+                } else if isOsaurusRouter,
                     let metadata = routerMetadata(unprefixedRouterModelId(modelId))
                 {
                     item = .fromOsaurusRouterModel(

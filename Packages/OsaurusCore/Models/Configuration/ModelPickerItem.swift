@@ -276,6 +276,21 @@ extension ModelPickerItem {
         )
     }
 
+    /// One Osaurus Swarm pool × model: "Qwen 27B · Raptor Pool #1", grouped
+    /// under the Osaurus Swarm provider, with the pool's live capacity
+    /// ("2 of 2 nodes available", or "No nodes available") as its
+    /// description. A pool with no free node stays selectable: sends queue.
+    static func fromSwarmEntry(_ entry: SwarmCatalogEntry) -> ModelPickerItem {
+        ModelPickerItem(
+            id: entry.pickerModelId,
+            displayName: entry.displayName,
+            source: .remote(
+                providerName: SwarmModelIdentity.providerName, providerId: SwarmModelIdentity.providerId),
+            description: entry.capacityText,
+            contextLength: entry.pool.contextLength
+        )
+    }
+
     /// Create a remote provider model picker item. `contextLength` is the
     /// window the provider's `/models` endpoint advertised (e.g. vLLM's
     /// `max_model_len`), when known; it feeds the same provider-metadata

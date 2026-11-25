@@ -179,6 +179,10 @@ final class NativeTypingIndicatorView: NSView {
         let text: String
         if phase == .loadingModel {
             text = L("Loading model…")
+        } else if let progress, progress.stage == .queued, let detail = progress.detail, !detail.isEmpty {
+            // A queued request that names what it waits for (e.g. "Waiting for
+            // a Swarm node in Raptor Pool #1") has no token count yet.
+            text = detail
         } else if let progress, progress.totalUnitCount > 0 {
             text = "\(progress.stage.localizedDisplayTitle) "
                 + "\(progress.completedUnitCount)/\(progress.totalUnitCount) · \(Int(progress.percentCompleted))%"

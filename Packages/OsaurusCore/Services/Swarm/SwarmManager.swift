@@ -364,6 +364,7 @@ final class SwarmManager: ObservableObject {
             catalog: entries,
             nodeNames: Dictionary(nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
         )
+        RemoteProviderManager.shared.setSwarmCatalog(entries, service: isRunning ? service : nil)
     }
 
     // MARK: - Activity
