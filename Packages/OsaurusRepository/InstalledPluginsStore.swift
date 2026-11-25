@@ -78,6 +78,31 @@ public final class InstalledPluginsStore: @unchecked Sendable {
         return receipt
     }
 
+    /// Returns true if `directory` directly contains a regular (non-symlink) file with a
+    /// `.dylib` extension. Mirrors `PluginInstallManager.isRegularPayloadFile` so a
+    /// directory or symlink merely *named* `*.dylib` is not mistaken for a loadable plugin
+    /// binary by the dev-mode ("no receipt.json") validity check.
+    private func containsLoadableDylib(in directory: URL) -> Bool {
+        let fm = FileManager.default
+        guard
+            let urls = try? fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return false
+        }
+        return urls.contains { url in
+            guard url.pathExtension == "dylib",
+                let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            else {
+                return false
+            }
+            return values.isRegularFile == true && values.isSymbolicLink != true
+        }
+    }
+
     /// Returns all installed versions for a plugin by scanning the file system.
     public func installedVersions(pluginId: String) -> [SemanticVersion] {
         let fm = FileManager.default
@@ -109,10 +134,8 @@ public final class InstalledPluginsStore: @unchecked Sendable {
             // Must contain a receipt.json OR a .dylib file (for dev mode)
             let receiptURL = entry.appendingPathComponent("receipt.json", isDirectory: false)
             if !fm.fileExists(atPath: receiptURL.path) {
-                // Check for any .dylib file
-                guard let files = try? fm.contentsOfDirectory(atPath: entry.path),
-                    files.contains(where: { $0.hasSuffix(".dylib") })
-                else {
+                // Check for any real (regular, non-symlink) .dylib file (dev mode)
+                guard containsLoadableDylib(in: entry) else {
                     continue
                 }
             }
@@ -164,8 +187,8 @@ public final class InstalledPluginsStore: @unchecked Sendable {
             let receiptURL = versionDir.appendingPathComponent("receipt.json", isDirectory: false)
 
             var isValid = fm.fileExists(atPath: receiptURL.path)
-            if !isValid, let files = try? fm.contentsOfDirectory(atPath: versionDir.path) {
-                isValid = files.contains(where: { $0.hasSuffix(".dylib") })
+            if !isValid {
+                isValid = containsLoadableDylib(in: versionDir)
             }
 
             if isValid, let version = SemanticVersion.parse(dest) {
