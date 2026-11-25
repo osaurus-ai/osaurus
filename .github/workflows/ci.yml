@@ -90,8 +90,11 @@ jobs:
   build-core-tests:
     runs-on: macos-26
     # Cold builds measured 35–38 minutes in run 36031218815 and 44–47 minutes
-    # by November 2026. The full test suite runs in its own job, not here.
-    timeout-minutes: 60
+    # by November 2026. A pull request that moves the vMLX pin misses the
+    # dependency cache (saved only on main) and built in 52–53 minutes, with
+    # two runs cut off at 60 (45630859217). The full test suite runs in its
+    # own job, not here.
+    timeout-minutes: 75
     outputs:
       artifact-name: ${{ steps.bundle.outputs.artifact-name }}
       cache-hit: ${{ steps.dd-deps-cache.outputs.cache-hit }}
