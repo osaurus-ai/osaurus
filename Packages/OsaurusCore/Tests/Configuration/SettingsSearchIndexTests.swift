@@ -78,6 +78,11 @@ struct SettingsSearchIndexTests {
                     KeysTab(rawValue: subTab) != nil,
                     "\(entry.id): \(subTab) is not a KeysTab raw value"
                 )
+            case .swarm:
+                #expect(
+                    SwarmSettingsTab(rawValue: subTab) != nil,
+                    "\(entry.id): \(subTab) is not a SwarmSettingsTab raw value"
+                )
             case .workspaces:
                 #expect(
                     WorkspaceDetailView.Tab(subTab: subTab) != nil,

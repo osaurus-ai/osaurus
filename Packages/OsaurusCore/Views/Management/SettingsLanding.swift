@@ -27,6 +27,7 @@ enum SettingsLanding {
             case .models:
                 if let kind = LocalModelKind(rawValue: subTab) { stateManager.pendingLocalModelsKind = kind }
             case .keys: stateManager.keysSubTabRequest = subTab
+            case .swarm: stateManager.swarmSubTabRequest = subTab
             case .tools: stateManager.pendingToolsSubTab = subTab
             case .workspaces:
                 if let tab = WorkspaceDetailView.Tab(subTab: subTab) {

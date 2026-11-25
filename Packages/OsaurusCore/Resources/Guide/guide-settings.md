@@ -230,6 +230,14 @@ and explicit Keep Model Loaded choices remain unchanged.
 macOS manages swap. Osaurus no longer shows swap warnings or requires a
 “Use Anyway” confirmation. Actual model-load failures still appear normally.
 
+## Osaurus Swarm
+
+Settings → Providers → **Osaurus Swarm** (a row under **Your Devices** on the Providers page; only in builds that include the Swarm library) lets your own Macs run models for this Osaurus. A node runs models only: it never gets chats, agents, memory or keys, and the agent loop, tools and memory stay on this Mac. It has three tabs:
+
+- **Nodes**: **Add Node** shows a 12-character pairing code and its QR code (valid for 5 minutes) to enter in Osaurus Swarm on the other Mac. Each node shows its hardware, memory in use against its owner's cap, free disk, connection path and status (Available, Serving, Paused with the reason, Offline, Unreachable when there is no direct path, Update required). **Manage** opens the node: **Install a Model** (paste a Hugging Face link or `org/repo`; the node downloads it and checks it fits its memory cap and disk) or **Copy From Another Node**, the **Model Library** (**Load** / **Unload**, **Keep Loaded** to preheat, **Delete from Node** — the node leaves pools that no longer have a model on it), the node's **Name**, and **Remove Node** (revokes its pairing; its models stay on the device).
+- **Pools**: **New Pool** / **Edit** set the **Pool Name**, the models it serves, its member nodes (only nodes with every chosen model installed), **Lease Duration** (how long a caller holds a node; it renews while the caller keeps sending requests), **Max Queue Wait** (how long a request waits for a free node before failing with `swarm_pool_busy`) and an optional **Context Length**. Every pool × model appears in every model picker under **Osaurus Swarm** as "model · pool" with its live capacity, and as the HTTP API model id `osaurus-swarm/<pool>/<model>` (Chat Completions and Responses; list it in Server → Exposed Models like any provider model). A pool with no free node stays selectable: the chat shows "Waiting for a Swarm node" until one frees up or the max queue wait ends.
+- **Activity**: **Active Leases** (node, pool, model, time left, requests served, **Release**), requests waiting for a node, each node's last token/s, and recent pairing, install, lease and error events.
+
 ## Settings sidebar
 
 Settings opens on the page you last used (Agents the first time). Settings… (⌘,) opens it; the app menu also has **Agents…** (**Agents** in the Dock menu). **Workflows…** (**Workflows** in the Dock menu) opens Workflows in the main window rail instead.
@@ -237,7 +245,7 @@ Settings opens on the page you last used (Agents the first time). Settings… (�
 - Pinned at the top: **Agents**, **Automations**, **Inbox**.
 - **General**: General, Chat (with Commands), Vault, Osaurus ID (with Wallet & Credits), Privacy & Security (with Permissions).
 - **Sharing**: Workspaces, Access, Devices.
-- **Models**: Local Models, Providers, Model Defaults.
+- **Models**: Local Models, Providers (with Osaurus Swarm, in builds that include it), Model Defaults.
 - **Capabilities**: Tools & MCP, Channels, Agent Runtimes, Web Search, Voice, Images & Video, Computer & Browser Use (with Browser Use).
 - **Context**: Memory, Projects, Knowledge, Skills.
 - **Developer Tools**: Server, Sandbox, Tasks.

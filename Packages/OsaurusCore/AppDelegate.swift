@@ -562,6 +562,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await AppleAppsPluginMigration.migrateIfNeededAtLaunch()
             await MediaGenerationCoordinator.shared.refreshCloudCatalog()
             await MediaGenerationCoordinator.shared.resumePendingJobs()
+            // Osaurus Swarm: only when this build has a Swarm backend (the
+            // vendored library, or the dev simulator). Publishes its pool
+            // models before the picker cache warms.
+            await SwarmManager.shared.startIfAvailable()
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 

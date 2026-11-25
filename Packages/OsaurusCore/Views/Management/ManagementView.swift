@@ -184,6 +184,8 @@ private extension ManagementView {
             ImageGenerationView()
         case .providers:
             RemoteProvidersView()
+        case .swarm:
+            SwarmSettingsView()
         case .agents:
             AgentsView()
         case .agentChannels:
