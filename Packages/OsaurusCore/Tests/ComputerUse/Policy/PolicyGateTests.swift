@@ -88,6 +88,38 @@ final class EffectClassifierTests: XCTestCase {
         XCTAssertEqual(EffectClassifier.classify(action: bareReturn), .edit)
     }
 
+    func testDeleteQuitAndForceQuitChordsAreConsequential() {
+        let chords: [(String, [String])] = [
+            ("delete", ["cmd"]),
+            ("backspace", ["command"]),
+            ("forwarddelete", ["cmd"]),
+            ("delete", ["shift", "cmd"]),
+            ("q", ["cmd"]),
+            ("Q", ["shift", "cmd"]),
+            ("q", ["ctrl", "cmd"]),
+            ("escape", ["option", "cmd"]),
+            ("esc", ["alt", "command"]),
+        ]
+        for (key, modifiers) in chords {
+            let action = AgentAction(verb: .pressKey, key: key, modifiers: modifiers)
+            let effect = EffectClassifier.classify(action: action)
+            XCTAssertEqual(effect, .consequential, "\(modifiers) \(key)")
+            XCTAssertEqual(AutonomyPreset.trusted.disposition(for: effect), .confirm, "\(modifiers) \(key)")
+        }
+
+        let editChords: [(String, [String])] = [
+            ("delete", []),
+            ("q", []),
+            ("escape", []),
+            ("escape", ["cmd"]),
+            ("s", ["cmd"]),
+        ]
+        for (key, modifiers) in editChords {
+            let action = AgentAction(verb: .pressKey, key: key, modifiers: modifiers)
+            XCTAssertEqual(EffectClassifier.classify(action: action), .edit, "\(modifiers) \(key)")
+        }
+    }
+
     func testAmbiguousClickIsStricter() {
         // No mark resolution, no role, no describe → escalate navigate → edit.
         let blind = AgentAction(verb: .click, target: AgentTarget(describe: ""))

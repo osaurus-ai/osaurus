@@ -292,6 +292,7 @@
       "computer_use.cautious-confirms-edit",
       "computer_use.cautious-confirms-navigate",
       "computer_use.ceiling-caps-autonomous",
+      "computer_use.command-delete-confirms-trusted",
       "computer_use.command-return-submits",
       "computer_use.edit-confirms-balanced",
       "computer_use.navigate-autoruns-balanced",

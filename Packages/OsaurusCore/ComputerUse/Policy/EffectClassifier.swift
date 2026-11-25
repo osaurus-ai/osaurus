@@ -99,13 +99,17 @@ public enum EffectClassifier {
             effect = EffectClass.max(effect, .edit)
         }
 
-        // 4) ⌘Return / ⌘Enter — the conventional submit/send chord.
+        // 4) Chords that submit, delete or end something: ⌘Return / ⌘Enter
+        //    (submit/send), ⌘Delete / ⌘⌦ (Move to Trash, delete the selection),
+        //    ⌘Q with any extras (quit, ⇧ log out, ⌃ lock screen), ⌥⌘Esc
+        //    (Force Quit).
         if action.verb == .pressKey {
             let key = (action.key ?? "").lowercased()
             let mods = Set(action.modifiers.map { $0.lowercased() })
-            let isReturn = key == "return" || key == "enter" || key == "\r"
             let hasCommand = mods.contains("cmd") || mods.contains("command")
-            if isReturn, hasCommand {
+            let hasOption = mods.contains("option") || mods.contains("opt") || mods.contains("alt")
+            let isForceQuit = hasOption && (key == "escape" || key == "esc")
+            if hasCommand, Self.consequentialCommandKeys.contains(key) || isForceQuit {
                 effect = EffectClass.max(effect, .consequential)
             }
         }
@@ -160,6 +164,11 @@ public enum EffectClassifier {
     static let commitSignals: Set<String> = [
         "save", "done", "apply", "ok", "add", "create", "confirm", "update",
         "schedule", "invite", "save changes",
+    ]
+
+    /// Keys that make a ⌘ chord consequential (rule 4).
+    static let consequentialCommandKeys: Set<String> = [
+        "return", "enter", "\r", "delete", "backspace", "forwarddelete", "q",
     ]
 
     /// Recipients / cross-boundary audience signals.
