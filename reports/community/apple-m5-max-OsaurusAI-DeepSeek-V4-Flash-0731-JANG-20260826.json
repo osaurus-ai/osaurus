@@ -1,0 +1,154 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-08-27T05:32:45.226Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.9496402877697842,
+      "chatModelPassed" : 261,
+      "chatModelScored" : 301,
+      "correctFileDeliveryRate" : 0.88,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "cc19e77",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/DeepSeek-V4-Flash-0731-JANG",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 0,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.9496402877697842,
+      "meanAgentLoopWallTimeMs" : 74866.85831255192,
+      "meanCpuPercent" : 100.82312996698835,
+      "meanDecodeTokensPerSecond" : 17.01555460006993,
+      "meanFirstActionMs" : 18570.13573249181,
+      "meanFirstStepContextTokens" : 2603.057971014493,
+      "meanFrictionCalls" : 0.33098591549295775,
+      "meanPromptTokensPerTask" : 13861.141361256545,
+      "meanTotalTokensPerTask" : 13210.140776699029,
+      "meanTtftMs" : 422.3008525203651,
+      "medianModelSteps" : 4,
+      "modelId" : "OsaurusAI/DeepSeek-V4-Flash-0731-JANG",
+      "peakCpuPercent" : 322.389381528508,
+      "peakPhysFootprintMb" : 110491.7901763916,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 115,
+          "scored" : 139,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3
+          },
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 1,
+          "passed" : 12,
+          "scored" : 15,
+          "skipReasons" : {
+            "priorCaseTimeout: blocked: not run — process hung on prior case 'apple_script.liveproof-create-if-missing' (watchdog timeout); suite terminated to free the matrix driver." : 19
+          },
+          "skipped" : 19
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 23,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 31,
+          "scored" : 42,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 15,
+          "skipReasons" : {
+            "other: scenario: multimodal_image · port 64072" : 1,
+            "other: scenario: multimodal_video · port 64072" : 1
+          },
+          "skipped" : 2
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 2,
+          "passed" : 3,
+          "scored" : 4,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 13,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 1,
+          "passed" : 34,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-08-27T00:51:55Z",
+      "subsystemPassed" : 12,
+      "subsystemScored" : 15,
+      "topContextContributors" : [
+        "§pluginCreator=714",
+        "§enabledManifest=432",
+        "tool:search_and_extract=371",
+        "tool:file_read=279",
+        "tool:render_chart=275",
+        "tool:spawn_batch=266"
+      ],
+      "totalPassed" : 273,
+      "totalScored" : 316
+    }
+  ]
+}
