@@ -9,6 +9,7 @@
 //
 
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Darwin
 import Foundation
@@ -61,6 +62,10 @@ private typealias SLPSPostEventRecordToFn =
 private typealias SLPSGetFrontProcessFn = @convention(c) (UnsafeMutableRawPointer) -> Int32
 
 private typealias GetProcessForPIDFn = @convention(c) (pid_t, UnsafeMutableRawPointer) -> Int32
+
+// `AXError _AXUIElementGetWindow(AXUIElementRef, CGWindowID *)`: the
+// WindowServer id behind an AX window element.
+private typealias AXUIElementGetWindowFn = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
 
 /// Lazy-loaded pointers to the private SkyLight / HIServices entry points
 /// that the background-driver recipe depends on.
@@ -191,13 +196,15 @@ enum SkyLightBridge {
     /// Sends two `_SLPSPostEventRecordTo` payloads (subtype `0x01` to the
     /// previously-frontmost process, `0x02` to the target) so the target
     /// becomes AppKit-active for input routing without `SLPSSetFrontProcess`
-    /// pulling its window forward or dragging Spaces along.
+    /// pulling its window forward or dragging Spaces along. With a `windowId`
+    /// the records name that window (as yabai does), so input routes to it
+    /// rather than to whichever of the app's windows was last key.
     ///
     /// No-op (returns `false`) when any of the symbols are missing or the
     /// PSN lookup fails. Callers should treat `false` as "best-effort, the
     /// SkyLight click will still be tried".
     @discardableResult
-    static func focusWithoutRaise(pid: pid_t) -> Bool {
+    static func focusWithoutRaise(pid: pid_t, windowId: CGWindowID? = nil) -> Bool {
         guard let post = symbols.postEventRecordTo,
             let frontPSN = currentFrontProcess(),
             let targetPSN = processSerialNumber(forPid: pid)
@@ -214,10 +221,15 @@ enum SkyLightBridge {
         bytes2[0x04] = 0xF8
         bytes2[0x08] = 0x02
         bytes2[0x3A] = 0x10
-        // yabai also sets bytes[0x20..<0x30] = 0xFF when targeting a specific
-        // window id. We don't know windowId here, so leave the slot zero —
-        // that addresses "the app" rather than a specific window, which is
-        // exactly what we want when the agent is just routing input.
+        // The window id belongs only in the record addressed to the target's
+        // own process (yabai's make-key-window layout); the first record goes
+        // to the user's frontmost app and must not name a foreign window.
+        if let windowId {
+            for i in 0x20 ..< 0x30 { bytes2[i] = 0xFF }
+            withUnsafeBytes(of: windowId.littleEndian) { raw in
+                for (offset, byte) in raw.enumerated() { bytes2[0x3C + offset] = byte }
+            }
+        }
 
         var fronts = frontPSN
         var targets = targetPSN
@@ -237,6 +249,15 @@ enum SkyLightBridge {
         return s1 == 0 && s2 == 0
     }
 
+    /// The WindowServer window behind an AX window element, or nil when the
+    /// private symbol is missing or the element is not a window.
+    static func windowId(ofWindow window: AXUIElement) -> CGWindowID? {
+        guard let fn = symbols.axGetWindow else { return nil }
+        var id: CGWindowID = 0
+        guard fn(window, &id) == .success, id != 0 else { return nil }
+        return id
+    }
+
     // MARK: - Symbol loader
 
     /// Resolves all SkyLight/HIServices entry points once at first use.
@@ -247,6 +268,7 @@ enum SkyLightBridge {
         let postEventRecordTo: SLPSPostEventRecordToFn?
         let getFrontProcess: SLPSGetFrontProcessFn?
         let getProcessForPID: GetProcessForPIDFn?
+        let axGetWindow: AXUIElementGetWindowFn?
         let hasObserverRemoteSymbol: Bool
 
         static func load() -> ResolvedSymbols {
@@ -291,6 +313,8 @@ enum SkyLightBridge {
                     ?? loadFn(skyHandle, "_SLPSPostEventRecordTo", as: SLPSPostEventRecordToFn.self),
                 getFrontProcess: frontFn,
                 getProcessForPID: pidFn,
+                axGetWindow: loadFn(hiHandle, "_AXUIElementGetWindow", as: AXUIElementGetWindowFn.self)
+                    ?? loadFn(nil, "_AXUIElementGetWindow", as: AXUIElementGetWindowFn.self),
                 hasObserverRemoteSymbol: hasRemote
             )
         }

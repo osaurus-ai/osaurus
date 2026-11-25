@@ -22,24 +22,29 @@ final class BackgroundDriverRouteTests: XCTestCase {
         var skyLight = 0
         var postToPid = 0
         var hid = 0
+        var events: [CGEvent] = []
+        var focusedWindows: [CGWindowID?] = []
     }
 
     private func makeDriver(
         spy: TransportSpy,
         skyLightAvailable: Bool,
         chromium: Bool = false,
-        skyLightAccepted: Bool = true
+        skyLightAccepted: Bool = true,
+        windowUnderPoint: CGWindowID? = nil
     ) -> BackgroundDriver {
         var t = BackgroundDriver.Transports.live
         t.isWindowServerVisible = { _ in true }
         t.skyLightAvailable = { skyLightAvailable }
-        t.skyLightPost = { _, _ in
-            spy.skyLight += 1; return skyLightAccepted
+        t.skyLightPost = { event, _ in
+            spy.skyLight += 1; spy.events.append(event); return skyLightAccepted
         }
-        t.postToPid = { _, _ in spy.postToPid += 1 }
-        t.hidPost = { _ in spy.hid += 1 }
+        t.postToPid = { event, _ in spy.postToPid += 1; spy.events.append(event) }
+        t.hidPost = { event in spy.hid += 1; spy.events.append(event) }
         t.isChromium = { _ in chromium }
-        t.focusWithoutRaise = { _ in }
+        t.focusWithoutRaise = { _, window in spy.focusedWindows.append(window) }
+        t.windowAt = { _, _ in windowUnderPoint }
+        t.pause = { _ in }
         return BackgroundDriver(transports: t)
     }
 
@@ -179,5 +184,93 @@ final class BackgroundDriverRouteTests: XCTestCase {
         XCTAssertEqual(spy.hid, 4)
         XCTAssertEqual(spy.postToPid, 0)
         XCTAssertEqual(driver.lastRoute, .hidFallback)
+    }
+
+    // MARK: - Window binding
+
+    private func boundWindow(_ event: CGEvent) -> Int64 {
+        event.getIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent)
+    }
+
+    func testClickBindsEventsToTheElementWindowAndFocusesIt() {
+        let spy = TransportSpy()
+        let driver = makeDriver(spy: spy, skyLightAvailable: true, windowUnderPoint: 99)
+
+        let result = driver.click(pid: 4242, point: CGPoint(x: 10, y: 10), windowId: 7)
+
+        XCTAssertTrue(result.success)
+        XCTAssertEqual(spy.events.count, 2)
+        XCTAssertEqual(spy.events.map(boundWindow), [7, 7], "an explicit window wins over the point lookup")
+        XCTAssertEqual(
+            spy.events.map { $0.getIntegerValueField(.mouseEventWindowUnderMousePointer) },
+            [7, 7]
+        )
+        XCTAssertEqual(spy.focusedWindows, [7])
+        XCTAssertTrue(spy.events.allSatisfy(ComputerUseEventTag.isSynthesized))
+    }
+
+    func testClickWithoutWindowFallsBackToTheWindowUnderThePoint() {
+        let spy = TransportSpy()
+        let driver = makeDriver(spy: spy, skyLightAvailable: true, windowUnderPoint: 99)
+
+        _ = driver.click(pid: 4242, point: CGPoint(x: 10, y: 10))
+
+        XCTAssertEqual(spy.events.map(boundWindow), [99, 99])
+        XCTAssertEqual(spy.postToPid, 2, "binding does not add a transport")
+    }
+
+    func testChromiumDecoyClickIsNotBoundToTheWindow() {
+        let spy = TransportSpy()
+        let driver = makeDriver(spy: spy, skyLightAvailable: true, chromium: true)
+
+        _ = driver.click(pid: 4242, point: CGPoint(x: 10, y: 10), windowId: 7)
+
+        XCTAssertEqual(spy.skyLight, 4)
+        XCTAssertEqual(spy.events.map(boundWindow), [0, 0, 7, 7], "the off-screen decoy must stay unbound")
+    }
+
+    func testScrollAtPointIsPlacedThere() {
+        let spy = TransportSpy()
+        let driver = makeDriver(spy: spy, skyLightAvailable: true)
+
+        let result = driver.scroll(pid: 4242, direction: .down, amount: 3, at: CGPoint(x: 300, y: 200))
+
+        XCTAssertTrue(result.success)
+        XCTAssertEqual(spy.postToPid, 1)
+        XCTAssertEqual(spy.events.first?.location, CGPoint(x: 300, y: 200))
+    }
+
+    // MARK: - Drag
+
+    func testCocoaDragUsesPerPidPathWithoutHid() {
+        let spy = TransportSpy()
+        let driver = makeDriver(spy: spy, skyLightAvailable: true, windowUnderPoint: 5)
+        let start = CGPoint(x: 0, y: 0)
+        let end = CGPoint(x: 200, y: 0)
+
+        let result = driver.drag(pid: 4242, from: start, to: end)
+
+        XCTAssertTrue(result.success)
+        let path = BackgroundDriver.dragPath(from: start, to: end)
+        XCTAssertEqual(spy.hid, 0, "drag no longer warps the user's cursor")
+        XCTAssertEqual(spy.skyLight, 0)
+        XCTAssertEqual(spy.postToPid, path.count + 2, "down + one event per path point + up")
+        XCTAssertEqual(spy.events.first?.type, .leftMouseDown)
+        XCTAssertEqual(spy.events.last?.type, .leftMouseUp)
+        XCTAssertEqual(spy.events.last?.location, end)
+        XCTAssertTrue(spy.events.dropFirst().dropLast().allSatisfy { $0.type == .leftMouseDragged })
+        XCTAssertTrue(spy.events.allSatisfy { boundWindow($0) == 5 })
+        XCTAssertEqual(driver.lastRoute, .perPid)
+    }
+
+    func testDragPathIsMonotonicAndEndsAtTheDestination() {
+        let start = CGPoint(x: 10, y: 10)
+        let end = CGPoint(x: 410, y: 310)
+        let path = BackgroundDriver.dragPath(from: start, to: end)
+        XCTAssertGreaterThanOrEqual(path.count, 4)
+        XCTAssertLessThanOrEqual(path.count, 30)
+        XCTAssertEqual(path.last, end)
+        XCTAssertEqual(path, path.sorted { $0.x < $1.x }, "points advance toward the destination")
+        XCTAssertEqual(BackgroundDriver.dragPath(from: start, to: start).count, 4, "a zero-length drag still moves")
     }
 }

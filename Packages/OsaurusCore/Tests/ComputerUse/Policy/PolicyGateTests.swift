@@ -177,6 +177,18 @@ final class AutonomyPolicyTests: XCTestCase {
         let decoded = try JSONDecoder().decode(AutonomyPolicy.self, from: data)
         XCTAssertEqual(decoded, policy)
     }
+
+    func testLockAppWhileWorkingDefaultsOnAndRoundTrips() throws {
+        let legacy = try JSONDecoder().decode(
+            AutonomyPolicy.self,
+            from: Data(#"{"globalPreset":"balanced","perApp":{}}"#.utf8)
+        )
+        XCTAssertTrue(legacy.lockAppWhileWorking, "policies saved before the setting existed lock by default")
+        var policy = AutonomyPolicy()
+        policy.lockAppWhileWorking = false
+        let decoded = try JSONDecoder().decode(AutonomyPolicy.self, from: JSONEncoder().encode(policy))
+        XCTAssertFalse(decoded.lockAppWhileWorking)
+    }
 }
 
 // MARK: - Gate

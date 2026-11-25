@@ -104,7 +104,7 @@ public protocol SubagentKind: Sendable {
 /// A local-model kind whose residency decision can become stale while it waits
 /// for process-wide admission.
 ///
-/// Text, Browser, Computer Use and AppleScript share this scheduling contract.
+/// Text, Browser and Computer Use share this scheduling contract.
 /// Keeping it separate from `SubagentKind` avoids imposing text-model residency
 /// policy on media kinds whose detached producers own a different lifetime.
 protocol SubagentPostAdmissionResidencyPlanning: SubagentKind {

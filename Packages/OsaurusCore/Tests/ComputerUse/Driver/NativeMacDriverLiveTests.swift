@@ -50,7 +50,7 @@ final class NativeMacDriverLiveTests: XCTestCase {
     /// perception the whole loop is built on.
     func testCaptureSerializesTextEditAX() async throws {
         try requireLiveInput()
-        let pid = try await launchApp(bundleId: "com.apple.TextEdit", appName: "TextEdit")
+        let pid = try await launchTextEditDocument()
         defer { terminate(pid) }
 
         let snapshot = await driver.capture(pid: pid, tier: .ax)
@@ -71,7 +71,7 @@ final class NativeMacDriverLiveTests: XCTestCase {
     /// actuation.
     func testElementTypeInsertsTextExactlyOnce() async throws {
         try requireLiveInput()
-        let pid = try await launchApp(bundleId: "com.apple.TextEdit", appName: "TextEdit")
+        let pid = try await launchTextEditDocument()
         defer { terminate(pid) }
 
         let snapshot = await driver.capture(pid: pid, tier: .ax)
@@ -85,11 +85,10 @@ final class NativeMacDriverLiveTests: XCTestCase {
             .typeText(id: field.id, pid: pid, text: phrase, replace: true)
         )
         XCTAssertTrue(result.success, "type failed: \(result.error ?? "nil")")
-        XCTAssertEqual(
-            result.routeUsed,
-            .skyLight,
-            "pid-addressed type should take the SkyLight route, not the HID fallback"
-        )
+        // TextEdit's text view takes the AX caret insert, which posts no event
+        // (no route). A Chromium target or a non-insertable field would take
+        // SkyLight; never the HID fallback.
+        XCTAssertNil(result.routeUsed, "an AppKit text view should take the AX caret insert, not synthesized keys")
 
         let value = try await pollText(pid: pid, timeout: 2.0)
         // The pre-fix bug produced "hheelllloo  wwoorrlldd"; a length mismatch is
@@ -110,7 +109,7 @@ final class NativeMacDriverLiveTests: XCTestCase {
     /// with NO element id. The text must still land in the focused field.
     func testCoordinateClickFocusesThenTypes() async throws {
         try requireLiveInput()
-        let pid = try await launchApp(bundleId: "com.apple.TextEdit", appName: "TextEdit")
+        let pid = try await launchTextEditDocument()
         defer { terminate(pid) }
 
         let snapshot = await driver.capture(pid: pid, tier: .ax)
@@ -131,9 +130,14 @@ final class NativeMacDriverLiveTests: XCTestCase {
         XCTAssertTrue(typed.success, "type-after-coordinate-focus failed: \(typed.error ?? "nil")")
 
         let value = try await pollText(pid: pid, timeout: 2.0, contains: "coordinate")
+        let after = await driver.capture(pid: pid, tier: .ax)
         XCTAssertTrue(
             value.lowercased().contains("coordinate"),
-            "expected typed text in the field after coordinate focus; got '\(value)'"
+            "expected typed text in the field after coordinate focus; got '\(value)'. Clicked \(field.role) "
+                + "\"\(field.label ?? "")\" at (\(cx), \(cy)) in windows "
+                + "\(snapshot.windows.map { "\($0.title ?? "?")@\($0.x),\($0.y) \($0.w)x\($0.h)" }); "
+                + "after: focused \(after.elements.first { $0.focused }.map { "\($0.role) \"\($0.label ?? "")\"" } ?? "none"), "
+                + "texts \(after.elements.filter { $0.role.contains("text") }.map { "\($0.role)=\($0.value ?? "")" })"
         )
     }
 
@@ -236,12 +240,29 @@ final class NativeMacDriverLiveTests: XCTestCase {
         throw XCTSkip("\(appName) did not come up within the deadline.")
     }
 
+    /// TextEdit opened on an empty temp document. Launched bare, it can show
+    /// the Open panel instead of a document window.
+    private func launchTextEditDocument() async throws -> pid_t {
+        let path = "/tmp/cu_native_live_\(getpid())_\(UUID().uuidString.prefix(8)).txt"
+        FileManager.default.createFile(atPath: path, contents: Data(), attributes: nil)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: path) }
+        return try await launchApp(bundleId: "com.apple.TextEdit", appName: "TextEdit", openArgs: [path])
+    }
+
     private func isInstalled(bundleId: String) -> Bool {
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) != nil
     }
 
+    /// Waits for the quit (forcing it past a save prompt), so the next test's
+    /// launch doesn't pick up the instance still on its way out.
     private func terminate(_ pid: pid_t) {
-        NSRunningApplication(processIdentifier: pid)?.terminate()
+        guard let app = NSRunningApplication(processIdentifier: pid) else { return }
+        app.terminate()
+        let deadline = Date().addingTimeInterval(5)
+        while !app.isTerminated, Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
+        if !app.isTerminated { app.forceTerminate() }
+        let gone = Date().addingTimeInterval(3)
+        while !app.isTerminated, Date() < gone { Thread.sleep(forTimeInterval: 0.1) }
     }
 
     /// First editable text element in a snapshot (the document/text-entry node).

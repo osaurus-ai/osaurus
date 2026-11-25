@@ -968,6 +968,10 @@ final class ComputerUseEvidencePackTests: XCTestCase {
                 return "pressKey:\((modifiers + [key]).joined(separator: "+"))"
             case .clearField(let id):
                 return "clear:\(id)"
+            case .adjust(let id, let increment, let steps):
+                return "adjust:\(id):\(increment ? "up" : "down"):\(steps)"
+            case .selectOption(let id, let option):
+                return "select:\(id):length=\(option.count)"
             }
         }
     }
@@ -976,14 +980,13 @@ final class ComputerUseEvidencePackTests: XCTestCase {
         snapshot.elements.first(where: { $0.id == id })?.value
     }
 
-    /// An explicit `open` verb must launch the app FOREGROUND (`background: false`).
-    /// A background launch sets `config.hides = true`; a hidden Cocoa app exposes no
-    /// AX windows, so the readiness poll times out, the verify capture is empty, and
-    /// the model reports the open as failed even though the app did launch. Regression
-    /// guard for the 0.22.3 report: "launches the app but never brings the window to
-    /// the foreground, then incorrectly reports the task as failed."
+    /// The `open` verb launches behind the user's work (`background: true`), and
+    /// no launch is ever hidden: the 0.22.3 report ("launches the app but never
+    /// brings the window to the foreground, then incorrectly reports the task as
+    /// failed") came from `config.hides = true`, under which a Cocoa app exposes
+    /// no AX windows and the verify capture is empty.
     @MainActor
-    func testOpenVerbLaunchesForegroundSoTheWindowIsVisibleAndVerifiable() async {
+    func testOpenVerbLaunchesBehindWithoutHidingSoTheWindowIsVerifiable() async {
         let pid: Int32 = 7420
         let window = CUWindowSummary(id: 1, title: "Untitled", focused: true, x: 0, y: 0, w: 600, h: 400)
         let snapshot = CUSnapshot(
@@ -1028,13 +1031,25 @@ final class ComputerUseEvidencePackTests: XCTestCase {
         XCTAssertEqual(openCalls.first?.identifier, "TextEdit")
         XCTAssertEqual(
             openCalls.first?.background,
-            false,
-            """
-            The `open` verb launched the app in background mode. Background launching sets \
-            config.hides = true, so the app never comes to the foreground and exposes no AX \
-            windows — the model then reports a successful launch as a failure. An explicit \
-            open must foreground the app.
-            """)
+            true,
+            "The `open` verb must not take the front from the user's app."
+        )
+        for background in [true, false] {
+            let config = launchConfiguration(background: background)
+            XCTAssertFalse(config.hides, "a hidden launch exposes no AX windows (background: \(background))")
+            XCTAssertEqual(config.activates, !background)
+        }
+    }
+
+    func testBackgroundOpenHandsFocusBackOnlyWhenTheTargetTookIt() {
+        XCTAssertTrue(shouldHandFocusBack(target: 2, frontmost: 2, previous: 1))
+        XCTAssertFalse(shouldHandFocusBack(target: 2, frontmost: 1, previous: 1), "the user's app is still in front")
+        XCTAssertFalse(shouldHandFocusBack(target: 2, frontmost: 2, previous: 2), "the target was already in front")
+        XCTAssertFalse(shouldHandFocusBack(target: 2, frontmost: 2, previous: nil))
+        XCTAssertFalse(
+            shouldHandFocusBack(target: 2, frontmost: 3, previous: 1),
+            "the user moved on to a third app; leave it"
+        )
     }
 }
 

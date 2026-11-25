@@ -25,6 +25,9 @@ private func axElement(_ ref: CFTypeRef?) -> AXUIElement? {
     return (ref as! AXUIElement)
 }
 
+/// `axElement(_:)` for scopes where a property of that name shadows it.
+private func castAXElement(_ ref: CFTypeRef?) -> AXUIElement? { axElement(ref) }
+
 private func axValue(_ ref: CFTypeRef?) -> AXValue? {
     guard let ref, CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
     // swiftlint:disable:next force_cast
@@ -143,8 +146,32 @@ final class CachedElement: @unchecked Sendable {
         return CGRect(origin: position, size: size)
     }
 
+    /// The WindowServer window holding this element: its AX window resolved
+    /// through `_AXUIElementGetWindow`, else the app's frontmost window under
+    /// `point`.
+    func windowNumber(near point: CGPoint?) -> CGWindowID? {
+        var windowRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(axElement, kAXWindowAttribute as CFString, &windowRef) == .success,
+            let window = castAXElement(windowRef),
+            let id = SkyLightBridge.windowId(ofWindow: window)
+        {
+            return id
+        }
+        if role == kAXWindowRole as String, let id = SkyLightBridge.windowId(ofWindow: axElement) {
+            return id
+        }
+        return point.flatMap { WindowBinding.window(ownedBy: pid, containing: $0) }
+    }
+
     func supportsAction(_ action: String) -> Bool {
         return supportedActions.contains(action)
+    }
+
+    /// Bring the element into its scroll view's visible area before a
+    /// coordinate action at its frame. No-op where the action isn't offered.
+    func scrollToVisibleIfSupported() {
+        guard supportsAction("AXScrollToVisible") else { return }
+        _ = performAction("AXScrollToVisible")
     }
 
     func performAction(_ action: String) -> Bool {
@@ -1318,9 +1345,11 @@ struct MacAppError: Error, Sendable {
 
 /// Launch (if needed) and prepare an application for backgrounded driving.
 ///
-/// The default mode is `background: true` — we never call `activate()`,
-/// never set `config.activates = true`, and never bring the app's window
-/// across Spaces. The user's frontmost app and cursor are untouched.
+/// The default mode is `background: true`: we never call `activate()` and
+/// launch with `config.activates = false`, but never hidden (a hidden Cocoa
+/// app exposes no AX windows, so nothing could be driven). Apps that
+/// activate themselves on launch are handed back: the app the user had in
+/// front is reactivated once the target is ready.
 ///
 /// Pass `background: false` only when the agent genuinely needs the user
 /// to look at the target window (e.g. an interactive demo capture).
@@ -1398,6 +1427,9 @@ func openApplication(
         return await openFolderInFinder(folder)
     }
     let lowerId = identifier.lowercased()
+    let previousFront: pid_t? = await MainActor.run {
+        NSWorkspace.shared.frontmostApplication?.processIdentifier
+    }
 
     // Phase 1 — AppKit on the main actor: match an already-running app and
     // activate it for foreground opens. Only Sendable fields cross back.
@@ -1426,6 +1458,7 @@ func openApplication(
             AccessibilityManager.shared.prepareForAccessibility(pid: pid)
         }
         let ready = await waitUntilReady(pid: pid, requireFrontmost: !background)
+        if background { await handFocusBack(from: pid, to: previousFront) }
         return .success(
             MacAppInfo(pid: pid, bundleId: info.bundleId, name: info.name, ready: ready)
         )
@@ -1445,6 +1478,7 @@ func openApplication(
             isNewLaunch: true,
             requireFrontmost: !background
         )
+        if background { await handFocusBack(from: pid, to: previousFront) }
         return .success(
             MacAppInfo(pid: pid, bundleId: info.bundleId, name: info.name, ready: ready)
         )
@@ -1452,6 +1486,27 @@ func openApplication(
         return .failure(
             MacAppError(message: "Failed to open application: \(error.localizedDescription)")
         )
+    }
+}
+
+/// Whether a background open should reactivate the user's previous app:
+/// only when the target took the front itself and someone else had it.
+func shouldHandFocusBack(target: pid_t, frontmost: pid_t?, previous: pid_t?) -> Bool {
+    guard let previous, previous != target else { return false }
+    return frontmost == target
+}
+
+/// Undo a launch-time self-activation so a background open leaves the user's
+/// app in front.
+private func handFocusBack(from target: pid_t, to previous: pid_t?) async {
+    await MainActor.run {
+        let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard shouldHandFocusBack(target: target, frontmost: frontmost, previous: previous),
+            let previous,
+            let app = NSRunningApplication(processIdentifier: previous),
+            !app.isTerminated
+        else { return }
+        _ = app.activate()
     }
 }
 
@@ -1545,6 +1600,17 @@ private func axElementHasChildren(_ element: AXUIElement) -> Bool {
     !axChildren(element).isEmpty
 }
 
+/// Background launches don't activate and should not pollute the user's
+/// recent files menu (cooperative; macOS may still ignore these on certain
+/// bundle types). No launch is ever hidden: see `openApplication`.
+func launchConfiguration(background: Bool) -> NSWorkspace.OpenConfiguration {
+    let config = NSWorkspace.OpenConfiguration()
+    config.activates = !background
+    config.addsToRecentItems = !background
+    config.hides = false
+    return config
+}
+
 /// Launch `identifier` and return its Sendable identity. Runs off the main
 /// actor: `urlForApplication` is a synchronous LaunchServices database query
 /// that can stall, and `openApplication(at:configuration:)` is the async
@@ -1553,13 +1619,7 @@ private func launchApplication(
     identifier: String,
     background: Bool
 ) async throws -> MacAppInfo {
-    let config = NSWorkspace.OpenConfiguration()
-    config.activates = !background
-    // Background launches should not pollute the user's recent files menu
-    // or pull the dock's attention. Cooperative; macOS may still ignore
-    // these on certain bundle types.
-    config.addsToRecentItems = !background
-    config.hides = background
+    let config = launchConfiguration(background: background)
 
     let workspace = NSWorkspace.shared
 

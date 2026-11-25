@@ -65,7 +65,9 @@ public struct ComputerUseEvalHarness: @unchecked Sendable {
     }
 }
 
-final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning, @unchecked Sendable {
+final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning, SubagentContextAdmission,
+    @unchecked Sendable
+{
     let capability = SubagentCapabilityRegistry.computerUse
 
     private let goal: String
@@ -89,6 +91,12 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
     /// override, or the same local model already resident).
     private var residencyPlan: ResidencyPlan = .none
     private var invokingParentModelName: String?
+    /// The history-window ceiling the loop enforces and admission prices:
+    /// the resolved model window, or less when admission fitted it to the
+    /// memory left. `nil` until `resolveModel` (and for evals).
+    private var contextPositions: Int?
+    private(set) var minimumAdmissionContextPositions: Int?
+    private(set) var admissionContextWasMemoryFitted = false
 
     /// Funnel attribution for `ComputerUseTool`. `loopStarted` flips the
     /// moment `run` hands control to `ComputerUseLoop` (from then on the run
@@ -129,7 +137,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
         // off the Default agent or turning Tools back on.
         try await validateAuthority(scope)
         // One shared path for precedence (per-agent `computer_use` override →
-        // the parent agent's model), the availability fallback, and the live
+        // Model Defaults → Computer Use Model → the parent agent's model), the
+        // fail-closed check on an assigned model, and the live
         // residency decision (reject-before-evict; a remote override / the
         // inherited model needs no swap). The chat model is already idle here —
         // the parent turn is awaiting this tool result. `evalModel` is nil: the
@@ -149,6 +158,11 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
                     + "make room).",
                 unavailableMessage:
                     "No model is selected for this agent, so Computer Use can't run. Pick a model first.",
+                assignedUnavailableMessage: { id in
+                    "Computer Use is set to use \(id), which isn't installed or connected. Download it in "
+                        + "Local Models → Computer Use, reconnect its provider, or choose another model in "
+                        + "Model Defaults → Computer Use Model or this agent's Computer Use settings."
+                },
                 defaultModel: { scope.parentModelName ?? AgentManager.shared.effectiveModel(for: agentId) }
             )
         } catch SubagentError.denied(let message) {
@@ -167,13 +181,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             () -> (ceiling: AutonomyCeiling?, policy: AutonomyPolicy, vision: VisionContext) in
             let ceiling = AgentManager.shared.agent(for: agentId)?.settings.computerUseCeiling
             let policy = ComputerUsePolicyStore.load()
-            let vision = VisionContext(
-                modelAcceptsImages: ComputerUseTool.modelAcceptsImages(modelId),
-                modelIsLocal: ModelManager.findInstalledModel(named: modelId) != nil,
-                cloudConsent: CloudVisionConsent.shared.isGranted,
-                cloudScrubMode: CloudVisionConsent.shared.scrubMode
-            )
-            return (ceiling, policy, vision)
+            return (ceiling, policy, VisionContext.resolved(for: modelId))
         }
         self.config = RunConfig(
             ceiling: snapshot.ceiling,
@@ -185,7 +193,31 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             )
         )
         self.residencyPlan = resolved.decision.plan
+        let window = await AgentLoopBudget.resolveContextWindow(modelId: modelId)
+        contextPositions = window
+        minimumAdmissionContextPositions = min(
+            window,
+            ComputerUseLoop.minimumStepPositions(
+                goal: goal, policySummary: config?.policySummary ?? "", vision: snapshot.vision
+            )
+        )
+        admissionContextWasMemoryFitted = false
         return ResolvedModel(name: modelId, id: resolved.installedModelID, isLocal: resolved.decision.isLocal)
+    }
+
+    func admissionRequestEstimate() -> SubagentChildRequestEstimate? {
+        contextPositions.map {
+            SubagentChildRequestEstimate(seedCharacters: nil, maxOutputTokens: nil, enforcedPositionCeiling: $0)
+        }
+    }
+
+    func tightenAdmissionContextPositions(to limit: Int) -> Bool {
+        guard let current = contextPositions, let minimum = minimumAdmissionContextPositions,
+            limit >= minimum, limit < current
+        else { return false }
+        contextPositions = limit
+        admissionContextWasMemoryFitted = true
+        return true
     }
 
     func refreshedResidencyPlanAfterAdmission(for resolved: ResolvedModel) async throws -> ResidencyPlan {
@@ -301,6 +333,13 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             }
         }
 
+        var limits = limits
+        limits.contextPositions = contextPositions
+        let locksTarget = config.policy.lockAppWhileWorking
+        let takeover = await MainActor.run {
+            TakeoverController(locksTarget: locksTarget, onStop: { interrupt.interrupt() })
+        }
+
         let result = await ComputerUseLoop.run(
             goal: goal,
             modelId: resolved.name,
@@ -330,7 +369,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             vision: config.vision,
             sessionId: scope.sessionId,
             enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
-            reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name)
+            reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
+            presenter: TakeoverPresenter(controller: takeover)
         )
 
         await MainActor.run {

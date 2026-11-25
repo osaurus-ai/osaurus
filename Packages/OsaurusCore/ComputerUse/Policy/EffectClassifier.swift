@@ -56,8 +56,14 @@ public enum EffectClassifier {
         // Target text = what the control IS (label + roleDescription + value +
         // the model's `describe`), excluding the free-text rationale (`note`) so
         // an icon-only control with a descriptive note isn't treated as labeled.
+        //
+        // A `point` target is identified only by what's under it: the model's
+        // `describe` is unverified there and must not make an unlabeled hit
+        // look labeled. A `select` also carries the option it picks.
+        let describeSignal = action.target?.point == nil ? action.target?.describe : nil
+        let optionSignal = action.verb == .select ? action.option : nil
         let targetText =
-            [resolvedLabel, resolvedRoleDescription, valueSignal, action.target?.describe]
+            [resolvedLabel, resolvedRoleDescription, valueSignal, describeSignal, optionSignal]
             .compactMap { $0 }
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespaces)
@@ -108,7 +114,7 @@ public enum EffectClassifier {
         //    target exposes no readable text — an unidentifiable hit (empty role)
         //    OR an icon-only button (a known control role with no label/value/
         //    description) — could do anything, so confirm it rather than auto-run.
-        if action.verb == .click || action.verb == .doubleClick || action.verb == .rightClick {
+        if [.click, .doubleClick, .rightClick, .select].contains(action.verb) {
             let isControl = role.isEmpty || Self.actionableControlRoles.contains(role)
             if targetText.isEmpty, isControl {
                 effect = EffectClass.max(effect, .edit)

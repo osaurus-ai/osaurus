@@ -27,8 +27,8 @@ import Foundation
 /// the registry entry are literally one object — adding a kind is "add one
 /// descriptor + its kind + its thin tool".
 public struct SubagentCapability: Sendable {
-    /// How a kind sources the model it runs — the local-vs-remote axis a future
-    /// dedicated model-backed kind (e.g. an AppleScript generator) slots into.
+    /// How a kind sources the model it runs — the local-vs-remote axis a
+    /// dedicated model-backed kind slots into.
     /// Documents whether a kind needs its own default-model picker + residency
     /// handoff (`dedicatedConfigured` / `agent`) or simply reuses the parent
     /// agent's model (`inheritsParent`).
@@ -54,7 +54,6 @@ public struct SubagentCapability: Sendable {
         case spawn
         case image
         case video
-        case appleScript
 
         /// The resolved per-agent flag for the `resolveTools` strip.
         public func enabled(in snapshot: AgentConfigSnapshot) -> Bool {
@@ -64,7 +63,6 @@ public struct SubagentCapability: Sendable {
             case .spawn: return snapshot.spawnDelegationEnabled
             case .image: return snapshot.imageEnabled
             case .video: return snapshot.videoEnabled
-            case .appleScript: return snapshot.appleScriptEnabled
             }
         }
 
@@ -76,7 +74,6 @@ public struct SubagentCapability: Sendable {
             case .spawn: return settings.spawnDelegationEnabled
             case .image: return settings.imageEnabled
             case .video: return settings.videoEnabled
-            case .appleScript: return settings.appleScriptEnabled
             }
         }
 
@@ -88,7 +85,6 @@ public struct SubagentCapability: Sendable {
             case .spawn: settings.spawnDelegationEnabled = value
             case .image: settings.imageEnabled = value
             case .video: settings.videoEnabled = value
-            case .appleScript: settings.appleScriptEnabled = value
             }
         }
     }
@@ -132,6 +128,10 @@ public struct SubagentCapability: Sendable {
     /// the override row for any capability with this set, so a new chat-driven
     /// kind gets a picker by only flipping this flag.
     public let supportsModelOverride: Bool
+    /// Whether Model Defaults carries an app-wide model for this kind, stored in
+    /// `SubagentConfiguration.subagentModelOverrides[id]`. A custom agent with no
+    /// override of its own then uses it before falling back to `modelSource`.
+    public let hasGlobalModelDefault: Bool
     /// Human label for the live-feed header + collapsed tool chip.
     public let displayLabel: String
     /// SF Symbol for the live feed + tool chip.
@@ -155,6 +155,7 @@ public struct SubagentCapability: Sendable {
         perAgentFlag: PerAgentFlag? = nil,
         modelSource: ModelSource = .inheritsParent,
         supportsModelOverride: Bool = false,
+        hasGlobalModelDefault: Bool = false,
         displayLabel: String? = nil,
         iconName: String = "sparkles",
         guidance: String? = nil,
@@ -168,6 +169,7 @@ public struct SubagentCapability: Sendable {
         self.perAgentFlag = perAgentFlag
         self.modelSource = modelSource
         self.supportsModelOverride = supportsModelOverride
+        self.hasGlobalModelDefault = hasGlobalModelDefault
         self.displayLabel = displayLabel ?? id
         self.iconName = iconName
         self.guidance = guidance
@@ -189,6 +191,7 @@ public enum SubagentCapabilityRegistry {
         perAgentFlag: .computerUse,
         modelSource: .inheritsParent,
         supportsModelOverride: true,
+        hasGlobalModelDefault: true,
         displayLabel: "Computer Use",
         iconName: "cursorarrow.rays",
         guidance: SystemPromptTemplates.computerUseGuidance,
@@ -275,40 +278,15 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Video Generation"
     )
 
-    /// The AppleScript family — two sibling tools, one shared capability + one
-    /// on-device model (the curated `AppleScriptModelCatalog`): `applescript`
-    /// (state-changing automation, the user's confirm gate) and `mac_query`
-    /// (read-only info retrieval, auto-run reads / block writes). `applescript`
-    /// is primary, so the guidance + gating key off it; both gate together (one
-    /// per-agent toggle + the installed-model check), like the spawn pair.
-    /// `supportsModelOverride = false` like `image`: AppleScript owns its own
-    /// model system (per-agent / global `appleScriptModelId` + first-installed
-    /// fallback) and renders its own picker + execution-mode control instead of
-    /// the shared override row.
-    public static let appleScript = SubagentCapability(
-        id: "applescript",
-        toolNames: [AppleScriptTool.toolName, MacQueryTool.toolName],
-        gate: .delegation,
-        perAgentFlag: .appleScript,
-        modelSource: .dedicatedConfigured,
-        supportsModelOverride: false,
-        displayLabel: "AppleScript",
-        iconName: "applescript",
-        guidance: SystemPromptTemplates.appleScriptGuidance,
-        guidanceCompact: SystemPromptTemplates.appleScriptGuidanceCompact,
-        guidanceSectionId: "appleScript",
-        guidanceLabelKey: "AppleScript"
-    )
-
     /// Every capability, in guidance-render order (computer_use, then
-    /// browser_use, then image, then applescript; spawn renders its own
-    /// dynamic guidance block in the composer).
+    /// browser_use, then image, then video; spawn renders its own dynamic
+    /// guidance block in the composer).
     public static let all: [SubagentCapability] = [
-        computerUse, browserUse, spawn, image, video, appleScript,
+        computerUse, browserUse, spawn, image, video,
     ]
 
-    /// The delegation-gated capabilities (spawn + image + applescript).
-    public static let delegationFamily: [SubagentCapability] = [spawn, image, video, appleScript]
+    /// The delegation-gated capabilities (spawn + image + video).
+    public static let delegationFamily: [SubagentCapability] = [spawn, image, video]
 
     /// The Orchestrator's settings handoff. Labeled for the user ("Settings"),
     /// never with the hidden agent's name. Not in `all`: it has no per-agent
@@ -348,8 +326,8 @@ public enum SubagentCapabilityRegistry {
     public static let handoffs: [SubagentCapability] =
         [configuratorHandoff, architectHandoff] + BuiltInWorker.allCases.map(worker)
 
-    /// Distinct per-agent toggle flags, in registry order (computer_use, spawn,
-    /// image, applescript). One entry per *toggle* (deduped, so a future kind
+    /// Distinct per-agent toggle flags, in registry order (computer_use,
+    /// browser_use, spawn, image, video). One entry per *toggle* (deduped, so a future kind
     /// that shares a flag would collapse) — the AgentsView Subagents tab renders
     /// exactly one card per flag, driven by the registry instead of hand-built
     /// groups.
@@ -499,18 +477,6 @@ public enum SubagentToolVisibility {
     /// generates video itself — it delegates to an agent that has it — so
     /// the legacy `delegation.video_enabled` switch is ignored here.
     static func videoAvailable(
-        isDefault: Bool,
-        config: SubagentConfiguration,
-        perAgentEnabled: Bool
-    ) -> Bool {
-        isDefault ? false : perAgentEnabled
-    }
-
-    /// Whether `applescript` is available for an agent. Only a custom agent's
-    /// own toggle can enable it; the Orchestrator never runs AppleScript
-    /// itself. The installed-model gate is applied separately
-    /// (`hasReadyAppleScriptModel` in `visibleDelegationToolNames`).
-    static func appleScriptAvailable(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool
@@ -690,8 +656,7 @@ public enum SubagentToolVisibility {
         snapshot: AgentConfigSnapshot,
         config: SubagentConfiguration,
         hasReadyImageModel: Bool,
-        hasReadyVideoModel: Bool = false,
-        hasReadyAppleScriptModel: Bool = false
+        hasReadyVideoModel: Bool = false
     ) -> Set<String> {
         let isDefault = (agentId == Agent.defaultId)
         var names = Set<String>()
@@ -726,18 +691,6 @@ public enum SubagentToolVisibility {
             )
         {
             names.formUnion(SubagentCapabilityRegistry.video.toolNames)
-        }
-        // AppleScript gates like image: the per-agent / global switch can be ON,
-        // but the tool is withheld until a curated AppleScript model is installed
-        // (so the model is never offered a capability the runtime can't satisfy).
-        if hasReadyAppleScriptModel,
-            appleScriptAvailable(
-                isDefault: isDefault,
-                config: config,
-                perAgentEnabled: snapshot.appleScriptEnabled
-            )
-        {
-            names.formUnion(SubagentCapabilityRegistry.appleScript.toolNames)
         }
         return names
     }
@@ -782,54 +735,29 @@ public enum SubagentToolVisibility {
         return imageToVideo ? settings?.imageToVideoTarget : settings?.textToVideoTarget
     }
 
-    /// The configured AppleScript model id for an agent. Default / main chat
-    /// uses the global default. A custom agent's explicit model wins, while
-    /// "Choose automatically" inherits that same visible global default before
-    /// falling through to the catalog's first-installed model. This matches the
-    /// Settings contract and keeps an unconfigured custom agent from silently
-    /// loading a different helper than the user selected globally.
-    static func effectiveAppleScriptModel(
-        isDefault: Bool,
-        config: SubagentConfiguration,
-        settings: AgentSettings?
-    ) -> String? {
-        func normalized(_ value: String?) -> String? {
-            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return (trimmed?.isEmpty ?? true) ? nil : trimmed
-        }
-        if isDefault { return normalized(config.defaultAppleScriptModelId) }
-        return normalized(settings?.appleScriptModelId)
-            ?? normalized(config.defaultAppleScriptModelId)
-    }
-
-    /// The AppleScript execution mode for an agent — Default / main chat uses
-    /// the global default; a custom agent uses its own. Defaults to the safe
-    /// `confirmEach` when unset.
-    static func effectiveAppleScriptExecutionMode(
-        isDefault: Bool,
-        config: SubagentConfiguration,
-        settings: AgentSettings?
-    ) -> AppleScriptExecutionMode {
-        if isDefault { return config.defaultAppleScriptExecutionMode }
-        return settings?.appleScriptExecutionMode ?? .default
-    }
-
     /// The effective per-run model override for a subagent capability, or `nil`
     /// to inherit the kind's default model source (the parent agent's model for
     /// computer_use; the chosen agent's model for spawn). The
-    /// Default / main chat reads the global override map; a custom agent its own.
-    /// A blank stored value resolves to `nil` (inherit). This is the standard
-    /// model-pick axis every chat-driven kind reads the same way.
+    /// Default / main chat reads the global override map; a custom agent its own,
+    /// then the global value when the kind `hasGlobalModelDefault` (Model
+    /// Defaults → Computer Use Model). A blank stored value resolves to `nil`
+    /// (inherit). This is the standard model-pick axis every chat-driven kind
+    /// reads the same way.
     static func effectiveSubagentModel(
         capabilityId: String,
         isDefault: Bool,
         config: SubagentConfiguration,
         settings: AgentSettings?
     ) -> String? {
-        let raw =
-            isDefault
-            ? config.subagentModelOverrides[capabilityId]
-            : settings?.subagentModelOverrides[capabilityId]
+        let global = trimmedModelId(config.subagentModelOverrides[capabilityId])
+        if isDefault { return global }
+        if let own = trimmedModelId(settings?.subagentModelOverrides[capabilityId]) { return own }
+        let inheritsGlobal =
+            SubagentCapabilityRegistry.capability(forKindId: capabilityId)?.hasGlobalModelDefault ?? false
+        return inheritsGlobal ? global : nil
+    }
+
+    private static func trimmedModelId(_ raw: String?) -> String? {
         let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (trimmed?.isEmpty ?? true) ? nil : trimmed
     }

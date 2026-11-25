@@ -208,9 +208,49 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         let goal = modelGoal.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = userRequest?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !request.isEmpty else { return goal }
-        return AppleScriptToolDispatch.authoritativeReplacementTask(
+        return ComputerUseGoalAuthority.authoritativeReplacementTask(
             parentTask: goal,
             latestUserTask: request
+        )
+    }
+}
+
+extension VisionContext {
+    /// The vision posture of a run on `modelId`: image support, local vs
+    /// remote, the user's cloud-vision consent and scrub mode, and for a
+    /// local bundle the frame budget from its preprocessor config plus its
+    /// grounding profile (or the calibration it still needs).
+    @MainActor
+    public static func resolved(for modelId: String) -> VisionContext {
+        let acceptsImages = ComputerUseTool.modelAcceptsImages(modelId)
+        guard let localModel = ModelManager.findInstalledMLXModel(named: modelId) else {
+            return VisionContext(
+                modelAcceptsImages: acceptsImages,
+                modelIsLocal: false,
+                cloudConsent: CloudVisionConsent.shared.isGranted,
+                cloudScrubMode: CloudVisionConsent.shared.scrubMode
+            )
+        }
+        let budget = FrameBudget.resolve(modelDirectory: localModel.localDirectory)
+        var grounding: GroundingProfile? = nil
+        var pending: GroundingCalibrationKey? = nil
+        if acceptsImages {
+            switch GroundingProfileResolver.resolve(
+                modelId: modelId, directory: localModel.localDirectory, budget: budget
+            ) {
+            case .resolved(let profile): grounding = profile
+            case .marksOnly: break
+            case .needsCalibration(let key): pending = key
+            }
+        }
+        return VisionContext(
+            modelAcceptsImages: acceptsImages,
+            modelIsLocal: true,
+            cloudConsent: CloudVisionConsent.shared.isGranted,
+            cloudScrubMode: CloudVisionConsent.shared.scrubMode,
+            frameBudget: budget,
+            grounding: grounding,
+            pendingCalibration: pending
         )
     }
 }

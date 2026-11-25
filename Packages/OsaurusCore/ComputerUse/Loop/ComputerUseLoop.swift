@@ -13,6 +13,7 @@
 //  shared `SubagentFeed`.
 //
 
+import CoreGraphics
 import Foundation
 
 // MARK: - Limits + outcome
@@ -50,27 +51,47 @@ public struct RunLimits: Sendable {
     /// and confirm; a second unverified `done` ends the run as `gaveUp`.
     /// Scripted evals that only exercise gate/parse contracts may turn it off.
     public var requireVerifiedChangeForDone: Bool
+    /// History-window ceiling, in positions, that every model step is trimmed
+    /// to and checked against after tokenization. RAM admission prices this
+    /// exact number, so it can only tighten the model's resolved window.
+    /// `nil` runs on the resolved window with no position check.
+    public var contextPositions: Int?
+
+    /// Wall-clock allowance per step when the caller doesn't set one. A local
+    /// vision model spends 7–15 s per step (prompt with a screenshot, then the
+    /// action), so the run's clock grows with its step cap rather than ending
+    /// a long `max_steps` run early.
+    public static let wallClockSecondsPerStep: TimeInterval = 20
+    /// The shortest default wall clock, for small step caps.
+    public static let minimumWallClockSeconds: TimeInterval = 300
+
+    /// The default wall clock for a run capped at `maxSteps`.
+    public static func defaultWallClockSeconds(maxSteps: Int) -> TimeInterval {
+        max(minimumWallClockSeconds, Double(max(1, maxSteps)) * wallClockSecondsPerStep)
+    }
 
     public init(
         maxSteps: Int = 24,
         maxConsecutiveInvalid: Int = 3,
         maxConsecutiveReobserve: Int = 2,
         maxConsecutiveDeadEnd: Int = 3,
-        wallClockSeconds: TimeInterval = 300,
+        wallClockSeconds: TimeInterval? = nil,
         modelStepTimeoutSeconds: TimeInterval = 90,
         maxInferenceRetries: Int = 2,
         maxRepeatedActions: Int = 4,
-        requireVerifiedChangeForDone: Bool = true
+        requireVerifiedChangeForDone: Bool = true,
+        contextPositions: Int? = nil
     ) {
         self.maxSteps = max(1, maxSteps)
         self.maxConsecutiveInvalid = max(1, maxConsecutiveInvalid)
         self.maxConsecutiveReobserve = max(1, maxConsecutiveReobserve)
         self.maxConsecutiveDeadEnd = max(1, maxConsecutiveDeadEnd)
-        self.wallClockSeconds = wallClockSeconds
+        self.wallClockSeconds = wallClockSeconds ?? Self.defaultWallClockSeconds(maxSteps: maxSteps)
         self.modelStepTimeoutSeconds = modelStepTimeoutSeconds
         self.maxInferenceRetries = max(0, maxInferenceRetries)
         self.maxRepeatedActions = maxRepeatedActions
         self.requireVerifiedChangeForDone = requireVerifiedChangeForDone
+        self.contextPositions = contextPositions.map { max(1, $0) }
     }
 }
 
@@ -236,7 +257,63 @@ public enum ComputerUseLoop {
                 useModelDetection: mode == .pii
             )
         },
-        nextAction: AgentStepProvider? = nil
+        nextAction: AgentStepProvider? = nil,
+        presenter: ComputerUsePresenting = ComputerUseNoopPresenter()
+    ) async -> ComputerUseRunResult {
+        await presenter.begin(goal: goal)
+        let heartbeat = Task {
+            while !Task.isCancelled {
+                await presenter.heartbeat()
+                try? await Task.sleep(nanoseconds: UInt64(presenceHeartbeatSeconds * 1_000_000_000))
+            }
+        }
+        let result = await runCore(
+            goal: goal,
+            modelId: modelId,
+            driver: driver,
+            gate: gate,
+            feed: feed,
+            interrupt: interrupt,
+            confirm: confirm,
+            requestCloudVisionConsent: requestCloudVisionConsent,
+            confirmUnavailable: confirmUnavailable,
+            limits: limits,
+            policySummary: policySummary,
+            vision: vision,
+            sessionId: sessionId,
+            enableThinking: enableThinking,
+            reasoningEffort: reasoningEffort,
+            scrubFrame: scrubFrame,
+            nextAction: nextAction,
+            presenter: presenter
+        )
+        heartbeat.cancel()
+        await presenter.end(result.outcome)
+        return result
+    }
+
+    /// How often `run` tells the presenter the run is still alive.
+    public static let presenceHeartbeatSeconds: TimeInterval = 2
+
+    private static func runCore(
+        goal: String,
+        modelId: String,
+        driver: MacDriver,
+        gate: ComputerUseGating,
+        feed: SubagentFeed,
+        interrupt: InterruptToken,
+        confirm: @escaping @Sendable (ActionPreview) async -> Bool,
+        requestCloudVisionConsent: @escaping @Sendable () async -> CloudVisionConsentChoice,
+        confirmUnavailable: @escaping @Sendable () async -> String?,
+        limits: RunLimits,
+        policySummary: String,
+        vision: VisionContext,
+        sessionId: String,
+        enableThinking: Bool?,
+        reasoningEffort: String?,
+        scrubFrame: @escaping CloudFrameScrubOperation,
+        nextAction: AgentStepProvider?,
+        presenter: ComputerUsePresenting
     ) async -> ComputerUseRunResult {
         // The wall clock measures the RUN, not the user. Time spent inside a
         // confirm card or a cloud-vision consent prompt is credited back, so a
@@ -247,7 +324,9 @@ public enum ComputerUseLoop {
         var deadline: Date { baseDeadline.addingTimeInterval(userWaitCredit.total) }
         let timedConfirm: @Sendable (ActionPreview) async -> Bool = { preview in
             let began = Date()
+            await presenter.confirmPending(true)
             let approved = await confirm(preview)
+            await presenter.confirmPending(false)
             userWaitCredit.add(Date().timeIntervalSince(began))
             return approved
         }
@@ -273,23 +352,43 @@ public enum ComputerUseLoop {
                 privacyReviewMode: .autoScrub
             ) : nil
 
+        // A local bundle that states no grounding frame is measured once before
+        // its first run; the outcome is cached per bundle.
+        let calibrationStarted = Date()
+        let vision = await groundedVision(
+            vision,
+            engine: engine,
+            modelId: modelId,
+            sessionId: sessionId,
+            enableThinking: enableThinking,
+            reasoningEffort: reasoningEffort,
+            limits: limits,
+            interrupt: interrupt,
+            feed: feed
+        )
+        // One-time setup, not part of the task's time.
+        userWaitCredit.add(Date().timeIntervalSince(calibrationStarted))
+        let pointing = PointingSurface(vision.grounding)
+
         // Capture availability once: it gates the escalation ladder (som/vision
         // need Screen Recording) for the whole run.
         let availability = await driver.availability()
         var metrics = ComputerUseRunMetrics()
         // The tier the next AX-resolution capture runs at. Escalates when a target
-        // won't resolve; resets to ax once one does.
-        var currentTier: CaptureTier = .ax
+        // won't resolve; drops back to the resting tier once one does.
+        var currentTier = restingTier(vision: vision, availability: availability)
 
         // Conversation state.
         var messages: [ChatMessage] = [
-            ChatMessage(role: "system", content: systemPrompt(policySummary: policySummary))
+            ChatMessage(role: "system", content: systemPrompt(policySummary: policySummary, pointing: pointing))
         ]
-        let contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: modelId)
+        let resolvedWindow = await AgentLoopBudget.resolveContextWindow(modelId: modelId)
+        let positionLimit = limits.contextPositions.map { min(resolvedWindow, $0) }
+        let contextWindow = positionLimit ?? resolvedWindow
         let systemChars = messages.first?.content?.count ?? 0
-        // Base tool-schema reservation; bumped per-iteration by the in-context
-        // image's estimated tokens (the text budget doesn't count image parts).
-        let baseToolTokens = 500
+        // Bumped per-iteration by the in-context image's estimated tokens (the
+        // text budget doesn't count image parts).
+        let baseToolTokens = toolSchemaReserveTokens
         let budgetManager = AgentLoopBudget.makeBudgetManager(
             contextWindow: contextWindow,
             systemPromptChars: systemChars,
@@ -315,6 +414,9 @@ public enum ComputerUseLoop {
         var hintedApps: Set<String> = []
         // Estimated tokens of the single screenshot currently in context (0 = none).
         var imageTokensInContext = 0
+        // The screenshot the model was last shown; `target.point` and `zoom`
+        // regions are read against it in `vision.grounding`'s frame.
+        var shownFrame: CUImage? = nil
         // Cloud-vision consent state for THIS run. Seeded from the snapshot taken
         // at run start; a just-in-time prompt can flip `granted` true mid-run.
         var runConsent = RunCloudVisionConsent(granted: vision.cloudConsent, asked: false)
@@ -348,8 +450,9 @@ public enum ComputerUseLoop {
         appendAppGuidance(app: currentApp, into: &messages, hinted: &hintedApps)
         if let frame = initialFrame {
             do {
-                try await attachFrame(
+                shownFrame = try await attachFrame(
                     image: frame,
+                    snapshot: initialView.snapshot,
                     vision: vision,
                     consent: &runConsent,
                     requestConsent: timedCloudVisionConsent,
@@ -360,7 +463,7 @@ public enum ComputerUseLoop {
                     feed: feed,
                     step: 0,
                     scrubFrame: scrubFrame
-                )
+                ) ?? shownFrame
             } catch {
                 return frameScrubFailureResult(error, step: 0, completedSteps: 0, metrics: metrics, feed: feed)
             }
@@ -405,6 +508,7 @@ public enum ComputerUseLoop {
             if interrupt.isInterrupted || Task.isCancelled {
                 return terminate(.interrupted)
             }
+            await presenter.targetChanged(ComputerUsePresenceTarget(snapshot: lastSnapshot))
             if Date() >= deadline {
                 return terminate(.deadEnd(reason: "Reached the time limit before finishing."))
             }
@@ -451,7 +555,9 @@ public enum ComputerUseLoop {
                         messages: stepMessages,
                         enableThinking: enableThinking,
                         reasoningEffort: reasoningEffort,
-                        attempt: responseAttempt
+                        attempt: responseAttempt,
+                        pointing: pointing,
+                        positionLimit: positionLimit
                     )
                 }
             }
@@ -462,6 +568,7 @@ public enum ComputerUseLoop {
                     produce,
                     timeout: limits.modelStepTimeoutSeconds,
                     maxRetries: limits.maxInferenceRetries,
+                    interrupt: interrupt,
                     feed: feed,
                     step: step,
                     shouldRetry: { error in
@@ -482,7 +589,11 @@ public enum ComputerUseLoop {
                 // before the model got one chance to emit `done`.
                 parsed = nil
             } catch {
+                if interrupt.isInterrupted || Task.isCancelled { return terminate(.interrupted) }
                 return terminate(.failed(reason: error.localizedDescription))
+            }
+            if interrupt.isInterrupted || Task.isCancelled {
+                return terminate(.interrupted)
             }
 
             // The model ignored the forced tool call and emitted text. Re-ask.
@@ -723,6 +834,7 @@ public enum ComputerUseLoop {
                     advancedStep: &advancedStep,
                     abort: &openAbort,
                     metrics: &metrics,
+                    interrupt: interrupt,
                     feed: feed,
                     step: step + 1
                 ) {
@@ -740,7 +852,107 @@ public enum ComputerUseLoop {
                     return terminate(openAbort)
                 }
 
-            case .click, .doubleClick, .rightClick, .drag, .type, .setValue, .clear, .pressKey, .scroll:
+            case .screenshot, .zoom:
+                guard let pid = currentPid else {
+                    toolResult = "No app is focused yet. Use `open` to launch or switch to an app first."
+                    advancedStep = false
+                    break
+                }
+                if let unavailable = pixelsUnavailableReason(availability: availability, vision: vision) {
+                    toolResult = unavailable
+                    break
+                }
+                if action.verb == .screenshot {
+                    let tier = CaptureRouter.nextTier(
+                        current: .ax,
+                        reason: .pixelsRequested,
+                        availability: availability
+                    )
+                    metrics.raiseTier(to: tier)
+                    let p = await perceive(
+                        pid: pid,
+                        driver: driver,
+                        previous: lastView,
+                        feed: feed,
+                        step: step + 1,
+                        tier: tier
+                    )
+                    lastView = p.view
+                    lastSnapshot = p.snapshot
+                    if let image = p.snapshot?.image, image.width > 0 {
+                        pendingFrameImage = image
+                        toolResult = "Captured a screenshot; it follows this result.\n" + p.render
+                    } else {
+                        toolResult = "The screenshot capture failed.\n" + p.render
+                    }
+                    break
+                }
+                guard let area = action.region else { break }
+                switch ScreenshotPointing.screenRegion(area, in: shownFrame, grounding: vision.grounding) {
+                case .invalid(let reason):
+                    toolResult = reason
+                    advancedStep = false
+                case .screen(let region):
+                    guard let image = await driver.zoom(pid: pid, region: region), image.width > 0 else {
+                        toolResult = "Couldn't capture that region."
+                        break
+                    }
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step + 1,
+                            kind: .perceive,
+                            title: "Zoomed in",
+                            detail: "\(image.width)×\(image.height) px"
+                        )
+                    )
+                    pendingFrameImage = image
+                    toolResult =
+                        "The close-up follows. A `target.point` now refers to the close-up until the next "
+                        + "screenshot."
+                }
+
+            case .batch:
+                guard let pid = currentPid else {
+                    toolResult =
+                        "No app is focused yet. Use `open` to launch or switch to an app first, then act."
+                    advancedStep = false
+                    break
+                }
+                guard let snapshot = lastSnapshot, let view = lastView else {
+                    toolResult = "No current view. Use `observe` first."
+                    advancedStep = false
+                    break
+                }
+                let batch = await runBatch(
+                    action.actions,
+                    pid: pid,
+                    view: view,
+                    snapshot: snapshot,
+                    shownFrame: shownFrame,
+                    grounding: vision.grounding,
+                    appName: currentApp,
+                    driver: driver,
+                    gate: gate,
+                    availability: availability,
+                    confirm: timedConfirm,
+                    confirmUnavailable: confirmUnavailable,
+                    presenter: presenter,
+                    currentTier: &currentTier,
+                    pendingFrameImage: &pendingFrameImage,
+                    lastView: &lastView,
+                    lastSnapshot: &lastSnapshot,
+                    metrics: &metrics,
+                    interrupt: interrupt,
+                    feed: feed,
+                    step: step + 1
+                )
+                if let abort = batch.abort { return terminate(abort) }
+                toolResult = batch.toolResult
+                advancedStep = batch.performed > 0
+                if batch.performed > 0 { consecutiveDeadEnd = 0 }
+
+            case .click, .doubleClick, .rightClick, .drag, .type, .setValue, .clear, .pressKey, .scroll, .hover,
+                .select:
                 guard let pid = currentPid else {
                     toolResult =
                         "No app is focused yet. Use `open` to launch or switch to an app first, then act."
@@ -777,9 +989,29 @@ public enum ComputerUseLoop {
                     break
                 }
 
-                // Resolve the element for element-addressed verbs.
+                // Resolve the element for element-addressed verbs. A point is
+                // placed through the shown screenshot and classified by the
+                // element under it.
                 var resolvedElement: CUElement? = nil
-                if requiresTarget(action.verb) || action.target != nil {
+                var actPoint: CGPoint? = nil
+                if let point = action.target?.point {
+                    switch ScreenshotPointing.screenPoint(point, in: shownFrame, grounding: vision.grounding) {
+                    case .invalid(let reason):
+                        toolResult = reason
+                        advancedStep = false
+                    case .screen(let screenPoint):
+                        actPoint = screenPoint
+                        resolvedElement = ScreenshotPointing.hitTest(screenPoint, in: snapshot)
+                    }
+                    if actPoint == nil { break }
+                    if resolvedElement == nil, needsElement(action.verb) {
+                        toolResult =
+                            "No accessible element is at that point, and \(action.verb.rawValue) needs one. "
+                            + "Address it by `mark` instead."
+                        advancedStep = false
+                        break
+                    }
+                } else if requiresTarget(action.verb) || action.target != nil {
                     let resolution = TargetResolver.resolve(action.target, view: view, snapshot: snapshot)
                     switch resolution {
                     case .resolved(_, let element):
@@ -787,8 +1019,11 @@ public enum ComputerUseLoop {
                         metrics.recordResolveAttempt(success: true)
                         consecutiveReobserve = 0
                         lastReobserveTargetKey = nil
-                        // Resolved against the AX tree — no pixels needed; drop back to ax.
-                        currentTier = .ax
+                        // Resolved against the AX tree; drop back to the resting tier.
+                        currentTier = restingTier(
+                            vision: vision.withConsent(runConsent.granted),
+                            availability: availability
+                        )
                     case .reobserve(let reason):
                         metrics.recordResolveAttempt(success: false)
                         let key = targetKey(action.target)
@@ -867,16 +1102,20 @@ public enum ComputerUseLoop {
                 // with the start; on failure, report and let the model retry rather
                 // than performing a half-specified drag.
                 var destinationElement: CUElement? = nil
+                var destinationPoint: CGPoint? = nil
                 if action.verb == .drag {
-                    let destResolution = TargetResolver.resolve(action.to, view: view, snapshot: snapshot)
-                    switch destResolution {
-                    case .resolved(_, let element):
-                        destinationElement = element
-                    case .reobserve(let reason), .deadEnd(let reason):
-                        toolResult = "Couldn't resolve the drag destination: \(reason)"
+                    switch resolveDestination(
+                        action.to, view: view, snapshot: snapshot, shownFrame: shownFrame,
+                        grounding: vision.grounding
+                    ) {
+                    case .success(let destination):
+                        destinationElement = destination.element
+                        destinationPoint = destination.point
+                    case .failure(let problem):
+                        toolResult = problem.message
                         advancedStep = false
                     }
-                    if destinationElement == nil { break }
+                    if destinationElement == nil && destinationPoint == nil { break }
                 }
 
                 // Classify the real effect (verb baseline refined upward by the
@@ -891,7 +1130,9 @@ public enum ComputerUseLoop {
                     recipeSignals: AppRecipes.signals(for: currentApp)
                 )
                 metrics.recordEffect(effect)
-                let targetLabel = resolvedElement.map { describe($0) } ?? action.target?.describe
+                let targetLabel =
+                    resolvedElement.map { describe($0) }
+                    ?? (actPoint != nil ? unlabeledPointLabel(action.target?.point) : action.target?.describe)
                 let decision = await gate.evaluate(
                     action: action,
                     effect: effect,
@@ -910,13 +1151,23 @@ public enum ComputerUseLoop {
                     advancedStep: &advancedStep,
                     abort: &actAbort,
                     metrics: &metrics,
+                    interrupt: interrupt,
                     feed: feed,
                     step: step + 1
                 ) {
+                    await presenter.willAct(
+                        ComputerUsePresenceAct(
+                            verb: action.verb.rawValue,
+                            point: actPoint ?? resolvedElement.map { CGPoint(x: $0.center.x, y: $0.center.y) },
+                            movesPointer: movesPointer(action.verb)
+                        )
+                    )
                     toolResult = await act(
                         action: action,
                         element: resolvedElement,
                         destinationElement: destinationElement,
+                        point: actPoint,
+                        destinationPoint: destinationPoint,
                         pid: pid,
                         driver: driver,
                         availability: availability,
@@ -928,6 +1179,7 @@ public enum ComputerUseLoop {
                         feed: feed,
                         step: step + 1
                     )
+                    await presenter.didAct()
                     consecutiveDeadEnd = 0
                 } else if let actAbort {
                     return terminate(actAbort)
@@ -947,8 +1199,9 @@ public enum ComputerUseLoop {
             // the VisionContext), again after the tool result for the same reason.
             if let frame = pendingFrameImage {
                 do {
-                    try await attachFrame(
+                    shownFrame = try await attachFrame(
                         image: frame,
+                        snapshot: lastSnapshot,
                         vision: vision,
                         consent: &runConsent,
                         requestConsent: timedCloudVisionConsent,
@@ -959,7 +1212,7 @@ public enum ComputerUseLoop {
                         feed: feed,
                         step: step + 1,
                         scrubFrame: scrubFrame
-                    )
+                    ) ?? shownFrame
                 } catch {
                     return frameScrubFailureResult(
                         error, step: step + 1, completedSteps: step + (advancedStep ? 1 : 0),
@@ -969,6 +1222,284 @@ public enum ComputerUseLoop {
             }
             if advancedStep { step += 1 }
         }
+    }
+
+    /// Where an untargeted scroll lands: the middle of the focused window, so
+    /// it reaches the app's content rather than whatever is under the cursor.
+    static func focusedWindowCenter(_ snapshot: CUSnapshot?) -> CGPoint? {
+        guard let snapshot,
+            let window = snapshot.windows.first(where: \.focused) ?? snapshot.windows.first,
+            window.w > 0, window.h > 0
+        else { return nil }
+        return CGPoint(x: Double(window.x) + Double(window.w) / 2, y: Double(window.y) + Double(window.h) / 2)
+    }
+
+    /// Verbs that post mouse events (and so may take the HID route).
+    static func movesPointer(_ verb: AgentVerb) -> Bool {
+        switch verb {
+        case .click, .doubleClick, .rightClick, .drag, .scroll, .hover: return true
+        default: return false
+        }
+    }
+
+    /// Why a `screenshot` / `zoom` can't produce pixels the model will see.
+    static func pixelsUnavailableReason(availability: MacDriverAvailability, vision: VisionContext) -> String? {
+        if !availability.screenRecording {
+            return
+                "Screen Recording permission isn't granted, so there are no screenshots. Work from the "
+                + "element list, or ask the user to grant Screen Recording in System Settings → Privacy & "
+                + "Security."
+        }
+        if !vision.modelAcceptsImages {
+            return "This model doesn't take images, so a screenshot wouldn't reach you. Work from the element list."
+        }
+        return nil
+    }
+
+    /// Verbs that act on an element itself rather than a screen position.
+    static func needsElement(_ verb: AgentVerb) -> Bool {
+        switch verb {
+        case .setValue, .clear, .select: return true
+        default: return false
+        }
+    }
+
+    private static func unlabeledPointLabel(_ point: AgentPoint?) -> String {
+        guard let point else { return "an unlabeled spot" }
+        return "an unlabeled spot at (\(Int(point.x)), \(Int(point.y))) in the screenshot"
+    }
+
+    struct TargetProblem: Error {
+        let message: String
+    }
+
+    /// A drag destination: an element (by mark/describe) or a screen point.
+    static func resolveDestination(
+        _ target: AgentTarget?,
+        view: AgentView,
+        snapshot: CUSnapshot,
+        shownFrame: CUImage?,
+        grounding: GroundingProfile?
+    ) -> Result<(element: CUElement?, point: CGPoint?), TargetProblem> {
+        if let point = target?.point {
+            switch ScreenshotPointing.screenPoint(point, in: shownFrame, grounding: grounding) {
+            case .invalid(let reason): return .failure(TargetProblem(message: reason))
+            case .screen(let screenPoint): return .success((nil, screenPoint))
+            }
+        }
+        switch TargetResolver.resolve(target, view: view, snapshot: snapshot) {
+        case .resolved(_, let element):
+            return .success((element, nil))
+        case .reobserve(let reason), .deadEnd(let reason):
+            return .failure(TargetProblem(message: "Couldn't resolve the drag destination: \(reason)"))
+        }
+    }
+
+    // MARK: - Batch
+
+    struct BatchOutcome {
+        var toolResult: String
+        var performed: Int
+        var abort: RunOutcome?
+    }
+
+    /// Run a `batch` in order against the view the model planned on. Each step
+    /// is resolved and gated like a single action; the batch stops at the
+    /// first step that can't be resolved, is blocked or declined, fails, or
+    /// needed approval (it runs once approved, then the batch ends so the model
+    /// sees the result before going further). One verify capture follows.
+    static func runBatch(
+        _ steps: [AgentAction],
+        pid: Int32,
+        view: AgentView,
+        snapshot: CUSnapshot,
+        shownFrame: CUImage?,
+        grounding: GroundingProfile?,
+        appName: String?,
+        driver: MacDriver,
+        gate: ComputerUseGating,
+        availability: MacDriverAvailability,
+        confirm: @escaping @Sendable (ActionPreview) async -> Bool,
+        confirmUnavailable: @escaping @Sendable () async -> String?,
+        presenter: ComputerUsePresenting,
+        currentTier: inout CaptureTier,
+        pendingFrameImage: inout CUImage?,
+        lastView: inout AgentView?,
+        lastSnapshot: inout CUSnapshot?,
+        metrics: inout ComputerUseRunMetrics,
+        interrupt: InterruptToken,
+        feed: SubagentFeed,
+        step: Int
+    ) async -> BatchOutcome {
+        var lines: [String] = []
+        var performed = 0
+        var last: (action: AgentAction, element: CUElement?, result: CUActionResult)? = nil
+        var stoppedAt: Int? = nil
+
+        for (index, action) in steps.enumerated() {
+            let label = "\(index + 1). \(action.feedLabel)"
+            var element: CUElement? = nil
+            var point: CGPoint? = nil
+            if let target = action.target?.point {
+                switch ScreenshotPointing.screenPoint(target, in: shownFrame, grounding: grounding) {
+                case .invalid(let reason):
+                    lines.append("\(label): not run. \(reason)")
+                case .screen(let screenPoint):
+                    point = screenPoint
+                    element = ScreenshotPointing.hitTest(screenPoint, in: snapshot)
+                }
+                if point == nil {
+                    stoppedAt = index
+                    break
+                }
+                if element == nil, needsElement(action.verb) {
+                    lines.append("\(label): not run. No accessible element is at that point.")
+                    stoppedAt = index
+                    break
+                }
+            } else if requiresTarget(action.verb) || action.target != nil {
+                switch TargetResolver.resolve(action.target, view: view, snapshot: snapshot) {
+                case .resolved(_, let resolved):
+                    element = resolved
+                    metrics.recordResolveAttempt(success: true)
+                case .reobserve(let reason), .deadEnd(let reason):
+                    metrics.recordResolveAttempt(success: false)
+                    lines.append("\(label): not run. \(reason)")
+                }
+                if element == nil {
+                    stoppedAt = index
+                    break
+                }
+            }
+            var destinationElement: CUElement? = nil
+            var destinationPoint: CGPoint? = nil
+            if action.verb == .drag {
+                switch resolveDestination(
+                    action.to, view: view, snapshot: snapshot, shownFrame: shownFrame, grounding: grounding
+                ) {
+                case .success(let destination):
+                    destinationElement = destination.element
+                    destinationPoint = destination.point
+                case .failure(let problem):
+                    lines.append("\(label): not run. \(problem.message)")
+                    stoppedAt = index
+                }
+                if stoppedAt != nil { break }
+            }
+
+            let effect = EffectClassifier.classify(
+                action: action,
+                resolvedRole: element?.role,
+                resolvedLabel: element?.label,
+                resolvedValue: element?.value,
+                resolvedRoleDescription: element?.roleDescription,
+                appName: appName,
+                recipeSignals: AppRecipes.signals(for: appName)
+            )
+            metrics.recordEffect(effect)
+            let decision = await gate.evaluate(
+                action: action,
+                effect: effect,
+                appName: appName,
+                targetLabel: element.map { describe($0) }
+                    ?? (point != nil ? unlabeledPointLabel(action.target?.point) : action.target?.describe)
+            )
+            let neededApproval: Bool
+            if case .confirm = decision { neededApproval = true } else { neededApproval = false }
+            var gateResult = ""
+            var advanced = true
+            var abort: RunOutcome? = nil
+            guard
+                await applyGate(
+                    decision,
+                    action: action,
+                    effect: effect,
+                    appName: appName,
+                    confirm: confirm,
+                    confirmUnavailable: confirmUnavailable,
+                    toolResult: &gateResult,
+                    advancedStep: &advanced,
+                    abort: &abort,
+                    metrics: &metrics,
+                    interrupt: interrupt,
+                    feed: feed,
+                    step: step
+                )
+            else {
+                if let abort { return BatchOutcome(toolResult: gateResult, performed: performed, abort: abort) }
+                lines.append("\(label): not run. \(gateResult)")
+                stoppedAt = index
+                break
+            }
+
+            await presenter.willAct(
+                ComputerUsePresenceAct(
+                    verb: action.verb.rawValue,
+                    point: point ?? element.map { CGPoint(x: $0.center.x, y: $0.center.y) },
+                    movesPointer: movesPointer(action.verb)
+                )
+            )
+            let outcome = await performAct(
+                action: action,
+                element: element,
+                destinationElement: destinationElement,
+                point: point,
+                destinationPoint: destinationPoint,
+                pid: pid,
+                driver: driver,
+                lastSnapshot: snapshot,
+                metrics: &metrics,
+                feed: feed,
+                step: step
+            )
+            await presenter.didAct()
+            guard let result = outcome.result else {
+                lines.append("\(label): not run. \(outcome.message ?? "Unsupported action.")")
+                stoppedAt = index
+                break
+            }
+            performed += 1
+            last = (action, element, result)
+            if !result.success {
+                lines.append("\(label): failed. \(result.error ?? "unknown error").")
+                stoppedAt = index
+                break
+            }
+            lines.append("\(label): posted.")
+            if neededApproval, index < steps.count - 1 {
+                lines.append("Stopped after this approved step so you can check its result first.")
+                stoppedAt = index
+                break
+            }
+        }
+
+        if let stoppedAt, stoppedAt + 1 < steps.count {
+            let skipped = (stoppedAt + 2 ... steps.count).map(String.init).joined(separator: ", ")
+            lines.append("Not run: step(s) \(skipped).")
+        }
+        var toolResult = "Batch of \(steps.count): \(performed) performed.\n" + lines.joined(separator: "\n")
+        if let last {
+            toolResult +=
+                "\n"
+                + (await verifyAct(
+                    action: last.action,
+                    element: last.element,
+                    result: last.result,
+                    pid: pid,
+                    driver: driver,
+                    availability: availability,
+                    currentTier: &currentTier,
+                    pendingFrameImage: &pendingFrameImage,
+                    lastView: &lastView,
+                    lastSnapshot: &lastSnapshot,
+                    metrics: &metrics,
+                    feed: feed,
+                    step: step
+                ))
+        } else {
+            toolResult += "\n\nCurrent view:\n" + view.renderForModel()
+        }
+        return BatchOutcome(toolResult: toolResult, performed: performed, abort: nil)
     }
 
     // MARK: - Gate
@@ -984,6 +1515,45 @@ public enum ComputerUseLoop {
         appName: String?,
         confirm: (ActionPreview) async -> Bool,
         confirmUnavailable: () async -> String? = { nil },
+        toolResult: inout String,
+        advancedStep: inout Bool,
+        abort: inout RunOutcome?,
+        metrics: inout ComputerUseRunMetrics,
+        interrupt: InterruptToken,
+        feed: SubagentFeed,
+        step: Int
+    ) async -> Bool {
+        let cleared = await gateClears(
+            decision,
+            action: action,
+            effect: effect,
+            appName: appName,
+            confirm: confirm,
+            confirmUnavailable: confirmUnavailable,
+            toolResult: &toolResult,
+            advancedStep: &advancedStep,
+            abort: &abort,
+            metrics: &metrics,
+            feed: feed,
+            step: step
+        )
+        // A Stop that landed during the model step or the approval card must
+        // win over the action it was racing: nothing is posted after Stop.
+        if cleared, interrupt.isInterrupted || Task.isCancelled {
+            advancedStep = false
+            abort = .interrupted
+            return false
+        }
+        return cleared
+    }
+
+    private static func gateClears(
+        _ decision: GateDecision,
+        action: AgentAction,
+        effect: EffectClass,
+        appName: String?,
+        confirm: (ActionPreview) async -> Bool,
+        confirmUnavailable: () async -> String?,
         toolResult: inout String,
         advancedStep: inout Bool,
         abort: inout RunOutcome?,
@@ -1121,10 +1691,10 @@ public enum ComputerUseLoop {
     }
 
     /// Perceive, climbing the capture ladder (ax→som→vision) while the AX view
-    /// is empty and pixels are available. The frame from the final escalated
-    /// capture is staged in `pendingFrameImage` for attachment after the step's
-    /// tool result. Bounded by the ladder height (at most two escalations), and
-    /// a no-op for a normal, populated view.
+    /// is empty and pixels are available. The frame from the final capture (when
+    /// it ran above `ax`) is staged in `pendingFrameImage` for attachment after
+    /// the step's tool result. Bounded by the ladder height (at most two
+    /// escalations), and a no-op for a normal, populated view.
     private static func perceiveEscalatingEmptyAX(
         pid: Int32?,
         driver: MacDriver,
@@ -1161,8 +1731,10 @@ public enum ComputerUseLoop {
                 step: step,
                 tier: currentTier
             )
-            // Stage the escalated frame; attached after the step's tool result.
-            pendingFrameImage = perception.snapshot?.image
+        }
+        // Stage the frame; attached after the step's tool result.
+        if currentTier != .ax, let image = perception.snapshot?.image {
+            pendingFrameImage = image
         }
         return perception
     }
@@ -1262,15 +1834,11 @@ public enum ComputerUseLoop {
         guard let identifier = action.app, !identifier.isEmpty else {
             return .failure("missing app name")
         }
-        // An explicit `open` verb means the agent (on the user's behalf) wants to
-        // use this app, so launch it foreground: `background: true` sets
-        // `config.hides = true`, and a hidden Cocoa app exposes no AX windows —
-        // `waitUntilReady` then times out, the follow-up capture is empty, and the
-        // model concludes the open failed even though the app did launch. Opening
-        // frontmost brings the window across, populates the AX tree, and lets the
-        // verify capture actually see it. (Background/hidden launching stays
-        // available on the driver primitive for silent perception paths.)
-        let result = await driver.open(identifier: identifier, background: false)
+        // Open behind the user's work: the app launches without activating
+        // (and never hidden, so its AX windows exist for the verify capture),
+        // and an app that activates itself hands the front back. Input then
+        // reaches it per-process, so the user keeps their own app in front.
+        let result = await driver.open(identifier: identifier, background: true)
         switch result {
         case .success(let info):
             let snapshot = await driver.capture(pid: info.pid, tier: .ax)
@@ -1335,6 +1903,8 @@ public enum ComputerUseLoop {
         action: AgentAction,
         element: CUElement?,
         destinationElement: CUElement? = nil,
+        point: CGPoint? = nil,
+        destinationPoint: CGPoint? = nil,
         pid: Int32,
         driver: MacDriver,
         availability: MacDriverAvailability,
@@ -1346,23 +1916,88 @@ public enum ComputerUseLoop {
         feed: SubagentFeed,
         step: Int
     ) async -> String {
+        let performed = await performAct(
+            action: action,
+            element: element,
+            destinationElement: destinationElement,
+            point: point,
+            destinationPoint: destinationPoint,
+            pid: pid,
+            driver: driver,
+            lastSnapshot: lastSnapshot,
+            metrics: &metrics,
+            feed: feed,
+            step: step
+        )
+        guard let result = performed.result else { return performed.message ?? "Unsupported action." }
+        return await verifyAct(
+            action: action,
+            element: element,
+            result: result,
+            pid: pid,
+            driver: driver,
+            availability: availability,
+            currentTier: &currentTier,
+            pendingFrameImage: &pendingFrameImage,
+            lastView: &lastView,
+            lastSnapshot: &lastSnapshot,
+            metrics: &metrics,
+            feed: feed,
+            step: step
+        )
+    }
+
+    /// The driver result of one act, or why it couldn't be attempted.
+    struct PerformedAct {
+        var result: CUActionResult?
+        var message: String?
+    }
+
+    /// Post one action (with the stale-ref coordinate fallback) and report the
+    /// driver result. No verify capture: `act` and `runBatch` take that after.
+    static func performAct(
+        action: AgentAction,
+        element: CUElement?,
+        destinationElement: CUElement?,
+        point: CGPoint?,
+        destinationPoint: CGPoint?,
+        pid: Int32,
+        driver: MacDriver,
+        lastSnapshot: CUSnapshot?,
+        metrics: inout ComputerUseRunMetrics,
+        feed: SubagentFeed,
+        step: Int
+    ) async -> PerformedAct {
         metrics.actsAttempted += 1
+        let elementCenter = element.map { CGPoint(x: $0.center.x, y: $0.center.y) }
         var result: CUActionResult
         switch action.verb {
-        case .click:
-            guard let element else { return "Click needs a resolved target." }
-            result = await driver.perform(.click(id: element.id, button: .left, doubleClick: false))
-        case .doubleClick:
-            guard let element else { return "double_click needs a resolved target." }
-            result = await driver.perform(.click(id: element.id, button: .left, doubleClick: true))
-        case .rightClick:
-            guard let element else { return "right_click needs a resolved target." }
-            result = await driver.perform(.click(id: element.id, button: .right, doubleClick: false))
+        case .click, .doubleClick, .rightClick:
+            let button: CUMouseButton = action.verb == .rightClick ? .right : .left
+            let double = action.verb == .doubleClick
+            if let point {
+                result = await driver.coordinate(
+                    .click(x: Double(point.x), y: Double(point.y), button: button, doubleClick: double, pid: pid)
+                )
+            } else if let element {
+                result = await driver.perform(.click(id: element.id, button: button, doubleClick: double))
+            } else {
+                return PerformedAct(message: "\(action.verb.rawValue) needs a resolved target.")
+            }
+        case .hover:
+            guard let at = point ?? elementCenter else {
+                return PerformedAct(message: "hover needs a resolved target.")
+            }
+            result = await driver.coordinate(.move(x: Double(at.x), y: Double(at.y), pid: pid))
+        case .select:
+            guard let element else { return PerformedAct(message: "select needs a resolved control.") }
+            result = await driver.perform(.selectOption(id: element.id, option: action.option ?? ""))
         case .drag:
-            guard let element else { return "drag needs a resolved start target." }
-            guard let destinationElement else { return "drag needs a resolved destination." }
-            let start = element.center
-            let end = destinationElement.center
+            guard let start = point ?? elementCenter else {
+                return PerformedAct(message: "drag needs a resolved start target.")
+            }
+            guard let end = destinationPoint ?? destinationElement.map({ CGPoint(x: $0.center.x, y: $0.center.y) })
+            else { return PerformedAct(message: "drag needs a resolved destination.") }
             result = await driver.coordinate(
                 .drag(
                     startX: Double(start.x),
@@ -1373,27 +2008,62 @@ public enum ComputerUseLoop {
                 )
             )
         case .type:
-            result = await driver.perform(
-                .typeText(id: element?.id, pid: pid, text: action.text ?? "", replace: action.replace ?? true)
-            )
+            let replace = action.replace ?? true
+            if let point, !(element.map { isTextBearing(role: $0.role) } ?? false) {
+                // Nothing text-bearing is under the point: click there to put
+                // the caret in place, then type into whatever took focus.
+                let focus = await driver.coordinate(.click(x: Double(point.x), y: Double(point.y), pid: pid))
+                guard focus.success else {
+                    result = focus
+                    break
+                }
+                result = await driver.perform(.typeText(id: nil, pid: pid, text: action.text ?? "", replace: replace))
+            } else {
+                result = await driver.perform(
+                    .typeText(id: element?.id, pid: pid, text: action.text ?? "", replace: replace)
+                )
+            }
         case .setValue:
-            guard let element else { return "set_value needs a resolved target." }
+            guard let element else { return PerformedAct(message: "set_value needs a resolved target.") }
             result = await driver.perform(.setValue(id: element.id, value: action.text ?? ""))
         case .clear:
-            guard let element else { return "clear needs a resolved target." }
+            guard let element else { return PerformedAct(message: "clear needs a resolved target.") }
             result = await driver.perform(.clearField(id: element.id))
         case .pressKey:
+            let times = (action.repeatCount ?? 1).clamped(to: 1 ... AgentAction.maxKeyRepeat)
+            result = .failure("press_key did not run.")
+            for _ in 0 ..< times {
+                result = await driver.perform(
+                    .pressKey(pid: pid, key: action.key ?? "", modifiers: action.modifiers)
+                )
+                if !result.success { break }
+            }
+        case .scroll where point == nil && (element.map { AXAdjustment.supports($0.actions) } ?? false):
+            // A slider or stepper: step it through its own AX actions rather
+            // than posting a wheel event at it.
+            let dir = action.direction ?? .down
             result = await driver.perform(
-                .pressKey(pid: pid, key: action.key ?? "", modifiers: action.modifiers)
+                .adjust(
+                    id: element!.id,
+                    increment: AXAdjustment.action(for: dir) == AXAdjustment.increment,
+                    steps: (action.amount ?? 1).clamped(to: 1 ... AXAdjustment.maxSteps)
+                )
             )
         case .scroll:
             let dir = action.direction ?? .down
             let amount = Int32((action.amount ?? 3).clamped(to: Self.scrollAmountRange))
+            let at = point ?? elementCenter ?? focusedWindowCenter(lastSnapshot)
             result = await driver.coordinate(
-                .scroll(direction: dir, amount: amount, x: nil, y: nil, pid: pid)
+                .scroll(
+                    direction: dir,
+                    amount: amount,
+                    x: at.map { Double($0.x) },
+                    y: at.map { Double($0.y) },
+                    pid: pid
+                )
             )
         default:
-            return "Unsupported action."
+            return PerformedAct(message: "Unsupported action.")
         }
 
         // Coordinate fallback. The element resolved against the immutable
@@ -1475,13 +2145,32 @@ public enum ComputerUseLoop {
                 success: result.success
             )
         )
+        metrics.recordRoute(result.routeUsed)
+        return PerformedAct(result: result)
+    }
 
-        // Verify: re-perceive and report the delta. If the action still failed
-        // stale/removed even after the coordinate fallback, escalate the capture
-        // tier (ax->som->vision) so the re-perception carries pixels the model
-        // can use to relocate the target, instead of handing back the same AX
-        // view that just failed to resolve.
-        var verifyTier: CaptureTier = .ax
+    /// Re-perceive after an act and report the delta to the model.
+    static func verifyAct(
+        action: AgentAction,
+        element: CUElement?,
+        result: CUActionResult,
+        pid: Int32,
+        driver: MacDriver,
+        availability: MacDriverAvailability,
+        currentTier: inout CaptureTier,
+        pendingFrameImage: inout CUImage?,
+        lastView: inout AgentView?,
+        lastSnapshot: inout CUSnapshot?,
+        metrics: inout ComputerUseRunMetrics,
+        feed: SubagentFeed,
+        step: Int
+    ) async -> String {
+        // Verify: re-perceive at the current tier and report the delta. If the
+        // action still failed stale/removed even after the coordinate fallback,
+        // escalate the capture tier (ax->som->vision) so the re-perception
+        // carries pixels the model can use to relocate the target, instead of
+        // handing back the same AX view that just failed to resolve.
+        var verifyTier = currentTier
         if result.removed || result.stale,
             CaptureRouter.canEscalate(from: currentTier, availability: availability)
         {
@@ -1504,10 +2193,9 @@ public enum ComputerUseLoop {
         let view = AgentView.build(from: snapshot, previous: lastView)
         lastView = view
         lastSnapshot = snapshot
-        // Stage any escalated frame for attachment after this step's tool result.
+        // Stage any frame for attachment after this step's tool result.
         if verifyTier != .ax { pendingFrameImage = snapshot.image }
         if view.hasChanges { metrics.verifyChanged += 1 }
-        metrics.recordRoute(result.routeUsed)
         // A driver "success" only means the input was posted (or AXPress
         // returned). Without an observed change it is unproven, and the
         // model is told so — calling it "succeeded" here is what let stalled
@@ -1660,7 +2348,115 @@ public enum ComputerUseLoop {
         return role.contains("text") || role == "combobox" || role == "searchfield"
     }
 
+    // MARK: - Grounding calibration
+
+    /// `vision` with its grounding settled: unchanged unless a local bundle
+    /// still needs calibrating, in which case the model is measured through
+    /// the loop's own model step, the outcome is cached for the bundle, and
+    /// the run continues with the measured frame (or marks only).
+    static func groundedVision(
+        _ vision: VisionContext,
+        engine: (any ResponsesEngineProtocol)?,
+        modelId: String,
+        sessionId: String,
+        enableThinking: Bool?,
+        reasoningEffort: String?,
+        limits: RunLimits,
+        interrupt: InterruptToken,
+        feed: SubagentFeed,
+        store: GroundingCalibrationStore = .shared
+    ) async -> VisionContext {
+        guard let key = vision.pendingCalibration, let engine else { return vision }
+        feed.emit(
+            SubagentActivityEvent(
+                step: 0,
+                kind: .perceive,
+                title: "Checking how this model points at screenshots",
+                detail: "one-time, \(GroundingCalibration.screenSizes.count) test screens"
+            )
+        )
+        let result: GroundingCalibration.Result
+        do {
+            result = try await GroundingCalibration.run(
+                budget: key.budget,
+                isInterrupted: { interrupt.isInterrupted }
+            ) { messages in
+                try await runModelStep(
+                    {
+                        try await modelStep(
+                            engine: engine,
+                            modelId: modelId,
+                            sessionId: sessionId,
+                            messages: messages,
+                            enableThinking: enableThinking,
+                            reasoningEffort: reasoningEffort,
+                            tool: GroundingCalibration.toolSpec,
+                            positionLimit: limits.contextPositions
+                        )
+                    },
+                    timeout: limits.modelStepTimeoutSeconds,
+                    maxRetries: 0,
+                    interrupt: interrupt,
+                    feed: feed,
+                    step: 0
+                )
+            }
+        } catch {
+            // Interrupted: leave the bundle uncalibrated and run on marks.
+            return vision.withGrounding(nil)
+        }
+        store.record(result, for: key)
+        let hits = result.hits.sorted { $0.value > $1.value }.first
+        let speed = result.decodeTokensPerSecond.isEmpty
+            ? "" : String(format: ", %.1f tok/s", result.decodeTokensPerSecond.reduce(0, +)
+                / Double(result.decodeTokensPerSecond.count))
+        switch result.outcome {
+        case .frame(let frame):
+            feed.emit(
+                SubagentActivityEvent(
+                    step: 0,
+                    kind: .perceive,
+                    title: "This model points in \(frame.label)",
+                    detail: "\(hits?.value ?? 0)/\(result.trials) test targets hit\(speed)"
+                )
+            )
+            return vision.withGrounding(GroundingProfile(frame: frame, source: .calibrated))
+        case .marksOnly:
+            feed.emit(
+                SubagentActivityEvent(
+                    step: 0,
+                    kind: .perceive,
+                    title: "This model will address elements by mark",
+                    detail: "best frame hit \(hits?.value ?? 0)/\(result.trials) test targets\(speed)"
+                )
+            )
+            return vision.withGrounding(nil)
+        }
+    }
+
     // MARK: - Model step
+
+    /// Tokens the context budget holds back for the `agent_action` schema.
+    static let toolSchemaReserveTokens = 500
+
+    /// The smallest history window one step can run in: the system prompt
+    /// and goal, the action schema, one screenshot when the model takes
+    /// images (at most one is ever in context), one view listing at the
+    /// delegated per-turn tool-result allowance, and one response. Token math
+    /// matches `DelegatedRunContract` (chars × 3 / 8, rounded up).
+    static func minimumStepPositions(
+        goal: String,
+        policySummary: String,
+        vision: VisionContext
+    ) -> Int {
+        let pointing = PointingSurface(vision.grounding)
+        let characters = systemPrompt(policySummary: policySummary, pointing: pointing).count + goal.count
+        let textTokens = (characters * 3 + 7) / 8
+        let imageTokens = vision.modelAcceptsImages ? Attachment.imageTokenCeiling : 0
+        return textTokens + toolSchemaReserveTokens + imageTokens
+            + DelegatedRunContract.toolResultAllowancePerTurn
+            + AgentLoopBudget.defaultResponseReservation
+    }
 
     /// Sparse model usage and the exact assistant snapshot. Scripted providers
     /// explicitly report zero tokens because they make no model call.
@@ -1680,12 +2476,16 @@ public enum ComputerUseLoop {
         messages: [ChatMessage],
         enableThinking: Bool?,
         reasoningEffort: String?,
-        attempt: DesktopResponsesAttempt? = nil
+        attempt: DesktopResponsesAttempt? = nil,
+        pointing: PointingSurface = .frame(.pixels),
+        tool: Tool? = nil,
+        positionLimit: Int? = nil
     ) async throws -> ModelStepResult {
         var request = ResponsesInferenceRequest(model: modelId, input: messages)
-        request.tools = [AgentAction.toolSpec]
+        request.tools = [tool ?? AgentAction.toolSpec(pointing: pointing)]
         request.toolChoice = AgentAction.forcedToolChoice
         request.sessionID = sessionId
+        request.context.admissionPositionLimit = positionLimit
         request.context.samplingParametersAreImplicit = true
         request.context.isAgentRequest = true
         request.generation.enableThinking = enableThinking
@@ -1741,17 +2541,22 @@ public enum ComputerUseLoop {
         _ produce: @escaping @Sendable () async throws -> T,
         timeout: TimeInterval,
         maxRetries: Int,
+        interrupt: InterruptToken? = nil,
         feed: SubagentFeed,
         step: Int,
         shouldRetry: (@Sendable (Error) -> Bool)? = nil
     ) async throws -> T {
         var attempt = 0
         while true {
+            if interrupt?.isInterrupted == true { throw CancellationError() }
             do {
-                return try await withModelStepTimeout(timeout, produce)
+                return try await cancelling(on: interrupt) {
+                    try await withModelStepTimeout(timeout, produce)
+                }
             } catch is CancellationError {
                 throw CancellationError()  // interrupt/teardown — don't retry
             } catch {
+                if interrupt?.isInterrupted == true { throw CancellationError() }
                 if isMissingRequiredAgentActionError(error) {
                     throw error
                 }
@@ -1768,6 +2573,23 @@ public enum ComputerUseLoop {
                 // Bounded linear backoff: 0.25s, 0.5s, 0.75s, capped.
                 try? await Task.sleep(nanoseconds: UInt64(min(attempt, 4)) * 250_000_000)
             }
+        }
+    }
+
+    /// Run `op` in a child task that a tripped `interrupt` cancels, so Stop
+    /// ends an in-flight prefill/decode instead of waiting for it.
+    private static func cancelling<T: Sendable>(
+        on interrupt: InterruptToken?,
+        _ op: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        guard let interrupt else { return try await op() }
+        let task = Task { try await op() }
+        let observer = interrupt.observeInterrupt { task.cancel() }
+        defer { interrupt.removeInterruptObserver(observer) }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
         }
     }
 
@@ -1806,7 +2628,10 @@ public enum ComputerUseLoop {
     /// A stable fingerprint of an acting action, used to detect a model that
     /// keeps proposing the identical step without making progress.
     private static func actionSignature(_ action: AgentAction) -> String {
-        [
+        if action.verb == .batch {
+            return "batch[" + action.actions.map(actionSignature).joined(separator: ";") + "]"
+        }
+        return [
             action.verb.rawValue,
             targetKey(action.target),
             targetKey(action.to),
@@ -1815,6 +2640,8 @@ public enum ComputerUseLoop {
             action.modifiers.joined(separator: "+"),
             action.direction?.rawValue ?? "",
             action.app ?? "",
+            action.option ?? "",
+            action.repeatCount.map(String.init) ?? "",
         ].joined(separator: "|")
     }
 
@@ -1822,13 +2649,14 @@ public enum ComputerUseLoop {
 
     private static func requiresTarget(_ verb: AgentVerb) -> Bool {
         switch verb {
-        case .click, .doubleClick, .rightClick, .drag, .setValue, .clear: return true
+        case .click, .doubleClick, .rightClick, .drag, .setValue, .clear, .hover, .select: return true
         default: return false
         }
     }
 
     private static func targetKey(_ target: AgentTarget?) -> String {
         guard let target else { return "<none>" }
+        if let point = target.point { return "point:\(Int(point.x)),\(Int(point.y))" }
         if let mark = target.mark { return "mark:\(mark)" }
         if let d = target.describe { return "desc:\(d.lowercased())" }
         return "<empty>"
@@ -1850,13 +2678,24 @@ public enum ComputerUseLoop {
         var asked: Bool
     }
 
+    /// The tier perception rests at between escalations: `som` when frames
+    /// reach the model by default, otherwise `ax`.
+    static func restingTier(vision: VisionContext, availability: MacDriverAvailability) -> CaptureTier {
+        vision.attachesPixelsByDefault(availability: availability) ? .som : .ax
+    }
+
     /// Attach a freshly captured frame to the model conversation when the
-    /// `VisionContext` allows it. Local models receive the frame directly; remote
-    /// models receive a `FrameScrubber`-redacted frame routed through
-    /// `CaptureRouter.cloudRoute`, and only with consent. Otherwise this is a
-    /// no-op and the loop continues on the AX text alone.
+    /// `VisionContext` allows it. The frame is first fitted to the run's
+    /// `FrameBudget`; a `som` frame then gets the mark numbers of `snapshot`'s
+    /// elements (the list the model was just shown). Local models receive the
+    /// frame directly; remote models receive a `FrameScrubber`-redacted frame
+    /// routed through `CaptureRouter.cloudRoute`, and only with consent, with
+    /// the marks drawn after the scrub so the masks don't cover them.
+    /// Otherwise this is a no-op and the loop continues on the AX text alone.
+    @discardableResult
     private static func attachFrame(
-        image: CUImage,
+        image captured: CUImage,
+        snapshot: CUSnapshot?,
         vision: VisionContext,
         consent: inout RunCloudVisionConsent,
         requestConsent: @Sendable () async -> CloudVisionConsentChoice,
@@ -1867,16 +2706,19 @@ public enum ComputerUseLoop {
         feed: SubagentFeed,
         step: Int,
         scrubFrame: CloudFrameScrubOperation
-    ) async throws {
+    ) async throws -> CUImage? {
         let effective = vision.withConsent(consent.granted)
+        let image = FramePreparer.fit(captured, to: vision.frameBudget)
+        let marks = snapshot?.tier == .som ? FramePreparer.marks(for: snapshot, in: image) : []
         switch VisionAttachment.decide(image: image, context: effective, availability: availability) {
         case .none:
             // The frame can't attach as-is. If the ONLY thing missing is
             // cloud-vision consent (remote image model + Screen Recording on),
             // offer a just-in-time prompt once per run rather than silently
             // dropping to AX-only.
-            try await offerJustInTimeCloudConsent(
+            return try await offerJustInTimeCloudConsent(
                 image: image,
+                marks: marks,
                 vision: vision,
                 consent: &consent,
                 requestConsent: requestConsent,
@@ -1889,11 +2731,15 @@ public enum ComputerUseLoop {
                 scrubFrame: scrubFrame
             )
         case .localFrame(let img):
+            let shown = FramePreparer.drawMarks(marks, on: img)
             appendImageMessage(
-                img,
+                shown,
                 note:
-                    "Screenshot of the current view (the accessibility tree could not resolve the target). "
-                    + "Use it to locate the element, then address it by `describe`.",
+                    "Screenshot of the current view"
+                    + (shown == img ? "" : "; each numbered red box is that `mark` in the element list")
+                    + ". Use it to locate the element, then address it by "
+                    + (vision.grounding == nil ? "`mark` or `describe`." : "`mark`, `describe`, or `target.point`."),
+                pointing: PointingSurface(vision.grounding),
                 into: &messages,
                 imageTokensInContext: &imageTokensInContext
             )
@@ -1905,9 +2751,11 @@ public enum ComputerUseLoop {
                     detail: "on-device"
                 )
             )
+            return shown
         case .needsScrubForCloud(let img):
-            try await attachScrubbedForCloud(
+            return try await attachScrubbedForCloud(
                 img,
+                marks: marks,
                 vision: vision,
                 availability: availability,
                 messages: &messages,
@@ -1927,6 +2775,7 @@ public enum ComputerUseLoop {
     /// doesn't nag again this run.
     private static func offerJustInTimeCloudConsent(
         image: CUImage,
+        marks: [FrameMark],
         vision: VisionContext,
         consent: inout RunCloudVisionConsent,
         requestConsent: @Sendable () async -> CloudVisionConsentChoice,
@@ -1937,7 +2786,7 @@ public enum ComputerUseLoop {
         feed: SubagentFeed,
         step: Int,
         scrubFrame: CloudFrameScrubOperation
-    ) async throws {
+    ) async throws -> CUImage? {
         let effective = vision.withConsent(consent.granted)
         guard
             !consent.asked,
@@ -1946,7 +2795,7 @@ public enum ComputerUseLoop {
                 context: effective,
                 availability: availability
             )
-        else { return }
+        else { return nil }
         consent.asked = true
         feed.emit(
             SubagentActivityEvent(
@@ -1966,7 +2815,7 @@ public enum ComputerUseLoop {
                     detail: "Cloud vision declined; continuing from accessibility text"
                 )
             )
-            return
+            return nil
         case .allowOnce:
             await MainActor.run { CloudVisionConsent.shared.grantForSession() }
             consent.granted = true
@@ -1980,9 +2829,10 @@ public enum ComputerUseLoop {
                 context: vision.withConsent(true),
                 availability: availability
             )
-        else { return }
-        try await attachScrubbedForCloud(
+        else { return nil }
+        return try await attachScrubbedForCloud(
             img,
+            marks: marks,
             vision: vision,
             availability: availability,
             messages: &messages,
@@ -1998,8 +2848,10 @@ public enum ComputerUseLoop {
     /// consented cloud route. The route is the only way to reach `.cloudVision`
     /// and only accepts a `ScrubbedFrame`, so a raw or unconsented frame can
     /// never be attached here. Only called once consent is effectively granted.
+    @discardableResult
     static func attachScrubbedForCloud(
         _ img: CUImage,
+        marks: [FrameMark] = [],
         vision: VisionContext,
         availability: MacDriverAvailability,
         messages: inout [ChatMessage],
@@ -2008,9 +2860,10 @@ public enum ComputerUseLoop {
         feed: SubagentFeed,
         step: Int,
         scrubFrame: CloudFrameScrubOperation
-    ) async throws {
+    ) async throws -> CUImage? {
         let mode = vision.cloudScrubMode
-        let frame = try await scrubFrame(img, mode)
+        let masked = try await scrubFrame(img, mode)
+        let frame = masked.withMarks(marks)
         guard
             let route = CaptureRouter.cloudRoute(
                 scrubbed: frame,
@@ -2018,10 +2871,13 @@ public enum ComputerUseLoop {
                 availability: availability
             ),
             case .cloudVision(let scrubbed) = route
-        else { return }
+        else { return nil }
         appendImageMessage(
             scrubbed.image,
-            note: cloudFrameNote(mode: mode),
+            note: cloudFrameNote(mode: mode)
+                + (frame.image == masked.image
+                    ? "" : " Each numbered red box is that `mark` in the element list; you can address it by `mark`."),
+            pointing: PointingSurface(vision.grounding),
             into: &messages,
             imageTokensInContext: &imageTokensInContext
         )
@@ -2034,6 +2890,7 @@ public enum ComputerUseLoop {
                 detail: cloudFrameFeedDetail(mode: mode, masked: frame.report.maskedRegions)
             )
         )
+        return scrubbed.image
     }
 
     private static func frameScrubFailureResult(
@@ -2104,11 +2961,25 @@ public enum ComputerUseLoop {
     private static func appendImageMessage(
         _ image: CUImage,
         note: String,
+        pointing: PointingSurface,
         into messages: inout [ChatMessage],
         imageTokensInContext: inout Int
     ) {
         dropPriorImages(&messages)
         let dataUrl = "data:\(image.mimeType);base64,\(image.base64)"
+        var note = note
+        if image.region != nil {
+            switch pointing {
+            case .frame(.pixels):
+                note += " It is \(image.width)×\(image.height) pixels; a `target.point` is in these pixels."
+            case .frame(.normalized1000):
+                note += " A `target.point` is on a 0–1000 scale of its width and height."
+            case .frame(.normalizedUnit):
+                note += " A `target.point` is on a 0–1 scale of its width and height."
+            case .marksOnly, .unstated:
+                break
+            }
+        }
         messages.append(
             ChatMessage(
                 role: "user",
@@ -2215,20 +3086,42 @@ public enum ComputerUseLoop {
 
     // MARK: - System prompt
 
-    static func systemPrompt(policySummary: String = "") -> String {
+    static func systemPrompt(policySummary: String = "", pointing: PointingSurface = .frame(.pixels)) -> String {
+        let looking: String
+        let addressing: String
+        switch pointing {
+        case .frame(.pixels):
+            looking = "`screenshot` for pixels and `zoom` (`region`) for a close-up"
+            addressing = "or `target.point` with pixel coordinates in the latest screenshot"
+        case .frame(.normalized1000):
+            looking = "`screenshot` for pixels and `zoom` (`region`) for a close-up"
+            addressing = "or `target.point` with coordinates on a 0–1000 scale of the latest screenshot's width and height"
+        case .frame(.normalizedUnit):
+            looking = "`screenshot` for pixels and `zoom` (`region`) for a close-up"
+            addressing = "or `target.point` with coordinates on a 0–1 scale of the latest screenshot's width and height"
+        case .marksOnly:
+            looking = "`screenshot` for pixels"
+            addressing = "and nothing else; this model doesn't point by screenshot coordinates"
+        case .unstated:
+            looking = "`screenshot` for pixels and `zoom` (`region`) for a close-up"
+            addressing = "or `target.point` on the element in the latest screenshot"
+        }
         var prompt = """
             You are Computer Use, an agent that operates macOS apps for the user through an accessibility \
             driver. You perceive the screen as a numbered list of elements and act by proposing ONE action \
             at a time.
 
             Rules:
-            - Each turn, call the `agent_action` tool exactly once with a single verb.
-            - Verbs: look with `observe`/`find`; interact with `click`, `double_click`, `right_click` \
-            (context menu), `type`, `set_value`, `clear`, `press_key`, `scroll`, and `drag` (`target` is \
-            the start, `to` is the destination); switch apps with `open`; pause for async UI (a spinner or \
-            load) with `wait` (`seconds`); finish with `done`/`give_up`.
+            - Each turn, call the `agent_action` tool exactly once.
+            - Verbs: look with `observe`/`find`, or \(looking); interact with `click`, `double_click`, \
+            `right_click` (context menu), `hover`, `select` (pick an `option` from a popup or menu), `type`, `set_value`, `clear`, `press_key` (`repeat` to \
+            press it several times), `scroll`, and `drag` (`target` is the start, `to` is the destination); \
+            switch apps with `open`; pause for async UI (a spinner or load) with `wait` (`seconds`); finish \
+            with `done`/`give_up`.
             - Address elements by the `mark` number shown in the current view. If you don't have a mark, \
-            use `target.describe` with the element's role and label.
+            use `target.describe` with the element's role and label, \(addressing).
+            - When the next few steps don't depend on each other's results (filling several fields), send \
+            them as one `batch` with `actions`. It stops at the first step that fails or needs approval.
             - After every action you get a fresh view with `*` marking elements that changed — use it to \
             verify the action worked before moving on.
             - The harness applies the user's autonomy policy to every action: some run immediately, some \

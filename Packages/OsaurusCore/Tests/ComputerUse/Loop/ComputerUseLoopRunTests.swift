@@ -20,6 +20,18 @@ import XCTest
 
 @testable import OsaurusCore
 
+/// Trips Stop as soon as the first action has been posted.
+private struct InterruptingPresenter: ComputerUsePresenting {
+    let token: InterruptToken
+    func begin(goal: String) async {}
+    func targetChanged(_ target: ComputerUsePresenceTarget?) async {}
+    func willAct(_ act: ComputerUsePresenceAct) async {}
+    func didAct() async { token.interrupt() }
+    func confirmPending(_ pending: Bool) async {}
+    func heartbeat() async {}
+    func end(_ outcome: RunOutcome) async {}
+}
+
 final class ComputerUseLoopRunTests: XCTestCase {
 
     // MARK: - Fixtures
@@ -370,6 +382,119 @@ final class ComputerUseLoopRunTests: XCTestCase {
         guard case .interrupted = result.outcome else {
             return XCTFail("Expected interrupted; got \(result.outcome)")
         }
+    }
+
+    /// Stop lands while the model is deciding; the click it then returns must
+    /// not be posted.
+    func testStopDuringModelStepPostsNoAction() async {
+        let d = driver([el("go", "button", "Go")])
+        let token = InterruptToken()
+        let scripted = ComputerUseLoop.scriptedProvider([
+            AgentAction(verb: .click, target: AgentTarget(mark: 1), note: "click go")
+        ])
+        let result = await run(
+            d,
+            provider: { input in
+                token.interrupt()
+                return try await scripted(input)
+            },
+            interrupt: token
+        )
+        guard case .interrupted = result.outcome else {
+            return XCTFail("Expected interrupted; got \(result.outcome)")
+        }
+        let elementActions = await d.elementActions
+        let coordinateActions = await d.coordinateActions
+        XCTAssertTrue(elementActions.isEmpty)
+        XCTAssertTrue(coordinateActions.isEmpty)
+        XCTAssertEqual(result.metrics.actsAttempted, 0)
+    }
+
+    /// Stop pressed while the approval card is up wins over a late Approve.
+    func testStopDuringApprovalPostsNoAction() async {
+        let d = driver([el("field", "textfield", "Note", value: "")])
+        let token = InterruptToken()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .type, text: "hello", note: "fill note")
+            ]),
+            confirm: { _ in
+                token.interrupt()
+                return true
+            },
+            interrupt: token
+        )
+        guard case .interrupted = result.outcome else {
+            return XCTFail("Expected interrupted; got \(result.outcome)")
+        }
+        XCTAssertEqual(result.metrics.confirmsRequested, 1)
+        let elementActions = await d.elementActions
+        let coordinateActions = await d.coordinateActions
+        XCTAssertTrue(elementActions.isEmpty)
+        XCTAssertTrue(coordinateActions.isEmpty)
+    }
+
+    /// Stop between two batched steps: the first ran, the second is not posted.
+    func testStopInsideBatchHaltsRemainingSteps() async {
+        let d = driver([el("a", "button", "A"), el("b", "button", "B")])
+        let token = InterruptToken()
+        let presenter = InterruptingPresenter(token: token)
+        let result = await ComputerUseLoop.run(
+            goal: "test goal",
+            modelId: "test-model",
+            driver: d,
+            gate: HardwiredGate(),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal"),
+            interrupt: token,
+            confirm: { _ in true },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(
+                    verb: .batch,
+                    actions: [
+                        AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                        AgentAction(verb: .click, target: AgentTarget(mark: 2)),
+                    ]
+                )
+            ]),
+            presenter: presenter
+        )
+        guard case .interrupted = result.outcome else {
+            return XCTFail("Expected interrupted; got \(result.outcome)")
+        }
+        let elementActions = await d.elementActions
+        let coordinateActions = await d.coordinateActions
+        XCTAssertEqual(elementActions.count + coordinateActions.count, 1)
+    }
+
+    /// A model step that never yields is cancelled by Stop instead of being
+    /// waited out.
+    func testStopCancelsInFlightModelStep() async {
+        let token = InterruptToken()
+        let started = Date()
+        Task {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            token.interrupt()
+        }
+        do {
+            _ = try await ComputerUseLoop.runModelStep(
+                { () async throws -> Int in
+                    try await Task.sleep(nanoseconds: 30_000_000_000)
+                    return 0
+                },
+                timeout: 0,
+                maxRetries: 2,
+                interrupt: token,
+                feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal"),
+                step: 1
+            )
+            XCTFail("An interrupted model step must throw")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "got \(error)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 
     // MARK: - Gate decline

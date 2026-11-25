@@ -159,7 +159,6 @@ public final class ComputerUsePromptQueue: ObservableObject {
     }
 
     static let typedTextDetailLimit = 2_000
-    static let scriptDetailLimit = 4_000
 
     /// The step as the owner's other devices show it before answering.
     static func detail(for preview: ActionPreview) -> Data? {
@@ -171,11 +170,6 @@ public final class ComputerUsePromptQueue: ObservableObject {
         if let typed = preview.typedText, !typed.isEmpty {
             let clipped = AttentionDetail.clip(typed, typedTextDetailLimit)
             object["typedText"] = clipped.text
-            cut = cut || clipped.cut
-        }
-        if let script = preview.scriptBody, !script.isEmpty {
-            let clipped = AttentionDetail.clip(script, scriptDetailLimit)
-            object["script"] = clipped.text
             cut = cut || clipped.cut
         }
         if cut { object["truncated"] = true }
@@ -332,7 +326,6 @@ extension ComputerUsePromptQueue {
             if let target = preview.targetLabel { row["target"] = target }
             if let note = preview.note { row["note"] = note }
             if let typed = preview.typedText { row["typed_text"] = typed }
-            if let script = preview.scriptBody { row["script"] = script }
             return row
         }
         rows += pendingConsent.filter(\.fromPairedPhone).map { request -> [String: Any] in

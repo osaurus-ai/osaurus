@@ -107,6 +107,13 @@ public struct ScrubbedFrame: Sendable, Equatable {
         self.image = image
         self.report = report
     }
+
+    /// The frame with element marks drawn over the masks. A mark is a number
+    /// and a box the harness generated, so it puts nothing from the screen
+    /// back over a masked region.
+    public func withMarks(_ marks: [FrameMark]) -> ScrubbedFrame {
+        ScrubbedFrame(image: FramePreparer.drawMarks(marks, on: image), report: report)
+    }
 }
 
 public enum FrameScrubber {
@@ -159,7 +166,7 @@ public enum FrameScrubber {
             useModelDetection: useModelDetection,
             processing: processing
         )
-        guard let encoded = encode(masked, width: image.width, height: image.height) else {
+        guard let encoded = encode(masked, region: image.region) else {
             throw FrameScrubError.imageEncodeFailed
         }
         return ScrubbedFrame(image: encoded, report: report)
@@ -359,7 +366,7 @@ public enum FrameScrubber {
         return rep.cgImage
     }
 
-    private static func encode(_ image: CGImage, width: Int, height: Int) -> CUImage? {
+    private static func encode(_ image: CGImage, region: CUScreenRegion?) -> CUImage? {
         let rep = NSBitmapImageRep(cgImage: image)
         guard let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
         else { return nil }
@@ -367,7 +374,8 @@ public enum FrameScrubber {
             base64: data.base64EncodedString(),
             mimeType: "image/jpeg",
             width: image.width,
-            height: image.height
+            height: image.height,
+            region: region
         )
     }
 

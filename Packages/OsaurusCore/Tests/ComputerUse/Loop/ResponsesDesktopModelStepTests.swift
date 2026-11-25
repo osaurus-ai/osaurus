@@ -89,43 +89,36 @@ struct ResponsesDesktopModelStepTests: Sendable {
         #expect(requests[1].input.last?.tool_call_id == "call_original")
     }
 
-    @Test func appleScriptKeepsHistoryAndOnlyExplicitSamplingOverride() async throws {
-        let engine = Engine([row(calls: [call(AppleScriptAction.toolName)], measured: false)])
-        let result = try await AppleScriptLoop.modelStep(
-            engine: engine, modelId: "fixture-model", sessionId: "session", messages: [],
-            samplingTemperature: 0.42, enableThinking: false, reasoningEffort: nil
+    @Test func positionCeilingTravelsOnEveryRequest() async throws {
+        let engine = Engine([row(calls: [call(AgentAction.toolName)]), row(calls: [call(AgentAction.toolName)])])
+        _ = try await ComputerUseLoop.modelStep(
+            engine: engine, modelId: "fixture", sessionId: "s", messages: [],
+            enableThinking: nil, reasoningEffort: nil, positionLimit: 16_384
         )
-        #expect(result.call?.id == "call_original")
-        #expect(result.tokens == nil && result.inputTokenCount == nil && result.outputTokenCount == nil)
-        #expect(result.tokensPerSecond == nil)
-        #expect(result.assistantMessage?.responses_output_items == [raw])
-        #expect(result.assistantMessage?.reasoning_content == "Original model reasoning.")
-        let request = try #require(await engine.requests.first)
-        #expect(request.generation.temperature == Float(0.42))
-        #expect(request.generation.enableThinking == false)
-        #expect(request.generation.topP == nil && request.generation.topK == nil && request.generation.maxOutputTokens == nil)
-        #expect(!request.context.samplingParametersAreImplicit && request.context.isAgentRequest)
+        _ = try await ComputerUseLoop.modelStep(
+            engine: engine, modelId: "fixture", sessionId: "s", messages: [],
+            enableThinking: nil, reasoningEffort: nil
+        )
+        let requests = await engine.requests
+        #expect(requests[0].context.admissionPositionLimit == 16_384)
+        // An implicit output budget is fitted into the ceiling, not reserved whole.
+        #expect(requests[0].generation.maxOutputTokens == nil)
+        #expect(requests[1].context.admissionPositionLimit == nil)
     }
 
-    @Test(arguments: [false, true])
-    func unsupportedCallsAreNotSelectedOrRenamed(_ computerUse: Bool) async {
-        let expected = computerUse ? AgentAction.toolName : AppleScriptAction.toolName
+    @Test func unsupportedCallsAreNotSelectedOrRenamed() async {
+        let expected = AgentAction.toolName
         for calls in [[call("wrong_tool")], [call(expected), call(expected, id: "second_call")], [call(expected, id: "")]] {
             let engine = Engine([row(calls: calls)])
             await #expect(throws: DesktopResponsesModelStep.InvalidResponse.self) {
-                if computerUse {
-                    _ = try await ComputerUseLoop.modelStep(engine: engine, modelId: "fixture", sessionId: "s", messages: [], enableThinking: nil, reasoningEffort: nil)
-                } else {
-                    _ = try await AppleScriptLoop.modelStep(engine: engine, modelId: "fixture", sessionId: "s", messages: [], enableThinking: nil, reasoningEffort: nil)
-                }
+                _ = try await ComputerUseLoop.modelStep(engine: engine, modelId: "fixture", sessionId: "s", messages: [], enableThinking: nil, reasoningEffort: nil)
             }
             #expect(await engine.requests.count == 1)
         }
     }
 
-    @Test(arguments: [false, true])
-    func incompleteLengthUnclosedAndCancelledDoNotBecomeActions(_ computerUse: Bool) async {
-        let expected = computerUse ? AgentAction.toolName : AppleScriptAction.toolName
+    @Test func incompleteLengthUnclosedAndCancelledDoNotBecomeActions() async {
+        let expected = AgentAction.toolName
         let scripts = [
             row(calls: [call(expected)], status: .incomplete, stop: "length"),
             row(calls: [call(expected)], status: .completed, stop: "length"),
@@ -135,16 +128,12 @@ struct ResponsesDesktopModelStepTests: Sendable {
         for script in scripts {
             let engine = Engine([script])
             await #expect(throws: DesktopResponsesModelStep.InvalidResponse.self) {
-                if computerUse {
-                    _ = try await ComputerUseLoop.modelStep(engine: engine, modelId: "fixture", sessionId: "s", messages: [], enableThinking: nil, reasoningEffort: nil)
-                } else {
-                    _ = try await AppleScriptLoop.modelStep(engine: engine, modelId: "fixture", sessionId: "s", messages: [], enableThinking: nil, reasoningEffort: nil)
-                }
+                _ = try await ComputerUseLoop.modelStep(engine: engine, modelId: "fixture", sessionId: "s", messages: [], enableThinking: nil, reasoningEffort: nil)
             }
         }
     }
 
-    @Test func missingRequiredCallKeeps422WhileOptionalPlainAnswerCompletes() async throws {
+    @Test func missingRequiredCallKeeps422() async throws {
         let computer = Engine([row(calls: [], text: "No action.")])
         do {
             _ = try await ComputerUseLoop.modelStep(engine: computer, modelId: "fixture", sessionId: "s", messages: [], enableThinking: nil, reasoningEffort: nil)
@@ -155,9 +144,6 @@ struct ResponsesDesktopModelStepTests: Sendable {
             let diagnostic = error.userInfo[NSUnderlyingErrorKey] as? DesktopResponsesModelStep.InvalidResponse
             #expect(diagnostic?.response.completion.responseID == "resp_original")
         }
-        let apple = Engine([row(calls: [], text: "The result is ready.")])
-        let result = try await AppleScriptLoop.modelStep(engine: apple, modelId: "fixture", sessionId: "s", messages: [], enableThinking: nil, reasoningEffort: nil)
-        #expect(result.call == nil && result.text == "The result is ready.")
     }
 
     @Test func retryIsOnlyTransientAndBeforeAnyOutput() async throws {
@@ -178,11 +164,11 @@ struct ResponsesDesktopModelStepTests: Sendable {
             Script(events: [], error: NSError(domain: "HTTP", code: 429)),
             Script(events: [], error: NSError(domain: "OsaurusToolChoice", code: 422)),
         ] {
-            let failedEngine = Engine([script, row(calls: [call(AppleScriptAction.toolName)])])
+            let failedEngine = Engine([script, row(calls: [call(AgentAction.toolName)])])
             let failedAttempt = DesktopResponsesAttempt()
             do {
-                _ = try await AppleScriptLoop.runModelStep({
-                    try await AppleScriptLoop.modelStep(engine: failedEngine, modelId: "fixture", sessionId: "s", messages: [], enableThinking: nil, reasoningEffort: nil, attempt: failedAttempt)
+                _ = try await ComputerUseLoop.runModelStep({
+                    try await ComputerUseLoop.modelStep(engine: failedEngine, modelId: "fixture", sessionId: "s", messages: [], enableThinking: nil, reasoningEffort: nil, attempt: failedAttempt)
                 }, timeout: 0, maxRetries: 2, feed: feed(), step: 1,
                     shouldRetry: { failedAttempt.permitsRetry($0) })
                 Issue.record("A non-retryable model error must propagate")

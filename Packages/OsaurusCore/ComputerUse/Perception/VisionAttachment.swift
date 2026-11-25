@@ -41,17 +41,54 @@ public struct VisionContext: Sendable, Equatable {
     /// from Settings → Computer Use. Resolved once at run start so it can't
     /// change under a running loop. Ignored for on-device models.
     public let cloudScrubMode: ScrubMode
+    /// The size frames are fitted to before they're attached: `standard`, or
+    /// what a local bundle's preprocessor config allows.
+    public let frameBudget: FrameBudget
+    /// The frame the model's `target.point` and zoom `region` are written in.
+    /// `nil` means the model hasn't shown it can point: it addresses elements
+    /// by mark and `describe` only.
+    public let grounding: GroundingProfile?
+    /// Set when a local bundle states no frame and has no cached calibration;
+    /// the loop calibrates once under this key before its first step.
+    public let pendingCalibration: GroundingCalibrationKey?
 
     public init(
         modelAcceptsImages: Bool,
         modelIsLocal: Bool,
         cloudConsent: Bool,
-        cloudScrubMode: ScrubMode = .allText
+        cloudScrubMode: ScrubMode = .allText,
+        frameBudget: FrameBudget = .standard,
+        grounding: GroundingProfile? = .providerPixels,
+        pendingCalibration: GroundingCalibrationKey? = nil
     ) {
         self.modelAcceptsImages = modelAcceptsImages
         self.modelIsLocal = modelIsLocal
         self.cloudConsent = cloudConsent
         self.cloudScrubMode = cloudScrubMode
+        self.frameBudget = frameBudget
+        self.grounding = grounding
+        self.pendingCalibration = pendingCalibration
+    }
+
+    /// A copy with the grounding a calibration settled on.
+    func withGrounding(_ grounding: GroundingProfile?) -> VisionContext {
+        VisionContext(
+            modelAcceptsImages: modelAcceptsImages,
+            modelIsLocal: modelIsLocal,
+            cloudConsent: cloudConsent,
+            cloudScrubMode: cloudScrubMode,
+            frameBudget: frameBudget,
+            grounding: grounding,
+            pendingCalibration: nil
+        )
+    }
+
+    /// Whether frames reach the model without being asked for: the model reads
+    /// images, Screen Recording is on, and the frame stays on-device or the
+    /// user already allowed cloud vision. Such a run perceives with pixels by
+    /// default instead of only after the accessibility tree falls short.
+    public func attachesPixelsByDefault(availability: MacDriverAvailability) -> Bool {
+        modelAcceptsImages && availability.screenRecording && (modelIsLocal || cloudConsent)
     }
 
     /// A copy with cloud-vision consent overridden — used when a run obtains
@@ -62,7 +99,10 @@ public struct VisionContext: Sendable, Equatable {
             modelAcceptsImages: modelAcceptsImages,
             modelIsLocal: modelIsLocal,
             cloudConsent: granted,
-            cloudScrubMode: cloudScrubMode
+            cloudScrubMode: cloudScrubMode,
+            frameBudget: frameBudget,
+            grounding: grounding,
+            pendingCalibration: pendingCalibration
         )
     }
 
