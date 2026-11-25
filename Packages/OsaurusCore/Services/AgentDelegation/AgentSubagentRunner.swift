@@ -193,7 +193,9 @@ enum AgentSubagentRunner {
         // DelegatedRunContract; preserve the same tighten-only semantics.
         let effectiveMaxTokens = maxTokens.map { min(agentMaxTokens ?? $0, $0) } ?? agentMaxTokens
 
-        let contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: modelName)
+        let contextWindow = await AgentLoopBudget.resolveContextWindow(
+            modelId: modelName,
+            agentContextLengthCap: generationSettings?.contextLengthCap)
         // Whether the child's model can view images. Gates both what
         // `file_read` stages (image vs OCR) and how the tool message is
         // encoded, so the two never disagree.

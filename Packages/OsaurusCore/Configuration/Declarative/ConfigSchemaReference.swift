@@ -92,7 +92,7 @@ enum ConfigSchemaReference {
         Not configurable here (Settings UI only, by design): server runtime
         (port, network exposure, generation defaults, caches, concurrency,
         memory safety, model exposure), Chat page sampling (Top P, Max Tool
-        Attempts) and Context Window Cap, the dock icon, beta updates, factory
+        Attempts), the dock icon, beta updates, factory
         reset, themes/appearance/font size, voice/dictation/TTS, computer-use
         autonomy policy, sandbox resources, the privacy filter, image/video
         generation model selection, tool auto-approval grants, telemetry/crash

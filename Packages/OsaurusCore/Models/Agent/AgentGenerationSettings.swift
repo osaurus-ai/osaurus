@@ -16,13 +16,18 @@ public struct AgentGenerationSettings: Codable, Equatable, Sendable {
     public var templateKwargs: [String: JSONValue]?
     /// Host-only preference: nil inherits Server; false uses AR; true requests adaptive drafting.
     public var speculativeDecoding: Bool?
+    /// Per-agent context window cap, in tokens. Nil inherits the global
+    /// Context Window Cap and the model's own window. Applied as
+    /// `min(this, global cap, model window)`, so it can only lower the window.
+    public var contextLengthCap: Int?
 
     public init(
         topP: Float? = nil, topK: Int? = nil, minP: Float? = nil,
         repetitionPenalty: Float? = nil, frequencyPenalty: Float? = nil,
         presencePenalty: Float? = nil, seed: Int? = nil, stop: [String]? = nil,
         enableThinking: Bool? = nil, reasoningEffort: String? = nil,
-        templateKwargs: [String: JSONValue]? = nil, speculativeDecoding: Bool? = nil
+        templateKwargs: [String: JSONValue]? = nil, speculativeDecoding: Bool? = nil,
+        contextLengthCap: Int? = nil
     ) {
         self.topP = topP
         self.topK = topK
@@ -36,6 +41,7 @@ public struct AgentGenerationSettings: Codable, Equatable, Sendable {
         self.reasoningEffort = reasoningEffort
         self.templateKwargs = templateKwargs
         self.speculativeDecoding = speculativeDecoding
+        self.contextLengthCap = contextLengthCap
     }
 
     enum CodingKeys: String, CodingKey {
@@ -50,6 +56,7 @@ public struct AgentGenerationSettings: Codable, Equatable, Sendable {
         case reasoningEffort = "reasoning_effort"
         case templateKwargs = "template_kwargs"
         case speculativeDecoding = "speculative_decoding"
+        case contextLengthCap = "context_length_cap"
     }
 
     var hasReasoningOverride: Bool {
@@ -64,6 +71,7 @@ public struct AgentGenerationSettings: Codable, Equatable, Sendable {
             && frequencyPenalty == nil && presencePenalty == nil && seed == nil
             && stop == nil && enableThinking == nil && reasoningEffort == nil
             && templateKwargs == nil && speculativeDecoding == nil
+            && contextLengthCap == nil
     }
 
     func validate() throws {
@@ -73,6 +81,10 @@ public struct AgentGenerationSettings: Codable, Equatable, Sendable {
         ).validate()
         if let reason = RequestValidator.repetitionPenaltyReason(repetitionPenalty) {
             throw ChatTurnOverrides.ValidationError.invalid(reason)
+        }
+        if let contextLengthCap, contextLengthCap < 1 {
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "Context length cap must be a positive integer.")
         }
         // These existing request fields have no shared model-independent range contract.
         // Reject non-numbers without inventing provider-specific bounds or defaults.

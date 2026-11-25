@@ -229,7 +229,7 @@ public enum ConfigManifest {
 
         ConfigSectionSpec(
             .chat,
-            comment: "everyday Chat page switches (Top P, Max Tool Attempts, and Context Window Cap stay in Settings)",
+            comment: "everyday Chat page switches, plus the global context window cap (Top P and Max Tool Attempts stay in Settings)",
             value: .mapping([
                 ConfigKeySpec(
                     "smooth_streaming", .scalar(.boolean, example: "true"),
@@ -255,6 +255,13 @@ public enum ConfigManifest {
                 ConfigKeySpec(
                     "keep_mac_awake", .scalar(.boolean, example: "true"),
                     comment: "Keep Mac Awake While Agents Run"),
+                ConfigKeySpec(
+                    "context_length_cap", .scalar(.integer, example: "null", nullable: true),
+                    comment: "global Context Window Cap in tokens; null follows each model",
+                    moreComments: [
+                        "2048...4194304; only lowers a model's window",
+                        "a custom agent can set a lower cap in generation_settings.context_length_cap",
+                    ]),
             ])),
 
         ConfigSectionSpec(
@@ -953,6 +960,13 @@ public enum ConfigManifest {
         ConfigKeySpec("reasoning_effort", .scalar(.string, example: "null", nullable: true)),
         ConfigKeySpec("template_kwargs", .jsonObject(nullable: true)),
         ConfigKeySpec("speculative_decoding", .scalar(.boolean, example: "null", nullable: true)),
+        ConfigKeySpec(
+            "context_length_cap", .scalar(.integer, example: "null", nullable: true),
+            comment: "per-agent context window cap in tokens; null inherits",
+            moreComments: [
+                "2048...4194304",
+                "effective window is min(this, chat.context_length_cap, the model window)",
+            ]),
     ]
 
     // MARK: - Derived: strict validation tables

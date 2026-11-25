@@ -78,6 +78,32 @@ struct AgentGenerationSettingsTests {
             frequencyPenalty: -3, presencePenalty: 3, reasoningEffort: "model-specific-level"
         ).validate()
     }
+
+    @Test("context length cap round-trips, inherits when omitted, and rejects a non-positive value")
+    func contextLengthCap() throws {
+        let capped = AgentGenerationSettings(contextLengthCap: 32_768)
+        #expect(!capped.isEmpty)
+        let data = try JSONEncoder().encode(capped)
+        let decoded = try JSONDecoder().decode(AgentGenerationSettings.self, from: data)
+        #expect(decoded.contextLengthCap == 32_768)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(json["context_length_cap"] as? Int == 32_768)
+
+        let inherited = try JSONDecoder().decode(AgentGenerationSettings.self, from: Data("{}".utf8))
+        #expect(inherited.contextLengthCap == nil)
+        #expect(inherited.isEmpty)
+        let explicitNull = try JSONDecoder().decode(
+            AgentGenerationSettings.self, from: Data(#"{"context_length_cap":null}"#.utf8))
+        #expect(explicitNull.contextLengthCap == nil)
+
+        #expect(throws: (any Error).self) {
+            try AgentGenerationSettings(contextLengthCap: 0).validate()
+        }
+        #expect(throws: (any Error).self) {
+            try AgentGenerationSettings(contextLengthCap: -32).validate()
+        }
+        try AgentGenerationSettings(contextLengthCap: 32_768).validate()
+    }
 }
 
 @MainActor

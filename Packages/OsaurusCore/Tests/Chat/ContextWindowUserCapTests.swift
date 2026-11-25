@@ -132,17 +132,20 @@ final class ContextWindowUserCapTests: XCTestCase {
 
         func body(of name: String) throws -> String {
             let start = try XCTUnwrap(src.range(of: "static func \(name)("))
-            return String(src[start.lowerBound...].prefix(1600))
+            return String(src[start.lowerBound...].prefix(2400))
         }
 
         for twin in ["resolveContextWindowResolution", "resolveContextWindowResolutionSync"] {
             let b = try body(of: twin)
             XCTAssertTrue(
-                b.contains("applyingUserCap("),
+                b.contains("applyingContextCaps("),
                 "\(twin) does not apply the user cap — the twins disagree")
             XCTAssertTrue(
                 b.contains("contextLengthCap"),
                 "\(twin) never reads the cap setting")
+            XCTAssertTrue(
+                b.contains("agentContextLengthCap"),
+                "\(twin) never receives the per-agent cap")
         }
     }
 
@@ -170,6 +173,101 @@ final class ContextWindowUserCapTests: XCTestCase {
     }
 
     // MARK: - The old field stays a fallback
+
+    /// The effective window is the tightest of the agent cap, the global cap,
+    /// and the model window. The chip's source names whichever cap decided.
+    func testAgentCapAndGlobalCapTakeTheMinimum() {
+        let model = resolution(262_144, .bundleMetadata)
+
+        let agentOnly = AgentLoopBudget.applyingContextCaps(
+            model, globalCap: nil, agentCap: 32_768)
+        XCTAssertEqual(agentOnly.tokens, 32_768)
+        XCTAssertEqual(agentOnly.source, .agentCap)
+
+        let globalTighter = AgentLoopBudget.applyingContextCaps(
+            model, globalCap: 16_384, agentCap: 32_768)
+        XCTAssertEqual(globalTighter.tokens, 16_384)
+        XCTAssertEqual(globalTighter.source, .userCap)
+
+        let agentTighter = AgentLoopBudget.applyingContextCaps(
+            model, globalCap: 65_536, agentCap: 32_768)
+        XCTAssertEqual(agentTighter.tokens, 32_768)
+        XCTAssertEqual(agentTighter.source, .agentCap)
+
+        let anotherAgent = AgentLoopBudget.applyingContextCaps(
+            model, globalCap: nil, agentCap: nil)
+        XCTAssertEqual(anotherAgent.tokens, 262_144)
+        XCTAssertEqual(anotherAgent.source, .bundleMetadata)
+
+        let equal = AgentLoopBudget.applyingContextCaps(
+            model, globalCap: 32_768, agentCap: 32_768)
+        XCTAssertEqual(equal.tokens, 32_768)
+        XCTAssertEqual(equal.source, .agentCap, "an equal agent cap is the one the chip names")
+    }
+
+    func testAgentCapAboveTheModelWindowIsIgnored() {
+        let untouched = AgentLoopBudget.applyingContextCaps(
+            resolution(8_192, .bundleMetadata), globalCap: nil, agentCap: 32_768)
+        XCTAssertEqual(untouched.tokens, 8_192)
+        XCTAssertEqual(untouched.source, .bundleMetadata)
+    }
+
+    func testNonPositiveAgentCapInherits() {
+        for bad in [0, -1] {
+            let out = AgentLoopBudget.applyingContextCaps(
+                resolution(32_768, .bundleMetadata), globalCap: 8_192, agentCap: bad)
+            XCTAssertEqual(out.tokens, 8_192)
+            XCTAssertEqual(out.source, .userCap)
+        }
+    }
+
+    func testOverBudgetMessageNamesTheCapThatDecided() {
+        let agent = AgentToolLoop.overBudgetMessage(windowSource: .agentCap)
+        XCTAssertTrue(agent.contains("generation_settings.context_length_cap"))
+        let global = AgentToolLoop.overBudgetMessage(windowSource: .userCap)
+        XCTAssertTrue(global.contains("Context Window Cap"))
+        XCTAssertFalse(global.contains("generation_settings"))
+        XCTAssertEqual(
+            AgentToolLoop.overBudgetMessage(windowSource: .bundleMetadata),
+            AgentToolLoop.overBudgetMessage)
+    }
+
+    /// The surfaces that show or run a window must pass the agent cap into
+    /// the shared resolver. A call that only passes the model id would keep
+    /// that surface on the full window while the others honor the agent.
+    func testNamedSurfacesPassTheAgentCap() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let paths = [
+            "Views/Chat/ChatView.swift",
+            "Views/Chat/FloatingInputCard.swift",
+            "Services/AgentDelegation/AgentSubagentRunner.swift",
+            "Subagent/Kinds/TextSubagentKind.swift",
+            "Networking/HTTPHandler.swift",
+            "Services/Plugin/PluginHostAPI.swift",
+            "Services/MobileConnect/PhoneContextUsage.swift",
+            "ComputerUse/Loop/ComputerUseLoop.swift",
+            "AppleScript/Loop/AppleScriptLoop.swift",
+            "Services/Context/AgentLoopEvaluator.swift",
+            "Tools/Handoff/HiddenAgentHandoffRunner.swift",
+            "Services/Context/CapabilityClaimsEvaluator.swift",
+        ]
+        for path in paths {
+            let src = try String(
+                contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+            XCTAssertTrue(
+                src.contains("agentContextLengthCap"),
+                "\(path) resolves a context window without the agent cap")
+        }
+        let browser = try String(
+            contentsOf: root.appendingPathComponent("Subagent/Kinds/BrowserUseKind.swift"),
+            encoding: .utf8)
+        XCTAssertTrue(
+            browser.contains("generationSettings:"),
+            "browser use runs without the target agent's generation settings")
+    }
 
     /// `contextLength` must NOT become a cap. It defaults to 128k, so treating
     /// it as one would clamp every longer-context model on update.

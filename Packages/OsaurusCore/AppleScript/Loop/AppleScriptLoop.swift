@@ -413,7 +413,11 @@ public enum AppleScriptLoop {
         ]
         messages.append(ChatMessage(role: "user", content: "Task: \(task)"))
 
-        let contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: modelId)
+        let agentCap = await MainActor.run {
+            AgentLoopBudget.storedAgentContextLengthCap(for: ChatExecutionContext.currentAgentId)
+        }
+        let contextWindow = await AgentLoopBudget.resolveContextWindow(
+            modelId: modelId, agentContextLengthCap: agentCap)
         let systemChars = messages.first?.content?.count ?? 0
         let budgetManager = AgentLoopBudget.makeBudgetManager(
             contextWindow: contextWindow,

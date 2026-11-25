@@ -834,7 +834,11 @@ public enum AgentLoopEvaluator {
         if let contextWindowOverride {
             contextWindow = contextWindowOverride
         } else {
-            contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: resolvedModel)
+            let agentCap = await MainActor.run {
+                AgentLoopBudget.storedAgentContextLengthCap(for: resolvedAgentId)
+            }
+            contextWindow = await AgentLoopBudget.resolveContextWindow(
+                modelId: resolvedModel, agentContextLengthCap: agentCap)
         }
         // Production Chat sends the effective per-agent override and otherwise
         // leaves max_tokens nil so the active bundle/runtime config remains the

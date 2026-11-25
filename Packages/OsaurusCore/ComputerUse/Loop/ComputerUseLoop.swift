@@ -285,7 +285,11 @@ public enum ComputerUseLoop {
         var messages: [ChatMessage] = [
             ChatMessage(role: "system", content: systemPrompt(policySummary: policySummary))
         ]
-        let contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: modelId)
+        let agentCap = await MainActor.run {
+            AgentLoopBudget.storedAgentContextLengthCap(for: ChatExecutionContext.currentAgentId)
+        }
+        let contextWindow = await AgentLoopBudget.resolveContextWindow(
+            modelId: modelId, agentContextLengthCap: agentCap)
         let systemChars = messages.first?.content?.count ?? 0
         // Base tool-schema reservation; bumped per-iteration by the in-context
         // image's estimated tokens (the text budget doesn't count image parts).

@@ -3903,7 +3903,10 @@ final class ChatSession: ObservableObject {
     /// occupies — the same denominator the runtime trims against.
     private var contextUsageFractionEstimate: Double? {
         guard let model = selectedModel else { return nil }
-        let window = AgentLoopBudget.resolveContextWindowSync(modelId: model)
+        let agentCap = AgentManager.shared.effectiveGenerationSettings(
+            for: agentId ?? Agent.defaultId)?.contextLengthCap
+        let window = AgentLoopBudget.resolveContextWindowSync(
+            modelId: model, agentContextLengthCap: agentCap)
         let effective = ContextBudgetManager(contextLength: window).effectiveBudget
         guard effective > 0 else { return nil }
         let total = estimatedContextBreakdown.total
@@ -8528,9 +8531,14 @@ final class ChatSession: ObservableObject {
                     // activates once the conversation outgrows the history
                     // budget; the system prefix is never rewritten so paged-KV
                     // reuse survives compaction.
+                    let agentContextCap: Int? = turnGenerationControls.agentDefaultsCaptured == true
+                        ? turnGenerationControls.agentSettings?.contextLengthCap
+                        : AgentManager.shared.effectiveGenerationSettings(for: effectiveAgentId)?
+                            .contextLengthCap
                     let loopBudgetManager: ContextBudgetManager = await {
                         var contextWindow = await AgentLoopBudget.resolveContextWindow(
-                            modelId: turnModelId ?? "default"
+                            modelId: turnModelId ?? "default",
+                            agentContextLengthCap: agentContextCap
                         )
                         if let delegationBudget = self.delegationBudget {
                             // Delegated child: the contract's position
@@ -8551,7 +8559,9 @@ final class ChatSession: ObservableObject {
                     }()
                     let orchestratorContextWindow: Int? =
                         usesOrchestratorContextPolicy
-                        ? await AgentLoopBudget.resolveContextWindow(modelId: turnModelId ?? "default")
+                        ? await AgentLoopBudget.resolveContextWindow(
+                            modelId: turnModelId ?? "default",
+                            agentContextLengthCap: agentContextCap)
                         : nil
 
                     // Incomplete reasoning attempts remain visible in the
@@ -10144,7 +10154,9 @@ final class ChatSession: ObservableObject {
                         var overBudgetWindowSource: AgentLoopBudget.ContextWindowSource?
                         if let overBudgetModel = turnModelId {
                             overBudgetWindowSource = AgentLoopBudget
-                                .resolveContextWindowResolutionSync(modelId: overBudgetModel)
+                                .resolveContextWindowResolutionSync(
+                                    modelId: overBudgetModel,
+                                    agentContextLengthCap: agentContextCap)
                                 .source
                         }
                         let overBudgetText = AgentToolLoop.overBudgetMessage(

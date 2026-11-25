@@ -238,6 +238,9 @@ final class BrowserUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning
             maxIterations: maxSteps,
             deadline: deadline,
             sessionId: sessionId,
+            generationSettings: await MainActor.run {
+                AgentManager.shared.effectiveGenerationSettings(for: agentId)
+            },
             enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
             reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
             isInterrupted: { interrupt.isInterrupted },

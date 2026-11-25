@@ -11903,7 +11903,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // byte-stable; only the conversation tail is trimmed.
             let budgetManager: ContextBudgetManager? = await {
                 guard maxIterations > 1 else { return nil }
-                let contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: model)
+                let agentCap = await MainActor.run {
+                    AgentLoopBudget.storedAgentContextLengthCap(for: agentId)
+                }
+                let contextWindow = await AgentLoopBudget.resolveContextWindow(
+                    modelId: model, agentContextLengthCap: agentCap)
                 let toolTokens = await MainActor.run {
                     ToolRegistry.shared.totalEstimatedTokens(for: tools)
                 }

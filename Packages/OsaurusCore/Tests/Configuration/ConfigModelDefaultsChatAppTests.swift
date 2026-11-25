@@ -133,6 +133,7 @@ struct ConfigModelDefaultsChatAppTests {
         desired.followUpSuggestions = !(before.followUpSuggestions ?? true)
         desired.clipboardMonitoring = !(before.clipboardMonitoring ?? true)
         desired.keepMacAwake = !(before.keepMacAwake ?? true)
+        desired.contextLengthCap = before.contextLengthCap
 
         Self.expectNoFailures(await Self.apply { $0.chat = desired })
 
@@ -199,6 +200,67 @@ struct ConfigModelDefaultsChatAppTests {
         #expect(ConfigExporter.export().app?.hotkey == .null)
     }
 
+    @Test
+    func chat_contextLengthCapAppliesAndClears() async throws {
+        let original = ChatConfigurationStore.load()
+        defer { ChatConfigurationStore.save(original) }
+
+        var set = ChatSection()
+        set.contextLengthCap = .value(32_768)
+        Self.expectNoFailures(await Self.apply { $0.chat = set })
+        #expect(ChatConfigurationStore.load().contextLengthCap == 32_768)
+        #expect(ConfigExporter.export().chat?.contextLengthCap == .value(32_768))
+        try Self.expectIdempotentExport(sections: [.chat])
+
+        var clear = ChatSection()
+        clear.contextLengthCap = .null
+        Self.expectNoFailures(await Self.apply { $0.chat = clear })
+        #expect(ChatConfigurationStore.load().contextLengthCap == nil)
+        #expect(ConfigExporter.export().chat?.contextLengthCap == .null)
+
+        let untouched = ChatConfigurationStore.load().contextLengthCap
+        var absent = ChatSection()
+        absent.smoothStreaming = ConfigExporter.export().chat?.smoothStreaming
+        Self.expectNoFailures(await Self.apply { $0.chat = absent })
+        #expect(ChatConfigurationStore.load().contextLengthCap == untouched)
+
+        let issues = Self.planIssues { document in
+            var chat = ChatSection()
+            chat.contextLengthCap = .value(1)
+            document.chat = chat
+        }
+        #expect(issues.contains { $0.contains("chat.context_length_cap") }, "\(issues)")
+
+        let agentIssues = Self.planIssues { document in
+            var entry = AgentEntry(name: "Capped")
+            entry.generationSettings = .value(AgentGenerationSettings(contextLengthCap: 512))
+            document.agents = [entry]
+        }
+        #expect(
+            agentIssues.contains { $0.contains("generation_settings.context_length_cap") },
+            "\(agentIssues)")
+
+        let document = try ConfigYAML.decode(
+            """
+            agents:
+              - name: Mycroft
+                generation_settings:
+                  context_length_cap: 32768
+            chat:
+              context_length_cap: 65536
+            """)
+        #expect(document.agents?.first?.generationSettings.valueOrNil?.contextLengthCap == 32_768)
+        #expect(document.chat?.contextLengthCap == .value(65_536))
+        let cleared = try ConfigYAML.decode(
+            """
+            agents:
+              - name: Mycroft
+                generation_settings:
+                  context_length_cap: null
+            """)
+        #expect(cleared.agents?.first?.generationSettings.valueOrNil?.contextLengthCap == nil)
+    }
+
     /// A hotkey recorded on another keyboard layout has no text form and
     /// exports as its display string; re-applying that export must stay a
     /// no-op instead of failing validation.
@@ -238,6 +300,7 @@ struct ConfigModelDefaultsChatAppTests {
             "settings.chat.generateFollowUps": "chat",
             "settings.chat.clipboard": "chat",
             "settings.chat.keepAwakeForAgentRuns": "chat",
+            "settings.chat.contextLength": "chat",
         ]
         for (id, section) in expected {
             let entry = SettingsSearchIndex.entries.first { $0.id == id }

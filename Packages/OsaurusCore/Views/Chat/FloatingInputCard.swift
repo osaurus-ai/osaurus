@@ -763,8 +763,11 @@ struct FloatingInputCard: View {
     /// margin) the runtime trims against, the hard gate excludes compactable
     /// history, and the response reservation is included.
     private var contextBudget: ContextBudgetSnapshot {
+        let agentCap = agentManager.effectiveGenerationSettings(for: effectiveAgentId)?
+            .contextLengthCap
         let resolution = selectedModel.map {
-            AgentLoopBudget.resolveContextWindowResolutionSync(modelId: $0)
+            AgentLoopBudget.resolveContextWindowResolutionSync(
+                modelId: $0, agentContextLengthCap: agentCap)
         }
         let breakdown = displayContextBreakdown
         // Real per-agent max_tokens (not the 4096 default) so the chip's
@@ -7295,6 +7298,8 @@ private struct ContextBreakdownPopover: View {
             // Named so a window smaller than the bundle advertises reads as a
             // setting the user chose, not as the model being mis-detected.
             return L("Your context limit")
+        case .agentCap:
+            return L("Agent context limit")
         case nil:
             return L("Model maximum")
         }
