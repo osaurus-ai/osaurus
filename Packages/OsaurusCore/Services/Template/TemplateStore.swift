@@ -27,7 +27,23 @@ public final class TemplateStore: ObservableObject {
     /// Latest version of every library template, sorted by name.
     @Published public private(set) var templates: [Template] = []
 
-    public let builtIn: [Template] = TemplateStore.loadBuiltIn()
+    /// Bundled templates, parsed once on first touch. A `static let` is
+    /// lazily and thread-safely initialized, so the launch prewarm (off the
+    /// main thread) and any later reader share one parse.
+    public nonisolated static let builtInTemplates: [Template] = TemplateStore.loadBuiltIn()
+
+    public var builtIn: [Template] { Self.builtInTemplates }
+
+    /// Parses the bundled templates off the main thread so the first view
+    /// that touches the store does not do it during layout (APPLE-MACOS-3KB).
+    public nonisolated static func prewarm() {
+        Task.detached(priority: .utility) {
+            _ = TemplateStore.builtInTemplates
+            // Creating `shared` starts the background library load, so it
+            // has normally landed before any view or tool reads the store.
+            await MainActor.run { _ = TemplateStore.shared }
+        }
+    }
 
     public nonisolated static let maxFileBytes = 2 * 1024 * 1024
 
@@ -62,15 +78,70 @@ public final class TemplateStore: ObservableObject {
         }
     }
 
-    private struct Index: Codable {
+    private struct Index: Codable, Sendable {
         var version: Int = 1
         var hiddenFromOrchestrator: [UUID] = []
     }
 
     private var index = Index()
 
+    /// Bumped by every synchronous `reload()` so the initial background
+    /// load can never overwrite newer state.
+    private var reloadGeneration = 0
+
+    /// False until the library has been read once, by either path.
+    private var hasLoaded = false
+
+    /// The in-flight background library load started by `init`.
+    private var initialLoad: Task<Void, Never>?
+
+    /// True once the library and index have been read, by either path.
+    /// Until then readers see built-ins only; views update through
+    /// `templates` when the background load lands.
+    public var isLibraryLoaded: Bool { hasLoaded }
+
+    /// Mutations read-modify-write `index` and pick version numbers, so they
+    /// must see the on-disk library before writing. They run on explicit
+    /// user or tool actions, never during view layout, so a synchronous read
+    /// here does not reintroduce APPLE-MACOS-3KB. Readers do NOT call this.
+    private func ensureLoadedForMutation() {
+        if !hasLoaded { reload() }
+    }
+
+    /// Waits for the background library load without blocking the main
+    /// actor. Non-UI callers that need the user's templates (tools) await
+    /// this; views just observe `templates`.
+    public func libraryLoaded() async {
+        guard !hasLoaded, let initialLoad else { return }
+        await initialLoad.value
+    }
+
+    /// Reading and parsing the library (and the bundled templates) is disk
+    /// I/O plus YAML/JSON work. `shared` is first touched from SwiftUI view
+    /// construction on the main actor, so doing it here synchronously froze
+    /// the UI (APPLE-MACOS-3KB). Load in the background and publish through
+    /// `@Published templates`; readers never load synchronously.
     private init() {
-        reload()
+        let generation = reloadGeneration
+        initialLoad = Task.detached(priority: .userInitiated) { [weak self] in
+            _ = TemplateStore.builtInTemplates
+            let loadedIndex = TemplateStore.readIndex()
+            let latest = TemplateStore.loadLatest()
+            await self?.applyInitialLoad(index: loadedIndex, latest: latest, generation: generation)
+        }
+    }
+
+    /// Test seam: a fresh, non-shared store whose background load has just
+    /// started, so tests can race it. `shared` stays the only app instance.
+    static func makeForTesting() -> TemplateStore {
+        TemplateStore()
+    }
+
+    private func applyInitialLoad(index loadedIndex: Index, latest: [Template], generation: Int) {
+        guard generation == reloadGeneration else { return }
+        hasLoaded = true
+        index = loadedIndex
+        templates = latest.map(applyingIndex)
     }
 
     // MARK: - Paths
@@ -90,6 +161,8 @@ public final class TemplateStore: ObservableObject {
     // MARK: - Reading
 
     public func reload() {
+        reloadGeneration += 1
+        hasLoaded = true
         index = Self.readIndex()
         templates = Self.loadLatest().map(applyingIndex)
     }
@@ -170,12 +243,12 @@ public final class TemplateStore: ObservableObject {
     }
 
     public func isBuiltIn(_ template: Template) -> Bool {
-        !templates.contains { $0.id == template.id } && builtIn.contains { $0.id == template.id }
+        return !templates.contains { $0.id == template.id } && builtIn.contains { $0.id == template.id }
     }
 
     /// Latest version of a template, library first.
     public func latest(id: UUID) -> Template? {
-        templates.first { $0.id == id } ?? builtIn.first { $0.id == id }.map(applyingIndex)
+        return templates.first { $0.id == id } ?? builtIn.first { $0.id == id }.map(applyingIndex)
     }
 
     /// A specific version, from the library or the matching built-in.
@@ -211,7 +284,7 @@ public final class TemplateStore: ObservableObject {
     }
 
     public func orchestratorVisible(kind: TemplateKind? = nil) -> [Template] {
-        allTemplates.filter { $0.availableToOrchestrator && (kind == nil || $0.kind == kind) }
+        return allTemplates.filter { $0.availableToOrchestrator && (kind == nil || $0.kind == kind) }
     }
 
     public var orchestratorVisible: [Template] { orchestratorVisible(kind: nil) }
@@ -277,6 +350,7 @@ public final class TemplateStore: ObservableObject {
     }
 
     private func write(_ template: Template) throws -> Template {
+        ensureLoadedForMutation()
         let url = Self.versionURL(template.id, version: template.version)
         do {
             try OsaurusPaths.ensureExists(Self.templateDirectory(template.id))
@@ -315,6 +389,7 @@ public final class TemplateStore: ObservableObject {
     }
 
     public func setAvailableToOrchestrator(_ visible: Bool, id: UUID) {
+        ensureLoadedForMutation()
         index.hiddenFromOrchestrator.removeAll { $0 == id }
         if !visible { index.hiddenFromOrchestrator.append(id) }
         writeIndex()
@@ -325,6 +400,7 @@ public final class TemplateStore: ObservableObject {
     /// Deletes every stored version. Built-ins cannot be deleted; a
     /// shadowing library copy can, which brings the built-in back.
     public func delete(id: UUID) throws {
+        ensureLoadedForMutation()
         let dir = Self.templateDirectory(id)
         guard FileManager.default.fileExists(atPath: dir.path) else {
             if builtIn.contains(where: { $0.id == id }) { throw StoreError.builtInReadOnly }
@@ -411,6 +487,7 @@ public final class TemplateStore: ObservableObject {
     /// Test seam.
     func resetForTesting() {
         try? FileManager.default.removeItem(at: Self.directory)
+        reloadGeneration += 1
         index = Index()
         templates = []
     }
