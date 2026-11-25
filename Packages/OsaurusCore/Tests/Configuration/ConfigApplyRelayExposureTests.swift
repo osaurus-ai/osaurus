@@ -105,5 +105,25 @@ extension PairedRelaySuites {
             withExtendedLifetime(pairing) {}
             await cleanUp([created])
         }
+
+        @Test func keptOffRecordIsPersistedToDiskAfterFlush() async throws {
+            let name = "Relay Apply Persisted \(UUID().uuidString.prefix(6))"
+
+            var document = OsaurusConfigDocument()
+            document.agents = [relayDisabledEntry(name)]
+            let results = await ConfigApplier.apply(document: document, prune: false)
+            #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+            let created = try #require(AgentManager.shared.agents.first { $0.name == name })
+
+            RelayConfigurationStore.flush()
+            let onDisk = try JSONDecoder().decode(
+                RelayConfiguration.self,
+                from: Data(contentsOf: OsaurusPaths.relayConfigFile())
+            )
+            #expect(onDisk.isKeptOff(created.id))
+            #expect(onDisk == RelayConfigurationStore.load())
+
+            await cleanUp([created])
+        }
     }
 }

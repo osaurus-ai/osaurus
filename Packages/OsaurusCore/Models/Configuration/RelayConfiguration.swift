@@ -49,8 +49,38 @@ public struct RelayConfiguration: Codable, Equatable, Sendable {
 
 @MainActor
 enum RelayConfigurationStore {
+    /// Last configuration saved or loaded, keyed by the file it belongs to so
+    /// a changed root (tests) never serves another root's value. The cache is
+    /// authoritative for readers, which keeps read-after-save consistent while
+    /// the file write itself happens off the main actor.
+    private static var cached: (url: URL, configuration: RelayConfiguration)?
+
+    /// Serializes disk writes off the main actor, in save order. `save` runs
+    /// on the main actor (e.g. inside `ConfigApplier.applyAgents`'
+    /// `MainActor.run`), where a slow atomic write/rename stalled the UI.
+    private static let diskQueue = DispatchQueue(label: "ai.osaurus.relay.config", qos: .utility)
+
     static func load() -> RelayConfiguration {
         let url = OsaurusPaths.relayConfigFile()
+        if let cached, cached.url == url { return cached.configuration }
+        let configuration = loadFromDisk(url)
+        cached = (url, configuration)
+        return configuration
+    }
+
+    static func save(_ configuration: RelayConfiguration) {
+        let url = OsaurusPaths.relayConfigFile()
+        cached = (url, configuration)
+        diskQueue.async { saveToDisk(configuration, to: url) }
+    }
+
+    /// Blocks until every pending write has reached disk. For tests and
+    /// shutdown paths that need the file itself to be current.
+    static func flush() {
+        diskQueue.sync {}
+    }
+
+    private static func loadFromDisk(_ url: URL) -> RelayConfiguration {
         guard FileManager.default.fileExists(atPath: url.path) else { return .default }
         do {
             return try JSONDecoder().decode(RelayConfiguration.self, from: Data(contentsOf: url))
@@ -60,15 +90,14 @@ enum RelayConfigurationStore {
         }
     }
 
-    static func save(_ configuration: RelayConfiguration) {
-        let url = OsaurusPaths.relayConfigFile()
+    nonisolated private static func saveToDisk(_ configuration: RelayConfiguration, to url: URL) {
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(configuration).write(to: url, options: [.atomic])
         } catch {
-            print("[Osaurus] Failed to save RelayConfiguration: \(error)")
+            print("[Osaurus] Failed to save RelayConfiguration to \(url.path): \(error)")
         }
     }
 }
