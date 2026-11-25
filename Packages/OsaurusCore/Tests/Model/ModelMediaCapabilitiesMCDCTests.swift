@@ -201,14 +201,17 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(incomplete.reason.contains("missing configured"))
     }
 
-    @Test(arguments: ["qwen2_vl", "qwen2_5_vl", "qwen3_vl", "qwen3_5", "qwen3_5_moe", "qwen4_exp", "gemma4", "gemma4_unified"])
+    @Test(arguments: [
+        "qwen2_vl", "qwen2_5_vl", "qwen3_vl", "qwen3_5", "qwen3_5_moe", "qwen4_exp",
+        "prism_hadamard_qwen35", "gemma4", "gemma4_unified",
+    ])
     func installedFamilies(type: String) throws {
         let root = try VisionBundleFixture.make(type: type)
         defer { try? FileManager.default.removeItem(at: root) }
         for alias in ["ordinary-local-model", "Qwen3-VL", "Nemotron-3-Ultra-Local", "Step-3.7-Local"] {
             let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
             #expect(caps.supportsImage)
-            #expect(caps.supportsVideo == type.hasPrefix("qwen"))
+            #expect(caps.supportsVideo == (type.hasPrefix("qwen") || type == "prism_hadamard_qwen35"))
             #expect(!caps.supportsAudio)
             #expect(VLMDetection.isVLM(at: root) == caps.supportsImage)
         }

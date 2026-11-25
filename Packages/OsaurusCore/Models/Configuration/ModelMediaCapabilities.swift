@@ -273,6 +273,7 @@ public enum ModelMediaCapabilities {
     private static let videoCapableModelTypes: Set<String> = [
         "qwen2_vl", "qwen2_5_vl", "qwen3_vl",
         "qwen3_5", "qwen3_5_moe", "qwen4_exp",
+        "prism_hadamard_qwen35",
         "qwen3_6", "qwen3_6_moe",
         "smolvlm",
         // Muse Glimmer's vision tower carries `patch_temporal: 2`, i.e. it
