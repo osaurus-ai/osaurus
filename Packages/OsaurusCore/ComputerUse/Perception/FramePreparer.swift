@@ -46,18 +46,21 @@ public enum FramePreparer {
         return render(source, width: target.width, height: target.height, like: image) { _ in } ?? image
     }
 
-    /// Marks for `snapshot`'s elements that are visible in `image`. Element
-    /// `i` carries mark `i + 1`, the numbering `AgentView` uses. Empty when the
-    /// frame has no `region` (nothing to map screen frames into).
-    public static func marks(for snapshot: CUSnapshot?, in image: CUImage) -> [FrameMark] {
-        guard let snapshot, let region = image.region, region.w > 0, region.h > 0,
+    /// Marks for `snapshot`'s elements that are visible in `image`, numbered
+    /// as `view` (built from `snapshot`) lists them; an element the view
+    /// doesn't list gets no mark. Empty when the frame has no `region`
+    /// (nothing to map screen frames into).
+    public static func marks(for snapshot: CUSnapshot?, view: AgentView?, in image: CUImage) -> [FrameMark] {
+        guard let snapshot, let view, let region = image.region, region.w > 0, region.h > 0,
             image.width > 0, image.height > 0
         else { return [] }
+        let markByElement = Dictionary(view.items.map { ($0.elementId, $0.mark) }, uniquingKeysWith: { first, _ in first })
         let sx = CGFloat(image.width) / CGFloat(region.w)
         let sy = CGFloat(image.height) / CGFloat(region.h)
         let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         var marks: [FrameMark] = []
-        for (index, element) in snapshot.elements.enumerated() {
+        for element in snapshot.elements {
+            guard let number = markByElement[element.id] else { continue }
             let rect = CGRect(
                 x: (CGFloat(element.x) - CGFloat(region.x)) * sx,
                 y: (CGFloat(element.y) - CGFloat(region.y)) * sy,
@@ -65,7 +68,7 @@ public enum FramePreparer {
                 height: CGFloat(element.h) * sy
             ).intersection(bounds)
             guard !rect.isNull, rect.width >= minMarkSide, rect.height >= minMarkSide else { continue }
-            marks.append(FrameMark(number: index + 1, rect: rect))
+            marks.append(FrameMark(number: number, rect: rect))
         }
         return marks
     }

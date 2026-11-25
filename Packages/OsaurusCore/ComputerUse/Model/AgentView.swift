@@ -137,6 +137,11 @@ public struct AgentView: Sendable, Equatable {
     /// Build a fresh view from a snapshot, computing the `changed` delta
     /// against `previous`. Elements are matched across snapshots by
     /// (role, label) since the live `s…` ids rotate every capture.
+    ///
+    /// A matched element keeps its previous mark and a new one takes the next
+    /// unused number, so marks never shift when something above disappears:
+    /// a mark remembered from an earlier view names the same control or
+    /// nothing, never its neighbour.
     public static func build(from snapshot: CUSnapshot, previous: AgentView?) -> AgentView {
         // Index the previous view's values by a stable (role|label) key so we
         // can detect new/changed elements. A nil previous means first capture:
@@ -156,18 +161,21 @@ public struct AgentView: Sendable, Equatable {
         var changes: [AgentViewChange] = []
         var consumed: [String: Int] = [:]  // how many of each key we've matched
         let windowsById = Dictionary(uniqueKeysWithValues: snapshot.windows.map { ($0.id, $0) })
+        var nextMark = (previous?.items.map(\.mark).max() ?? 0) + 1
 
-        for (index, element) in snapshot.elements.enumerated() {
+        for element in snapshot.elements {
             let key = matchKey(windowId: element.windowId, role: element.role, label: element.label)
             let window = element.windowId.flatMap { windowsById[$0] }
             let visibleValue = visibleValue(for: element)
             let change: AgentViewChange.Kind?
+            var keptMark: Int?
             if previous == nil {
                 change = nil
             } else if let candidates = previousItems[key] {
                 let already = consumed[key, default: 0]
                 if already < candidates.count {
                     let prevValue = candidates[already].value
+                    keptMark = candidates[already].mark
                     consumed[key] = already + 1
                     change = normalize(prevValue) != normalize(visibleValue) ? .valueChanged(from: prevValue) : nil
                 } else {
@@ -177,16 +185,23 @@ public struct AgentView: Sendable, Equatable {
             } else {
                 change = .appeared  // element not present in the previous view
             }
+            let mark: Int
+            if let keptMark {
+                mark = keptMark
+            } else {
+                mark = nextMark
+                nextMark += 1
+            }
             let changed = change != nil
             if let change {
                 changes.append(
                     AgentViewChange(
-                        mark: index + 1, role: element.role, label: element.label, value: visibleValue, kind: change))
+                        mark: mark, role: element.role, label: element.label, value: visibleValue, kind: change))
             }
 
             items.append(
                 AgentViewItem(
-                    mark: index + 1,
+                    mark: mark,
                     elementId: element.id,
                     windowId: element.windowId,
                     windowTitle: window?.title,

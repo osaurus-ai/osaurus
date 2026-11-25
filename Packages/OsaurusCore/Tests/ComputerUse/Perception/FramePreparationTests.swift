@@ -115,7 +115,8 @@ final class FramePreparationTests: XCTestCase {
             CUElement(id: "tiny", role: "button", x: 600, y: 600, w: 4, h: 4),
             CUElement(id: "edge", role: "button", x: 2000, y: 900, w: 400, h: 400),
         ])
-        let marks = FramePreparer.marks(for: snapshot, in: image)
+        let view = AgentView.build(from: snapshot, previous: nil)
+        let marks = FramePreparer.marks(for: snapshot, view: view, in: image)
         XCTAssertEqual(
             marks,
             [
@@ -125,12 +126,33 @@ final class FramePreparationTests: XCTestCase {
         )
     }
 
+    func testMarksCarryTheViewNumbersAfterAnElementAboveDisappears() throws {
+        let region = CUScreenRegion(x: 0, y: 0, w: 1000, h: 500)
+        let image = try Self.solidImage(width: 1000, height: 500, region: region)
+        let before = Self.snapshot(elements: [
+            CUElement(id: "s1-1", role: "statictext", label: "Last Expression", x: 10, y: 10, w: 200, h: 30),
+            CUElement(id: "s1-2", role: "button", label: "1", x: 10, y: 100, w: 60, h: 60),
+            CUElement(id: "s1-3", role: "button", label: "2", x: 100, y: 100, w: 60, h: 60),
+        ])
+        let after = Self.snapshot(elements: [
+            CUElement(id: "s2-1", role: "button", label: "1", x: 10, y: 100, w: 60, h: 60),
+            CUElement(id: "s2-2", role: "button", label: "2", x: 100, y: 100, w: 60, h: 60),
+        ])
+        let view = AgentView.build(from: after, previous: AgentView.build(from: before, previous: nil))
+        XCTAssertEqual(
+            FramePreparer.marks(for: after, view: view, in: image).map(\.number),
+            [2, 3]
+        )
+    }
+
     func testNoMarksWithoutARegionOrSnapshot() throws {
         let image = try Self.solidImage(width: 200, height: 100, region: nil)
         let snapshot = Self.snapshot(elements: [CUElement(id: "go", role: "button", x: 10, y: 10, w: 50, h: 20)])
-        XCTAssertTrue(FramePreparer.marks(for: snapshot, in: image).isEmpty)
+        let view = AgentView.build(from: snapshot, previous: nil)
+        XCTAssertTrue(FramePreparer.marks(for: snapshot, view: view, in: image).isEmpty)
         let placed = try Self.solidImage(width: 200, height: 100, region: CUScreenRegion(x: 0, y: 0, w: 200, h: 100))
-        XCTAssertTrue(FramePreparer.marks(for: nil, in: placed).isEmpty)
+        XCTAssertTrue(FramePreparer.marks(for: nil, view: view, in: placed).isEmpty)
+        XCTAssertTrue(FramePreparer.marks(for: snapshot, view: nil, in: placed).isEmpty)
     }
 
     func testDrawnMarkTagsTheBoxCorner() throws {

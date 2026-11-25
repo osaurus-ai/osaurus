@@ -487,6 +487,7 @@ public enum ComputerUseLoop {
                 shownFrame = try await attachFrame(
                     image: frame,
                     snapshot: initialView.snapshot,
+                    view: initialView.view,
                     vision: vision,
                     consent: &runConsent,
                     requestConsent: timedCloudVisionConsent,
@@ -1228,6 +1229,7 @@ public enum ComputerUseLoop {
                     shownFrame = try await attachFrame(
                         image: frame,
                         snapshot: lastSnapshot,
+                        view: lastView,
                         vision: vision,
                         consent: &runConsent,
                         requestConsent: timedCloudVisionConsent,
@@ -2865,8 +2867,8 @@ public enum ComputerUseLoop {
 
     /// Attach a freshly captured frame to the model conversation when the
     /// `VisionContext` allows it. The frame is first fitted to the run's
-    /// `FrameBudget`; a `som` frame then gets the mark numbers of `snapshot`'s
-    /// elements (the list the model was just shown). Local models receive the
+    /// `FrameBudget`; a `som` frame then gets `view`'s mark numbers on
+    /// `snapshot`'s elements (the list the model was just shown). Local models receive the
     /// frame directly; remote models receive a `FrameScrubber`-redacted frame
     /// routed through `CaptureRouter.cloudRoute`, and only with consent, with
     /// the marks drawn after the scrub so the masks don't cover them.
@@ -2875,6 +2877,7 @@ public enum ComputerUseLoop {
     private static func attachFrame(
         image captured: CUImage,
         snapshot: CUSnapshot?,
+        view: AgentView?,
         vision: VisionContext,
         consent: inout RunCloudVisionConsent,
         requestConsent: @Sendable () async -> CloudVisionConsentChoice,
@@ -2888,7 +2891,7 @@ public enum ComputerUseLoop {
     ) async throws -> CUImage? {
         let effective = vision.withConsent(consent.granted)
         let image = FramePreparer.fit(captured, to: vision.frameBudget)
-        let marks = snapshot?.tier == .som ? FramePreparer.marks(for: snapshot, in: image) : []
+        let marks = snapshot?.tier == .som ? FramePreparer.marks(for: snapshot, view: view, in: image) : []
         switch VisionAttachment.decide(image: image, context: effective, availability: availability) {
         case .none:
             // The frame can't attach as-is. If the ONLY thing missing is
