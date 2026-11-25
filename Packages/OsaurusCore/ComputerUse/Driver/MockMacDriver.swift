@@ -29,6 +29,9 @@ public actor MockMacDriver: MacDriver {
     /// Optional queue of action results; when empty, actions succeed.
     private var actionResultQueue: [CUActionResult] = []
 
+    /// Pids reported as exited by `isRunning`; every other pid is unknown.
+    private var exitedPids: Set<Int32> = []
+
     // MARK: Recorded calls (for assertions)
 
     public private(set) var elementActions: [CUElementAction] = []
@@ -77,6 +80,7 @@ public actor MockMacDriver: MacDriver {
     public func enqueueActionResults(_ results: [CUActionResult]) {
         actionResultQueue.append(contentsOf: results)
     }
+    public func markExited(pid: Int32) { exitedPids.insert(pid) }
 
     // MARK: MacDriver
 
@@ -89,6 +93,8 @@ public actor MockMacDriver: MacDriver {
     public func activeWindow() async -> CUActiveWindow? { active }
 
     public func focusedContent(pid: Int32) async -> CUFocusedContent? { focusedContentByPid[pid] }
+
+    public func isRunning(pid: Int32) async -> Bool? { exitedPids.contains(pid) ? false : nil }
 
     public func open(
         identifier: String,

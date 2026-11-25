@@ -649,6 +649,37 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertTrue(elementActions.isEmpty)
     }
 
+    /// The target quit after it was perceived: the click is not posted into the
+    /// dead pid, and the model is told to reopen the app.
+    func testTargetThatQuitReceivesNoInput() async {
+        let d = driver([el("go", "button", "Go")])
+        await d.markExited(pid: 4242)
+        let results = ToolResultLog()
+        let script = ComputerUseLoop.scriptedProvider([
+            AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+            AgentAction(verb: .giveUp, reason: "app is gone"),
+        ])
+        let result = await run(
+            d,
+            provider: { input in
+                await results.record(input.lastToolResult)
+                return try await script(input)
+            }
+        )
+        guard case .gaveUp = result.outcome else {
+            return XCTFail("Expected gaveUp; got \(result.outcome)")
+        }
+        let elementActions = await d.elementActions
+        let coordinateActions = await d.coordinateActions
+        XCTAssertTrue(elementActions.isEmpty)
+        XCTAssertTrue(coordinateActions.isEmpty)
+        let seen = await results.results.compactMap { $0 }
+        XCTAssertTrue(
+            seen.contains { $0.contains("no longer running") && $0.contains("Use `open`") },
+            "The model should be told the app quit: \(seen)"
+        )
+    }
+
     /// Stop between two batched steps: the first ran, the second is not posted.
     func testStopInsideBatchHaltsRemainingSteps() async {
         let d = driver([el("a", "button", "A"), el("b", "button", "B")])
