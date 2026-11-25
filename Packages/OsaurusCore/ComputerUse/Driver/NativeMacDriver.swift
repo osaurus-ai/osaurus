@@ -146,6 +146,7 @@ public struct NativeMacDriver: MacDriver {
                 if let maxElements { filter.maxElements = maxElements }
                 if focusedWindowOnly { filter.focusedWindowOnly = true }
                 filter.interactiveOnly = interactiveOnly
+                filter.passiveValueLimit = ElementFilter.capturePassiveValueLimit
                 return AccessibilityManager.shared.traverse(filter: filter)
             }
             return mapSnapshot(snapshot, tier: .ax, image: nil)

@@ -103,6 +103,56 @@ final class AgentViewTests: XCTestCase {
         XCTAssertTrue(next.renderForModel().localizedCaseInsensitiveContains("disappeared"))
     }
 
+    /// Live finding (Qwen3-VL-8B): after a click that archived the email, the result said only "The view changed."
+    /// and the model clicked Archive three more times. The verify result now names what changed.
+    func testChangesNameTheValueAppearedAndDisappearedElements() {
+        let prev = AgentView.build(
+            from: snapshot([
+                el("a", "button", "Archive"), el("s", "statictext", "State", value: "inbox"),
+                el("g", "button", "Gone"),
+            ]),
+            previous: nil
+        )
+        let next = AgentView.build(
+            from: snapshot(
+                [
+                    el("a", "button", "Archive"), el("s", "statictext", "State", value: "archived"),
+                    el("u", "button", "Undo"),
+                ], id: 2),
+            previous: prev
+        )
+        XCTAssertEqual(
+            next.changes,
+            [
+                AgentViewChange(mark: 2, role: "statictext", label: "State", value: "archived", kind: .valueChanged(from: "inbox")),
+                AgentViewChange(mark: 3, role: "button", label: "Undo", value: nil, kind: .appeared),
+                AgentViewChange(mark: nil, role: "button", label: "Gone", value: nil, kind: .disappeared),
+            ])
+        XCTAssertEqual(
+            next.renderChanges(),
+            "[2] statictext \"State\": \"inbox\" → \"archived\"\n[3] button \"Undo\" appeared\nbutton \"Gone\" disappeared")
+    }
+
+    func testChangesAreCappedAndSecureValuesStayOut() {
+        let prev = AgentView.build(from: snapshot([el("p", "securetextfield", "Password", value: "a")]), previous: nil)
+        let next = AgentView.build(
+            from: snapshot(
+                [el("p", "securetextfield", "Password", value: "ab")] + (1...8).map { el("n\($0)", "button", "N\($0)") },
+                id: 2),
+            previous: prev
+        )
+        XCTAssertFalse(next.changes.contains { $0.label == "Password" }, "a secure value is never diffed")
+        let lines = next.renderChanges(limit: 3).components(separatedBy: "\n")
+        XCTAssertEqual(lines.count, 4)
+        XCTAssertEqual(lines.last, "… and 5 more")
+    }
+
+    func testFirstCaptureListsNoChanges() {
+        let view = AgentView.build(from: snapshot([el("a", "textfield", "F", value: "x")]), previous: nil)
+        XCTAssertTrue(view.changes.isEmpty)
+        XCTAssertEqual(view.renderChanges(), "")
+    }
+
     func testDuplicateLabelChangeDetection() {
         // Two same-keyed rows; only the second value changes. The build's
         // per-key "consumed" counter must attribute the change to the right one.

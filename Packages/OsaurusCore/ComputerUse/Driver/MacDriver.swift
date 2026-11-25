@@ -514,9 +514,10 @@ public protocol MacDriver: Sendable {
     func isRunning(pid: Int32) async -> Bool?
 
     /// Perceive an app at a given tier. `interactiveOnly` controls whether the
-    /// AX traversal keeps only actionable elements (buttons, fields, …) or also
-    /// includes passive content roles like `statictext` — the latter is what
-    /// the screen-context distiller needs to surface real on-screen text rather
+    /// AX traversal keeps actionable elements (buttons, fields, …) plus the first
+    /// few passive elements that carry a value (a display, a status line), or
+    /// every passive content role like `statictext` — the latter is what the
+    /// screen-context distiller needs to surface real on-screen text rather
     /// than UI chrome.
     func capture(
         pid: Int32,

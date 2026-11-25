@@ -194,7 +194,13 @@ delivery acknowledgement, so a driver "success" only means *the input was
 posted*. The verify step therefore reports three distinct states to the model:
 
 - **`Action succeeded.`** — the driver returned success **and** the re-perceive
-  saw the view change (`metrics.verifyChanged`).
+  saw the view change (`metrics.verifyChanged`). The result names the changes
+  (`AgentView.changes`, at most six lines): `[3] statictext "State": "inbox" →
+  "archived"`, `[7] button "Undo" appeared`, `button "Archive" disappeared`.
+  Secure fields are never diffed. Before this, the model read only "The view
+  changed." and Qwen3-VL-8B repeated a click that had already archived the email
+  until the repeat guard stopped it. The lines sit before the listing, so they
+  stay in history after the listing is compacted.
 - **`Input was posted, but no change was observed …`** — the driver returned
   success but nothing changed (`metrics.unverifiedActs`). The model is told to
   `wait` / `observe` before retrying and never to report `done` on it alone.
@@ -263,6 +269,13 @@ as a delete whatever `describe` says. A point on no known element leaves the
 classifier with no label, which escalates the click to an edit (the ambiguous
 click rule). `set_value`, `clear`, and `select` need an element under the
 point. After a `zoom`, points refer to the close-up until the next screenshot.
+A plain `click` whose point hits a control that presses (a button, checkbox,
+radio button, menu item, link, or popup/menu button that offers `AXPress`) goes
+through the element: `AXPress`, then a window-bound click. Calculator, a SwiftUI
+app, drops a click posted to its pid while it is in the background, but `AXPress`
+on the same button lands (`CalculatorBackgroundInputProbe`,
+`OSAURUS_CU_LIVE_CALCULATOR=1`). Double and right clicks, and points on
+anything else, are posted at the point.
 
 **`zoom`** crops the region from a fresh full-resolution window capture (at
 most 1568 pixels on the long edge) and attaches it. **`hover`** posts a
@@ -296,6 +309,12 @@ can't carry the step:
 Both pixel tiers capture the window at full backing resolution, up to a 1568 px
 long edge, honor `interactiveOnly`, and wait for an Electron/Chromium tree the
 same way `ax` does.
+
+The loop captures with `interactiveOnly`: actionable elements, plus the first 24
+passive elements that carry a value (`ElementFilter.capturePassiveValueLimit`),
+which count toward the element cap. Those are the state the controls change.
+Without them, Calculator's display was not in the view, so a digit press read as
+"no visible change" and the result could not be read back.
 
 `CaptureRouter` decides the next tier. In production it escalates when a target
 can't be resolved (`targetUnresolved`) or the AX tree comes back empty

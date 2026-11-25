@@ -201,8 +201,15 @@ struct ElementFilter: Decodable {
     var maxDepth: Int?
     var maxElements: Int?
     var interactiveOnly: Bool?
+    /// With `interactiveOnly`, also keep up to this many non-actionable elements that carry a value: the state the
+    /// controls change (Calculator's display, a status line, a result). They count toward `maxElements`.
+    var passiveValueLimit: Int?
     /// If true, only traverse the focused window (skip menu bar and other windows).
     var focusedWindowOnly: Bool?
+
+    /// The passive values a perception capture keeps alongside the controls. Without them Calculator's display was
+    /// not in the view: a digit press read as "no visible change" and the result could not be read back.
+    static let capturePassiveValueLimit = 24
 }
 
 /// Search options used by `find_elements`. Reuses the same traversal as `get_ui_elements`.
@@ -716,6 +723,7 @@ final class AccessibilityManager: @unchecked Sendable {
         var elements: [ElementInfo] = []
         var nextElementNum: Int = 1
         var truncated = false
+        var passiveBudget = interactiveOnly ? (filter.passiveValueLimit ?? 0) : 0
 
         for window in orderedWindows {
             if elements.count >= maxElements || Date() >= deadline {
@@ -748,6 +756,7 @@ final class AccessibilityManager: @unchecked Sendable {
                 pid: filter.pid,
                 nextElementNum: &nextElementNum,
                 elements: &elements,
+                passiveBudget: &passiveBudget,
                 truncated: &truncated
             )
         }
@@ -775,6 +784,7 @@ final class AccessibilityManager: @unchecked Sendable {
                 pid: filter.pid,
                 nextElementNum: &nextElementNum,
                 elements: &elements,
+                passiveBudget: &passiveBudget,
                 truncated: &truncated
             )
         }
@@ -810,6 +820,7 @@ final class AccessibilityManager: @unchecked Sendable {
         pid: Int32,
         nextElementNum: inout Int,
         elements: inout [ElementInfo],
+        passiveBudget: inout Int,
         truncated: inout Bool
     ) {
         if depth > maxDepth { return }
@@ -865,11 +876,14 @@ final class AccessibilityManager: @unchecked Sendable {
 
         // Inclusion gate:
         // - role filter must match
-        // - if interactiveOnly: must be in the interactive set OR have actions
+        // - if interactiveOnly: must be in the interactive set OR have actions, or be one of the
+        //   first `passiveValueLimit` passive elements that carry a value
         // - must have content the agent can use to identify it
         // - if enabledOnly (search): must be enabled
         // - if textNeedle (search): label/value/placeholder/roleDescription must contain it
-        let passesInteractive = !interactiveOnly || isInteractive || !actions.isEmpty
+        let actionable = isInteractive || !actions.isEmpty
+        let keptPassive = interactiveOnly && !actionable && passiveBudget > 0 && !(value ?? "").isEmpty
+        let passesInteractive = !interactiveOnly || actionable || keptPassive
         let passesEnabled = !enabledOnly || enabled
         let passesText: Bool = {
             guard let needle = textNeedle else { return true }
@@ -930,6 +944,7 @@ final class AccessibilityManager: @unchecked Sendable {
                     actions: actions.map { simplifyAction($0) }
                 )
                 elements.append(info)
+                if keptPassive { passiveBudget -= 1 }
             }
         }
 
@@ -972,6 +987,7 @@ final class AccessibilityManager: @unchecked Sendable {
                 pid: pid,
                 nextElementNum: &nextElementNum,
                 elements: &elements,
+                passiveBudget: &passiveBudget,
                 truncated: &truncated
             )
         }

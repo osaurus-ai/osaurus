@@ -360,4 +360,32 @@ struct ComputerUseLoopEvalTests {
         }
         #expect(scriptedRan >= 5, "Expected >=5 deterministic scripted scenarios; ran \(scriptedRan)")
     }
+
+    /// The Qwen3-VL-8B live rows were all attributed to "targeting" at a 3/3 resolve rate, including the runs whose
+    /// first click archived the email and then repeated. A repeat stop names what the metrics show.
+    @Test func failureAttributionSeparatesLoopsTargetingAndBudget() {
+        var worked = ComputerUseRunMetrics()
+        worked.targetResolveAttempts = 3
+        worked.targetResolveSuccesses = 3
+        worked.verifyChanged = 1
+        worked.unverifiedActs = 2
+        let repeated = RunOutcome.deadEnd(reason: "Repeated the same action (Click mark 1) 4 times without progress.")
+        let loop = EvalRunner.attributeFailure(outcome: repeated, invalidActions: 0, metrics: worked, acted: 3)
+        #expect(loop.hasPrefix("loop — repeated an action after it had changed the view"), "\(loop)")
+
+        var nothing = worked
+        nothing.verifyChanged = 0
+        nothing.unverifiedActs = 3
+        let targeting = EvalRunner.attributeFailure(outcome: repeated, invalidActions: 0, metrics: nothing, acted: 3)
+        #expect(targeting.hasPrefix("targeting — repeated an action that never changed the view"), "\(targeting)")
+
+        let budget = EvalRunner.attributeFailure(
+            outcome: .deadEnd(reason: "Reached the time limit before finishing."), invalidActions: 0,
+            metrics: worked, acted: 6, observes: 5)
+        #expect(budget == "budget — reached the time limit after 6 acts and 5 observes.")
+
+        let observed = EvalRunner.attributeFailure(
+            outcome: .stepCapReached, invalidActions: 0, metrics: ComputerUseRunMetrics(), acted: 0, observes: 6)
+        #expect(observed == "planning — only observed (6 observes); never acted.")
+    }
 }

@@ -28,7 +28,8 @@ final class ComputerUseLoopSurfaceTests: XCTestCase {
         ]
     }
 
-    private func driver(withFrame: Bool = true) -> MockMacDriver {
+    private func driver(withFrame: Bool = true, elements override: [CUElement]? = nil) -> MockMacDriver {
+        let elements = override ?? self.elements
         let snapshot = CUSnapshot(
             snapshotId: 1,
             pid: pid,
@@ -97,6 +98,35 @@ final class ComputerUseLoopSurfaceTests: XCTestCase {
         XCTAssertEqual(y, 114)
         XCTAssertEqual(clickPid, pid)
         XCTAssertEqual(result.metrics.confirmsRequested, 0, "A point on the Go button is a navigate click")
+    }
+
+    /// Live finding: Calculator (SwiftUI, in the background) drops a click posted to its pid, while AXPress on the
+    /// same button lands. A plain click whose point hits a control that presses goes through the element.
+    func testPointClickOnAPressableControlPressesIt() async {
+        var pressable = elements
+        pressable[0] = CUElement(
+            id: "go", role: "button", label: "Go", x: 100, y: 100, w: 80, h: 30, actions: ["press"])
+        let d = driver(elements: pressable)
+        _ = await run(d, [shot, AgentAction(verb: .click, target: AgentTarget(point: AgentPoint(x: 70, y: 57)))])
+        let pressed = await d.elementActions
+        guard case .click(let id, _, false)? = pressed.first else {
+            return XCTFail("Expected an element click; got \(pressed)")
+        }
+        XCTAssertEqual(id, "go")
+        let clicks = await d.coordinateActions
+        XCTAssertTrue(clicks.isEmpty, "the click is not also posted at the point: \(clicks)")
+    }
+
+    func testOnlyPlainClicksOnPressableRolesPress() {
+        let button = CUElement(id: "b", role: "button", actions: ["press"])
+        XCTAssertTrue(ComputerUseLoop.pressesAsElement(.click, button))
+        XCTAssertFalse(ComputerUseLoop.pressesAsElement(.doubleClick, button))
+        XCTAssertFalse(ComputerUseLoop.pressesAsElement(.rightClick, button))
+        XCTAssertFalse(ComputerUseLoop.pressesAsElement(.click, CUElement(id: "b", role: "button")))
+        XCTAssertFalse(
+            ComputerUseLoop.pressesAsElement(.click, CUElement(id: "t", role: "textfield", actions: ["press"])),
+            "a click in a text field places the caret at the point")
+        XCTAssertFalse(ComputerUseLoop.pressesAsElement(.click, nil))
     }
 
     func testPointClickIsGatedByTheElementItHits() async {

@@ -2103,6 +2103,18 @@ public enum ComputerUseLoop {
         var message: String?
     }
 
+    /// Controls a plain click and `AXPress` do the same thing to.
+    static let pressableRoles: Set<String> = [
+        "button", "checkbox", "radiobutton", "menuitem", "menubutton", "popupbutton", "link",
+    ]
+
+    /// A plain click whose point lands on a pressable control goes through the element (`AXPress`, then a
+    /// window-bound click): a background SwiftUI app such as Calculator drops a click posted to its pid.
+    static func pressesAsElement(_ verb: AgentVerb, _ element: CUElement?) -> Bool {
+        guard verb == .click, let element else { return false }
+        return element.actions.contains("press") && pressableRoles.contains(element.role.lowercased())
+    }
+
     /// Post one action (with the stale-ref coordinate fallback) and report the
     /// driver result. No verify capture: `act` and `runBatch` take that after.
     static func performAct(
@@ -2125,7 +2137,7 @@ public enum ComputerUseLoop {
         case .click, .doubleClick, .rightClick:
             let button: CUMouseButton = action.verb == .rightClick ? .right : .left
             let double = action.verb == .doubleClick
-            if let point {
+            if let point, !pressesAsElement(action.verb, element) {
                 result = await driver.coordinate(
                     .click(x: Double(point.x), y: Double(point.y), button: button, doubleClick: double, pid: pid)
                 )
@@ -2389,7 +2401,7 @@ public enum ComputerUseLoop {
             break
         }
         if view.hasChanges {
-            out += " The view changed."
+            out += " The view changed:\n" + view.renderChanges()
         } else if unverified {
             out +=
                 " The view looks unchanged. If the app may render late, `wait` or `observe` before "
