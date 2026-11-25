@@ -270,6 +270,48 @@ public struct AgentAction: Sendable, Equatable {
         }
     }
 
+    /// The feed's record of the action: the element it resolves to, named by
+    /// role and label, and the app, so "Click mark 136" reads
+    /// `Click button "Send" in Mail`. Typed text appears only as a length;
+    /// the text itself is shown on the confirm card, never stored in the feed.
+    public func auditLabel(element: CUElement?, destination: CUElement? = nil, app: String?) -> String {
+        let subject = element.map(Self.describe) ?? targetLabel
+        let place = app.map { $0.isEmpty ? "" : " in \($0)" } ?? ""
+        switch verb {
+        case .click: return "Click " + subject + place
+        case .doubleClick: return "Double-click " + subject + place
+        case .rightClick: return "Right-click " + subject + place
+        case .hover: return "Hover " + subject + place
+        case .clear: return "Clear " + subject + place
+        case .drag:
+            return "Drag " + subject + " to " + (destination.map(Self.describe) ?? destinationLabel) + place
+        case .type:
+            let into = element != nil || target != nil ? " into \(subject)" : ""
+            return "Type " + Self.length(text) + into + place
+        case .setValue: return "Set " + subject + " to " + Self.length(text) + place
+        case .select: return "Select " + quoted(option) + " in " + subject + place
+        case .pressKey, .scroll: return feedLabel + place
+        case .batch:
+            return "Run \(actions.count) steps" + place + ": "
+                + actions.map { $0.auditLabel(element: nil, app: nil) }.joined(separator: ", ")
+        case .observe, .wait, .find, .zoom, .screenshot, .open, .done, .giveUp:
+            return feedLabel
+        }
+    }
+
+    private static func describe(_ element: CUElement) -> String {
+        guard let label = element.label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty else {
+            return element.role
+        }
+        let clipped = label.count > 40 ? String(label.prefix(40)) + "…" : label
+        return "\(element.role) \"\(clipped)\""
+    }
+
+    private static func length(_ text: String?) -> String {
+        let count = text?.count ?? 0
+        return count == 1 ? "1 character" : "\(count) characters"
+    }
+
     /// The full text payload a confirm card can show expandably (the feed label
     /// truncates it at 40 chars). `nil` for verbs that carry no typed payload.
     public var typedTextForPreview: String? {

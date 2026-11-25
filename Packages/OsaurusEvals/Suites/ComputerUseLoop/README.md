@@ -58,6 +58,7 @@ asserts each scripted case passes.
 | `confirm-pause-extends-deadline` | a 1.2s user delay on the confirm card inside a 1s wall clock still ends `done` — confirm time is credited back (`wallClockSeconds`, `confirmDelaySeconds`) |
 | `confirm-unavailable-fails-fast` | no surface can render the confirm card (`confirmUnavailable`) → gated action does not run, run ends `gaveUp` with the reason |
 | `target-app-opened-behind` | the `app` argument (`targetApp`) opens the app before the first step, with no takeover question, and the click lands there (`expectVerbsInOrder: [open, click]`) |
+| `audit-labels-name-the-element` | propose, act and gate events name the resolved element and app (`Click button "Send" in Mail`), and typed text appears only as a length (`feedTitleExcludes`) |
 | `takeover-declined` | no `app`: the user declines "Take over Mail?" (`declineTakeover`) → run ends `declined` with nothing perceived or clicked (`maxActsAttempted: 0`) |
 | `return-submit-verified` | type → Return on the focused field applies the element's `onReturn` effect (two verified changes), so the following `done` is evidence-backed and the run ends `done` |
 | `batch-stops-at-failure` | a `batch` runs its steps in order and stops at the first failure (`select` on a control with no option list); the step after it never runs, the edit before it stands |
@@ -75,7 +76,7 @@ model's own vision posture with cloud-vision consent off, and a scripted case
 gets no pixels),
 element `onReturn` (effect of Return while that field is focused), element
 `options` (titles `select` can pick); scoring fields: `minUnverifiedActs`,
-`minVerifyChanged`, `feedTitleContains`, `minConfirms`, `maxConfirms`,
+`minVerifyChanged`, `feedTitleContains`, `feedTitleExcludes`, `minConfirms`, `maxConfirms`,
 `maxActsAttempted`.
 
 The scripted world lays elements out in a vertical stack inside a 1200×800

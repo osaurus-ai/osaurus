@@ -326,6 +326,14 @@ extension EvalRunner {
                 fail: "no feed event title contained '\(needle)' (titles: \(feedTitles))"
             )
         }
+        for needle in exp.feedTitleExcludes ?? [] {
+            let leaked = feedTitles.filter { $0.localizedCaseInsensitiveContains(needle) }
+            check(
+                leaked.isEmpty,
+                pass: "feed kept out '\(needle)'",
+                fail: "\(leaked.count) feed event title(s) contained excluded text"
+            )
+        }
 
         // 10. Gate and act counts.
         if let minConfirms = exp.minConfirms {

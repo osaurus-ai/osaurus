@@ -347,6 +347,48 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertEqual(captures, 0, "Nothing is perceived before the user agrees")
     }
 
+    // MARK: - Action audit
+
+    /// The model addresses marks; the feed records what they resolved to —
+    /// role, label and app — and typed text only as a length.
+    func testFeedNamesResolvedElementsAndKeepsTypedTextOut() async {
+        let d = driver(sequence: [
+            [el("to", "textfield", "To", value: ""), el("send", "button", "Send")],
+            [el("to", "textfield", "To", value: "sam@example.com"), el("send", "button", "Send")],
+            [el("to", "textfield", "To", value: "sam@example.com"), el("status", "statictext", "Sent")],
+        ])
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "Send it")
+        let result = await ComputerUseLoop.run(
+            goal: "Send it",
+            modelId: "test-model",
+            driver: d,
+            gate: AlwaysConfirmGate(),
+            feed: feed,
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .type, target: AgentTarget(mark: 1), text: "sam@example.com"),
+                AgentAction(verb: .click, target: AgentTarget(mark: 2)),
+                AgentAction(verb: .done, reason: "sent"),
+            ])
+        )
+        XCTAssertTrue(result.outcome.isSuccess, "got \(result.outcome)")
+        let titles = feed.currentEvents().map(\.title)
+        func has(_ kind: SubagentActivityEvent.Kind, _ title: String) -> Bool {
+            feed.currentEvents().contains { $0.kind == kind && $0.title == title }
+        }
+        XCTAssertTrue(has(.propose, #"Type 15 characters into textfield "To" in Demo"#), "\(titles)")
+        XCTAssertTrue(has(.act, #"Type 15 characters into textfield "To" in Demo"#), "\(titles)")
+        XCTAssertTrue(has(.propose, #"Click button "Send" in Demo"#), "\(titles)")
+        XCTAssertTrue(has(.act, #"Click button "Send" in Demo"#), "\(titles)")
+        XCTAssertTrue(has(.confirmRequested, #"Confirm: Click button "Send" in Demo"#), "\(titles)")
+        XCTAssertTrue(has(.confirmed, #"Approved: Click button "Send" in Demo"#), "\(titles)")
+        XCTAssertFalse(titles.contains { $0.contains("sam@example.com") }, "Typed text leaked: \(titles)")
+        XCTAssertFalse(titles.contains { $0.contains("mark ") }, "A resolved target is named, not numbered")
+    }
+
     /// Nothing in front and no named app: the run refuses instead of guessing.
     func testNoTargetAppGivesUpWithoutActing() async {
         let d = MockMacDriver(

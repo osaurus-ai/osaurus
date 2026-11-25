@@ -1,0 +1,38 @@
+{
+  "id": "computer_use_loop.audit-labels-name-the-element",
+  "domain": "computer_use_loop",
+  "label": "CU loop • the feed names each element by role, label and app, and never stores typed text",
+  "query": "Address the reply to sam.rivera@example.com and send it.",
+  "notes": "Deterministic (scripted-model) case for the action audit: the model addresses controls by mark only, but every propose, act and gate event in the stored feed names the resolved element (`textfield \"To\"`, `button \"Send\"`) and the app. The typed address appears in no feed title: the feed records its length, and the text itself is shown only on the confirm card. Under `trusted` the Send commit confirms, so the gate events are covered too.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Mail",
+      "targetApp": "Mail",
+      "maxSteps": 5,
+      "preset": "trusted",
+      "elements": [
+        { "id": "to", "role": "textfield", "label": "To", "value": "", "editable": true },
+        { "id": "send", "role": "button", "label": "Send", "onClick": { "setValues": [{ "id": "status", "value": "Sent" }] } },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "Draft" }
+      ],
+      "successValues": [
+        { "id": "to", "equals": "sam.rivera@example.com" },
+        { "id": "status", "equals": "Sent" }
+      ],
+      "successClicked": ["send"],
+      "feedTitleContains": [
+        "Type 22 characters into textfield \"To\" in Mail",
+        "Click button \"Send\" in Mail",
+        "Confirm: Click button \"Send\" in Mail",
+        "Approved: Click button \"Send\" in Mail"
+      ],
+      "feedTitleExcludes": ["sam.rivera", "mark 1", "mark 2"],
+      "scriptedActions": [
+        "{\"verb\":\"type\",\"target\":{\"mark\":1},\"text\":\"sam.rivera@example.com\",\"note\":\"address the reply\"}",
+        "{\"verb\":\"click\",\"target\":{\"mark\":2},\"note\":\"send it\"}",
+        "{\"verb\":\"done\",\"reason\":\"The reply is addressed and sent.\"}"
+      ]
+    }
+  }
+}

@@ -170,7 +170,21 @@ Delegating). `ComputerUseKind` adopts `SubagentContextAdmission`:
 ### Outcomes (`RunOutcome`)
 
 `done(summary)` · `gaveUp(reason)` · `stepCapReached` · `deadEnd(reason)` ·
-`interrupted` · `failed(reason)`.
+`interrupted` · `declined(app)` · `failed(reason)`.
+
+### What the feed records
+
+The feed (live in chat, and stored with the run) names what each action
+touched, not how the model addressed it. Propose, act and gate events
+(Blocked, Confirm, Approved, Declined) use `AgentAction.auditLabel`. It gives
+the resolved element by role and label, then the app: `Click button "Send" in
+Mail` rather than `Click mark 136`. Propose events resolve the mark against
+the current view. Act and gate events use the element the action actually
+resolved to, including a screenshot point's hit-tested element. A target that
+didn't resolve keeps the model's address (`mark 4`, `point (120, 80)`).
+Typed text is recorded only as a length (`Type 22 characters into textfield
+"To" in Mail`). The text itself is shown on the confirm card, where
+`ActionPreview` still carries it, and never in a feed title.
 
 ### Honest verify results
 

@@ -3231,6 +3231,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// feed event title — how a case pins loop-side reporting (e.g. an
         /// "Open X: not ready" event) that never lands in the tree or summary.
         public let feedTitleContains: [String]?
+        /// Case-insensitive substrings no feed event title may contain — how a
+        /// case pins that typed text stays out of the stored feed.
+        public let feedTitleExcludes: [String]?
         /// `local` runs the loop as for an on-device model that takes images,
         /// so `screenshot` / `zoom` frames and `target.point` are live; `none`
         /// keeps every pixel from the model. nil → a model-driven case uses
@@ -3270,6 +3273,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             minUnverifiedActs: Int? = nil,
             minVerifyChanged: Int? = nil,
             feedTitleContains: [String]? = nil,
+            feedTitleExcludes: [String]? = nil,
             vision: String? = nil,
             minConfirms: Int? = nil,
             maxConfirms: Int? = nil,
@@ -3301,6 +3305,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.minUnverifiedActs = minUnverifiedActs
             self.minVerifyChanged = minVerifyChanged
             self.feedTitleContains = feedTitleContains
+            self.feedTitleExcludes = feedTitleExcludes
             self.vision = vision
             self.minConfirms = minConfirms
             self.maxConfirms = maxConfirms

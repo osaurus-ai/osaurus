@@ -688,7 +688,11 @@ public enum ComputerUseLoop {
                 SubagentActivityEvent(
                     step: step,
                     kind: .propose,
-                    title: action.feedLabel,
+                    title: action.auditLabel(
+                        element: proposedElement(action.target, view: lastView, snapshot: lastSnapshot),
+                        destination: proposedElement(action.to, view: lastView, snapshot: lastSnapshot),
+                        app: lastSnapshot?.app
+                    ),
                     detail: action.note
                 )
             )
@@ -765,7 +769,7 @@ public enum ComputerUseLoop {
                         return terminate(
                             .deadEnd(
                                 reason:
-                                    "Repeated the same action (\(action.feedLabel)) "
+                                    "Repeated the same action (\(action.auditLabel(element: nil, app: nil))) "
                                     + "\(repeatedActionCount) times without progress."
                             )
                         )
@@ -859,7 +863,7 @@ public enum ComputerUseLoop {
                 var openAbort: RunOutcome? = nil
                 if await applyGate(
                     openDecision,
-                    action: action,
+                    label: action.auditLabel(element: nil, app: nil),
                     effect: openEffect,
                     appName: action.app,
                     confirm: timedConfirm,
@@ -1176,7 +1180,7 @@ public enum ComputerUseLoop {
                 var actAbort: RunOutcome? = nil
                 if await applyGate(
                     decision,
-                    action: action,
+                    label: action.auditLabel(element: resolvedElement, destination: destinationElement, app: currentApp),
                     effect: effect,
                     appName: currentApp,
                     confirm: timedConfirm,
@@ -1446,7 +1450,7 @@ public enum ComputerUseLoop {
             guard
                 await applyGate(
                     decision,
-                    action: action,
+                    label: action.auditLabel(element: element, destination: destinationElement, app: appName),
                     effect: effect,
                     appName: appName,
                     confirm: confirm,
@@ -1541,10 +1545,11 @@ public enum ComputerUseLoop {
     /// Apply a gate decision's bookkeeping (feed event + metrics + tool-result)
     /// and report whether the caller should perform the action. Both gated paths
     /// (`open` and the element-addressed verbs) share this so the
-    /// block / confirm / decline wording and counters stay identical.
+    /// block / confirm / decline wording and counters stay identical. `label`
+    /// is the action's `auditLabel`, the only form the feed records.
     private static func applyGate(
         _ decision: GateDecision,
-        action: AgentAction,
+        label: String,
         effect: EffectClass,
         appName: String?,
         confirm: (ActionPreview) async -> Bool,
@@ -1559,7 +1564,7 @@ public enum ComputerUseLoop {
     ) async -> Bool {
         let cleared = await gateClears(
             decision,
-            action: action,
+            label: label,
             effect: effect,
             appName: appName,
             confirm: confirm,
@@ -1583,7 +1588,7 @@ public enum ComputerUseLoop {
 
     private static func gateClears(
         _ decision: GateDecision,
-        action: AgentAction,
+        label: String,
         effect: EffectClass,
         appName: String?,
         confirm: (ActionPreview) async -> Bool,
@@ -1599,14 +1604,14 @@ public enum ComputerUseLoop {
         case .reject(let reason):
             ComputerUseTraceLog.recordGate(
                 step: step,
-                action: action.feedLabel,
+                action: label,
                 effect: effect,
                 appName: appName,
                 decision: "reject"
             )
             metrics.blocked += 1
             feed.emit(
-                SubagentActivityEvent(step: step, kind: .blocked, title: "Blocked: \(action.feedLabel)", detail: reason)
+                SubagentActivityEvent(step: step, kind: .blocked, title: "Blocked: \(label)", detail: reason)
             )
             toolResult = "That action is not allowed: \(reason). Choose a different action."
             advancedStep = false
@@ -1614,7 +1619,7 @@ public enum ComputerUseLoop {
         case .confirm(let preview):
             ComputerUseTraceLog.recordGate(
                 step: step,
-                action: action.feedLabel,
+                action: label,
                 effect: effect,
                 appName: appName,
                 decision: "confirm"
@@ -1625,7 +1630,7 @@ public enum ComputerUseLoop {
             if let reason = await confirmUnavailable() {
                 ComputerUseTraceLog.recordGateResolution(
                     step: step,
-                    action: action.feedLabel,
+                    action: label,
                     approved: false
                 )
                 metrics.confirmsUnpresentable += 1
@@ -1633,7 +1638,7 @@ public enum ComputerUseLoop {
                     SubagentActivityEvent(
                         step: step,
                         kind: .blocked,
-                        title: "Cannot ask for approval: \(action.feedLabel)",
+                        title: "Cannot ask for approval: \(label)",
                         detail: reason
                     )
                 )
@@ -1641,7 +1646,7 @@ public enum ComputerUseLoop {
                 advancedStep = false
                 abort = .gaveUp(
                     reason:
-                        "\(action.feedLabel) needs the user's approval, but \(reason), so the run "
+                        "\(label) needs the user's approval, but \(reason), so the run "
                         + "cannot continue. Reopen the chat with this agent and try again, or lower "
                         + "the autonomy policy's confirm threshold for this app."
                 )
@@ -1652,34 +1657,34 @@ public enum ComputerUseLoop {
                 SubagentActivityEvent(
                     step: step,
                     kind: .confirmRequested,
-                    title: "Confirm: \(preview.summary)",
+                    title: "Confirm: \(label)",
                     detail: preview.note
                 )
             )
             if await confirm(preview) {
                 ComputerUseTraceLog.recordGateResolution(
                     step: step,
-                    action: action.feedLabel,
+                    action: label,
                     approved: true
                 )
                 metrics.confirmsApproved += 1
-                feed.emit(SubagentActivityEvent(step: step, kind: .confirmed, title: "Approved: \(action.feedLabel)"))
+                feed.emit(SubagentActivityEvent(step: step, kind: .confirmed, title: "Approved: \(label)"))
                 return true
             }
             ComputerUseTraceLog.recordGateResolution(
                 step: step,
-                action: action.feedLabel,
+                action: label,
                 approved: false
             )
             metrics.confirmsDeclined += 1
-            feed.emit(SubagentActivityEvent(step: step, kind: .denied, title: "Declined: \(action.feedLabel)"))
+            feed.emit(SubagentActivityEvent(step: step, kind: .denied, title: "Declined: \(label)"))
             toolResult = "The user declined that action. Try a different approach or ask to stop."
             advancedStep = false
             return false
         case .run:
             ComputerUseTraceLog.recordGate(
                 step: step,
-                action: action.feedLabel,
+                action: label,
                 effect: effect,
                 appName: appName,
                 decision: "run"
@@ -1852,6 +1857,15 @@ public enum ComputerUseLoop {
             + "again):\n" + view.renderForModel()
     }
 
+    /// The element a proposed mark or describe target names in the current
+    /// view, for the feed only. Point targets are mapped when the action runs.
+    private static func proposedElement(_ target: AgentTarget?, view: AgentView?, snapshot: CUSnapshot?) -> CUElement? {
+        guard let target, target.point == nil, let view, let snapshot,
+            case .resolved(_, let element) = TargetResolver.resolve(target, view: view, snapshot: snapshot)
+        else { return nil }
+        return element
+    }
+
     // MARK: - Target
 
     private enum SettledTarget {
@@ -1893,7 +1907,7 @@ public enum ComputerUseLoop {
             guard
                 await applyGate(
                     decision,
-                    action: action,
+                    label: action.auditLabel(element: nil, app: nil),
                     effect: effect,
                     appName: app,
                     confirm: confirm,
@@ -2276,7 +2290,7 @@ public enum ComputerUseLoop {
             SubagentActivityEvent(
                 step: step,
                 kind: .act,
-                title: action.feedLabel,
+                title: action.auditLabel(element: element, destination: destinationElement, app: lastSnapshot?.app),
                 detail: result.error,
                 success: result.success
             )
