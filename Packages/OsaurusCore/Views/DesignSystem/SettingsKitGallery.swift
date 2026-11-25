@@ -348,6 +348,13 @@ SettingsCallout(
                     message: "Save your changes before closing this window.",
                     tone: .urgentWarning
                 )
+                SettingsCallout(
+                    icon: "bolt.horizontal.circle",
+                    title: "Dismissible callout",
+                    message: "An optional suggestion the user can close.",
+                    tone: .info,
+                    onDismiss: {}
+                )
             }
         }
         private var preservedDrillInRows: some View {

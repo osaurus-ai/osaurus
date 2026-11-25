@@ -81,7 +81,7 @@ Email is a channel like the others: mail from allowed senders reaches an agent, 
 ## Proactive posting
 
 - Whether an agent may post on its own (not as a reply) is set on the channel: Settings → Channels → the platform → **Sending** → **Agents that post on their own**. **Add Agent** lists an agent; its menu is *Off*, *Asks first* (you see each message before it is sent) or *Without asking* (sends directly; confirm once; use sparingly). The list is available once the bot may post in at least one room (the writable rooms above it); a choice writes one posting place per writable room.
-- The agent's **On Channels** list (Agents → the agent → Channels) is read-only — "Slack: answers in #support, replies automatically, posts after asking first" — with **Edit in Channels** on every row. The built-in Default agent cannot answer messages; it can post, and its per-room places are edited with **Edit places…** on its row.
+- The agent's **On Channels** list (Agents → the agent → Sharing) is read-only — "Slack: answers in #support, replies automatically, posts after asking first" — with **Edit in Channels** on every row. The built-in Default agent cannot answer messages; it can post, and its per-room places are edited with **Edit places…** on its row.
 - Modes behind the picker: Off / Draft (writes land in an Outbox for review) / Confirm (asks each time) / Autonomous (sends directly). Draft is only reachable through the Default agent's sheet or `osaurus_config`.
 - The Outbox (the **Outbox** button in the Settings → Channels header) holds drafts with mark-sent / retry / discard.
 

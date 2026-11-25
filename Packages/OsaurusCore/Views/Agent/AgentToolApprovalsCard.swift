@@ -3,7 +3,8 @@
 //  osaurus
 //
 //  The per-agent Tool Approvals mode (`AgentSettings.toolApprovalMode`,
-//  `agents[].tool_approvals`) at the top of a custom agent's Tools tab.
+//  `agents[].tool_approvals`) and the Per-Tool Policies summary, as two rows
+//  of the Tool Settings group on a custom agent's Tools tab.
 //  Use Global Setting follows Auto-Allow All Tool Calls; Ask keeps the
 //  approval card even when that switch is on; Never Ask skips it within the
 //  same limits. Choosing Never Ask goes through a confirm alert.
@@ -14,14 +15,10 @@ import SwiftUI
 struct AgentToolApprovalsCard: View {
     let agentId: UUID
 
-    @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
     @AppStorage(ToolApprovalSettings.autoAllowAllDefaultsKey)
     private var globalAutoAllow: Bool = false
     @State private var showNeverAskConfirm = false
-
-    /// Matches the Auto-discover card beside it.
-    private static let glyphTileSize: CGFloat = 26
 
     private var agent: Agent? { agentManager.agent(for: agentId) }
     private var mode: AgentToolApprovalMode { agent?.settings.toolApprovalMode ?? .useGlobal }
@@ -33,43 +30,46 @@ struct AgentToolApprovalsCard: View {
     private var policyCount: Int { agent?.settings.toolPolicies.count ?? 0 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.s10) {
-            modeRow
-            ThemeHairlineDivider()
-            policiesRow
+        modeRow
+            .themedAlert(
+                ToolApprovalEducation.neverAskConfirmTitle(agentName: agent?.displayName ?? L("This Agent")),
+                isPresented: $showNeverAskConfirm,
+                message: ToolApprovalEducation.neverAskConfirmMessage(agentName: agent?.displayName ?? L("This agent")),
+                primaryButton: .destructive(ToolApprovalEducation.neverAskConfirmButton) { set(.neverAsk) },
+                secondaryButton: .cancel(L("Cancel"))
+            )
+        policiesRow
+    }
+
+    private var modeRow: some View {
+        SettingsRow(
+            title: "Tool Approvals",
+            description: ToolApprovalEducation.caption(mode: mode, globalAutoAllow: globalAutoAllow),
+            badge: skipsCards ? L("Not Asking") : nil,
+            anchorId: "agents.toolApprovals",
+            verbatimDescription: true
+        ) {
+            SettingsMenuPicker(
+                selection: Binding(get: { mode }, set: { request($0) }),
+                options: AgentToolApprovalMode.allCases.map { .init($0, $0.displayName, verbatim: true) }
+            )
+            .accessibilityLabel(Text("Tool Approvals", bundle: .module))
         }
-        .padding(theme.space.s12)
-        .settingsChrome(.surface)
-        .themedAlert(
-            ToolApprovalEducation.neverAskConfirmTitle(agentName: agent?.displayName ?? L("This Agent")),
-            isPresented: $showNeverAskConfirm,
-            message: ToolApprovalEducation.neverAskConfirmMessage(agentName: agent?.displayName ?? L("This agent")),
-            primaryButton: .destructive(ToolApprovalEducation.neverAskConfirmButton) { set(.neverAsk) },
-            secondaryButton: .cancel(L("Cancel"))
-        )
     }
 
     private var policiesRow: some View {
-        HStack(spacing: theme.space.s12) {
-            VStack(alignment: .leading, spacing: theme.space.s2) {
-                Text("Per-Tool Policies", bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
-                Text(policiesSummary)
-                .textStyle(.footnote)
-                .foregroundColor(theme.text.tertiary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
+        SettingsRow(
+            title: "Per-Tool Policies",
+            description: policiesSummary,
+            anchorId: "agents.toolPolicies",
+            verbatimDescription: true
+        ) {
             if policyCount > 0 {
                 SettingsButton(.tertiary, "Reset All", size: .compact) {
                     AgentManager.shared.resetToolPolicies(for: agentId)
                 }
             }
         }
-        .padding(.leading, Self.glyphTileSize + theme.space.s12)
-        .settingsLandingAnchor("agents.toolPolicies")
     }
 
     private var policiesSummary: String {
@@ -79,36 +79,6 @@ struct AgentToolApprovalsCard: View {
         default:
             return L("\(policyCount) tools have their own policy for this agent. A tool set to Deny for every agent stays denied.")
         }
-    }
-
-    private var modeRow: some View {
-        HStack(spacing: theme.space.s12) {
-            Image(systemName: skipsCards ? "hand.raised.slash" : "hand.raised")
-                .glyphSize(.label, weight: .semibold)
-                .foregroundColor(skipsCards ? theme.status.warning.foreground : theme.text.secondary)
-                .frame(width: Self.glyphTileSize, height: Self.glyphTileSize)
-                .settingsChrome(.inset)
-
-            VStack(alignment: .leading, spacing: theme.space.s2) {
-                Text("Tool Approvals", bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
-                Text(ToolApprovalEducation.caption(mode: mode, globalAutoAllow: globalAutoAllow))
-                    .textStyle(.footnote)
-                    .foregroundColor(theme.text.tertiary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer()
-
-            SettingsMenuPicker(
-                selection: Binding(get: { mode }, set: { request($0) }),
-                options: AgentToolApprovalMode.allCases.map { .init($0, $0.displayName, verbatim: true) }
-            )
-            .accessibilityLabel(Text("Tool Approvals", bundle: .module))
-        }
-        .settingsLandingAnchor("agents.toolApprovals")
     }
 
     private func request(_ newMode: AgentToolApprovalMode) {

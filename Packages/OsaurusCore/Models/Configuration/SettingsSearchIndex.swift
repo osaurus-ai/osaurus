@@ -3606,7 +3606,7 @@ public enum SettingsSearchIndex {
             section: "Advanced Settings",
             title: "Show Response Metrics",
             keywords: ["tokenizer", "token count", "tokens per second", "tok/s", "response statistics", "agent display"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings. Shows existing measured response statistics in that agent's chats.",
+            disambiguation: "Custom agent → General → Advanced Settings. Shows existing measured response statistics in that agent's chats.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3618,7 +3618,7 @@ public enum SettingsSearchIndex {
                 "lock model", "required model", "pin model", "hide model picker", "fixed model",
                 "model_locked", "strictness always",
             ],
-            disambiguation: "Custom agent → General → Configure → Model. On: chats with this agent always use its model, the chat model picker becomes a fixed lock chip, and a missing model or provider fails the turn instead of falling back. Templates and bundles whose main model is `strictness: always` turn it on at install. Declarative key: `model_locked` on agents[].",
+            disambiguation: "Custom agent → General → Model. On: chats with this agent always use its model, the chat model picker becomes a fixed lock chip, and a missing model or provider fails the turn instead of falling back. Templates and bundles whose main model is `strictness: always` turn it on at install. Declarative key: `model_locked` on agents[].",
             declarativeSection: "agents"
         ),
         .init(
@@ -3630,7 +3630,7 @@ public enum SettingsSearchIndex {
                 "agent follow up", "agent followups", "per-agent suggestions", "suggested replies",
                 "follow-up model", "hide follow ups",
             ],
-            disambiguation: "Custom agent → General → Configure → Follow-Up Suggestions. On by default; off hides the suggested next questions under that agent's replies. Only narrows Settings → Chat → Suggest Follow-Up Questions, which turns the feature on for every agent. The Architect never shows them, and no agent shows them while it waits on its own question or form. While on, the model picker beneath it chooses the model that writes them (default: the shared Core Model). Declarative key: `follow_up_suggestions` on agents[].",
+            disambiguation: "Custom agent → General → Follow-Up Suggestions. On by default; off hides the suggested next questions under that agent's replies. Only narrows Settings → Chat → Suggest Follow-Up Questions, which turns the feature on for every agent. The Architect never shows them, and no agent shows them while it waits on its own question or form. While on, the model picker beneath it chooses the model that writes them (default: the shared Core Model). Declarative key: `follow_up_suggestions` on agents[].",
             declarativeSection: "agents"
         ),
         .init(
@@ -3639,7 +3639,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Temperature",
             keywords: ["agent temperature", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3648,7 +3648,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Max Tokens",
             keywords: ["agent max tokens", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3657,7 +3657,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Top P",
             keywords: ["agent top p", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3666,7 +3666,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Top K",
             keywords: ["agent top k", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3675,7 +3675,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Min P",
             keywords: ["agent min p", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3684,7 +3684,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Repetition penalty",
             keywords: ["agent repetition penalty", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3693,7 +3693,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Frequency penalty",
             keywords: ["agent frequency penalty", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3702,7 +3702,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Presence penalty",
             keywords: ["agent presence penalty", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3711,7 +3711,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Seed",
             keywords: ["agent seed", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3720,7 +3720,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Stop sequences",
             keywords: ["agent stop sequences (json array)", "per-agent generation", "agent defaults", "custom stop strings", "stop chips", "empty array"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3729,7 +3729,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Thinking",
             keywords: ["agent thinking", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3738,7 +3738,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Reasoning effort",
             keywords: ["agent reasoning effort", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3747,7 +3747,7 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Speculative Decoding",
             keywords: ["agent native mtp", "adaptive on off ar", "dspark", "dflash", "drafter", "per-agent speculation"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Eligible local bundles only. Inherit uses Server settings; Off uses AR; On requests adaptive drafting for this agent without changing shared defaults.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Eligible local bundles only. Inherit uses Server settings; Off uses AR; On requests adaptive drafting for this agent without changing shared defaults.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3756,7 +3756,19 @@ public enum SettingsSearchIndex {
             section: "Generation Overrides",
             title: "Template parameters (JSON)",
             keywords: ["agent template parameters (json)", "per-agent generation", "agent defaults", "custom template variables", "advanced chat template parameters", "empty object"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.avatar",
+            tab: .agents,
+            section: "Identity",
+            title: "Avatar",
+            keywords: [
+                "agent avatar", "change avatar", "agent picture", "agent photo", "agent icon",
+                "upload agent image", "agent mascot", "agent dino", "profile picture",
+            ],
+            disambiguation: "Custom agent → General → Identity: click the avatar (or the avatar in the page header) to upload an image, pick a dino, or use the first letter of the name. Appearance → Avatar has the same choices. Picking a dino or the letter removes an uploaded image. The Orchestrator and Architect set theirs in their own settings. Declarative key: `avatar` on agents[] (a dino name, or \"\" for the letter); uploading an image is UI-only.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3770,7 +3782,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "agents.runtime",
             tab: .agents,
-            section: "Runtime",
+            section: "Model",
             title: "Runs on",
             keywords: [
                 "runtime", "agent runtime", "harness", "external harness", "claude code", "pi", "pi rpc",
@@ -3778,7 +3790,7 @@ public enum SettingsSearchIndex {
                 "manage runtimes", "switch runtime", "switch to claude code", "model picker runtime",
             ],
             disambiguation:
-                "Per-agent choice between Osaurus's own loop and a registered harness (Configure tab → Runtime). The chat model picker lists the same runtimes as columns; picking one there changes this setting. Register or test harnesses under Settings → Agent Runtimes. Declarative key: `runtime` (\"builtin\" or a harness_runtimes name) on agents[] and default_agent.",
+                "Per-agent choice between Osaurus's own loop and a registered harness (custom agent → General → Model → Runs on; Manage Runtimes beside the Model title opens Agent Runtimes). The chat model picker lists the same runtimes as columns; picking one there changes this setting. Register or test harnesses under Settings → Agent Runtimes. Declarative key: `runtime` (\"builtin\" or a harness_runtimes name) on agents[] and default_agent.",
             declarativeSection: "agents"
         ),
         .init(
@@ -4011,7 +4023,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "agents.skills",
             tab: .agents,
-            section: "Abilities → Tools",
+            section: "Abilities → Tools → Tool Settings",
             title: "Limit to selected skills",
             keywords: [
                 "skills", "skill allow-list", "allowed skills", "allow list", "allowlist",
@@ -4019,13 +4031,13 @@ public enum SettingsSearchIndex {
             ],
             subTab: "capabilities",
             disambiguation:
-                "Per-custom-agent switch in Abilities → Tools. Off: the agent sees every installed skill. On: only the ticked skills appear in its prompt, capabilities_load and slash commands. Installing skill content is Skills in the sidebar, not this card. Declarative: agents[].skills (omit = unchanged, null = all skills, list = only these).",
+                "Per-custom-agent switch in Abilities → Tools → Tool Settings (collapsed above the tool list). Off: the agent sees every installed skill. On: only the ticked skills appear in its prompt, capabilities_load and slash commands. Installing skill content is Skills in the sidebar, not this card. Declarative: agents[].skills (omit = unchanged, null = all skills, list = only these).",
             declarativeSection: "agents"
         ),
         .init(
             id: "agents.toolApprovals",
             tab: .agents,
-            section: "Abilities → Tools",
+            section: "Abilities → Tools → Tool Settings",
             title: "Tool Approvals",
             keywords: [
                 "tool approvals", "approval", "approvals", "never ask", "don't ask", "stop asking",
@@ -4035,13 +4047,13 @@ public enum SettingsSearchIndex {
             ],
             subTab: "capabilities",
             disambiguation:
-                "At the top of a custom agent's Tools tab: Use Global Setting (follows Auto-Allow All Tool Calls under Tools & MCP → All Tools), Ask (always show approval cards for this agent, even with that switch on), or Never Ask (skip approval cards for this agent, after a confirmation). Never Ask skips only the standard card: tools set to Deny, sends and deletes, MCP tools their server marks destructive, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. Does not apply inside workflow runs or to built-in agents. Turning on Never Ask through a configuration change is marked high risk on its review card.",
+                "Under Tool Settings (collapsed above the tool list) on a custom agent's Tools tab: Use Global Setting (follows Auto-Allow All Tool Calls under Tools & MCP → All Tools), Ask (always show approval cards for this agent, even with that switch on), or Never Ask (skip approval cards for this agent, after a confirmation). Never Ask skips only the standard card: tools set to Deny, sends and deletes, MCP tools their server marks destructive, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. Does not apply inside workflow runs or to built-in agents. Turning on Never Ask through a configuration change is marked high risk on its review card.",
             declarativeSection: "agents"
         ),
         .init(
             id: "agents.toolPolicies",
             tab: .agents,
-            section: "Abilities → Tools",
+            section: "Abilities → Tools → Tool Settings",
             title: "Per-Tool Policies",
             keywords: [
                 "tool policy", "tool policies", "per tool policy", "auto ask deny", "block tool",
@@ -4049,7 +4061,7 @@ public enum SettingsSearchIndex {
             ],
             subTab: "capabilities",
             disambiguation:
-                "Auto, Ask or Deny for one tool in one custom agent, from the policy menu on an enabled tool's row in that agent's Tools tab (Default follows the policy under Tools & MCP → All Tools). Reset All clears them. A Deny under Tools & MCP → All Tools always wins, and send and delete tools ask every time whatever is set. Does not apply inside workflow runs. Setting a tool to Auto through a configuration change is marked high risk on its review card.",
+                "Auto, Ask or Deny for one tool in one custom agent, from the policy menu on an enabled tool's row in that agent's Tools tab (Default follows the policy under Tools & MCP → All Tools). Reset All, under Tool Settings, clears them. A Deny under Tools & MCP → All Tools always wins, and send and delete tools ask every time whatever is set. Does not apply inside workflow runs. Setting a tool to Auto through a configuration change is marked high risk on its review card.",
             declarativeSection: "agents"
         ),
 

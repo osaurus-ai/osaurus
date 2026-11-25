@@ -41,10 +41,27 @@ struct LocalModelsCatalogPage: View {
     @State private var showTokenPromptForDeepLink = false
     @State private var hasAppeared = false
     @State private var regionWidth: CGFloat = 0
+    /// The detail panel's width as the person last dragged it.
+    @AppStorage("localModelsInspectorWidth") private var storedInspectorWidth: Double = Self.defaultInspectorWidth
+    @State private var liveInspectorWidth: Double?
 
-    private static let inspectorWidth: CGFloat = 420
+    private static let defaultInspectorWidth: Double = 420
+    private static let minInspectorWidth: Double = 360
+    private static let maxInspectorWidth: Double = 760
     /// Narrower than this beside the panel, the panel covers the table.
     private static let minTableWidth: CGFloat = 480
+
+    /// How wide the panel may be: it never squeezes the table below its
+    /// minimum.
+    private var inspectorWidthRange: ClosedRange<Double> {
+        let room = Double(regionWidth - Self.minTableWidth)
+        return Self.minInspectorWidth...max(Self.minInspectorWidth, min(Self.maxInspectorWidth, room))
+    }
+
+    private var inspectorWidth: CGFloat {
+        let range = inspectorWidthRange
+        return CGFloat(min(max(liveInspectorWidth ?? storedInspectorWidth, range.lowerBound), range.upperBound))
+    }
 
     /// Until a chip is picked, the page opens on what is installed, or on
     /// Available when this kind has nothing on this Mac yet. Installed
@@ -60,7 +77,7 @@ struct LocalModelsCatalogPage: View {
         let searched = searchedItems
         let rows = LocalModelCatalogOrdering.sorted(searched.filter { scope.includes($0) }, by: sort)
         let selectedItem = selection.flatMap { id in source.items.first { $0.id == id } }
-        let inspectorCovers = regionWidth > 0 && regionWidth - Self.inspectorWidth < Self.minTableWidth
+        let inspectorCovers = regionWidth > 0 && regionWidth - CGFloat(Self.minInspectorWidth) < Self.minTableWidth
 
         VStack(spacing: theme.space.s0) {
             header(searched: searched)
@@ -87,7 +104,17 @@ struct LocalModelsCatalogPage: View {
                 if let selectedItem, !inspectorCovers {
                     ThemeHairlineDivider(axis: .vertical, color: theme.border.default)
                     inspector(for: selectedItem)
-                        .frame(width: Self.inspectorWidth)
+                        .frame(width: inspectorWidth)
+                        .clipped()
+                        .overlay(alignment: .leading) {
+                            ColumnResizeHandle(
+                                edge: .leading,
+                                range: inspectorWidthRange,
+                                storedWidth: $storedInspectorWidth,
+                                liveWidth: $liveInspectorWidth,
+                                accessibilityLabel: L("Resize model details"),
+                                onReset: { storedInspectorWidth = Self.defaultInspectorWidth })
+                        }
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }

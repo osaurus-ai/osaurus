@@ -113,8 +113,9 @@ struct HuggingFaceTokenPromptSheet: View {
 
 /// One-line nudge above the Language catalog while no token is saved. The
 /// token itself is managed under Vault → App Keys, so the banner only offers
-/// the Add flow and disappears once a token exists.
+/// the Add flow and disappears once a token exists or the user dismisses it.
 struct HuggingFaceTokenBanner: View {
+    @AppStorage("huggingFaceTokenBannerDismissed") private var dismissed = false
     /// Token presence. Seeded from the in-memory cache ONLY — never a
     /// synchronous keychain read on the render path, which can block the main
     /// thread for seconds and hang the catalog. `HuggingFaceAuth` is preloaded
@@ -139,12 +140,13 @@ struct HuggingFaceTokenBanner: View {
 
     var body: some View {
         Group {
-            if !hasToken {
+            if !hasToken && !dismissed {
                 SettingsCallout(
                     icon: "bolt.horizontal.circle",
                     title: "Faster model downloads",
-                    message: "A free Hugging Face token raises rate limits so models download faster.",
-                    tone: .info
+                    message: "A free Hugging Face token raises rate limits so models download faster. You can add one later in Vault → App Keys.",
+                    tone: .info,
+                    onDismiss: { withAnimation(theme.motion.quick) { dismissed = true } }
                 ) {
                     SettingsButton(.secondary, "Add Token", icon: "plus", size: .compact) { showAddSheet = true }
                 }

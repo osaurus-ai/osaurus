@@ -4,7 +4,7 @@
 //
 //  Phase 3 — the Next Run panel above the detail-view tab strip (spec
 //  §9.4). Shows the agent's upcoming run, paused state, or idle state.
-//  The mode picker lives in the Configure tab's Scheduling section; a
+//  The mode picker lives in the General tab's Scheduling section; a
 //  read-only chip here deep-links to it.
 //
 
@@ -282,7 +282,7 @@ public struct NextRunPanelView: View {
     // MARK: Mode chip
 
     /// Read-only at-a-glance indicator of the current schedule mode.
-    /// Tapping it deep-links to the Configure tab where the mode
+    /// Tapping it deep-links to the General tab where the mode
     /// picker lives now (see `AgentDetailView` Scheduling section).
     @ViewBuilder
     private var modeChip: some View {

@@ -167,7 +167,7 @@ private struct LocalModelFactsInspector: View {
                     .glyphSize(.label, weight: .semibold)
                     .foregroundColor(isSelected ? theme.text.link : theme.text.tertiary)
                 VStack(alignment: .leading, spacing: theme.space.s2) {
-                    HStack(spacing: theme.space.s6) {
+                    FlowLayout(spacing: theme.space.s6) {
                         Text(verbatim: version.framing ?? version.label ?? version.technicalName)
                             .font(SettingsFont.rowTitle)
                             .foregroundColor(theme.text.primary)
@@ -195,6 +195,7 @@ private struct LocalModelFactsInspector: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+                .layoutPriority(1)
                 Spacer(minLength: theme.space.s8)
                 if let size = version.sizeText {
                     Text(verbatim: size)
@@ -281,24 +282,48 @@ private struct LocalModelFactsInspector: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
-                HStack(spacing: theme.settingsControlGap) {
-                    ForEach(item.menuActions) { action in
-                        SettingsButton(
-                            action.role == .destructive ? .destructive : .secondary,
-                            action.title,
-                            icon: action.icon,
-                            size: .compact
-                        ) { perform(action) }
+                // One row while it fits; in a narrow panel the other actions
+                // wrap above the primary one instead of widening the panel.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: theme.settingsControlGap) {
+                        secondaryActions
+                        Spacer(minLength: 0)
+                        primaryActions
                     }
-                    Spacer(minLength: 0)
-                    if item.isDefault, item.status == .installed {
-                        StatusChip(L("Default"), tone: .accent, icon: "checkmark")
-                    }
-                    if let action = item.primaryAction {
-                        SettingsButton(.primary, action.title, icon: action.icon, size: .compact) { perform(action) }
+                    VStack(alignment: .leading, spacing: theme.space.s8) {
+                        FlowLayout(spacing: theme.settingsControlGap) { secondaryActions }
+                        HStack(spacing: theme.settingsControlGap) {
+                            Spacer(minLength: 0)
+                            primaryActions
+                        }
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var secondaryActions: some View {
+        ForEach(item.menuActions) { action in
+            SettingsButton(
+                action.role == .destructive ? .destructive : .secondary,
+                action.title,
+                icon: action.icon,
+                size: .compact
+            ) { perform(action) }
+            .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private var primaryActions: some View {
+        if item.isDefault, item.status == .installed {
+            StatusChip(L("Default"), tone: .accent, icon: "checkmark")
+                .fixedSize()
+        }
+        if let action = item.primaryAction {
+            SettingsButton(.primary, action.title, icon: action.icon, size: .compact) { perform(action) }
+                .fixedSize()
         }
     }
 

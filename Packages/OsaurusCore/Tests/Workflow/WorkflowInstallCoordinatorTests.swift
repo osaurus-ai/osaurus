@@ -24,6 +24,7 @@ private final class FakeMachine {
     var blockers: [SetupItem] = []
     var installedID = UUID()
     var commits = 0
+    var flaggedNeedsSetup: [UUID] = []
     var provisionError: Error?
     var now = Date(timeIntervalSince1970: 1_000)
 
@@ -53,6 +54,7 @@ private final class FakeMachine {
                 self.commits += 1
                 return self.installedID
             },
+            flagNeedsSetup: { self.flaggedNeedsSetup.append($0) },
             storeURL: storeURL,
             now: { self.now },
             tickInterval: nil,
@@ -164,6 +166,40 @@ struct WorkflowInstallCoordinatorTests {
         machine.blockers = []
         coordinator.recheck(id)
         #expect(coordinator.job(id: id)?.phase == .done(installedID: machine.installedID))
+    }
+
+    @Test
+    func aSkippedModelSlotInstallsMarkedNeedsSetup() {
+        let machine = FakeMachine()
+        machine.blockers = [SetupItem(kind: .model, severity: .blocking, title: "Write", detail: "", value: "write")]
+        let coordinator = WorkflowInstallCoordinator(environment: machine.environment())
+        let id = coordinator.start(subject, items: [], deferring: ["write"])
+
+        #expect(coordinator.job(id: id)?.phase == .done(installedID: machine.installedID))
+        #expect(machine.flaggedNeedsSetup == [machine.installedID])
+    }
+
+    @Test
+    func anotherBlockerStillWaitsWithASkippedModelSlot() {
+        let machine = FakeMachine()
+        machine.blockers = [
+            SetupItem(kind: .model, severity: .blocking, title: "Write", detail: "", value: "write"),
+            SetupItem(kind: .model, severity: .blocking, title: "Judge", detail: "", value: "judge"),
+        ]
+        let coordinator = WorkflowInstallCoordinator(environment: machine.environment())
+        let id = coordinator.start(subject, items: [], deferring: ["write"])
+
+        #expect(coordinator.job(id: id)?.phase == .needsYou)
+        #expect(machine.commits == 0)
+    }
+
+    @Test
+    func aCleanInstallIsNotMarkedNeedsSetup() {
+        let machine = FakeMachine()
+        let coordinator = WorkflowInstallCoordinator(environment: machine.environment())
+        coordinator.start(subject, items: [], deferring: ["write"])
+        #expect(machine.commits == 1)
+        #expect(machine.flaggedNeedsSetup.isEmpty, "a skipped slot that turned out fine needs nothing")
     }
 
     // MARK: - Downloads
@@ -362,5 +398,28 @@ struct WorkflowInstallCoordinatorTests {
         let third = WorkflowInstallCoordinator(environment: FakeMachine().environment(storeURL: url))
         third.resumeAfterLaunch()
         #expect(third.jobs.isEmpty, "a finished job is not saved")
+    }
+
+    @Test
+    func aSkippedModelSlotSurvivesARelaunch() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("installs-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let machine = FakeMachine()
+        let first = WorkflowInstallCoordinator(environment: machine.environment(storeURL: url))
+        let id = first.start(subject, items: [mediaItem], deferring: ["write"])
+        await settleTasks()
+
+        let relaunched = FakeMachine()
+        relaunched.blockers = [SetupItem(kind: .model, severity: .blocking, title: "Write", detail: "", value: "write")]
+        let second = WorkflowInstallCoordinator(environment: relaunched.environment(storeURL: url))
+        second.resumeAfterLaunch()
+        await settleTasks()
+        #expect(second.job(id: id)?.deferredSlots == ["write"])
+
+        relaunched.set(.media(qwen.id), .completed)
+        second.tick()
+        #expect(second.job(id: id)?.phase == .done(installedID: relaunched.installedID))
     }
 }

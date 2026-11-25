@@ -1247,9 +1247,15 @@ final class ChatSession: ObservableObject {
         // above races the connect that produced it. Fires immediately
         // with the current snapshot, which `applyPickerItems` no-ops when
         // unchanged.
+        // `$items` replays its current value on subscribe, which before the
+        // first load is an empty placeholder — applying it would end model
+        // discovery and flash the no-models state at launch.
         modelCacheCancellable = ModelPickerItemCache.shared.$items
             .sink { [weak self] items in
-                Task { @MainActor in self?.applyPickerItems(items) }
+                Task { @MainActor in
+                    guard ModelPickerItemCache.shared.isLoaded else { return }
+                    self?.applyPickerItems(items)
+                }
             }
 
         modelLockCancellable = Publishers.Merge(
@@ -11294,14 +11300,18 @@ struct ChatView: View {
             }
         } else if observedSession.syncPendingCount > 0, !observedSession.isStreaming {
             HStack(spacing: theme.space.s6) {
-                Image(systemName: "clock.arrow.circlepath")
+                Image(systemName: "laptopcomputer.and.iphone")
                     .glyphSize(.footnote, weight: .medium)
-                Text(L("Waiting to reach your other devices"))
+                Text(L("Saved on this Mac · syncs when another device is online"))
                     .textStyle(.micro)
             }
             .foregroundStyle(theme.text.secondary)
             .padding(.bottom, theme.space.s6)
-            .help(L("These messages sync the next time one of your other devices is reachable."))
+            .help(
+                L(
+                    "Nothing is lost. Your other devices are offline or asleep, so this chat syncs to them the next time one is reachable. Sharing → Devices shows what is waiting to send."
+                )
+            )
         }
     }
 

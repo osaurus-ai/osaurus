@@ -191,6 +191,8 @@ struct SettingsSearchSelfFindProbe {
             ("Build with the Architect", "workflows.architect"),
             ("Plugins", "tools.plugins"),
             ("Brief description (optional)", "agents.description"),
+            ("Avatar", "agents.avatar"),
+            ("change avatar", "agents.avatar"),
             ("Runs on", "agents.runtime"),
             ("Manage Runtimes", "agents.runtime"),
             ("Claude model", "agents.claudeCode.model"),

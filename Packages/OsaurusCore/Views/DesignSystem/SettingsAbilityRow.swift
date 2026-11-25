@@ -70,7 +70,6 @@ struct SettingsAbilityRow<Accessory: View>: View {
         isOn?.wrappedValue ?? isActive ?? false
     }
 
-    private var hasAccessory: Bool { Accessory.self != EmptyView.self }
     private var showsConfigure: Bool { active && configureLabel != nil && onConfigure != nil }
 
     var body: some View {
@@ -100,15 +99,19 @@ struct SettingsAbilityRow<Accessory: View>: View {
             }
             .disabled(!isInteractive)
 
-            if pausedNote != nil || hasAccessory || showsConfigure {
-                VStack(alignment: .leading, spacing: theme.space.s8) {
-                    pausedChip
-                    accessory
-                    configureLink
+            // Counted from what the accessory renders, not its type: an
+            // `if` that is currently false must not leave an empty band.
+            Group(subviews: accessory) { accessoryViews in
+                if pausedNote != nil || !accessoryViews.isEmpty || showsConfigure {
+                    VStack(alignment: .leading, spacing: theme.space.s8) {
+                        pausedChip
+                        ForEach(accessoryViews) { $0 }
+                        configureLink
+                    }
+                    .padding(.leading, icon == nil ? 0 : Self.tileSize + theme.space.s12)
+                    .padding(.bottom, theme.space.s8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.leading, icon == nil ? 0 : Self.tileSize + theme.space.s12)
-                .padding(.bottom, theme.space.s8)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .animation(theme.motion.springAnimation, value: active)

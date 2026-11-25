@@ -12,7 +12,7 @@ struct AgentGenerationInheritedValues {
     var fields: [AgentGenerationField: Value] = [:]
 
     subscript(_ field: AgentGenerationField) -> Value {
-        fields[field] ?? Value(text: "Model / server default", source: "", customText: nil)
+        fields[field] ?? Value(text: "Default", source: "", customText: nil)
     }
 
     static func resolve(

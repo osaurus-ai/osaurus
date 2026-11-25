@@ -1440,6 +1440,27 @@ public final class RemoteProviderManager: ObservableObject {
         )
     }
 
+    /// Whether the Providers page lists a provider (and its sidebar badge
+    /// counts it): never the managed Osaurus router, and never a paired agent
+    /// that shares no models for inference.
+    nonisolated static func isUserFacing(
+        providerType: RemoteProviderType,
+        discoveredModels: [String]
+    ) -> Bool {
+        providerType != .osaurusRouter
+            && exposesModelsForInference(providerType: providerType, discoveredModels: discoveredModels)
+    }
+
+    /// The providers the user manages on the Providers page, in their order.
+    var userFacingProviders: [RemoteProvider] {
+        configuration.providers.filter {
+            Self.isUserFacing(
+                providerType: $0.providerType,
+                discoveredModels: providerStates[$0.id]?.discoveredModels ?? []
+            )
+        }
+    }
+
     /// Connected billable media models. These never enter chat/spawn service
     /// model lists, but are published to media pickers and tool availability.
     func cachedMediaModels() -> [CachedProviderMediaModels] {
