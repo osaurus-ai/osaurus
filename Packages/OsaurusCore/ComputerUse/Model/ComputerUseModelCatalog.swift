@@ -23,11 +23,12 @@ enum ComputerUseModelCatalog {
 
     static let qwen3VL8BId = "mlx-community/Qwen3-VL-8B-Instruct-4bit"
     static let qwen3VL4BId = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
-    static let uiTars7BId = "mlx-community/UI-TARS-1.5-7B-4bit"
-    static let holo17BId = "mlx-community/Holo1-7B-4bit"
 
     /// Every bundle under evaluation, in display order. Osaurus-published
-    /// bundles go first, as top picks, once they exist.
+    /// bundles go first, as top picks, once they exist. Models trained on their
+    /// own action syntax (UI-TARS, Holo1) are not candidates: the loop speaks
+    /// `agent_action` through the bundle's tool-calling template, and their
+    /// bundles carry no metadata naming another syntax.
     static let candidates: [Candidate] = [
         Candidate(
             model: MLXModel(
@@ -49,26 +50,6 @@ enum ComputerUseModelCatalog {
                 description:
                     "Smaller Qwen3-VL for Macs with less memory. Same tool-calling template as the 8B.",
                 downloadURL: "https://huggingface.co/\(qwen3VL4BId)",
-                useCase: .vision
-            ),
-            proof: nil
-        ),
-        Candidate(
-            model: MLXModel(
-                id: uiTars7BId,
-                name: "UI-TARS 1.5 7B",
-                description: "GUI agent model trained on screenshots and desktop actions.",
-                downloadURL: "https://huggingface.co/\(uiTars7BId)",
-                useCase: .vision
-            ),
-            proof: nil
-        ),
-        Candidate(
-            model: MLXModel(
-                id: holo17BId,
-                name: "Holo1 7B",
-                description: "Web and desktop navigation model with strong click localization.",
-                downloadURL: "https://huggingface.co/\(holo17BId)",
                 useCase: .vision
             ),
             proof: nil

@@ -2007,7 +2007,7 @@ public enum SettingsSearchIndex {
             title: "Computer Use Models",
             keywords: [
                 "computer use model", "download computer use model", "grounding model", "gui agent model",
-                "screen model", "qwen3-vl", "ui-tars", "holo1",
+                "screen model", "qwen3-vl",
             ],
             disambiguation: "Opens Local Models → Computer Use. The model Computer Use runs on is chosen in Models → Model Defaults → Computer Use Model."
         ),

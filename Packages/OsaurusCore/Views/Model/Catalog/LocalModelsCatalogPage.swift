@@ -330,13 +330,15 @@ struct LocalModelsCatalogPage: View {
         switch scope {
         case .all: return L("No models available")
         case .onThisMac: return L("No models on this Mac yet")
-        case .available: return L("Every model is already on this Mac")
+        case .available:
+            return source.items.isEmpty ? L("No models available") : L("Every model is already on this Mac")
         case .nearby: return L("Nearby Macs share nothing new for this kind")
         }
     }
 
     private var emptyAction: SettingsEmptyState.Action? {
-        guard query.isEmpty, scope == .onThisMac else { return nil }
+        guard query.isEmpty, scope == .onThisMac, source.items.contains(where: { $0.status != .installed })
+        else { return nil }
         return .init(title: L("Browse Available"), icon: "square.grid.2x2") {
             withAnimation(theme.motion.quick) { scopeOverride = .available }
         }
