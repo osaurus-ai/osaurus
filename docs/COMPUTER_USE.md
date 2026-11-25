@@ -546,7 +546,10 @@ Escalation rules:
 - **Key chords** that submit, delete or end something escalate to
   `consequential`: ⌘Return / ⌘Enter, ⌘Delete / ⌘⌦ (Move to Trash), ⌘Q with
   any other modifiers (quit, ⇧ log out, ⌃ lock screen), and ⌥⌘Esc (Force
-  Quit). They confirm under `trusted` too. A `press_key` whose `modifiers`
+  Quit). They confirm under `trusted` too, and so do their menu forms (a
+  click on "Quit …", "Force Quit …", "Restart…", "Shut Down…", "Lock
+  Screen", "Log Out …"). A declined action is reported back to the model as
+  something not to reach another way. A `press_key` whose `modifiers`
   hold anything but a modifier name (say `key: "command", modifiers: ["q"]`)
   is rejected back to the model before the gate, so the chord that is
   classified is the chord that is pressed.

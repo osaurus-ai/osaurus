@@ -295,6 +295,7 @@
       "computer_use.command-delete-confirms-trusted",
       "computer_use.command-return-submits",
       "computer_use.edit-confirms-balanced",
+      "computer_use.force-quit-menu-confirms-trusted",
       "computer_use.navigate-autoruns-balanced",
       "computer_use.per-app-override-tightens",
       "computer_use.perapp-override-stricter",

@@ -120,6 +120,30 @@ final class EffectClassifierTests: XCTestCase {
         }
     }
 
+    /// Live finding: after the user declined ⌘Q under Trusted, the model clicked
+    /// the Apple menu's "Force Quit Calculator", which auto-ran as navigate.
+    func testMenuItemsThatEndSomethingAreConsequential() {
+        let labels = [
+            "Force Quit Calculator", "Quit Calculator", "Force Quit…", "Restart…", "Shut Down…",
+            "Lock Screen", "Log Out Taylor…",
+        ]
+        for label in labels {
+            let effect = EffectClassifier.classify(
+                action: AgentAction(verb: .click, target: AgentTarget(mark: 4)),
+                resolvedRole: "AXMenuItem",
+                resolvedLabel: label
+            )
+            XCTAssertEqual(effect, .consequential, label)
+            XCTAssertEqual(AutonomyPreset.trusted.disposition(for: effect), .confirm, label)
+        }
+        let about = EffectClassifier.classify(
+            action: AgentAction(verb: .click, target: AgentTarget(mark: 4)),
+            resolvedRole: "AXMenuItem",
+            resolvedLabel: "About This Mac"
+        )
+        XCTAssertEqual(about, .navigate)
+    }
+
     func testAmbiguousClickIsStricter() {
         // No mark resolution, no role, no describe → escalate navigate → edit.
         let blind = AgentAction(verb: .click, target: AgentTarget(describe: ""))

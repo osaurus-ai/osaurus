@@ -9,7 +9,9 @@
 //
 //  What it catches beyond the verb floor:
 //    • Irreversible / cross-boundary commits — a `click` on a button labeled
-//      "Send", "Delete", "Purchase", "Publish" jumps navigate → consequential.
+//      "Send", "Delete", "Purchase", "Publish" jumps navigate → consequential,
+//      as does a menu item that ends something ("Quit", "Force Quit…",
+//      "Restart…", "Shut Down…"), the menu forms of the rule-4 chords.
 //    • Recipients on a commit — a "Save" / "Done" / "Add" press while the
 //      surrounding text mentions invitees / recipients / attendees becomes
 //      consequential (the spec's "calendar-save-with-invitees" case).
@@ -154,8 +156,8 @@ public enum EffectClassifier {
         "delete", "remove", "discard", "trash", "erase", "destroy",
         "purchase", "buy", "pay", "checkout", "transfer", "withdraw",
         "unsubscribe", "uninstall", "deactivate", "logout", "forward", "overwrite",
-        "permanently", "wire",
-        "log out", "sign out", "reply all", "move to trash", "empty trash",
+        "permanently", "wire", "quit", "restart", "shutdown",
+        "log out", "sign out", "shut down", "lock screen", "reply all", "move to trash", "empty trash",
         "delete account", "place order", "confirm purchase", "send invites",
     ]
 

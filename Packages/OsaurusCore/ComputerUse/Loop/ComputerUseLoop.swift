@@ -1670,7 +1670,9 @@ public enum ComputerUseLoop {
             )
             metrics.confirmsDeclined += 1
             feed.emit(SubagentActivityEvent(step: step, kind: .denied, title: "Declined: \(label)"))
-            toolResult = "The user declined that action. Try a different approach or ask to stop."
+            toolResult =
+                "The user declined that action. Don't reach the same result another way (another "
+                + "control, menu item or shortcut): carry on without it, or give_up and say why."
             advancedStep = false
             return false
         case .run:
@@ -3305,7 +3307,9 @@ public enum ComputerUseLoop {
             pause for the user to approve, and some are blocked outright. Reads and navigation are usually \
             automatic; edits and consequential actions (sending, deleting, purchasing, sharing) are the ones \
             most likely to need approval, so always explain your intent in `note`.
-            - If an action is declined or blocked, do not repeat it — try another approach or `give_up`.
+            - If the user declines an action, do not get the same result another way (another control, \
+            menu item or shortcut): carry on without it or `give_up`. If an action is blocked, do not \
+            repeat it — try another approach or `give_up`.
             - Finish with `done` (include a `reason` summarizing what you accomplished) when the goal is met, \
             or `give_up` (with a `reason`) if it cannot be done.
             - Be efficient: the run has a step limit.
