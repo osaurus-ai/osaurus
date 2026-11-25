@@ -27,7 +27,7 @@ public struct ShareArtifactTool: OsaurusTool {
         + "If unsure where you wrote a file, find it first "
         + "(`sandbox_search_files` / `file_search` with `target=\"files\"`). This only presents a "
         + "separate chat attachment: it NEVER edits, replaces, or updates an existing file, open "
-        + "document, or Mac app state. Use `applescript` for a document open in a Mac app."
+        + "document, or Mac app state."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -90,23 +90,6 @@ public struct ShareArtifactTool: OsaurusTool {
     public func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let json) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        // A chat attachment cannot satisfy an edit to the frontmost app's
-        // existing document. The parent Ornith model was observed turning
-        // `the file` replacement into an unrelated file.txt artifact and then
-        // claiming success. Reject only that exact, working-document-shaped
-        // request so the parent can choose the state-changing AppleScript
-        // tool; do not silently reroute or broaden ordinary artifact creation.
-        if let conflict = AppleScriptToolDispatch.artifactConflictMessage(
-            latestUserTask: AppleScriptToolDispatch.latestUserTaskFromCurrentSession()
-        ) {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: conflict,
-                tool: name,
-                retryable: true
-            )
-        }
 
         // Empty-string filler bug: many models pass `content: ""` and
         // `filename: ""` as placeholders for unused optional fields when

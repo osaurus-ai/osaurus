@@ -165,21 +165,6 @@ enum BuiltinToolOutputSchemas {
 
     static let computerUse = helper(["steps": S.integer("Actions taken.")], "What the run did.")
 
-    static let appleScript = helper(
-        [
-            "mode": S.string("`automate` or `query`."),
-            "scripts_run": S.integer("Scripts executed."),
-            "succeeded": S.integer("Scripts that succeeded."),
-            "failed": S.integer("Scripts that failed."),
-            "values": S.string("The last script's output."),
-            "steps": S.array(S.anyObject("A script and its outcome."), "Each script."),
-            "errors": S.array(S.anyObject("A failed script."), "Failed scripts."),
-            "permission_needed": S.array(S.string("Permission."), "macOS permissions it lacked."),
-            "elapsed_seconds": S.number("Run time."),
-            "model_tokens": S.integer("Tokens generated."),
-            "tokens_per_second": S.number("Generation speed."),
-        ], "What the scripts did.")
-
     // MARK: Agent channels
 
     static let channelConnections = S.object(
@@ -299,8 +284,6 @@ extension ImageTool { public var outputSchema: JSONValue? { BuiltinToolOutputSch
 extension VideoTool { public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.video } }
 extension BrowserUseTool { public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.browserUse } }
 extension ComputerUseTool { public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.computerUse } }
-extension AppleScriptTool { public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.appleScript } }
-extension MacQueryTool { public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.appleScript } }
 extension StatusTool { public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.status } }
 extension OsaurusInspectTool { public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.osaurusSettings } }
 extension OsaurusHelpTool { public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.osaurusSettings } }

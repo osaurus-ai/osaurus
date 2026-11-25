@@ -216,6 +216,46 @@ struct SubagentModelResolutionTests {
         }
     }
 
+    @Test("a missing Model Defaults Computer Use model fails closed and names the model")
+    func missingComputerUseDefaultNamesModel() async {
+        let lease = await acquireSubagentStoreSandbox(
+            "subagent-model-resolution-cu-model-default"
+        )
+        defer { lease.release() }
+        let assigned = SpawnRemoteModelIdentity.make(
+            providerId: UUID(uuidString: "1E5B7C2A-9D44-4F0E-8B6A-3C2D1E0F9A87")!,
+            modelId: "vendor/removed-cu-model"
+        )!
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(
+                subagentModelOverrides: [SubagentCapabilityRegistry.computerUse.id: assigned]
+            )
+        )
+
+        do {
+            _ = try await SubagentModelResolution.resolve(
+                capabilityId: SubagentCapabilityRegistry.computerUse.id,
+                agentId: nil,
+                evalModel: nil,
+                invokingParentModelName: nil,
+                idleWaitSeconds: 30,
+                deniedMessage: "denied",
+                unavailableMessage: "generic",
+                assignedUnavailableMessage: { "missing \($0)" },
+                defaultModel: { "remote/chat-model-should-not-run" }
+            )
+            Issue.record("expected the missing Computer Use model to fail closed")
+        } catch let error as SubagentError {
+            guard case .unavailable(let message) = error else {
+                Issue.record("expected .unavailable, got \(error)")
+                return
+            }
+            #expect(message == "missing \(assigned)")
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
     @Test("a spawn target locked to its model skips the launcher's configured override")
     func lockedTargetIgnoresConfiguredOverride() async throws {
         let lease = await acquireSubagentStoreSandbox(

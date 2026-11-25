@@ -15,7 +15,7 @@
 	<key>SUPublicEDKey</key>
 	<string>HBRBQ8QQOhmvMKnSxQxqb3upTjyirdx0xkHSSRqn7aI=</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Osaurus uses automation to control other apps on your behalf — the built-in Notes, Mail, Messages, and Music tools you enable per agent, agents that write and run AppleScript, and plugins that use automation.</string>
+	<string>Osaurus uses automation to control other apps on your behalf — the built-in Notes, Mail, Messages, and Music tools you enable per agent, and plugins that use automation.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Osaurus reads, creates, and updates Calendar events only for agents you have given Calendar access to.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>

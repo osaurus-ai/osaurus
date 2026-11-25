@@ -935,7 +935,8 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         entry.systemPrompt = dict["system_prompt"] as? String
         if let model = dict["model"] as? String, !model.isEmpty { entry.model = .value(model) }
         if let caps = dict["capabilities"] {
-            let valid = AgentCapabilitiesEntry.CodingKeys.allCases.map(\.rawValue)
+            let valid = AgentCapabilitiesEntry.CodingKeys.allCases
+                .filter { !AgentCapabilitiesEntry.removedKeys.contains($0) }.map(\.rawValue)
             guard let capsDict = caps as? [String: Any] else {
                 return .failure(OverridesError("`overrides.capabilities` must be a mapping, e.g. {calculator_enabled: true}."))
             }

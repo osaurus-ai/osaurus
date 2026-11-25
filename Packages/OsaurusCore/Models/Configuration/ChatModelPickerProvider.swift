@@ -93,7 +93,7 @@ struct ChatModelPickerProvider: Identifiable, Equatable {
         var connectedOrder: [(id: String, title: String)] = []
 
         for item in items {
-            guard item.isMLXFormat, !item.isAppleScriptCatalogModel else { continue }
+            guard item.isMLXFormat, !item.isRetiredBundle else { continue }
             switch item.source {
             case .foundation:
                 foundation.append(item)

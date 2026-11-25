@@ -10,7 +10,6 @@ struct CrossKindResidencyPlanningTests {
         let kinds: [any SubagentPostAdmissionResidencyPlanning] = [
             BrowserUseKind(goal: "read", evalModel: "remote/test"),
             ComputerUseKind(goal: "read", limits: RunLimits()),
-            AppleScriptKind(task: "read", limits: RunLimits()),
         ]
         for kind in kinds {
             let remote = ResolvedModel(name: "remote/test", isLocal: false)

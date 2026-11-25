@@ -98,7 +98,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus uses automation to control other apps on your behalf — the built-in Notes, Mail, Messages, and Music tools you enable per agent, agents that write and run AppleScript, and plugins that use automation."
+            "value" : "Osaurus uses automation to control other apps on your behalf — the built-in Notes, Mail, Messages, and Music tools you enable per agent, and plugins that use automation."
           }
         },
         "ko" : {
@@ -110,7 +110,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Osaurus использует автоматизацию, чтобы управлять другими приложениями от вашего имени: в том числе агенты могут писать и запускать AppleScript для автоматизации задач на этом Mac, а плагины могут использовать автоматизацию."
+            "value" : "Osaurus использует автоматизацию, чтобы управлять другими приложениями от вашего имени: встроенные инструменты Заметок, Почты, Сообщений и Музыки, которые вы включаете для агента, и плагины, использующие автоматизацию."
           }
         },
         "zh-Hans" : {

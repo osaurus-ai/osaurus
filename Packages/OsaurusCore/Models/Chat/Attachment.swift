@@ -512,7 +512,7 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     /// Floor (≈ one merged tile) and ceiling for a single image. The ceiling
     /// keeps one attachment from ever falsely tripping the hard send-gate.
     private static let imageTokenFloor = 256
-    private static let imageTokenCeiling = 4096
+    static let imageTokenCeiling = 4096
 
     /// Estimate vision tokens for an encoded image by reading its pixel
     /// dimensions (header-only, no full decode) rather than its byte size.

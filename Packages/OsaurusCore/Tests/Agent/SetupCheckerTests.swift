@@ -108,13 +108,11 @@ struct SetupCheckerTests {
     }
 
     @Test
-    func computerUseWithoutAccessibility_blocks_automationIsAdvisory() {
+    func computerUseWithoutAccessibility_blocks() {
         var a = agent()
         a.settings.computerUseEnabled = true
-        a.settings.appleScriptEnabled = true
         let report = SetupChecker.check(a, environment: env(granted: []))
         #expect(report.blocking.map(\.value) == [SystemPermission.accessibility.rawValue])
-        #expect(report.items.contains { $0.value == SystemPermission.automation.rawValue && !$0.isBlocking })
     }
 
     @Test

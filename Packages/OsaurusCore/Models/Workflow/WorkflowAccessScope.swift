@@ -54,7 +54,7 @@ public struct WorkflowAccessScope: Equatable, Sendable {
     /// Shell and Python steps run in the workflow's sandbox.
     public var runsInSandbox: Bool
     /// Steps whose reach on this Mac no folder limits: Mac-control tools,
-    /// AppleScript, plugin and MCP tools, other agents and workflows. Named
+    /// plugin and MCP tools, other agents and workflows. Named
     /// as the person would recognize them.
     public var hostReach: [String]
     /// A tool step reads or saves at a path computed at run time, so the run
@@ -86,7 +86,7 @@ public struct WorkflowAccessScope: Equatable, Sendable {
     static let replaceTools: Set<String> = ["file_edit", "redact_file"]
     /// `file_undo` takes back recorded changes wherever they were made, which
     /// can remove a file, so it is named rather than summed into a folder.
-    static let unconfinedTools: Set<String> = WorkflowStepRisk.macTools.union(["applescript", "computer_use", "file_undo"])
+    static let unconfinedTools: Set<String> = WorkflowStepRisk.macTools.union(["computer_use", "file_undo"])
 
     public static func derive(_ definition: WorkflowDefinition) -> WorkflowAccessScope {
         var builder = Builder(definition: definition)

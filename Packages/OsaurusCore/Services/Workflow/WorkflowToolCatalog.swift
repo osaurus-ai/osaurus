@@ -128,6 +128,6 @@ enum WorkflowToolCatalog {
     /// Tools whose `.auto` policy only skips the call-level card: they ask
     /// before each risky action inside their own run.
     static let selfGatingToolNames: Set<String> = [
-        BrowserUseTool.toolName, ComputerUseTool.toolName, AppleScriptTool.toolName,
+        BrowserUseTool.toolName, ComputerUseTool.toolName,
     ]
 }

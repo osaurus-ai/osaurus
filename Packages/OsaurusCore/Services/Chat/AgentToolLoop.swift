@@ -1573,13 +1573,12 @@ enum AgentToolLoop {
     /// it happens during reject-before-evict model/config/residency
     /// resolution, strictly before any desktop action runs, so no partial
     /// external state can exist — and stopping there leaves the user with no
-    /// answer at all when a model calls e.g. `mac_query` on a machine with no
-    /// Computer Use model installed. Other tools retain their existing
-    /// envelope/pivot behavior; this safety stop is scoped to the three
-    /// desktop subagent entry points implicated by the shared
-    /// execution/finalization contract.
+    /// answer at all when a model calls `computer_use` on a machine with no
+    /// usable model. Other tools retain their existing envelope/pivot
+    /// behavior; this safety stop is scoped to the desktop subagent entry
+    /// point implicated by the shared execution/finalization contract.
     static func isTerminalDesktopSubagentFailure(toolName: String, result: String) -> Bool {
-        guard ["computer_use", "applescript", "mac_query"].contains(toolName) else {
+        guard toolName == "computer_use" else {
             return false
         }
         guard ToolEnvelope.isError(result),
@@ -1608,8 +1607,8 @@ enum AgentToolLoop {
     ///
     /// This is intentionally NOT a general invalid-arguments repair. It only
     /// returns the real summary from the immediately preceding successful
-    /// result when all of these are true: one of the three desktop subagent
-    /// tools is repeated, the parser reports that tool's primary required
+    /// result when all of these are true: the desktop subagent tool is
+    /// repeated, the parser reports that tool's primary required
     /// field missing, and the prior success envelope belongs to that same
     /// tool. Any other malformed call still executes normally and reaches the
     /// parent for correction.
@@ -1620,8 +1619,6 @@ enum AgentToolLoop {
         let requiredField: String
         switch invocation.toolName {
         case "computer_use": requiredField = "goal"
-        case "applescript": requiredField = "task"
-        case "mac_query": requiredField = "question"
         default: return nil
         }
 

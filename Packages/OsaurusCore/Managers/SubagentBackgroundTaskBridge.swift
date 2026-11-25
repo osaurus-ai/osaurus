@@ -58,7 +58,7 @@ public final class SubagentBackgroundTaskBridge {
     private func reconcile(_ feeds: [String: SubagentFeed]) {
         for (toolCallId, feed) in feeds where taskIdsByToolCallId[toolCallId] == nil {
             // Only helper-agent runs. Other subagent kinds (image,
-            // computer_use, applescript) keep their existing in-chat-only
+            // computer_use) keep their existing in-chat-only
             // presentation.
             guard feed.kindId == SubagentCapabilityRegistry.spawn.id else { continue }
             // True agent delegations already register a REAL background

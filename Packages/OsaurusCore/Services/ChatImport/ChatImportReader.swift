@@ -290,7 +290,7 @@ struct ChatImportReportTool: OsaurusTool {
 /// maps onto the declarative agent entry.
 enum ChatImportCapabilities {
     static let keys: Set<String> = [
-        "web_search", "memory", "search_memory", "knowledge", "image", "applescript", "speak", "render_chart",
+        "web_search", "memory", "search_memory", "knowledge", "image", "speak", "render_chart",
         "calculator", "browser_use", "computer_use", "task_checklist", "clarify", "artifacts", "self_scheduling",
     ]
 
@@ -302,7 +302,6 @@ enum ChatImportCapabilities {
             case "search_memory": entry.searchMemoryEnabled = true
             case "knowledge": entry.knowledgeEnabled = true
             case "image": entry.imageEnabled = true
-            case "applescript": entry.applescriptEnabled = true
             case "speak": entry.speakEnabled = true
             case "render_chart": entry.renderChartEnabled = true
             case "calculator": entry.calculatorEnabled = true

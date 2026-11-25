@@ -36,8 +36,6 @@ struct WorkflowToolPermissionTests {
         let registry = SubagentCapabilityRegistry.self
         #expect(scope([BrowserUseTool.toolName]).isGrantedByWorkflow(registry.browserUse))
         #expect(scope([ComputerUseTool.toolName]).isGrantedByWorkflow(registry.computerUse))
-        #expect(scope([AppleScriptTool.toolName]).isGrantedByWorkflow(registry.appleScript))
-        #expect(scope([MacQueryTool.toolName]).isGrantedByWorkflow(registry.appleScript))
         #expect(scope(["image"]).isGrantedByWorkflow(registry.image))
         #expect(scope(["video"]).isGrantedByWorkflow(registry.video))
         #expect(!scope([BrowserUseTool.toolName]).isGrantedByWorkflow(registry.computerUse))
@@ -117,22 +115,6 @@ struct WorkflowToolPermissionTests {
             Self.template(calling: tool), bindings: InstallBindings(), subjectId: UUID(),
             environment: Self.environment(tools: [tool], granted: true, permissions: [tool: [.accessibility]]))
         #expect(granted.isClean)
-    }
-
-    @Test
-    func setup_appleScriptWithoutAModel_isABlockingToolItem() {
-        let tool = AppleScriptTool.toolName
-        let reason = "No AppleScript model is installed."
-        let missing = SetupChecker.check(
-            Self.template(calling: tool), bindings: InstallBindings(), subjectId: UUID(),
-            environment: Self.environment(tools: [tool], capability: [tool: reason]))
-        #expect(missing.blocking.map(\.kind) == [.tool])
-        #expect(missing.blocking.first?.detail == reason)
-
-        let ready = SetupChecker.check(
-            Self.template(calling: tool), bindings: InstallBindings(), subjectId: UUID(),
-            environment: Self.environment(tools: [tool]))
-        #expect(ready.isClean)
     }
 
     @Test
@@ -217,7 +199,7 @@ struct WorkflowToolPermissionTests {
     func catalog_labelsSelfGatingTools() {
         #expect(
             WorkflowToolCatalog.selfGatingToolNames
-                == [BrowserUseTool.toolName, ComputerUseTool.toolName, AppleScriptTool.toolName])
+                == [BrowserUseTool.toolName, ComputerUseTool.toolName])
         let status = WorkflowToolCatalog.status(of: BrowserUseTool.toolName)
         #expect(status != L("Runs without asking"))
     }

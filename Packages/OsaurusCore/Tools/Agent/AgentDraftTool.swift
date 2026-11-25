@@ -417,7 +417,6 @@ final class AgentDraftTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
         .init(key: "web_search_enabled", summary: "Search the web and read pages: news, research, looking things up online."),
         .init(key: "browser_use_enabled", summary: "Drive a real web browser: open sites, sign in, fill forms, click."),
         .init(key: "computer_use_enabled", summary: "Control Mac apps on screen by clicking and typing."),
-        .init(key: "applescript_enabled", summary: "Automate and query Mac apps with AppleScript."),
         .init(key: "memory_enabled", summary: "Remember facts and preferences about the user across chats."),
         .init(key: "search_memory_enabled", summary: "Search past conversations and memory."),
         .init(key: "knowledge_enabled", summary: "Search the user's knowledge collections: documents, notes, files."),

@@ -1160,7 +1160,7 @@ public enum SettingsSearchIndex {
             ],
             subTab: "All",
             disambiguation:
-                "Global switch for every agent: tools set to Ask run without an approval card. Tools set to Deny, sends and deletes, MCP tools their server marks destructive, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. To turn approvals off or keep them on for one custom agent instead, use Tool Approvals on that agent's Tools tab, which can override this switch either way."
+                "Global switch for every agent: tools set to Ask run without an approval card. Tools set to Deny, sends and deletes, MCP tools their server marks destructive, configuration changes, delegation, image and video costs, Computer or Browser Use, and teammates on a shared agent still ask. To turn approvals off or keep them on for one custom agent instead, use Tool Approvals on that agent's Tools tab, which can override this switch either way."
         ),
         .init(
             id: "settings.chat.spellCheck",
@@ -2004,9 +2004,24 @@ public enum SettingsSearchIndex {
         .init(
             id: "computerUse.models",
             tab: .computerUse,
-            title: "AppleScript Models",
-            keywords: ["applescript model", "download applescript", "osascript model", "scripting model"],
-            disambiguation: "Opens Local Models → AppleScript. The default AppleScript model is chosen in Models → Model Defaults."
+            title: "Computer Use Models",
+            keywords: [
+                "computer use model", "download computer use model", "grounding model", "gui agent model",
+                "screen model", "qwen3-vl", "ui-tars", "holo1",
+            ],
+            disambiguation: "Opens Local Models → Computer Use. The model Computer Use runs on is chosen in Models → Model Defaults → Computer Use Model."
+        ),
+        .init(
+            id: "computerUse.lockApp",
+            tab: .computerUse,
+            section: "Staying in Control",
+            title: "Lock App While Working",
+            keywords: [
+                "takeover", "shield", "overlay", "glow", "block input", "block clicks", "lock app",
+                "esc to stop", "status pill", "stop computer use", "user interference",
+            ],
+            subTab: "Autonomy",
+            disambiguation: "Blocks your clicks and keys to the app Computer Use is driving while a run is active; the status pill's Stop and Esc stay available. It does not change what the agent is allowed to do — that is Autonomy."
         ),
         .init(
             id: "browser.enable",
@@ -2766,11 +2781,11 @@ public enum SettingsSearchIndex {
             section: "Local Models & Memory",
             title: "Swap Local Models for Subagents",
             keywords: [
-                "handoff", "browser use", "computer use", "applescript", "batch", "unload", "restore", "keep loaded",
+                "handoff", "browser use", "computer use", "batch", "unload", "restore", "keep loaded",
                 "coexistence",
             ],
             disambiguation:
-                "Shared by all agents for text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction. Off retains the invoking model during the job, including under Server Strict; memory admission and image cleanup remain separate.",
+                "Shared by all agents for text, Browser Use, Computer Use, local image jobs and context compaction. Off retains the invoking model during the job, including under Server Strict; memory admission and image cleanup remain separate.",
             declarativeSection: "delegation"
         ),
         .init(
@@ -4047,7 +4062,7 @@ public enum SettingsSearchIndex {
             ],
             subTab: "capabilities",
             disambiguation:
-                "Under Tool Settings (collapsed above the tool list) on a custom agent's Tools tab: Use Global Setting (follows Auto-Allow All Tool Calls under Tools & MCP → All Tools), Ask (always show approval cards for this agent, even with that switch on), or Never Ask (skip approval cards for this agent, after a confirmation). Never Ask skips only the standard card: tools set to Deny, sends and deletes, MCP tools their server marks destructive, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. Does not apply inside workflow runs or to built-in agents. Turning on Never Ask through a configuration change is marked high risk on its review card.",
+                "Under Tool Settings (collapsed above the tool list) on a custom agent's Tools tab: Use Global Setting (follows Auto-Allow All Tool Calls under Tools & MCP → All Tools), Ask (always show approval cards for this agent, even with that switch on), or Never Ask (skip approval cards for this agent, after a confirmation). Never Ask skips only the standard card: tools set to Deny, sends and deletes, MCP tools their server marks destructive, configuration changes, delegation, image and video costs, Computer or Browser Use, and teammates on a shared agent still ask. Does not apply inside workflow runs or to built-in agents. Turning on Never Ask through a configuration change is marked high risk on its review card.",
             declarativeSection: "agents"
         ),
         .init(
@@ -4243,10 +4258,10 @@ public enum SettingsSearchIndex {
             title: "Model kind",
             keywords: [
                 "chat models", "language models", "image models", "speech models", "search and memory models",
-                "embedding models", "privacy detection models", "applescript models", "on device", "catalog",
+                "embedding models", "privacy detection models", "computer use models", "on device", "catalog",
                 "whisper", "parakeet", "ideogram",
             ],
-            disambiguation: "Switches Local Models between Chat, Image, Speech, Search & Memory, Privacy Detection and AppleScript models. Chat was called Language and Search & Memory was called Embedding."
+            disambiguation: "Switches Local Models between Chat, Image, Speech, Search & Memory, Privacy Detection and Computer Use models. Chat was called Language and Search & Memory was called Embedding."
         ),
         .init(
             id: "models.embedding",
@@ -4300,6 +4315,17 @@ public enum SettingsSearchIndex {
             keywords: ["video model", "image to video", "animate image"]
         ),
         .init(
+            id: "modelDefaults.computerUse",
+            tab: .modelDefaults,
+            section: "Computer Use",
+            title: "Computer Use Model",
+            keywords: [
+                "computer use model", "default computer use model", "screen control model", "automation model",
+                "grounding model", "click model",
+            ],
+            disambiguation: "The app-wide model for Computer Use. An agent's own Computer Use model wins; unset uses the agent's chat model. Downloads live in Local Models → Computer Use."
+        ),
+        .init(
             id: "modelDefaults.speech",
             tab: .modelDefaults,
             section: "Speech",
@@ -4323,23 +4349,6 @@ public enum SettingsSearchIndex {
             section: "Privacy Detection",
             title: "Detection Model",
             keywords: ["privacy model", "pii model", "rampart", "redaction model", "ai detection"]
-        ),
-        .init(
-            id: "modelDefaults.appleScript",
-            tab: .modelDefaults,
-            section: "AppleScript",
-            title: "AppleScript Model",
-            keywords: ["applescript model", "scripting model", "osascript", "automation model"]
-        ),
-        .init(
-            id: "modelDefaults.appleScriptResidency",
-            tab: .modelDefaults,
-            section: "AppleScript",
-            title: "Keep AppleScript Model Loaded",
-            keywords: [
-                "applescript model residency", "applescript load policy", "keep loaded", "unload applescript",
-                "residency", "stay ready briefly",
-            ]
         ),
         .init(
             id: "providers.overview",

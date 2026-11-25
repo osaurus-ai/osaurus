@@ -885,7 +885,6 @@ struct AgentDraftPanel: View {
         case "web_search_enabled": return L("Web Search")
         case "browser_use_enabled": return L("Browser")
         case "computer_use_enabled": return L("Computer Use")
-        case "applescript_enabled": return L("AppleScript")
         case "memory_enabled": return L("Memory")
         case "search_memory_enabled": return L("Search Memory")
         case "knowledge_enabled": return L("Knowledge")

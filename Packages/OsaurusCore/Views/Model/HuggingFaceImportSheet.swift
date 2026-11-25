@@ -143,14 +143,8 @@ struct HuggingFaceImportSheet: View {
             )
             return
         }
-        // AppleScript bundles are Computer-Use-exclusive (they only emit
-        // AppleScript, so they aren't useful as chat models) and are filtered
-        // out of this catalog — route the user to Computer Use → Models
-        // instead of failing the MLX compatibility check below.
-        if AppleScriptModelCatalog.isAppleScriptModel(id: repoId) {
-            errorMessage = nil
-            dismiss()
-            ManagementStateManager.shared.openLocalModels(kind: .appleScript)
+        if RetiredModelBundles.isRetired(id: repoId) {
+            errorMessage = RetiredModelBundles.badgeHelp
             return
         }
         errorMessage = nil

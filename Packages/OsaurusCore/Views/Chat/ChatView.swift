@@ -7545,7 +7545,6 @@ final class ChatSession: ObservableObject {
     private func freezeInjectedContextOntoLatestUserTurn(
         memorySection: String?,
         screenContext: String?,
-        automationContext: String?,
         sessionState: String? = nil
     ) {
         guard let turn = turns.last(where: { $0.role == .user }) else { return }
@@ -7571,7 +7570,6 @@ final class ChatSession: ObservableObject {
                 injected: SystemPromptComposer.composeInjectedUserPrefix(
                     memorySection: memorySection,
                     screenContext: screenContext,
-                    automationContext: automationContext,
                     timeContext: SystemPromptTemplates.timeContext(now: Date(), timeZone: .current)
                 ),
                 sessionState: sessionState
@@ -8463,7 +8461,7 @@ final class ChatSession: ObservableObject {
                     budgetTracker.snapshot(context: context)
                     budgetTracker.updateScreenContext(tokens: cachedScreenContextTokens)
 
-                    // Freeze this turn's memory + screen/automation-context prefix into
+                    // Freeze this turn's memory + screen-context prefix into
                     // the turn history BEFORE any messages are rendered: the
                     // injected bytes become part of the turn's permanent
                     // rendering, so turn N+1 replays turn N byte-identically
@@ -8473,15 +8471,6 @@ final class ChatSession: ObservableObject {
                     // history on the next turn, re-prefilling the last
                     // exchange every turn.) Skipped in Mode 2: requests stay
                     // bare and the remote agent applies its own context.
-                    let appleScriptWorkingContext =
-                        !isRemoteAgentTarget
-                        && toolSpecs.contains(where: {
-                            $0.function.name == AppleScriptTool.toolName
-                        })
-                        ? SystemPromptComposer.appleScriptWorkingAppContext(
-                            appName: FrontmostAppTracker.shared.lastNonSelfAppName
-                        )
-                        : nil
                     // An ask button or Discovery card names its target, so the
                     // host makes that call in the first step's place.
                     var routedDispatch: ServiceToolInvocation? =
@@ -8505,7 +8494,6 @@ final class ChatSession: ObservableObject {
                         freezeInjectedContextOntoLatestUserTurn(
                             memorySection: context.memorySection,
                             screenContext: screenContextEnabled ? frozenScreenContext : nil,
-                            automationContext: appleScriptWorkingContext,
                             sessionState: orchestratorStateBlock
                         )
                     }
@@ -9538,13 +9526,6 @@ final class ChatSession: ObservableObject {
                             let currentInjectedTokens: Int = currentInjectedPrefix.map {
                                 ContextBudgetManager.estimateTokens(for: $0)
                             } ?? 0
-                            // The dedicated AppleScript app-name hint is part of
-                            // the conversation, not the opt-in Screen Context
-                            // budget row. Add its tokens back after excluding
-                            // the memory/screen prefix from Conversation.
-                            let automationContextTokens: Int = appleScriptWorkingContext.map {
-                                ContextBudgetManager.estimateTokens(for: $0)
-                            } ?? 0
                             // The LLM compaction summary message rides inside
                             // `msgs` but has its own budget row (set above), so
                             // exclude it from the Conversation total.
@@ -9555,7 +9536,7 @@ final class ChatSession: ObservableObject {
                             for message in msgs where message.role != "system" {
                                 rawConvTokens += ContextBudgetManager.estimateTokens(for: message.content)
                             }
-                            let excludedInjected: Int = max(0, currentInjectedTokens - automationContextTokens)
+                            let excludedInjected: Int = currentInjectedTokens
                             let convTokens: Int = rawConvTokens - excludedInjected - summaryMessageTokens
                             self.budgetTracker.updateConversation(
                                 tokens: max(0, convTokens),

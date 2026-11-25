@@ -24,6 +24,7 @@ enum SettingsLanding {
             case .memory: stateManager.memorySubTabRequest = subTab
             case .automations: stateManager.automationsSubTabRequest = subTab
             case .privacy: stateManager.privacySubTabRequest = subTab
+            case .computerUse: stateManager.computerUseSubTabRequest = subTab
             case .models:
                 if let kind = LocalModelKind(rawValue: subTab) { stateManager.pendingLocalModelsKind = kind }
             case .keys: stateManager.keysSubTabRequest = subTab

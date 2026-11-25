@@ -104,7 +104,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
     /// All built-in skills
     ///
     /// Every preset is grounded in real Osaurus tools (like `render_chart`,
-    /// `web_search`, `applescript`) rather than generic persona advice, so
+    /// `web_search`, `computer_use`) rather than generic persona advice, so
     /// enabling a skill teaches the agent a concrete workflow it could not
     /// otherwise know.
     ///
@@ -207,23 +207,25 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000009")!,
                 name: L("Mac Automator"),
-                description: L("Control and query Mac apps with AppleScript automation"),
+                description: L("Control Mac apps on screen with Computer Use"),
                 version: "1.0.0",
                 author: "Osaurus",
                 category: L("automation"),
                 keywords: [
-                    "mac", "automate", "applescript", "automation", "app", "safari",
-                    "finder", "notes", "control", "script", "macos",
+                    "mac", "automate", "computer use", "automation", "app", "safari",
+                    "finder", "notes", "control", "click", "type", "macos",
                 ],
                 instructions: """
                     When asked to control or query Mac applications:
 
                     ## Choosing the right tool
-                    - **Read-only lookups** (current Safari tab, what's playing, unread counts, file listings): use `mac_query` — it cannot change anything
-                    - **Actions** (create a note, send an email, move files, change settings): use `applescript` with a clear natural-language goal
+                    - **Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps, Music, Shortcuts**: prefer the built-in Apple app tools when the agent has that app turned on — they are faster and need no screen control
+                    - **Any other app, or anything those tools cannot do**: use `computer_use` with one clear goal that names the app and the end state
 
-                    ## Well-supported apps
-                    Safari, Notes, Mail, Finder, Calendar, Reminders, Music, Shortcuts, Terminal, and System Events have curated automation recipes — prefer these when the user has a choice of app.
+                    ## Writing the goal
+                    - Name the app and what done looks like ("In TextEdit, replace every 'draft' with 'final' and save")
+                    - Quote exact text the user gave, so it is typed and matched verbatim
+                    - One goal per call; split unrelated tasks into separate calls
 
                     ## Safety
                     - Confirm with the user before destructive or irreversible actions (deleting files, sending emails or messages, emptying trash)
@@ -231,8 +233,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     - Report exactly what was done, including anything skipped or failed
 
                     ## When automation fails
-                    - Check whether the target app is running and whether Osaurus has Automation permission (System Settings → Privacy & Security → Automation)
-                    - Scripts that click or type through System Events (UI scripting) also need Accessibility permission (System Settings → Privacy & Security → Accessibility)
+                    - Computer Use needs Accessibility permission (System Settings → Privacy & Security → Accessibility); reading the screen also needs Screen Recording
+                    - The Apple app tools need Automation permission for their app (System Settings → Privacy & Security → Automation)
                     - Retry once with a simpler, more explicit goal before giving up
                     - Fall back to step-by-step instructions the user can follow manually
                     """,

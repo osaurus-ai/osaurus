@@ -32,7 +32,7 @@ struct SubagentSettingsSection: View {
         SettingsSection(
             title: "Subagents",
             subtitle:
-                "The Orchestrator hands real work to these agents. Each runs as its own chat session with its own prompt, model, tools, and folder (it inherits the Orchestrator's folder when it has none). Media, AppleScript, Browser Use, and Computer Use live on custom agents — add such an agent here so the Orchestrator can delegate to it.",
+                "The Orchestrator hands real work to these agents. Each runs as its own chat session with its own prompt, model, tools, and folder (it inherits the Orchestrator's folder when it has none). Media, Browser Use, and Computer Use live on custom agents — add such an agent here so the Orchestrator can delegate to it.",
             anchorId: "settings.agents.delegation.mainChat"
         ) {
             readinessChip(mainSpawnReadiness)
@@ -63,7 +63,7 @@ struct SubagentSettingsSection: View {
             SettingsToggle(
                 title: "Swap Local Models for Subagents",
                 description:
-                    "For text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap.",
+                    "For text, Browser Use, Computer Use, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap.",
                 isOn: $configuration.localTextDelegationEnabled
             )
             .settingsLandingAnchor("settings.agents.delegation.swapModels")

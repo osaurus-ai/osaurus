@@ -107,16 +107,16 @@ struct WorkflowAccessScopeTests {
             inputSchema: WF.object(["folder": Self.folderInput]),
             nodes: [
                 Self.toolNode("read", "file_read", ["path": "{{input.folder}}/notes.txt"]),
-                Self.toolNode("script", "applescript", ["script": "tell app \"Finder\" to activate"]),
+                Self.toolNode("desktop", "computer_use", ["goal": "Activate Finder"]),
             ])
         let scope = WorkflowAccessScope.derive(def)
-        #expect(scope.hostReach == ["applescript"])
+        #expect(scope.hostReach == ["computer_use"])
         #expect(!scope.isContained)
         #expect(!scope.architectSentence.contains("won't touch anything else"))
-        #expect(scope.architectSentence.contains("applescript"))
+        #expect(scope.architectSentence.contains("computer_use"))
         let rows = Dictionary(uniqueKeysWithValues: scope.rows.map { ($0.verb, $0.value) })
         #expect(rows[.deletes] == "nothing through its file steps")
-        #expect(rows[.alsoUses]?.contains("applescript") == true)
+        #expect(rows[.alsoUses]?.contains("computer_use") == true)
     }
 
     @Test

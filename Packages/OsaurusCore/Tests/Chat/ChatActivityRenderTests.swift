@@ -119,6 +119,28 @@ struct ChatActivityRenderTests {
         #expect(Self.distinctColors(rep) > 8)
     }
 
+    /// Chats saved while the AppleScript subagent shipped still hold
+    /// `applescript` / `mac_query` calls; they draw as ordinary tool rows.
+    @Test(arguments: [true, false])
+    func removedAppleScriptToolRows_draw(dark: Bool) async throws {
+        let calls = [
+            Self.item(
+                "as", "applescript", args: "{\"task\":\"Create a note\"}",
+                result: "{\"ok\":true,\"result\":{\"summary\":\"Ran 1 script(s) successfully.\"}}", duration: 3.1),
+            Self.item(
+                "mq", "mac_query", args: "{\"question\":\"Front app?\"}",
+                result: "{\"ok\":true,\"result\":{\"summary\":\"Safari\"}}", duration: 1.4),
+        ]
+        let rep = try await Self.render("removed-applescript-rows", dark: dark, height: 300) { root, theme in
+            let group = NativeToolCallGroupView()
+            Self.pin(group, in: root, top: 16)
+            group.configure(
+                calls: calls, expandedIds: ["as"], width: Self.width, theme: theme, isStreaming: false,
+                onToggle: { _ in }, onHeightChanged: {})
+        }
+        #expect(Self.distinctColors(rep) > 8)
+    }
+
     @Test(arguments: [true, false])
     func expandedToolRow_draws(dark: Bool) async throws {
         let rep = try await Self.render("tool-expanded", dark: dark, height: 300) { root, theme in

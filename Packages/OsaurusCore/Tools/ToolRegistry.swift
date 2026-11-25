@@ -430,16 +430,6 @@ public final class ToolRegistry: ObservableObject {
             // `browserUseEnabled`; the Default agent is hard-off. The `browser_*` primitives are
             // PRIVATE to the nested runner and are never registered here.
             BrowserUseTool(),
-            // AppleScript subagent. Like the other delegation-family tools it
-            // is registered as a built-in so the runtime can execute it and
-            // ChatView can intercept its feed, but the composer strips it
-            // unless the agent has AppleScript enabled AND a model installed
-            // (gated via `SubagentToolVisibility`). Its on-device AppleScript
-            // model generates the script; macOS prompts for Automation consent
-            // at script-send time. `mac_query` is its read-only sibling (same
-            // capability + model + gating), so both register and gate together.
-            AppleScriptTool(),
-            MacQueryTool(),
         ]
         // Built-in Apple app tools (Calendar, Reminders, Contacts, Notes,
         // Mail, Messages, Maps/Location, Music, Shortcuts) — the
@@ -3201,11 +3191,7 @@ public final class ToolRegistry: ObservableObject {
     static var agentDelegationVideoToolNames: Set<String> {
         Set(SubagentCapabilityRegistry.video.toolNames)
     }
-    /// AppleScript-family tool names, derived from the capability registry.
-    static var agentDelegationAppleScriptToolNames: Set<String> {
-        Set(SubagentCapabilityRegistry.appleScript.toolNames)
-    }
-    /// All agent-delegation tool names (spawn + image + applescript), derived
+    /// All agent-delegation tool names (spawn + image + video), derived
     /// from the registry's delegation family. Used by the authoritative
     /// per-agent `spawnDelegationEnabled` gate in
     /// `SystemPromptComposer.resolveTools`.
@@ -3797,7 +3783,6 @@ public final class ToolRegistry: ObservableObject {
         // Discovering them on an agent with the flag off produced a
         // discover→load dead loop ("gated built-in and cannot be enabled").
         "spawn_agent",
-        "applescript", "mac_query",
     ])
     // Built-in Apple app tools follow the same contract (per-app toggle on
     // the agent, no load carve-out) — discovering `mail_list` on an agent

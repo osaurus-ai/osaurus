@@ -77,13 +77,6 @@ public enum EvalHostBootstrap {
         ToolRegistry.shared.unregister(names: [groupedLoadProbeToolName])
     }
 
-    /// True when at least one curated AppleScript bundle is installed and
-    /// ready — the gate the `applescript` / `mac_query` tools use before
-    /// appearing in the composed schema.
-    public static var hasReadyAppleScriptModel: Bool {
-        ModelPickerItemCache.shared.hasReadyAppleScriptModel
-    }
-
     /// Installed spawn targets the production resolver would not offer, such
     /// as a worker pinned to a model this host has not installed. Chat
     /// withholds `spawn_agent` from targets that are not runnable.

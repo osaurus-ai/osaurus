@@ -23,10 +23,10 @@ struct ModelDefaultsView: View {
         } content: {
             textGroup
             ImageVideoDefaultModelsGroup(editor: subagentEditor)
+            ComputerUseDefaultModelGroup(editor: subagentEditor)
             SpeechDefaultModelGroup()
             EmbeddingDefaultModelGroup()
             DetectionDefaultModelGroup()
-            AppleScriptDefaultModelGroup(editor: subagentEditor)
 
             SettingsSection(title: "Downloads & Updates") {
                 ModelUpdatesToggle()
@@ -91,6 +91,64 @@ private struct ModelUpdatesToggle: View {
                 "Checks installed OsaurusAI models every six hours. Never downloads model files automatically.",
             anchorId: "models.automaticUpdates",
             isOn: $modelManager.automaticallyChecksModelUpdates
+        )
+    }
+}
+
+// MARK: - Computer Use
+
+/// App-wide Computer Use model, stored in
+/// `subagentModelOverrides["computer_use"]`. An agent's own Computer Use model
+/// wins; unset falls back to the agent's chat model. An assigned model that is
+/// missing is shown as unavailable and the run reports it, never swaps it.
+private struct ComputerUseDefaultModelGroup: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject var editor: SubagentConfigurationEditorModel
+    @ObservedObject private var pickerCache = ModelPickerItemCache.shared
+
+    private static let kindId = SubagentCapabilityRegistry.computerUse.id
+
+    var body: some View {
+        let candidates = pickerCache.chatModelCandidates
+        let current = selection.wrappedValue
+        let isUnavailable =
+            pickerCache.isLoaded && current.map { id in !candidates.contains { $0.id == id } } ?? false
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            SettingsSectionHeader(title: "Computer Use")
+            SettingsGroup {
+                SettingsRow(
+                    title: "Computer Use Model",
+                    description: isUnavailable
+                        ? "This model isn't installed or connected, so Computer Use won't run until you download it or pick another."
+                        : "Operates apps when an agent uses Computer Use. Unset uses the agent's chat model. Each agent can override it.",
+                    anchorId: "modelDefaults.computerUse"
+                ) {
+                    ModelSearchablePicker(
+                        items: candidates,
+                        selection: selection,
+                        noneTitle: L("Use chat model (default)"),
+                        label: { id in
+                            candidates.first { $0.id == id }?.displayName ?? L("\(id) (unavailable)")
+                        },
+                        style: .compact
+                    )
+                }
+            }
+            SettingsGroupFooter("Download recommended models in Local Models → Computer Use.")
+        }
+    }
+
+    private var selection: Binding<String?> {
+        Binding(
+            get: { editor.configuration.subagentModelOverrides[Self.kindId] },
+            set: { newValue in
+                let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let trimmed, !trimmed.isEmpty {
+                    editor.configuration.subagentModelOverrides[Self.kindId] = trimmed
+                } else {
+                    editor.configuration.subagentModelOverrides.removeValue(forKey: Self.kindId)
+                }
+            }
         )
     }
 }

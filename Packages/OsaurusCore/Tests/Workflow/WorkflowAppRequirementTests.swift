@@ -27,8 +27,8 @@ struct WorkflowAppRequirementTests {
         WorkflowNode(
             id: "drive",
             name: "Drive the app",
-            kind: .tool(ToolNodeSpec(tool: ToolRef(name: "applescript"))),
-            input: .object(["task": script]),
+            kind: .tool(ToolNodeSpec(tool: ToolRef(name: "computer_use"))),
+            input: .object(["goal": script]),
             outputSchema: .object([:])
         )
     }
@@ -196,7 +196,7 @@ struct WorkflowAppRequirementTests {
     @Test
     func setup_blocksOnAMissingApp_unlessOptional() {
         var env = SetupChecker.Environment(
-            registeredToolNames: ["applescript"],
+            registeredToolNames: ["computer_use"],
             modelCatalog: ConfigModelReference.Catalog(localModelIds: [], providers: []),
             isPermissionGranted: { _ in true },
             bookmarkResolves: { _ in true },

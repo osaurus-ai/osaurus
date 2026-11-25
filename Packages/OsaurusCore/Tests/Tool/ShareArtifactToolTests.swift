@@ -23,7 +23,7 @@ struct ShareArtifactToolTests {
         let description = ShareArtifactTool().description
         #expect(description.contains("separate chat attachment"))
         #expect(description.contains("NEVER edits, replaces, or updates an existing file"))
-        #expect(description.contains("Use `applescript`"))
+        #expect(!description.contains("applescript"))
     }
 
     private static func runLocked(_ body: @Sendable (URL) async throws -> Void) async throws {

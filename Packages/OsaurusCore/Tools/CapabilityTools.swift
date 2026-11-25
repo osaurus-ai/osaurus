@@ -1346,7 +1346,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
         }
         // Built-ins are not dynamic capabilities. If the composer withheld one
-        // because Browser/Computer/Spawn/Image/AppleScript, an ability flag,
+        // because Browser/Computer/Spawn/Image, an ability flag,
         // execution mode, model readiness, or Tools is off, an exact guessed ID
         // must not activate it through the load buffer. Two intentional
         // exceptions: the Default agent's configure-write family, and the

@@ -125,8 +125,8 @@ public enum SetupChecker {
         /// Why a registered tool cannot run from a workflow (its policy is
         /// Deny, or it is a dynamic tool turned off), or nil when it can.
         var toolBlockReason: (String) -> String? = { _ in nil }
-        /// Why a step's tool that runs its own model (AppleScript, image,
-        /// video) has none to run on here, or nil.
+        /// Why a step's tool that runs its own model (image, video) has none
+        /// to run on here, or nil.
         var capabilityBlockReason: (String) -> String? = { _ in nil }
         /// The system permissions a registered tool needs before it runs.
         var toolSystemPermissions: (String) -> [SystemPermission] = { _ in [] }
@@ -270,9 +270,6 @@ public enum SetupChecker {
     static func liveCapabilityBlockReason(_ name: String) -> String? {
         let items = ModelPickerItemCache.shared.items
         switch name {
-        case AppleScriptTool.toolName, MacQueryTool.toolName:
-            guard !ModelPickerItemCache.shared.hasReadyAppleScriptModel else { return nil }
-            return L("No AppleScript model is installed. Download one in Settings → Local Models → AppleScript.")
         case "image":
             guard items.imageGenerationDelegateCandidates.isEmpty else { return nil }
             return L("No image generation model is installed or connected. Download one in Local Models → Image.")
@@ -921,14 +918,6 @@ public enum SetupChecker {
                     title: L("Accessibility"),
                     detail: L("Computer Use needs the Accessibility permission. Grant it in System Settings."),
                     value: SystemPermission.accessibility.rawValue))
-        }
-        if agent.settings.appleScriptEnabled, !env.isPermissionGranted(.automation) {
-            items.append(
-                SetupItem(
-                    kind: .systemPermission, severity: .advisory,
-                    title: L("Automation"),
-                    detail: L("AppleScript will ask for Automation permission the first time it controls an app."),
-                    value: SystemPermission.automation.rawValue))
         }
 
         // Manual tool list naming tools no server or plugin here provides.

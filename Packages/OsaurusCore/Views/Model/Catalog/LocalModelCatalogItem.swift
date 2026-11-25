@@ -4,7 +4,7 @@
 //
 //  One row of the Local Models table, whatever the model kind. Each kind's
 //  `LocalModelCatalogSource` maps its own manager state onto this shape so
-//  Language, Image, Speech, Privacy Detection and AppleScript read, sort and
+//  Language, Image, Speech, and Privacy Detection read, sort and
 //  act the same way.
 //
 
@@ -207,7 +207,7 @@ struct LocalModelCatalogItem: Identifiable {
     var facts: [Fact] = []
     /// Lowercased haystack for the shared search filter.
     var searchHaystack: String = ""
-    /// The MLX build behind a Language or AppleScript row, which opens the
+    /// The MLX build behind a Language row, which opens the
     /// full model detail view.
     var model: MLXModel?
     /// Every precision build of the row's family (Language catalog rows).

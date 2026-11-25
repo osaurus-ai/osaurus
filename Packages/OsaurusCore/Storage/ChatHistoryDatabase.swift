@@ -534,7 +534,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     }
 
     /// v17: `tool_call_logs` — JSON map of `callId -> SubagentRunLog`, the
-    /// finished Computer Use / AppleScript step log shown under the tool
+    /// finished Computer Use step log shown under the tool
     /// row. Nullable; legacy turns have none.
     private func migrateToV17() throws {
         try addColumnIfMissing("turns", "tool_call_logs", "TEXT")

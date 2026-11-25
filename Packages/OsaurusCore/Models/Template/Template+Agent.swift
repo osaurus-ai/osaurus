@@ -127,7 +127,6 @@ extension Template {
         if let v = over.computerUseEnabled { out.computerUseEnabled = v }
         if let v = over.browserUseEnabled { out.browserUseEnabled = v }
         if let v = over.imageEnabled { out.imageEnabled = v }
-        if let v = over.applescriptEnabled { out.applescriptEnabled = v }
         if let v = over.appleApps { out.appleApps = v }
         if let v = over.speakEnabled { out.speakEnabled = v }
         if let v = over.renderChartEnabled { out.renderChartEnabled = v }
@@ -266,9 +265,6 @@ extension Template {
         if let path = agent.workingFolderPath, !path.isEmpty {
             reqs.workingFolder = PathHint(path: abbreviateHome(path), label: L("Working Folder"))
             entry.workingFolder = .value(abbreviateHome(path))
-        }
-        if agent.settings.appleScriptEnabled {
-            reqs.permissions.append(SystemPermission.automation.rawValue)
         }
 
         // Enabled workflows travel as references plus the exact template

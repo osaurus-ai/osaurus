@@ -2,9 +2,9 @@
 //  LocalModelInspector.swift
 //  osaurus
 //
-//  The detail panel beside the Local Models table. MLX models (Language,
-//  AppleScript) open the full `ModelDetailView`; the other kinds show their
-//  row's facts and actions.
+//  The detail panel beside the Local Models table. Language MLX models open
+//  the full `ModelDetailView`; the other kinds show their row's facts and
+//  actions.
 //
 
 import AppKit

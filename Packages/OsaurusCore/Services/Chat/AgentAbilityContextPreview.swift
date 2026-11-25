@@ -55,7 +55,6 @@ struct AgentAbilityContextPreview: Equatable {
         var spawnDelegationEnabled: Bool? = nil
         var imageEnabled: Bool? = nil
         var videoEnabled: Bool? = nil
-        var appleScriptEnabled: Bool? = nil
         var spawnableAgentIDs: [UUID]? = nil
         var spawnConfiguration: AgentSpawnConfigSnapshot? = nil
         /// Live Abilities-tab Apple Apps toggles (nil = use the stored set).
@@ -211,7 +210,6 @@ struct AgentAbilityContextPreview: Equatable {
             spawnDelegationEnabled: draft.spawnDelegationEnabled ?? base.spawnDelegationEnabled,
             imageEnabled: draft.imageEnabled ?? base.imageEnabled,
             videoEnabled: draft.videoEnabled ?? base.videoEnabled,
-            appleScriptEnabled: draft.appleScriptEnabled ?? base.appleScriptEnabled,
             spawnableAgentIDs: draft.spawnableAgentIDs ?? base.spawnableAgentIDs,
             spawnableAgentNames: base.legacySpawnableAgentNames,
             spawnConfiguration: draft.spawnConfiguration ?? base.spawnConfiguration,

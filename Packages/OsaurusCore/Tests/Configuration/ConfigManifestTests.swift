@@ -124,10 +124,15 @@ struct ConfigManifestDerivationTests {
         #expect(items["required"] as? [String] == ["name"])
 
         // Enum constraints survive derivation.
+        let agentProps = try #require(items["properties"] as? [String: Any])
+        let approvals = try #require(agentProps["tool_approvals"] as? [String: Any])
+        #expect((approvals["enum"] as? [String])?.contains("use_global") == true)
+
+        // Removed keys are decode-only and never advertised.
         let delegation = try #require(properties["delegation"] as? [String: Any])
         let delegationProps = try #require(delegation["properties"] as? [String: Any])
-        let mode = try #require(delegationProps["applescript_execution_mode"] as? [String: Any])
-        #expect((mode["enum"] as? [String])?.contains("confirm_each") == true)
+        #expect(delegationProps["applescript_execution_mode"] == nil)
+        #expect(delegationProps["applescript_enabled"] == nil)
     }
 
     @Test

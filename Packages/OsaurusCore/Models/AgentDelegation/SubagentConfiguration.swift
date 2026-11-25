@@ -47,56 +47,6 @@ enum SubagentImageLoadPolicy: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// When local model swapping is enabled for a different-model AppleScript
-/// run, controls when its owned lease restores the invoking chat model.
-/// Keep-warm can reuse the dedicated model for the same parent/session; it
-/// cannot enable swapping when the global setting is off. A resident-parent
-/// `mac_query` does not acquire a dedicated-model warm lease.
-public enum AppleScriptLoadPolicy: String, Codable, CaseIterable, Sendable {
-    /// Restore the chat model immediately after an authorized swap.
-    case singleResidency = "single_residency"
-    /// Keep the AppleScript model resident for `keepWarmSeconds` after a run so
-    /// a follow-up AppleScript call reuses it. The chat model reload is deferred
-    /// until the window elapses or a chat turn reloads it on demand.
-    case keepWarmAfterJob = "keep_warm_after_job"
-
-    public var displayName: String {
-        switch self {
-        case .singleResidency: return L("Free Memory After Each Run")
-        case .keepWarmAfterJob: return L("Stay Ready Briefly")
-        }
-    }
-
-    public var caption: String {
-        switch self {
-        case .singleResidency:
-            return L("With Swap Local Models for Subagents on, your chat model comes back right after each AppleScript run.")
-        case .keepWarmAfterJob:
-            return L(
-                "With Swap Local Models for Subagents on, the AppleScript model stays ready for a short while so follow-up requests in the same chat start faster."
-            )
-        }
-    }
-
-    public static var `default`: AppleScriptLoadPolicy { .keepWarmAfterJob }
-
-    /// How long the AppleScript model is kept resident after a run under
-    /// `.keepWarmAfterJob` before the chat model is restored. Bounded so a warm
-    /// hold can't strand the chat model unloaded indefinitely.
-    public static let keepWarmSeconds = 90
-
-    /// Tolerant decode so a malformed/legacy stored value resolves to the
-    /// default rather than discarding the config.
-    public init(storedValue raw: String?) {
-        self = raw.flatMap(AppleScriptLoadPolicy.init(rawValue:)) ?? .default
-    }
-
-    /// The keep-warm window in seconds for this policy (`0` disables it).
-    public var keepWarmSeconds: Int {
-        self == .keepWarmAfterJob ? Self.keepWarmSeconds : 0
-    }
-}
-
 /// The model-bundle kinds the Agent Delegation model pickers resolve. Only the
 /// two image kinds remain — text `spawn` uses the spawnable agent's own model,
 /// so there is no separate text-delegate model to pick.
@@ -490,28 +440,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     var defaultTextToVideoTarget: MediaModelTarget?
     var defaultImageToVideoTarget: MediaModelTarget?
     var imageJobLoadPolicy: SubagentImageLoadPolicy
-    /// The global default AppleScript model id (`nil` → resolve to the first
-    /// installed catalog model at run time). A custom agent's explicit
-    /// `AgentSettings.appleScriptModelId` wins; "Choose automatically"
-    /// inherits this. The Orchestrator itself has no AppleScript tools.
-    var defaultAppleScriptModelId: String?
-    /// The global default AppleScript execution mode (confirm each script vs
-    /// auto-run with a warning), inherited by custom agents that leave theirs
-    /// unset.
-    var defaultAppleScriptExecutionMode: AppleScriptExecutionMode
-    /// How the AppleScript model is kept resident across calls (single residency
-    /// vs keep-warm-after-job). Global for every agent's AppleScript runs — the
-    /// warm hold is a process-wide, single-GPU residency behavior, so it isn't
-    /// per-agent. Defaults to keep-warm for the back-to-back latency win.
-    var appleScriptLoadPolicy: AppleScriptLoadPolicy
-    /// Read-model split: when true (default), a `mac_query` READ runs on the
-    /// already-resident, tool-capable local chat model instead of swapping in
-    /// the dedicated AppleScript model — skipping the multi-GB unload/reload
-    /// round-trip on the most common path. Automation (`applescript`) always
-    /// uses the dedicated model, and the query gate still blocks any mutation,
-    /// so this trades only model quality (simple reads) for latency. The
-    /// resolved model is always recorded in the run payload — never hidden.
-    var appleScriptQueryPrefersResidentModel: Bool
     var permissionDefaults: SubagentPermissionDefaults
     var budgets: SubagentBudgets
     /// When true (default), a subagent/image job runs a refuse-before-evict RAM
@@ -563,10 +491,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         defaultTextToVideoTarget: MediaModelTarget? = nil,
         defaultImageToVideoTarget: MediaModelTarget? = nil,
         imageJobLoadPolicy: SubagentImageLoadPolicy = .agentSingleResidency,
-        defaultAppleScriptModelId: String? = nil,
-        defaultAppleScriptExecutionMode: AppleScriptExecutionMode = .default,
-        appleScriptLoadPolicy: AppleScriptLoadPolicy = .default,
-        appleScriptQueryPrefersResidentModel: Bool = true,
         permissionDefaults: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         budgets: SubagentBudgets = SubagentBudgets(),
         ramSafetyPreflightEnabled: Bool = true,
@@ -598,10 +522,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.defaultTextToVideoTarget = Self.normalizedTarget(defaultTextToVideoTarget)
         self.defaultImageToVideoTarget = Self.normalizedTarget(defaultImageToVideoTarget)
         self.imageJobLoadPolicy = imageJobLoadPolicy
-        self.defaultAppleScriptModelId = Self.normalizedModelId(defaultAppleScriptModelId)
-        self.defaultAppleScriptExecutionMode = defaultAppleScriptExecutionMode
-        self.appleScriptLoadPolicy = appleScriptLoadPolicy
-        self.appleScriptQueryPrefersResidentModel = appleScriptQueryPrefersResidentModel
         self.permissionDefaults = permissionDefaults
         self.budgets = budgets.normalized
         self.ramSafetyPreflightEnabled = ramSafetyPreflightEnabled
@@ -614,7 +534,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// Three-way merge for long-lived settings surfaces backed by the shared
     /// configuration document. A field changed by the editor since it loaded
     /// wins; an untouched field adopts the latest store value. This lets the
-    /// main Spawn, AppleScript, and Image editors save their independent slices
+    /// main Spawn and Image editors save their independent slices
     /// without erasing a concurrent permission decision or another open
     /// editor's update.
     static func mergingEditorSnapshot(
@@ -705,34 +625,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         )
         mergeEditorField(
             \.imageJobLoadPolicy,
-            editor: editor,
-            loadedBaseline: loadedBaseline,
-            live: live,
-            into: &merged
-        )
-        mergeEditorField(
-            \.defaultAppleScriptModelId,
-            editor: editor,
-            loadedBaseline: loadedBaseline,
-            live: live,
-            into: &merged
-        )
-        mergeEditorField(
-            \.defaultAppleScriptExecutionMode,
-            editor: editor,
-            loadedBaseline: loadedBaseline,
-            live: live,
-            into: &merged
-        )
-        mergeEditorField(
-            \.appleScriptLoadPolicy,
-            editor: editor,
-            loadedBaseline: loadedBaseline,
-            live: live,
-            into: &merged
-        )
-        mergeEditorField(
-            \.appleScriptQueryPrefersResidentModel,
             editor: editor,
             loadedBaseline: loadedBaseline,
             live: live,
@@ -840,10 +732,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             defaultTextToVideoTarget: Self.normalizedTarget(defaultTextToVideoTarget),
             defaultImageToVideoTarget: Self.normalizedTarget(defaultImageToVideoTarget),
             imageJobLoadPolicy: imageJobLoadPolicy,
-            defaultAppleScriptModelId: Self.normalizedModelId(defaultAppleScriptModelId),
-            defaultAppleScriptExecutionMode: defaultAppleScriptExecutionMode,
-            appleScriptLoadPolicy: appleScriptLoadPolicy,
-            appleScriptQueryPrefersResidentModel: appleScriptQueryPrefersResidentModel,
             permissionDefaults: permissionDefaults,
             budgets: budgets.normalized,
             // Preserve the user's RAM-safety choice across the save/load round-trip.
@@ -981,10 +869,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         case defaultTextToVideoTarget
         case defaultImageToVideoTarget
         case imageJobLoadPolicy
-        case defaultAppleScriptModelId
-        case defaultAppleScriptExecutionMode
-        case appleScriptLoadPolicy
-        case appleScriptQueryPrefersResidentModel
         case permissionDefaults
         case budgets
         case ramSafetyPreflightEnabled
@@ -1060,29 +944,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
                 SubagentImageLoadPolicy.self,
                 forKey: .imageJobLoadPolicy
             )) ?? .agentSingleResidency,
-            defaultAppleScriptModelId: try container.decodeIfPresent(
-                String.self,
-                forKey: .defaultAppleScriptModelId
-            ),
-            // Enum field: `(try? …) ?? default` so an invalid/renamed raw value
-            // falls back to the safe `confirmEach` rather than discarding the
-            // whole delegation config.
-            defaultAppleScriptExecutionMode: (try? container.decodeIfPresent(
-                AppleScriptExecutionMode.self,
-                forKey: .defaultAppleScriptExecutionMode
-            )) ?? .default,
-            // Enum field: lenient like the other enums (absent or unparseable →
-            // the keep-warm default) so an old config gains the latency win.
-            appleScriptLoadPolicy: (try? container.decodeIfPresent(
-                AppleScriptLoadPolicy.self,
-                forKey: .appleScriptLoadPolicy
-            )) ?? .default,
-            // Absent (old config) → true: the read-model split is a pure
-            // latency win with the query gate still blocking mutations.
-            appleScriptQueryPrefersResidentModel: try container.decodeIfPresent(
-                Bool.self,
-                forKey: .appleScriptQueryPrefersResidentModel
-            ) ?? true,
             permissionDefaults: (try? container.decodeIfPresent(
                 SubagentPermissionDefaults.self,
                 forKey: .permissionDefaults
@@ -1152,19 +1013,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             forKey: .defaultImageToVideoTarget
         )
         try container.encode(value.imageJobLoadPolicy, forKey: .imageJobLoadPolicy)
-        try container.encodeIfPresent(
-            value.defaultAppleScriptModelId,
-            forKey: .defaultAppleScriptModelId
-        )
-        try container.encode(
-            value.defaultAppleScriptExecutionMode,
-            forKey: .defaultAppleScriptExecutionMode
-        )
-        try container.encode(value.appleScriptLoadPolicy, forKey: .appleScriptLoadPolicy)
-        try container.encode(
-            value.appleScriptQueryPrefersResidentModel,
-            forKey: .appleScriptQueryPrefersResidentModel
-        )
         try container.encode(value.permissionDefaults, forKey: .permissionDefaults)
         try container.encode(value.budgets, forKey: .budgets)
         try container.encode(
@@ -1255,7 +1103,7 @@ struct SpawnSharedConfigurationAuthority: Equatable, Sendable {
 
 /// Spawn authority owned only by the Default / main-chat launcher.
 ///
-/// Image and AppleScript settings deliberately do not appear here: saving
+/// Image settings deliberately do not appear here: saving
 /// either sibling editor cannot change the target, model, permission, budget,
 /// or tool grant of an already-approved Spawn operation.
 struct SpawnDefaultConfigurationAuthority: Equatable, Sendable {
@@ -1352,7 +1200,7 @@ struct SpawnConfigurationAuthorityRevision: Equatable, Sendable {
 
 /// The effective Spawn authority of the launching agent. This is deliberately
 /// semantic rather than a whole-`Agent` comparison: presentation fields and
-/// sibling Image / AppleScript settings cannot change an already-selected
+/// sibling Image settings cannot change an already-selected
 /// Spawn job.
 struct SpawnLauncherAuthority: Equatable, Sendable {
     let id: UUID
@@ -1415,7 +1263,7 @@ struct SpawnLauncherAuthority: Equatable, Sendable {
 }
 
 /// Target fields consumed by the bounded child runtime. Display metadata,
-/// Image / AppleScript configuration, and the target's own Spawn pool are not
+/// Image configuration, and the target's own Spawn pool are not
 /// part of the child that is already being launched.
 struct SpawnTargetAuthority: Equatable, Sendable {
     let id: UUID

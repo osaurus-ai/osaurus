@@ -105,11 +105,6 @@ struct PromptTokenTableTests {
                 compact: SystemPromptTemplates.imageGenerationGuidanceCompact
             ),
             Row(
-                "appleScript",
-                full: SystemPromptTemplates.appleScriptGuidance,
-                compact: SystemPromptTemplates.appleScriptGuidanceCompact
-            ),
-            Row(
                 "sandbox(section)",
                 full: SystemPromptTemplates.sandbox(
                     home: "/home/agent-abcdef123456",

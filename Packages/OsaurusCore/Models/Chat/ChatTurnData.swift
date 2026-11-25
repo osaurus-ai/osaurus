@@ -20,7 +20,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable, Equatable {
     /// Wall-clock duration (seconds) each tool call took, keyed by call id.
     /// Drives the "· 1.2s" elapsed label; empty for legacy turns.
     public var toolCallDurations: [String: TimeInterval]
-    /// Finished Computer Use / AppleScript step logs, keyed by call id. UI
+    /// Finished subagent step logs, keyed by call id. UI
     /// history only: never part of the model-facing tool result.
     public var toolCallLogs: [String: SubagentRunLog]
     /// Why a call ran without its approval card, keyed by call id. UI

@@ -3092,8 +3092,7 @@ public actor ModelRuntime {
     }
 
     /// A generation finishing is not the end of a delegated job. Its owned
-    /// model has no chat window, and may be waiting on a tool or an explicit
-    /// AppleScript warm deadline. The handoff's exact-token cleanup, not the
+    /// model has no chat window, and may be waiting on a tool. The handoff's exact-token cleanup, not the
     /// ordinary chat idle timer, releases it. Sharing the resident with a new
     /// request revokes ownership and restores the configured idle policy.
     ///

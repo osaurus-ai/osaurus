@@ -781,7 +781,7 @@ struct RuntimePolicySourceTests {
         // plus the orphan tool-call closer strip (vmlx-swift#115) that
         // removes stray `</parameter></function></zyphra_tool_call>`
         // closer runs from the visible stream in ZAYA / Gemma-4
-        // AppleScript agent-loop rows,
+        // agent-loop rows,
         // plus the GPU-stream-driver serialization (vmlx-swift#116) that
         // re-locks eval/asyncEval/item + synchronize/clearCache to kill the
         // Metal concurrent-encoder crash class (Sentry: end_encoding,
@@ -1911,7 +1911,7 @@ struct RuntimePolicySourceTests {
         #expect(!enrichment.contains("specs(forTools: Array(visibleDelegation))"))
     }
 
-    @Test("Capability controls show readiness; the Orchestrator has no Image/AppleScript toggles")
+    @Test("Capability controls show readiness; the Orchestrator has no Image toggle")
     func capabilityControlsExposeReadiness() throws {
         let agents = try Self.source("Views/Agent/AgentsView.swift")
         let mainChat = try Self.source("Views/Settings/SubagentSettingsSection.swift")
@@ -1920,9 +1920,9 @@ struct RuntimePolicySourceTests {
         #expect(agents.contains("private func subagentReadiness("))
         #expect(agents.contains(#"\(callableSubagentCount) \(L("callable"))"#))
         #expect(agents.contains("readiness.statusMessage"))
-        // Image / AppleScript are custom-agent abilities only: the
-        // Orchestrator's Subagents section offers the allow-list and its
-        // readiness, never a media or AppleScript switch.
+        // Image is a custom-agent ability only: the Orchestrator's
+        // Subagents section offers the allow-list and its readiness, never a
+        // media switch.
         #expect(!mainChat.contains("imageDelegationEnabled"))
         #expect(!mainChat.contains("appleScriptDelegationEnabled"))
         #expect(mainChat.contains("mainSpawnReadiness"))

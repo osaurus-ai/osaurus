@@ -199,10 +199,10 @@ enum LanguageModelCatalog {
         // + (when searching) anything matching the query, so imported or
         // pasted repos inserted into `availableModels` still appear.
         //
-        // AppleScript bundles only ever emit AppleScript, so they never
-        // surface in the language catalog (same rule as the chat model
-        // picker); they live under the AppleScript kind. Embedding bundles
-        // found on disk can't chat and aren't in the installed inventory.
+        // Retired task bundles never surface as catalog suggestions; an
+        // installed one stays in the inventory, badged, so it can be deleted.
+        // Embedding bundles found on disk can't chat and aren't in the
+        // installed inventory.
         let hasQuery = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         // A catalog row for an installed id must be the installed entry: a
@@ -219,12 +219,12 @@ enum LanguageModelCatalog {
         }
 
         let catalogBase = input.availableModels.filter { model in
-            guard !AppleScriptModelCatalog.isAppleScriptModel(id: model.id) else { return false }
+            guard !RetiredModelBundles.isRetired(id: model.id) else { return false }
             if model.isDownloaded, model.isEmbedding { return false }
             return isOsaurusAI(model) || isUserModel(model) || hasQuery
         }.map(installedRepresentative)
         let osaurusSuggested = input.suggestedModels.filter {
-            isOsaurusAI($0) && !AppleScriptModelCatalog.isAppleScriptModel(id: $0.id)
+            isOsaurusAI($0) && !RetiredModelBundles.isRetired(id: $0.id)
         }.map(installedRepresentative)
 
         let catalogFiltered = filterState.apply(
@@ -527,6 +527,10 @@ final class LanguageCatalogSource: LocalModelCatalogSource {
         }
 
         var badges: [LocalModelCatalogItem.Badge] = []
+        if RetiredModelBundles.isRetired(id: model.id) {
+            badges.append(.init(
+                text: RetiredModelBundles.badgeText, tone: .warning, help: RetiredModelBundles.badgeHelp))
+        }
         if isUnsupported {
             badges.append(.init(
                 text: L("Not supported"), tone: .warning,

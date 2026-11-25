@@ -295,10 +295,10 @@ struct ToolApprovalPresentationTests {
             workflow: .init(places: [], asksBeforeReplacing: true))
         #expect(read.guarantees.map(\.title) == ["Only this run's workspace"])
 
-        let script = ToolApprovalPresentation.make(
-            toolName: "applescript", description: "", descriptionIsForModel: true, argumentsJSON: "{}",
-            surface: .nativeHost, stepReason: "Script", sandbox: nil, workflow: facts)
-        #expect(script.guarantees.map(\.title) == ["Runs on your Mac"])
+        let desktop = ToolApprovalPresentation.make(
+            toolName: "computer_use", description: "", descriptionIsForModel: true, argumentsJSON: "{}",
+            surface: .nativeHost, stepReason: "Desktop", sandbox: nil, workflow: facts)
+        #expect(desktop.guarantees.map(\.title) == ["Runs on your Mac"])
     }
 
     // MARK: - Workflow paths

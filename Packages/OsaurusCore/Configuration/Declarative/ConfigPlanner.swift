@@ -86,8 +86,6 @@ enum ConfigRisk {
     static func alwaysAllowSubagent(_ kind: String) -> String {
         "Sets subagent kind `\(kind)` to always_allow — its jobs run without asking."
     }
-    static let applescriptAutoRun =
-        "AppleScript automations auto-run with only a warning (no per-script confirmation)."
     /// `spawnable_agents` REPLACES the pool. A document that lists none
     /// while the pool has members (or custom agents exist) takes
     /// `spawn_agent` away from the Orchestrator until an agent is added
@@ -564,10 +562,6 @@ enum ConfigPlanner {
         }
 
         if let section = document.delegation {
-            checkEnum(
-                section.applescriptExecutionMode,
-                ConfigAppBehaviorEnums.applescriptExecutionModes,
-                "delegation.applescript_execution_mode", &issues)
             for (kind, raw) in (section.permissionDefaults ?? [:]).sorted(by: { $0.key < $1.key }) {
                 if !ConfigAppBehaviorEnums.permissionKindIds.contains(kind.lowercased()) {
                     issues.append(
@@ -1665,9 +1659,7 @@ enum ConfigPlanner {
         diff(
             "image_enabled", desired: caps.imageEnabled,
             current: agent.settings.imageEnabled, into: &changes)
-        diff(
-            "applescript_enabled", desired: caps.applescriptEnabled,
-            current: agent.settings.appleScriptEnabled, into: &changes)
+        for hint in caps.removedKeyHints { changes.append("(ignored) " + hint) }
         diff(
             "speak_enabled", desired: caps.speakEnabled,
             current: agent.settings.speakEnabled, into: &changes)
@@ -1790,9 +1782,6 @@ enum ConfigPlanner {
         diff(
             "local_text_enabled", desired: desired.localTextEnabled,
             current: current.localTextEnabled, into: &changes)
-        diff(
-            "applescript_execution_mode", desired: desired.applescriptExecutionMode?.lowercased(),
-            current: current.applescriptExecutionMode, into: &changes)
         diffList(
             "spawnable_agents", desired: desired.spawnableAgents,
             current: current.spawnableAgents, into: &changes)
@@ -1843,11 +1832,6 @@ enum ConfigPlanner {
             && current.permissionDefaults?[kind] != raw
         {
             risks.append(ConfigRisk.alwaysAllowSubagent(kind))
-        }
-        if desired.applescriptExecutionMode?.lowercased() == "auto_run_with_warning"
-            && current.applescriptExecutionMode != "auto_run_with_warning"
-        {
-            risks.append(ConfigRisk.applescriptAutoRun)
         }
         if desired.ramSafetyPreflight == false && current.ramSafetyPreflight != false {
             risks.append(ConfigRisk.ramPreflightDisabled)

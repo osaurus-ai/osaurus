@@ -14,13 +14,13 @@ import Foundation
 /// The `kind` an item is published under. Values are listed in
 /// osaurus-sync's `docs/model-sharing.md`.
 enum ModelShareKind: String, CaseIterable, Sendable {
-    case language, embedding, applescript, image, speech, privacy
+    case language, embedding, image, speech, privacy
 
     var format: String {
         switch self {
         case .image: return "mflux"
         case .speech: return "coreml"
-        case .language, .embedding, .applescript, .privacy: return "mlx"
+        case .language, .embedding, .privacy: return "mlx"
         }
     }
 
@@ -28,7 +28,6 @@ enum ModelShareKind: String, CaseIterable, Sendable {
         switch self {
         case .language: return .language
         case .embedding: return .embedding
-        case .applescript: return .appleScript
         case .image: return .image
         case .speech: return .speech
         case .privacy: return .detection
@@ -37,9 +36,8 @@ enum ModelShareKind: String, CaseIterable, Sendable {
 
     init(_ kind: LocalModelKind) {
         switch kind {
-        case .language: self = .language
+        case .language, .computerUse: self = .language
         case .embedding: self = .embedding
-        case .appleScript: self = .applescript
         case .image: self = .image
         case .speech: self = .speech
         case .detection: self = .privacy
@@ -160,7 +158,7 @@ enum ShareableFiles {
 
 // MARK: - Providers
 
-/// Language, embedding and AppleScript bundles in the models folder, plus
+/// Language and embedding bundles in the models folder, plus
 /// MLX bundles found in the Hugging Face cache, LM Studio and custom folders.
 /// The built-in embedder ships with every copy of Osaurus, so it isn't offered.
 enum MLXBundleShareProvider: ShareableModelProvider {
@@ -169,7 +167,7 @@ enum MLXBundleShareProvider: ShareableModelProvider {
         var seen = Set<String>()
         return ModelManager.localModelsSnapshotNonBlocking().compactMap { model in
             guard model.id.contains("/"), seen.insert(model.id.lowercased()).inserted, model.isDownloaded,
-                !EmbeddingProfile.isBuiltInId(model.id)
+                !EmbeddingProfile.isBuiltInId(model.id), !RetiredModelBundles.isRetired(id: model.id)
             else { return nil }
             let directory = model.localDirectory
             if fm.fileExists(atPath: directory.appendingPathComponent(ModelManifest.pendingUpdateFilename).path) {
@@ -193,7 +191,6 @@ enum MLXBundleShareProvider: ShareableModelProvider {
     }
 
     static func kind(of model: MLXModel) -> ModelShareKind {
-        if AppleScriptModelCatalog.isAppleScriptModel(id: model.id) { return .applescript }
         if EmbeddingDetection.isEmbedding(at: model.localDirectory) { return .embedding }
         return .language
     }

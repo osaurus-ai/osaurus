@@ -130,7 +130,6 @@ struct ShareProviderTests {
         }
         #expect(ModelShareKind.language.format == "mlx")
         #expect(ModelShareKind.embedding.format == "mlx")
-        #expect(ModelShareKind.applescript.format == "mlx")
         #expect(ModelShareKind.privacy.format == "mlx")
         #expect(ModelShareKind.image.format == "mflux")
         #expect(ModelShareKind.speech.format == "coreml")

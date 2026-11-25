@@ -335,9 +335,6 @@ public enum ConfigManifest {
                             ConfigKeySpec(
                                 "image_enabled", .scalar(.boolean, example: "false"),
                                 comment: "image generation/editing (needs an installed image model)"),
-                            ConfigKeySpec(
-                                "applescript_enabled", .scalar(.boolean, example: "false"),
-                                comment: "AppleScript + mac_query (needs an AppleScript model)"),
                             ConfigKeySpec("speak_enabled", .scalar(.boolean, example: "false")),
                             ConfigKeySpec(
                                 "render_chart_enabled", .scalar(.boolean, example: "false")),
@@ -511,13 +508,6 @@ public enum ConfigManifest {
             value: .mapping([
                 ConfigKeySpec("local_text_enabled", .scalar(.boolean, example: "true")),
                 ConfigKeySpec(
-                    "applescript_execution_mode",
-                    .scalar(
-                        .string, example: "confirm_each",
-                        allowed: ConfigAppBehaviorEnums.applescriptExecutionModes),
-                    comment: "confirm_each | auto_run_with_warning",
-                    moreComments: ["(auto_run is HIGH RISK)"]),
-                ConfigKeySpec(
                     "spawnable_agents", .scalarList(.string, example: []),
                     comment: "custom agent NAMES the Orchestrator may spawn;",
                     moreComments: [
@@ -540,7 +530,7 @@ public enum ConfigManifest {
                         exampleKey: "spawn", exampleValue: "always_allow"),
                     comment: "kind id (spawn | spawn_workspace | image | video |",
                     moreComments: [
-                        "applescript | computer_use | browser_use) -> ask |",
+                        "computer_use | browser_use) -> ask |",
                         "deny | always_allow; merge",
                     ]),
                 ConfigKeySpec(

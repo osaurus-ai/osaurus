@@ -539,8 +539,8 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
     /// Image generation/editing on this agent (`AgentSettings.imageEnabled`).
     /// Image lives on custom agents only; the Orchestrator delegates to one.
     public var imageEnabled: Bool?
-    /// AppleScript / `mac_query` on this agent
-    /// (`AgentSettings.appleScriptEnabled`). Custom agents only, as above.
+    /// REMOVED: AppleScript automation was replaced by Computer Use. Decoded
+    /// so the planner and applier can explain; never exported or applied.
     public var applescriptEnabled: Bool?
     public var speakEnabled: Bool?
     public var renderChartEnabled: Bool?
@@ -565,6 +565,18 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
     public var artifactsEnabled: Bool?
 
     public init() {}
+
+    /// Keys still decoded for a migration hint but no longer settable.
+    static let removedKeys: Set<CodingKeys> = [.applescriptEnabled]
+
+    /// Removed keys present in this entry, as replacement hints.
+    var removedKeyHints: [String] {
+        guard applescriptEnabled != nil else { return [] }
+        return [
+            "capabilities.applescript_enabled was removed: AppleScript automation was replaced "
+                + "by Computer Use (capabilities.computer_use_enabled)."
+        ]
+    }
 
     enum CodingKeys: String, CodingKey, CaseIterable {
         case toolsEnabled = "tools_enabled"

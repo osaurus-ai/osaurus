@@ -1863,7 +1863,7 @@ public struct SystemPromptComposer: Sendable {
     /// Build the complete **loadable** enabled-capabilities manifest: every
     /// enabled dynamic tool plus every installed skill, regardless of what
     /// landed in this turn's hot schema. Authoritatively gated built-ins
-    /// (Browser Use, Computer Use, Image, Spawn, AppleScript, and per-agent
+    /// (Browser Use, Computer Use, Image, Spawn, and per-agent
     /// abilities) are injected directly when effective and are deliberately
     /// absent here: `capabilities_load` cannot bypass their owning flags.
     ///
@@ -3017,11 +3017,7 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             config: SubagentConfigurationStore.snapshot(),
             hasReadyImageModel: imageCache.hasReadyImageModel,
-            hasReadyVideoModel: imageCache.hasReadyVideoGenerationModel,
-            // AppleScript gates like image: the per-agent / global switch can be
-            // on, but the tool stays hidden until a curated AppleScript model is
-            // installed. Read off the same warmed picker cache.
-            hasReadyAppleScriptModel: imageCache.hasReadyAppleScriptModel
+            hasReadyVideoModel: imageCache.hasReadyVideoGenerationModel
         )
         // Recursion guard for TRUE agent delegation: a `.delegation`-sourced
         // session IS a spawned child (a real dispatched chat of the target
@@ -4008,7 +4004,6 @@ public struct SystemPromptComposer: Sendable {
     static func composeInjectedUserPrefix(
         memorySection: String?,
         screenContext: String?,
-        automationContext: String? = nil,
         timeContext: String? = nil
     ) -> String? {
         var prefix = ""
@@ -4026,13 +4021,9 @@ public struct SystemPromptComposer: Sendable {
             let trimmed = screenContext.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
         }
-        if let automationContext {
-            let trimmed = automationContext.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
-        }
         // Time rides LAST, right against the user's text: it is the most
         // volatile block, and keeping it at the tail means the stabler
-        // automation/screen/memory bytes stay adjacent to the shared static
+        // screen/memory bytes stay adjacent to the shared static
         // prefix — a fresh chat whose earlier blocks match a previous
         // session's prefill diverges only here, not at byte 0 of the turn.
         if let timeContext {
@@ -4040,25 +4031,6 @@ public struct SystemPromptComposer: Sendable {
             if !trimmed.isEmpty { prefix += "\(trimmed)\n\n" }
         }
         return prefix.isEmpty ? nil : prefix
-    }
-
-    /// Minimal app identity needed by the parent to route working-document
-    /// anaphora to AppleScript. This is not Screen Context: it carries no UI,
-    /// window, draft, or accessibility content, and callers include it only
-    /// when `applescript` is actually exposed in the frozen tool schema.
-    static func appleScriptWorkingAppContext(appName: String?) -> String? {
-        guard let appName else { return nil }
-        let app =
-            appName
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !app.isEmpty else { return nil }
-        return """
-            [Mac Automation Context]
-            Working app before this message: \(app)
-            If the request says `the file` or `the document`, it means that app's front open document. Use `applescript`; do not ask for a path or create a separate artifact.
-            [/Mac Automation Context]
-            """
     }
 
     /// Session-stable memory injection for surfaces whose history is owned

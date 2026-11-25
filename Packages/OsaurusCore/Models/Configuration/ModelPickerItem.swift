@@ -586,9 +586,8 @@ extension ModelPickerItem {
             // catalog, so an embedding repo can appear here. The flag is
             // detected from the bundle's config.json at item construction.
             // Non-MLX bundles can't load locally, so never auto-pick one.
-            // AppleScript bundles only ever emit AppleScript (a dedicated
-            // subagent model), so they are never a chat pick either.
-            return !isEmbedding && !isDecision && isMLXFormat && !isAppleScriptCatalogModel
+            // Retired task bundles never emit normal chat replies.
+            return !isEmbedding && !isDecision && isMLXFormat && !isRetiredBundle
         case .imageGeneration:
             // Image models produce images, not chat completions — never a
             // default chat pick (but still selectable to enter image mode).
@@ -598,15 +597,11 @@ extension ModelPickerItem {
         }
     }
 
-    /// True when this is one of the curated on-device AppleScript models (a
-    /// `.local` MLX bundle whose repo id matches `AppleScriptModelCatalog`).
-    /// These bundles only emit AppleScript, so they're hidden from the chat
-    /// model picker and never auto-selected as a chat model — they're chosen in
-    /// the dedicated AppleScript model picker instead. Their installed-ness
-    /// still drives `ModelPickerItemCache.hasReadyAppleScriptModel`.
-    var isAppleScriptCatalogModel: Bool {
+    /// A `.local` bundle listed in `RetiredModelBundles`: hidden from the chat
+    /// model picker and never auto-selected.
+    var isRetiredBundle: Bool {
         if case .local = source {
-            return AppleScriptModelCatalog.isAppleScriptModel(id: id)
+            return RetiredModelBundles.isRetired(id: id)
         }
         return false
     }
@@ -960,9 +955,7 @@ extension Array where Element == ModelPickerItem {
         var groups: [ModelPickerItem.Source: [ModelPickerItem]] = [:]
 
         for model in self {
-            // AppleScript bundles surface only in the dedicated AppleScript
-            // model picker, never the chat model picker.
-            if model.isAppleScriptCatalogModel { continue }
+            if model.isRetiredBundle { continue }
             groups[model.source, default: []].append(model)
         }
 
@@ -985,9 +978,7 @@ extension Array where Element == ModelPickerItem {
         var remoteOrder: [(key: String, title: String)] = []
 
         for model in self {
-            // AppleScript bundles surface only in the dedicated AppleScript
-            // model picker, never the chat model picker's Local tab.
-            if model.isAppleScriptCatalogModel { continue }
+            if model.isRetiredBundle { continue }
             switch model.source {
             case .foundation:
                 foundationModels.append(model)

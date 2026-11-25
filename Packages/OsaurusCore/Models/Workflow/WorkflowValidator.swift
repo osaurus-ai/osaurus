@@ -69,8 +69,12 @@ public enum WorkflowValidator {
     }
 
     /// Tools that drive whichever Mac app the step names.
-    static let appDrivingTools: Set<String> = [
-        AppleScriptTool.toolName, MacQueryTool.toolName, ComputerUseTool.toolName,
+    static let appDrivingTools: Set<String> = [ComputerUseTool.toolName]
+
+    /// Tools that no longer exist, with the replacement to name in the issue.
+    static let removedTools: [String: String] = [
+        "applescript": "AppleScript automation was replaced by Computer Use; use a `computer_use` step",
+        "mac_query": "AppleScript automation was replaced by Computer Use; use a `computer_use` step",
     ]
 
     /// Apps that come with macOS, by the name a script uses; a step that
@@ -87,7 +91,7 @@ public enum WorkflowValidator {
     private static let scriptedAppPattern = try! NSRegularExpression(  // swiftlint:disable:this force_try
         pattern: #"\b(?:application|app)\s+"([^"]+)""#, options: [.caseInsensitive])
 
-    /// Apps a step's text names the AppleScript way (`application "X"`).
+    /// Apps a step's text names the scripting way (`application "X"`).
     static func scriptedAppNames(in text: String) -> [String] {
         let range = NSRange(text.startIndex..., in: text)
         var names: [String] = []
@@ -820,6 +824,9 @@ public enum WorkflowValidator {
     }
 
     private static func excludedToolIssue(_ name: String) -> String? {
+        if let replacement = removedTools[name] {
+            return "`\(name)` was removed: \(replacement)"
+        }
         if isWorkflowTool(name) {
             return "`\(name)` is a workflow tool; to run another workflow, use a `workflow` node with its name"
         }

@@ -61,11 +61,11 @@ public enum WorkflowModelLocality: String, Codable, Equatable, Sendable {
 
 public enum WorkflowStepRisk {
     /// Tools that run programs on this Mac or in the workflow's sandbox.
-    static let shellTools: Set<String> = ["shell_run", "applescript"]
+    static let shellTools: Set<String> = ["shell_run"]
     /// Tools that drive a browser.
     static let browserTools: Set<String> = ["browser_use", "web_browse", "web_fetch"]
     /// Tools that control or read the Mac beyond files.
-    static let macTools: Set<String> = ["computer_use", "mac_query", "osaurus_config", "osaurus_import"]
+    static let macTools: Set<String> = ["computer_use", "osaurus_config", "osaurus_import"]
     /// Tools that write or move files.
     static let fileWriteTools: Set<String> = [
         "file_write", "file_edit", "file_copy", "file_move", "file_delete", "share_artifact", "file_create",

@@ -314,11 +314,9 @@ struct LocalModelsCatalogPage: View {
 
     private var emptyState: some View {
         SettingsEmptyState(
-            inline: searchLooksLikeAppleScript ? "applescript" : (scope == .onThisMac ? "internaldrive" : "cube.box"),
+            inline: scope == .onThisMac ? "internaldrive" : "cube.box",
             title: emptyTitle,
-            hint: searchLooksLikeAppleScript
-                ? "AppleScript models are made exclusively for Mac automation, so they live under AppleScript instead of the chat catalog."
-                : "",
+            hint: "",
             action: emptyAction,
             secondaryAction: searchText.isEmpty
                 ? nil
@@ -328,7 +326,6 @@ struct LocalModelsCatalogPage: View {
     }
 
     private var emptyTitle: String {
-        if searchLooksLikeAppleScript { return L("Looking for AppleScript models?") }
         if !query.isEmpty { return L("No models match your search") }
         switch scope {
         case .all: return L("No models available")
@@ -339,23 +336,10 @@ struct LocalModelsCatalogPage: View {
     }
 
     private var emptyAction: SettingsEmptyState.Action? {
-        if searchLooksLikeAppleScript {
-            return .init(title: L("Show AppleScript Models"), icon: "applescript") {
-                managementState.openLocalModels(kind: .appleScript)
-            }
-        }
         guard query.isEmpty, scope == .onThisMac else { return nil }
         return .init(title: L("Browse Available"), icon: "square.grid.2x2") {
             withAnimation(theme.motion.quick) { scopeOverride = .available }
         }
-    }
-
-    /// AppleScript models are kept out of the language catalog (they only
-    /// emit AppleScript), so a search for them points at their own kind.
-    private var searchLooksLikeAppleScript: Bool {
-        guard source.kind == .language else { return false }
-        let lowered = query.lowercased()
-        return lowered.contains("applescript") || lowered.contains("apple script")
     }
 
     // MARK: - Actions

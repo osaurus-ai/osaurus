@@ -61,15 +61,8 @@ struct AgentCapabilityReadinessTests {
             toolsEnabled: true,
             hasResolvedModel: true
         )
-        let appleScript = AgentCapabilityReadiness.subagent(
-            flag: .appleScript,
-            configured: true,
-            toolsEnabled: true,
-            hasResolvedModel: true
-        )
 
         #expect(image.primaryBlocker == .noImageModel)
-        #expect(appleScript.primaryBlocker == .noAppleScriptModel)
     }
 
     @Test("computer use is unavailable without Accessibility even with a model")
