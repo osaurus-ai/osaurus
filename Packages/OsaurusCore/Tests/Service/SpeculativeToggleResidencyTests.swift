@@ -151,4 +151,38 @@ struct SpeculativeToggleResidencyTests {
         // No load input changed at all: nothing to judge.
         #expect(!ServerController.onlySpeculativeLoadInputsChanged(previous: previous, next: previous))
     }
+
+    @Test("ERNIE 5.5 Flash bundled DSpark is detected and keeps resident weights across Off <-> On")
+    func ernie55BundledDSparkDetectionAndResidency() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-ernie-dspark-\(UUID().uuidString)", isDirectory: true)
+        let bundle = root.appendingPathComponent("ERNIE-5.5-Flash-Preview-JANGHT2.4", isDirectory: true)
+        let dspark = bundle.appendingPathComponent("dspark", isDirectory: true)
+        try FileManager.default.createDirectory(at: dspark, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try Data(#"{"model_type":"ernie5_5_moe"}"#.utf8).write(
+            to: bundle.appendingPathComponent("config.json"))
+        try Data(#"{"weight_map":{}}"#.utf8).write(
+            to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        try Data("{}".utf8).write(to: dspark.appendingPathComponent("draft-manifest.json"))
+        try Data().write(to: dspark.appendingPathComponent("draft-head.safetensors"))
+        try Data().write(to: dspark.appendingPathComponent("draft-layer-0.safetensors"))
+
+        let status = try #require(
+            ModelRuntime.inspectLoadingModelMTP(
+                name: "baidu/ERNIE-5.5-Flash-Preview-JANGHT2.4",
+                directory: bundle))
+        #expect(status.bundledDSpark)
+        #expect(status.speculationAvailable)
+        #expect(!status.speculationBlocked)
+        #expect(status.familyDefaultOn)
+
+        let dsparkStrategy = SpeculativeLoadFacts.identity(.dspark(drafterPath: dspark))
+        let arFacts = SpeculativeLoadFacts(nativeMTPInGraph: false, nativeMTPManualDepth: nil, strategy: nil)
+        let dsparkFacts = SpeculativeLoadFacts(
+            nativeMTPInGraph: false, nativeMTPManualDepth: nil, strategy: dsparkStrategy)
+        #expect(SpeculativeLoadFacts.keepsResidentWeights(loaded: arFacts, next: dsparkFacts))
+        #expect(SpeculativeLoadFacts.keepsResidentWeights(loaded: dsparkFacts, next: arFacts))
+    }
 }

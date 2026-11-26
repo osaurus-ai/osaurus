@@ -175,6 +175,11 @@ enum LocalReasoningCapability {
     /// external bundles, depend on ModelManager cache warmth). Reads disk;
     /// keep off the main thread.
     static func detect(at dir: URL) -> Capability {
+        if ernieReasoningCapability(at: dir) != nil {
+            return Capability(
+                supportsThinking: true, hasEnableThinkingKwarg: true,
+                templateInjectsThinkTag: true, defaultThinkingOn: true)
+        }
         let declaredCapability = readDeclaredReasoningCapability(at: dir)
         if let template = readChatTemplate(at: dir) {
             let analyzed = merge(
@@ -214,6 +219,15 @@ enum LocalReasoningCapability {
             return declaredCapability
         }
         return .none
+    }
+
+    /// ERNIE ships a native renderer, so there is no Jinja template to scan.
+    static func ernieReasoningCapability(at directory: URL) -> ReasoningCapability? {
+        guard let data = readSmallConfigFile(directory.appendingPathComponent("config.json")),
+            let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            Ernie55EffortPolicy.applies(to: config["model_type"] as? String)
+        else { return nil }
+        return Ernie55EffortPolicy.capability
     }
 
     /// Merge template mechanics with an explicit bundle declaration. The
