@@ -1380,8 +1380,8 @@ final class NativeToolCallRowView: NSView {
         // 0) Unified subagent feed: any row whose tool-call-id has a live
         //    (or grace-tail) `SubagentFeed` renders the shared activity pane.
         //    Drives spawn / image / computer_use live rows.
-        //    Once the grace tail drops the live feed, a finished Computer Use /
-        //    AppleScript run keeps its step log from the saved run log (the
+        //    Once the grace tail drops the live feed, a finished subagent
+        //    run keeps its step log from the saved run log (the
         //    pane header carries the outcome and failure reason); other kinds
         //    fall through to the markdown summary.
         if let feed = SubagentFeedRegistry.shared.feed(for: item.call.id)

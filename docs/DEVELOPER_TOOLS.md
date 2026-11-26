@@ -300,7 +300,7 @@ you just want a quieter view while debugging.
 Filter by source to distinguish between:
 
 - **Chat UI** — Requests from the built-in chat UI
-- **Agent** — Delegated subagents and helper loops (Computer Use, AppleScript)
+- **Agent** — Delegated subagents and helper loops (Computer Use)
 - **HTTP API** — Requests from external applications
 - **Schedule / Watcher / Self-scheduled / Channel** — Headless runs
 - **Tool** — Egress performed by a tool (search, URL fetch, MCP, channel delivery)

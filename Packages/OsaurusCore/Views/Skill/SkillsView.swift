@@ -103,7 +103,7 @@ struct SkillsView: View {
                             .init(
                                 icon: "gearshape.2.fill",
                                 title: L("Mac Automator"),
-                                description: "Control Mac apps with AppleScript"
+                                description: "Control Mac apps with Computer Use"
                             ),
                             .init(
                                 icon: "calendar",

@@ -1,0 +1,29 @@
+{
+  "id": "computer_use_loop.takeover-declined",
+  "domain": "computer_use_loop",
+  "label": "CU loop • without a named app, a declined takeover ends the run with nothing done",
+  "query": "Archive this message.",
+  "notes": "Deterministic (scripted-model) case for the frontmost-app fallback: no `app` argument, so the user is asked before Computer Use takes over the app in front. The user says no; the run must end `declined` without perceiving, opening or clicking anything, and the model is never asked for a step.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Mail",
+      "declineTakeover": true,
+      "maxSteps": 4,
+      "elements": [
+        { "id": "archive", "role": "button", "label": "Archive", "onClick": { "setValues": [{ "id": "status", "value": "Archived" }] } },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "Inbox" }
+      ],
+      "expectOutcome": ["declined"],
+      "failIfClicked": ["archive"],
+      "successValues": [{ "id": "status", "equals": "Inbox" }],
+      "finalSummaryContains": ["declined"],
+      "feedTitleContains": ["Take over Mail?"],
+      "maxActsAttempted": 0,
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"mark\":1},\"note\":\"archive\"}",
+        "{\"verb\":\"done\",\"reason\":\"archived\"}"
+      ]
+    }
+  }
+}

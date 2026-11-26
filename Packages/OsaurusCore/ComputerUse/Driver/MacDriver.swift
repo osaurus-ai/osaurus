@@ -127,18 +127,38 @@ public struct CUWindowSummary: Sendable, Equatable, Codable {
     }
 }
 
+/// A rectangle in global screen points (origin top-left of the primary
+/// display, as AX and CGWindowList report them).
+public struct CUScreenRegion: Sendable, Equatable, Codable {
+    public let x: Double
+    public let y: Double
+    public let w: Double
+    public let h: Double
+
+    public init(x: Double, y: Double, w: Double, h: Double) {
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+    }
+}
+
 /// Encoded screenshot bytes for the som/vision tiers.
 public struct CUImage: Sendable, Equatable {
     public let base64: String
     public let mimeType: String
     public let width: Int
     public let height: Int
+    /// The screen area the image shows. A point in the image maps to the
+    /// screen through it; `nil` when the capture couldn't tell.
+    public let region: CUScreenRegion?
 
-    public init(base64: String, mimeType: String, width: Int, height: Int) {
+    public init(base64: String, mimeType: String, width: Int, height: Int, region: CUScreenRegion? = nil) {
         self.base64 = base64
         self.mimeType = mimeType
         self.width = width
         self.height = height
+        self.region = region
     }
 }
 
@@ -393,6 +413,11 @@ public enum CUElementAction: Sendable {
     case typeText(id: String?, pid: Int32?, text: String, replace: Bool = true)
     case pressKey(pid: Int32?, key: String, modifiers: [String] = [])
     case clearField(id: String)
+    /// Step a slider / stepper through its own `AXIncrement` / `AXDecrement`.
+    case adjust(id: String, increment: Bool, steps: Int)
+    /// Pick the option titled `option` from a popup button, menu button, or
+    /// combo box.
+    case selectOption(id: String, option: String)
 }
 
 /// An action addressed to raw screen coordinates / a pid (no element id).
@@ -412,6 +437,8 @@ public enum CUCoordinateAction: Sendable {
         pid: Int32? = nil
     )
     case drag(startX: Double, startY: Double, endX: Double, endY: Double, pid: Int32? = nil)
+    /// Move the pointer to a point without pressing a button.
+    case move(x: Double, y: Double, pid: Int32? = nil)
 }
 
 // MARK: - Availability + errors
@@ -487,9 +514,10 @@ public protocol MacDriver: Sendable {
     func isRunning(pid: Int32) async -> Bool?
 
     /// Perceive an app at a given tier. `interactiveOnly` controls whether the
-    /// AX traversal keeps only actionable elements (buttons, fields, …) or also
-    /// includes passive content roles like `statictext` — the latter is what
-    /// the screen-context distiller needs to surface real on-screen text rather
+    /// AX traversal keeps actionable elements (buttons, fields, …) plus the first
+    /// few passive elements that carry a value (a display, a status line), or
+    /// every passive content role like `statictext` — the latter is what the
+    /// screen-context distiller needs to surface real on-screen text rather
     /// than UI chrome.
     func capture(
         pid: Int32,
@@ -519,6 +547,10 @@ public protocol MacDriver: Sendable {
     /// Capture a screenshot (used by the escalation/vision path).
     func screenshot(pid: Int32?, windowId: Int?, annotate: Bool) async -> CUImage?
 
+    /// A full-resolution capture of `region` (screen points) of `pid`'s
+    /// window. `nil` when pixels are unavailable.
+    func zoom(pid: Int32, region: CUScreenRegion) async -> CUImage?
+
     /// Record side-effect-free narration/telemetry for legibility.
     func narrate(_ note: String, step: Int?, total: Int?) async
 }
@@ -533,6 +565,9 @@ extension MacDriver {
 
     /// Default: liveness unknown, so the loop does not gate on it.
     public func isRunning(pid: Int32) async -> Bool? { nil }
+
+    /// Default: no pixels to zoom into.
+    public func zoom(pid: Int32, region: CUScreenRegion) async -> CUImage? { nil }
 
     public func capture(pid: Int32, tier: CaptureTier) async -> CUSnapshot {
         await capture(

@@ -32,7 +32,6 @@ struct SubagentConfigurationStoreTests {
             defaultImageGenerationModelId: "  flux  ",
             defaultImageEditModelId: "qwen-edit",
             imageJobLoadPolicy: .unloadImageAfterAgentJob,
-            defaultAppleScriptModelId: "  applescript-model  ",
             permissionDefaults: SubagentPermissionDefaults(
                 policies: ["spawn": .alwaysAllow, "image": .deny]
             ),
@@ -55,7 +54,6 @@ struct SubagentConfigurationStoreTests {
         #expect(reloaded.localOrchestratorTextHandoffActive == true)
         #expect(reloaded.defaultImageGenerationModelId == "flux")
         #expect(reloaded.imageJobLoadPolicy == .unloadImageAfterAgentJob)
-        #expect(reloaded.defaultAppleScriptModelId == "applescript-model")
         #expect(reloaded.permissionDefaults.policy(for: "spawn") == .alwaysAllow)
         #expect(reloaded.permissionDefaults.policy(for: "image") == .deny)
         #expect(reloaded.budgets.maxDelegateTokens == SubagentBudgets.tokenBounds.upperBound)

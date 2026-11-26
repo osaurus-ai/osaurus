@@ -1692,7 +1692,7 @@ one could be asked, not that the user declined.
 
 ### 16.4 Computer use: `GET /computer-use/prompts`, `POST /computer-use/prompts/{id}`
 
-Computer use, AppleScript and browser actions ask before each gated step,
+Computer use and browser actions ask before each gated step,
 and a run can ask once for consent to send screenshots to a cloud model. For
 a run from the paired phone those cards are listed here as well as shown in
 any open Mac chat window; whichever answers first wins. They wait until
@@ -1701,13 +1701,13 @@ answered or the run is cancelled.
 ```json
 {"prompts":[{"id":"<uuid>","kind":"action","app":"Mail","action":"Click",
              "target":"Send","effect":"consequential","note":"…",
-             "typed_text":"…","script":"…","offers_approve_rest":true},
+             "typed_text":"…","offers_approve_rest":true},
             {"id":"<uuid>","kind":"cloud_vision_consent"}]}
 ```
 
-`effect` is `read | navigate | edit | consequential`. `typed_text` and
-`script` appear only for actions that type text or run an AppleScript, and
-should be shown in full before approving.
+`effect` is `read | navigate | edit | consequential`. `typed_text` appears
+only for actions that type text, and should be shown in full before
+approving.
 
 Answer with `{"decision":…}`: for `action`, `approve | deny | approve_rest`
 (approve this and any later action in the same app at the same or lower

@@ -2,8 +2,8 @@
   "id": "capability_search.skill-direct-name",
   "domain": "capability_search",
   "label": "capability search • skill • direct name match",
-  "query": "write an applescript to control safari",
-  "notes": "Probes the simplest skill recall shape: query carries the skill's literal keyword tokens ('applescript', 'safari', 'control'). The built-in 'Mac Automator' skill's keywords array contains all three, so this should be a near-trivial pass. If even THIS fails, the skill index is dead — useful as a smoke-test before reading the trickier cases. All installed skills are universally searchable, so the full built-in catalog is in play with no fixture setup.",
+  "query": "use computer use to control safari",
+  "notes": "Probes the simplest skill recall shape: query carries the skill's literal keyword tokens ('computer use', 'safari', 'control'). The built-in 'Mac Automator' skill's keywords array contains all three, so this should be a near-trivial pass. If even THIS fails, the skill index is dead — useful as a smoke-test before reading the trickier cases. All installed skills are universally searchable, so the full built-in catalog is in play with no fixture setup.",
   "fixtures": {},
   "expect": {
     "capabilitySearch": {

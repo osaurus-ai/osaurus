@@ -2,7 +2,7 @@
 //  SubagentRunLogTests.swift
 //  osaurus / Subagent Tests
 //
-//  A finished Computer Use / AppleScript run keeps its step log. Before,
+//  A finished Computer Use run keeps its step log. Before,
 //  the live feed was the only copy: the registry dropped it five seconds
 //  after the run and the row fell back to a one-line summary, so the log
 //  vanished on success and on failure. The log is saved with the turn
@@ -46,7 +46,7 @@ struct SubagentRunLogTests {
 
     @Test func finishedRunLog_nilWhileRunningOrForOtherKinds() {
         let running = SubagentFeed(
-            toolCallId: "c", kindId: SubagentCapabilityRegistry.appleScript.id, title: "t")
+            toolCallId: "c", kindId: SubagentCapabilityRegistry.computerUse.id, title: "t")
         #expect(running.finishedRunLog() == nil)
         let spawn = Self.finishedFeed(kindId: SubagentCapabilityRegistry.spawn.id)
         #expect(spawn.finishedRunLog() == nil)

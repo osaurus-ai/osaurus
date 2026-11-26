@@ -8,14 +8,18 @@ order: 160
 
 This topic is about desktop and browser control. For schedules, folder changes, webhooks, feeds, failed runs and channel messages that start work on their own, read the `automations` topic.
 
-Three ways agents can act beyond chat — each isolated, gated, and off by default where it matters. All three (like AppleScript and image generation) are custom-agent abilities: the built-in Orchestrator has none of them itself and reaches them only by delegating to an agent that does (Settings → Agents → Delegation → Allowed subagents).
+Three ways agents can act beyond chat — each isolated, gated, and off by default where it matters. All three (like image generation) are custom-agent abilities: the built-in Orchestrator has none of them itself and reaches them only by delegating to an agent that does (Settings → Agents → Delegation → Allowed subagents).
 
 ## Computer Use (experimental)
 
 - An agent drives real macOS apps through accessibility APIs. Custom agents only (never the default agent); off by default.
 - Enable per agent: Agents → the agent → Abilities → Subagents → Computer Use. Global policy in Settings → Computer & Browser Use → Autonomy: autonomy preset (default balanced), per-app overrides, app allowlist.
+- Model: the agent's own Computer Use model (Abilities → Subagents → Computer Use → Model), else Models → Model Defaults → **Computer Use Model**, else the agent's chat model. A chosen model that isn't installed or connected stops the run with an error naming it; Osaurus never switches to another model. Recommended on-device models are in Local Models → **Computer Use** (also Settings → Computer & Browser Use → **Computer Use Models**); today that is **Qwen3-VL 8B**. A different local model than the chat model needs **Swap Local Models for Subagents**.
 - Needs Accessibility permission (and Screen Recording for visual grounding). Dangerous apps — Terminal, System Settings, Keychain, password managers — always require per-action confirmation.
-- Live steps stream into chat; consequential actions show a confirm overlay; Stop cancels at any point. Limits: ~24 steps / ~5 minutes per goal.
+- When the task names an app, the agent opens that app in the background and works there; your app stays in front. When it doesn't, Osaurus asks "Take over <app>?" for the app you were using before it starts; choose no and nothing is touched.
+- Live steps stream into chat; consequential actions show a confirm overlay; Stop cancels at any point. Limits: ~24 steps / ~8 minutes per goal.
+- While a run is active, the window being driven gets a glowing tint and a status pill ("Osaurus is using …") with **Stop** appears at the top of the screen. With **Lock App While Working** on (Settings → Computer & Browser Use → Autonomy → Staying in Control; on by default), your clicks and keystrokes to that app are blocked until the run ends; press Esc while it is frontmost, or Stop on the pill, to take back control. Other apps stay usable. When an action waits for approval, the tint shows "Waiting for your approval" and clicking it brings Osaurus forward. The overlay is hidden from screenshots, so the model never sees it.
+- Models that read images see a screenshot with each element's mark number drawn on it from the first step, when Screen Recording is on and the model is on-device (or cloud vision is allowed). The first time a local vision model runs, Osaurus checks how it points at screenshots on a few test screens (shown in the run's steps; it doesn't count toward the time limit). A model that can't point reliably addresses elements by mark only.
 - Cloud vision is off by default; if enabled, screenshots are scrubbed (text masked) before any cloud model sees them.
 
 ## Browser Use

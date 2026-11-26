@@ -27,6 +27,9 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     /// Confirms that could not be shown at all (no chat surface mounted to
     /// render the card). The run ends as `gaveUp` on the first one.
     public var confirmsUnpresentable = 0
+    /// The user's answer to "Take over <app>?", asked when the run starts in
+    /// the frontmost app rather than a named one. `nil` when it wasn't asked.
+    public var takeoverApproved: Bool?  // swiftlint:disable:this discouraged_optional_boolean
     /// Gate rejections (allowlist / deny disposition).
     public var blocked = 0
     /// Dead-end terminations encountered (resolution gave out).

@@ -29,6 +29,8 @@ struct CapturedImage: Sendable {
     let data: Data
     /// File path when the capture was written to disk; otherwise nil.
     let savedPath: String?
+    /// Screen area (points, top-left origin) the image shows, when known.
+    var bounds: CGRect? = nil
 
     var base64: String { data.base64EncodedString() }
 }
@@ -61,6 +63,13 @@ struct ScreenshotOptions: Decodable {
 
     /// Scale factor (0.0 - 1.0) to reduce image size
     var scale: Double?
+
+    /// Keep only this screen area (points), at full capture resolution
+    /// before `scale` applies.
+    var crop: CGRect?
+
+    /// Downscale further so neither side exceeds this many pixels.
+    var maxPixelEdge: Int?
 
     /// If specified, save screenshot to this file path in addition to returning bytes.
     var savePath: String?
@@ -149,23 +158,29 @@ final class ScreenshotController: @unchecked Sendable {
     /// `CGWindowListCreateImage` / `CGDisplayCreateImage` paths are unavailable
     /// on the current SDK. SCK still captures occluded / off-Space windows.
     func capture(options: ScreenshotOptions = ScreenshotOptions()) async -> CapturedImage? {
-        let image: CGImage?
+        var image: CGImage?
+        var bounds: CGRect?
 
-        if let windowId = options.windowId {
+        // One window is chosen up front so the pixels, the annotation origin,
+        // and the reported bounds all describe the same window.
+        let windowId = options.windowId ?? options.pid.flatMap(largestWindow(pid:))
+        if let windowId {
             // Direct window-id capture is the cleanest backgrounded path: it works
             // even if the window is hidden, occluded, or on a different Space.
             image = await captureWindow(windowId: windowId)
-        } else if let pid = options.pid {
-            image = await captureWindow(pid: pid)
-        } else if options.allDisplays == true {
-            image = await captureAllDisplays()
-        } else if let displayIndex = options.displayIndex {
-            image = await captureDisplay(at: displayIndex)
-        } else {
-            image = await captureFullScreen()
+            bounds = captureBoundsForWindowId(windowId)
+        }
+        if image == nil, Self.capturesDisplay(options) {
+            if options.allDisplays != true, let displayIndex = options.displayIndex {
+                image = await captureDisplay(at: displayIndex)
+                bounds = displayBounds(at: displayIndex)
+            } else {
+                image = await captureFullScreen()
+                bounds = CGDisplayBounds(CGMainDisplayID())
+            }
         }
 
-        guard let cgImage = image else {
+        guard var cgImage = image else {
             return nil
         }
 
@@ -179,14 +194,11 @@ final class ScreenshotController: @unchecked Sendable {
                     ?? options.windowId.flatMap { ownerPid(for: $0) }
                 guard let pid = pidForElements else { return cgImage }
                 let elements = AccessibilityManager.shared.mostRecentElements(for: pid)
-                let captureOrigin: CGPoint? =
-                    options.windowId.flatMap { captureBoundsForWindowId($0)?.origin }
-                    ?? captureBoundsForPid(pid)?.origin
-                if let origin = captureOrigin,
+                if let captureBounds = bounds,
                     let overlaid = overlayElementIds(
                         on: cgImage,
                         elements: elements,
-                        captureOrigin: origin
+                        captureBounds: captureBounds
                     )
                 {
                     return overlaid
@@ -195,17 +207,30 @@ final class ScreenshotController: @unchecked Sendable {
             return cgImage
         }()
 
+        cgImage = annotatedImage
+        if let crop = options.crop, let full = bounds {
+            guard let cropped = Self.crop(cgImage, to: crop, within: full) else { return nil }
+            cgImage = cropped.image
+            bounds = cropped.bounds
+        }
+
         // Apply scaling - default to 0.5 for reasonable size on Retina displays
+        var scale = options.scale ?? 0.5
+        if let maxEdge = options.maxPixelEdge, maxEdge > 0 {
+            let longest = Double(max(cgImage.width, cgImage.height)) * (scale > 0 && scale < 1 ? scale : 1)
+            if longest > Double(maxEdge) {
+                scale = (scale > 0 && scale < 1 ? scale : 1) * Double(maxEdge) / longest
+            }
+        }
         let finalImage: CGImage
-        let scale = options.scale ?? 0.5
         if scale > 0 && scale < 1.0 {
-            if let scaled = scaleImage(annotatedImage, scale: scale) {
+            if let scaled = scaleImage(cgImage, scale: scale) {
                 finalImage = scaled
             } else {
-                finalImage = annotatedImage
+                finalImage = cgImage
             }
         } else {
-            finalImage = annotatedImage
+            finalImage = cgImage
         }
 
         // Convert to data - default to JPEG for much smaller file size
@@ -232,8 +257,43 @@ final class ScreenshotController: @unchecked Sendable {
             height: finalImage.height,
             mimeType: mimeType,
             data: data,
-            savedPath: savedPath
+            savedPath: savedPath,
+            bounds: bounds
         )
+    }
+
+    /// Only an unscoped request captures a display. A request for a window or
+    /// an app with no capturable window (it quit, or its windows are tiny)
+    /// gets nothing: the display would show whatever other app is there.
+    static func capturesDisplay(_ options: ScreenshotOptions) -> Bool {
+        options.windowId == nil && options.pid == nil
+    }
+
+    /// Cut `region` (screen points) out of `image`, which shows `bounds`.
+    /// Returns the cropped pixels and the screen area they cover.
+    static func crop(_ image: CGImage, to region: CGRect, within bounds: CGRect) -> (image: CGImage, bounds: CGRect)? {
+        let visible = region.intersection(bounds)
+        guard !visible.isNull, visible.width > 0, visible.height > 0, bounds.width > 0, bounds.height > 0 else {
+            return nil
+        }
+        let sx = Double(image.width) / bounds.width
+        let sy = Double(image.height) / bounds.height
+        let pixels = CGRect(
+            x: ((visible.minX - bounds.minX) * sx).rounded(.down),
+            y: ((visible.minY - bounds.minY) * sy).rounded(.down),
+            width: (visible.width * sx).rounded(.up),
+            height: (visible.height * sy).rounded(.up)
+        ).intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard !pixels.isNull, pixels.width >= 1, pixels.height >= 1, let cut = image.cropping(to: pixels) else {
+            return nil
+        }
+        let covered = CGRect(
+            x: bounds.minX + pixels.minX / sx,
+            y: bounds.minY + pixels.minY / sy,
+            width: pixels.width / sx,
+            height: pixels.height / sy
+        )
+        return (cut, covered)
     }
 
     private func captureFullScreen() async -> CGImage? {
@@ -261,31 +321,33 @@ final class ScreenshotController: @unchecked Sendable {
         return await captureDisplay(displayID: CGMainDisplayID())
     }
 
-    private func captureWindow(pid: Int32) async -> CGImage? {
-        // Pick the largest reasonable window for the pid, then capture it.
-        let windowList =
+    /// The pid's largest reasonable on-screen window.
+    private func largestWindow(pid: Int32) -> CGWindowID? {
+        let windows =
             CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-            as? [[CFString: Any]]
-
-        if let windows = windowList {
-            var best: (id: CGWindowID, area: Double)? = nil
-            for window in windows {
-                guard let windowPID = window[kCGWindowOwnerPID] as? Int32, windowPID == pid,
-                    let windowID = window[kCGWindowNumber] as? CGWindowID,
-                    let bounds = window[kCGWindowBounds] as? [String: Any],
-                    let width = bounds["Width"] as? Double,
-                    let height = bounds["Height"] as? Double,
-                    width > 100, height > 100
-                else { continue }
-                let area = width * height
-                if best == nil || area > best!.area { best = (windowID, area) }
-            }
-            if let best, let image = await captureWindow(windowId: best.id) {
-                return image
-            }
+            as? [[CFString: Any]] ?? []
+        var best: (id: CGWindowID, area: Double)? = nil
+        for window in windows {
+            guard let windowPID = window[kCGWindowOwnerPID] as? Int32, windowPID == pid,
+                let windowID = window[kCGWindowNumber] as? CGWindowID,
+                let bounds = window[kCGWindowBounds] as? [String: Any],
+                let width = bounds["Width"] as? Double,
+                let height = bounds["Height"] as? Double,
+                width > 100, height > 100
+            else { continue }
+            let area = width * height
+            if best == nil || area > best!.area { best = (windowID, area) }
         }
-        // Fall back to full-screen capture.
-        return await captureFullScreen()
+        return best?.id
+    }
+
+    private func displayBounds(at index: Int) -> CGRect? {
+        var displayCount: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &displayCount)
+        guard index < displayCount else { return nil }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        CGGetActiveDisplayList(displayCount, &displays, &displayCount)
+        return CGDisplayBounds(displays[index])
     }
 
     /// Capture exactly one window by id via ScreenCaptureKit. Works on occluded
@@ -360,8 +422,7 @@ final class ScreenshotController: @unchecked Sendable {
         return info?.first?[kCGWindowOwnerPID] as? Int32
     }
 
-    /// Bounds of a specific window in screen coordinates. Mirrors
-    /// `captureBoundsForPid` for the windowId-driven path.
+    /// Bounds of a specific window in screen coordinates.
     fileprivate func captureBoundsForWindowId(_ windowId: CGWindowID) -> CGRect? {
         let info = CGWindowListCopyWindowInfo(.optionIncludingWindow, windowId) as? [[CFString: Any]]
         guard let entry = info?.first,
@@ -415,45 +476,25 @@ final class ScreenshotController: @unchecked Sendable {
             return bitmapRep.representation(using: .png, properties: [:])
         }
     }
-
-    /// Compute the screen-space bounds of the captured region so we can map
-    /// AX (global) coordinates to image-local coordinates.
-    /// Returns nil if we can't determine bounds; callers should skip annotation.
-    fileprivate func captureBoundsForPid(_ pid: Int32) -> CGRect? {
-        let windowList =
-            CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-            as? [[CFString: Any]]
-        guard let windows = windowList else { return nil }
-
-        for window in windows {
-            if let windowPID = window[kCGWindowOwnerPID] as? Int32, windowPID == pid,
-                let bounds = window[kCGWindowBounds] as? [String: Any],
-                let x = bounds["X"] as? Double,
-                let y = bounds["Y"] as? Double,
-                let w = bounds["Width"] as? Double,
-                let h = bounds["Height"] as? Double,
-                w > 100, h > 100
-            {
-                return CGRect(x: x, y: y, width: w, height: h)
-            }
-        }
-        return nil
-    }
 }
 
 // MARK: - Annotation Overlay
 
 /// Draws element-ID labels on top of `image` so vision-capable agents can
-/// reference IDs visually. `captureOrigin` is the screen-space origin of the
-/// capture so we can subtract it from each element's global AX coordinates.
+/// reference IDs visually. `captureBounds` is the screen area (points) the
+/// image shows, so each element's global AX frame maps into image pixels.
 private func overlayElementIds(
     on image: CGImage,
     elements: [(id: String, frame: CGRect)],
-    captureOrigin: CGPoint
+    captureBounds: CGRect
 ) -> CGImage? {
     let width = image.width
     let height = image.height
-    guard width > 0, height > 0, !elements.isEmpty else { return image }
+    guard width > 0, height > 0, !elements.isEmpty, captureBounds.width > 0, captureBounds.height > 0 else {
+        return image
+    }
+    let sx = CGFloat(width) / captureBounds.width
+    let sy = CGFloat(height) / captureBounds.height
 
     guard
         let context = CGContext(
@@ -490,10 +531,10 @@ private func overlayElementIds(
         let f = element.frame
         // Convert global top-left coords to image-local coords.
         // CGContext is bottom-left origin; flip y.
-        let localX = f.origin.x - captureOrigin.x
-        let localTopY = f.origin.y - captureOrigin.y
-        let bottomY = CGFloat(height) - localTopY - f.size.height
-        let rect = CGRect(x: localX, y: bottomY, width: f.size.width, height: f.size.height)
+        let localX = (f.origin.x - captureBounds.minX) * sx
+        let localTopY = (f.origin.y - captureBounds.minY) * sy
+        let bottomY = CGFloat(height) - localTopY - f.size.height * sy
+        let rect = CGRect(x: localX, y: bottomY, width: f.size.width * sx, height: f.size.height * sy)
         if rect.maxX <= 0 || rect.maxY <= 0 || rect.minX >= CGFloat(width)
             || rect.minY >= CGFloat(height)
         {

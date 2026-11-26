@@ -208,15 +208,20 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
     /// other app is rejected before disposition is even consulted. `nil` or
     /// empty means every app is allowed.
     public var allowlist: [String]?
+    /// Cover the window being driven with a shield and block the user's input
+    /// to it while a run is acting (Stop and Esc still work).
+    public var lockAppWhileWorking: Bool
 
     public init(
         globalPreset: AutonomyPreset = .default,
         perApp: [String: AutonomyPreset] = [:],
-        allowlist: [String]? = nil
+        allowlist: [String]? = nil,
+        lockAppWhileWorking: Bool = true
     ) {
         self.globalPreset = globalPreset
         self.perApp = perApp
         self.allowlist = allowlist
+        self.lockAppWhileWorking = lockAppWhileWorking
     }
 
     public init(from decoder: Decoder) throws {
@@ -224,12 +229,14 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
         globalPreset = try c.decodeIfPresent(AutonomyPreset.self, forKey: .globalPreset) ?? .default
         perApp = try c.decodeIfPresent([String: AutonomyPreset].self, forKey: .perApp) ?? [:]
         allowlist = try c.decodeIfPresent([String].self, forKey: .allowlist)
+        lockAppWhileWorking = try c.decodeIfPresent(Bool.self, forKey: .lockAppWhileWorking) ?? true
     }
 
     private enum CodingKeys: String, CodingKey {
         case globalPreset
         case perApp
         case allowlist
+        case lockAppWhileWorking
     }
 
     /// Normalize an app name / bundle id for case-insensitive matching: trim,

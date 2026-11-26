@@ -101,11 +101,11 @@ struct ChatModelPickerProviderTests {
         let incompleteImage = ModelPickerItem(id: "image/missing", displayName: "Missing", source: .imageGeneration)
         let nonMLX = ModelPickerItem(id: "gguf", displayName: "GGUF", source: .local, isMLXFormat: false)
         let encoder = ModelPickerItem(id: "encoder", displayName: "Encoder", source: .local, isEmbedding: true)
-        let script = ModelPickerItem(
+        let retired = ModelPickerItem(
             id: "OsaurusAI/Osaurus-AppleScript-16B-A4B-JANG_4M", displayName: "Scripts", source: .local
         )
         let groups = ChatModelPickerProvider.groups(
-            from: [regular, incompleteImage, nonMLX, encoder, script, image, .foundation()]
+            from: [regular, incompleteImage, nonMLX, encoder, retired, image, .foundation()]
         )
         #expect(groups.first?.models.map(\.id) == ["foundation", "image/alpha", "mlx/zeta"])
         #expect(groups.first?.availableModels == groups.first?.models)

@@ -118,13 +118,14 @@ non-agentic surface and does not inherit an Osaurus agent's capabilities.
   generation-only when no edit model is ready.
 - Permission and residency policy are enforced at execution.
 
-### AppleScript
+### AppleScript (removed)
 
-- Custom agents only, through `AgentSettings.appleScriptEnabled`. The former
-  `SubagentConfiguration.appleScriptDelegationEnabled` key is ignored on load.
-- Requires an installed curated AppleScript model.
-- Script execution mode, macOS Automation consent, read/write classification,
-  and residency policy remain execution-time gates.
+- The `applescript` and `mac_query` tools, their subagent, and the dedicated
+  AppleScript models were removed; Computer Use is the only desktop automation
+  path. Saved `appleScript*` agent and delegation keys are ignored on load,
+  declarative `applescript_*` keys decode with a removed-key hint, workflow
+  steps that call either tool fail validation, and installed AppleScript
+  bundles show as Retired in Local Models.
 
 ## Readiness states
 

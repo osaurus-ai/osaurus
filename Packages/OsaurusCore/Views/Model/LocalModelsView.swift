@@ -19,7 +19,7 @@ enum LocalModelKind: String, CaseIterable, Identifiable, Sendable, AnimatedTabIt
     case speech
     case embedding
     case detection
-    case appleScript
+    case computerUse
 
     var id: String { rawValue }
 
@@ -30,7 +30,7 @@ enum LocalModelKind: String, CaseIterable, Identifiable, Sendable, AnimatedTabIt
         case .speech: L("Speech")
         case .embedding: L("Search & Memory")
         case .detection: L("Privacy Detection")
-        case .appleScript: L("AppleScript")
+        case .computerUse: L("Computer Use")
         }
     }
 
@@ -41,7 +41,7 @@ enum LocalModelKind: String, CaseIterable, Identifiable, Sendable, AnimatedTabIt
         case .speech: "waveform"
         case .embedding: "text.magnifyingglass"
         case .detection: "eye.slash"
-        case .appleScript: "applescript"
+        case .computerUse: "cursorarrow.rays"
         }
     }
 
@@ -52,7 +52,7 @@ enum LocalModelKind: String, CaseIterable, Identifiable, Sendable, AnimatedTabIt
         case .speech: L("Speech-to-text models for voice input and transcription")
         case .embedding: L("Models that power memory and knowledge search")
         case .detection: L("On-device models that find personal data before it leaves your Mac")
-        case .appleScript: L("Models that write and run AppleScript to automate this Mac")
+        case .computerUse: L("On-device models that see the screen and operate apps for Computer Use")
         }
     }
 }

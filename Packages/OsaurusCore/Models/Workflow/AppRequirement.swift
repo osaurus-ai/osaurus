@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  A Mac app a workflow's steps drive (Shortcuts, Xcode, Final Cut Pro)
-//  through AppleScript, Computer Use, a Mac query, or a shell command.
+//  through Computer Use or a shell command.
 //  Those steps name the app in prose, so the graph cannot say which app
 //  it is: the Architect declares it (`declare_app`), the template carries
 //  it, and setup checks the app is installed on each Mac before a run.

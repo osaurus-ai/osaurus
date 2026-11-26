@@ -98,6 +98,29 @@ final class ComputerUsePromptQueueTests: XCTestCase {
         XCTAssertNil(pendingId(forToolCallId: id))
     }
 
+    /// The takeover pill and Esc only trip the run's interrupt token; a card
+    /// still on screen must resolve as DENIED so the run ends without an answer.
+    func testInterruptResolvesPendingConfirmAsDenied() async {
+        let id = "interrupt-\(UUID().uuidString)"
+        let other = "interrupt-other-\(UUID().uuidString)"
+        let token = InterruptToken()
+        let observer = ComputerUsePromptQueue.cancelOnInterrupt(token, toolCallId: id)
+        defer { token.removeInterruptObserver(observer) }
+        let task = Task { await self.queue.requestConfirmation(self.preview(), toolCallId: id) }
+        let otherTask = Task { await self.queue.requestConfirmation(self.preview(), toolCallId: other) }
+        await waitUntil({ self.pendingId(forToolCallId: id) != nil }, "the prompt to park")
+        await waitUntil({ self.pendingId(forToolCallId: other) != nil }, "the other run's prompt to park")
+
+        token.interrupt()
+        let approved = await task.value
+        XCTAssertFalse(approved)
+        XCTAssertNil(pendingId(forToolCallId: id))
+        XCTAssertNotNil(pendingId(forToolCallId: other), "another run's card is left alone")
+
+        queue.cancelAll(forToolCallId: other)
+        _ = await otherTask.value
+    }
+
     /// Structured cancellation of the awaiting Task (the loop's own teardown
     /// path) resolves the suspended call as DENIED via the cancellation handler.
     func testTaskCancellationResolvesConfirmAsDenied() async {

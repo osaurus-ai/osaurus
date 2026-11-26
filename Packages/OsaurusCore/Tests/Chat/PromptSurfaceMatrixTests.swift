@@ -215,7 +215,7 @@ struct PromptSurfaceMatrixTests {
                     "render_chart", "speak", "search_memory",
                     "schedule_next_run", "cancel_next_run", "notify",
                     ComputerUseTool.toolName, "spawn_agent",
-                    "image", "applescript",
+                    "image",
                 ]
 
                 #expect(rows[0].context.tools.isEmpty)

@@ -27,7 +27,7 @@ struct SkillSearchServiceTests {
             }
 
             let results = await SkillSearchService.shared.search(
-                query: "write an applescript to control safari",
+                query: "automate safari by clicking and typing",
                 threshold: 0.25
             )
 

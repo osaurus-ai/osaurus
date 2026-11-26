@@ -1,8 +1,8 @@
 {
   "id": "architect.chrome-tabs-declares-app",
   "domain": "architect",
-  "label": "architect \u2022 AppleScript step declares the app it drives",
-  "query": "Build a workflow that uses an AppleScript step to get the title and URL of every tab in Google Chrome's front window, then writes them as a Markdown list. Don't test it, since it reads my real browser; just offer to save it.",
+  "label": "architect \u2022 Computer Use step declares the app it drives",
+  "query": "Build a workflow that uses a Computer Use step to read the title and URL of every tab in Google Chrome's front window, then writes them as a Markdown list. Don't test it, since it reads my real browser; just offer to save it.",
   "notes": "Pins app requirements: a step that drives a Mac app that does not come with macOS declares it with `declare_app`, its bundle id looked up through `workflow_discover` `apps` (or asked for when Chrome is not installed here, answered by the reply), so a person installing the workflow is told to get Chrome first.",
   "fixtures": {},
   "expect": {

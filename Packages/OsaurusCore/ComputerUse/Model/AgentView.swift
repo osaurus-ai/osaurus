@@ -64,6 +64,31 @@ public struct AgentViewItem: Sendable, Equatable {
     }
 }
 
+/// One difference between a view and the one before it, as the verify step reports it to the model.
+public struct AgentViewChange: Sendable, Equatable {
+    public enum Kind: Sendable, Equatable {
+        case appeared
+        case valueChanged(from: String?)
+        case disappeared
+    }
+
+    /// The element's mark in the new view; nil for an element that disappeared.
+    public let mark: Int?
+    public let role: String
+    public let label: String?
+    /// The value in the new view (the last value seen, for an element that disappeared).
+    public let value: String?
+    public let kind: Kind
+
+    public init(mark: Int?, role: String, label: String?, value: String?, kind: Kind) {
+        self.mark = mark
+        self.role = role
+        self.label = label
+        self.value = value
+        self.kind = kind
+    }
+}
+
 // MARK: - View
 
 public struct AgentView: Sendable, Equatable {
@@ -76,6 +101,8 @@ public struct AgentView: Sendable, Equatable {
     /// Number of elements present in the previous view but gone from this
     /// one — a verify signal (a dialog closed, a row deleted).
     public let removedCount: Int
+    /// What differs from the previous view, in view order, then what disappeared. Empty on a first capture.
+    public let changes: [AgentViewChange]
 
     public init(
         snapshotId: Int,
@@ -84,7 +111,8 @@ public struct AgentView: Sendable, Equatable {
         tier: CaptureTier,
         truncated: Bool,
         items: [AgentViewItem],
-        removedCount: Int
+        removedCount: Int,
+        changes: [AgentViewChange] = []
     ) {
         self.snapshotId = snapshotId
         self.app = app
@@ -93,6 +121,7 @@ public struct AgentView: Sendable, Equatable {
         self.truncated = truncated
         self.items = items
         self.removedCount = removedCount
+        self.changes = changes
     }
 
     /// Whether anything changed vs the previous view (verify signal).
@@ -108,51 +137,71 @@ public struct AgentView: Sendable, Equatable {
     /// Build a fresh view from a snapshot, computing the `changed` delta
     /// against `previous`. Elements are matched across snapshots by
     /// (role, label) since the live `s…` ids rotate every capture.
+    ///
+    /// A matched element keeps its previous mark and a new one takes the next
+    /// unused number, so marks never shift when something above disappears:
+    /// a mark remembered from an earlier view names the same control or
+    /// nothing, never its neighbour.
     public static func build(from snapshot: CUSnapshot, previous: AgentView?) -> AgentView {
         // Index the previous view's values by a stable (role|label) key so we
         // can detect new/changed elements. A nil previous means first capture:
         // nothing is "changed" because there's no baseline.
-        var previousValues: [String: [String?]] = [:]
+        var previousItems: [String: [AgentViewItem]] = [:]
         if let previous {
             for item in previous.items {
-                previousValues[
+                previousItems[
                     matchKey(windowId: item.windowId, role: item.role, label: item.label),
                     default: []
-                ].append(
-                    item.value
-                )
+                ].append(item)
             }
         }
 
         var items: [AgentViewItem] = []
         items.reserveCapacity(snapshot.elements.count)
+        var changes: [AgentViewChange] = []
         var consumed: [String: Int] = [:]  // how many of each key we've matched
         let windowsById = Dictionary(uniqueKeysWithValues: snapshot.windows.map { ($0.id, $0) })
+        var nextMark = (previous?.items.map(\.mark).max() ?? 0) + 1
 
-        for (index, element) in snapshot.elements.enumerated() {
+        for element in snapshot.elements {
             let key = matchKey(windowId: element.windowId, role: element.role, label: element.label)
             let window = element.windowId.flatMap { windowsById[$0] }
             let visibleValue = visibleValue(for: element)
-            let changed: Bool
+            let change: AgentViewChange.Kind?
+            var keptMark: Int?
             if previous == nil {
-                changed = false
-            } else if let candidates = previousValues[key] {
+                change = nil
+            } else if let candidates = previousItems[key] {
                 let already = consumed[key, default: 0]
                 if already < candidates.count {
-                    let prevValue = candidates[already]
+                    let prevValue = candidates[already].value
+                    keptMark = candidates[already].mark
                     consumed[key] = already + 1
-                    changed = normalize(prevValue) != normalize(visibleValue)
+                    change = normalize(prevValue) != normalize(visibleValue) ? .valueChanged(from: prevValue) : nil
                 } else {
                     // More of this element than before → an extra one appeared.
-                    changed = true
+                    change = .appeared
                 }
             } else {
-                changed = true  // element not present in the previous view
+                change = .appeared  // element not present in the previous view
+            }
+            let mark: Int
+            if let keptMark {
+                mark = keptMark
+            } else {
+                mark = nextMark
+                nextMark += 1
+            }
+            let changed = change != nil
+            if let change {
+                changes.append(
+                    AgentViewChange(
+                        mark: mark, role: element.role, label: element.label, value: visibleValue, kind: change))
             }
 
             items.append(
                 AgentViewItem(
-                    mark: index + 1,
+                    mark: mark,
                     elementId: element.id,
                     windowId: element.windowId,
                     windowTitle: window?.title,
@@ -187,6 +236,18 @@ public struct AgentView: Sendable, Equatable {
                 let nowCount = currentCounts[key, default: 0]
                 if prevCount > nowCount { removedCount += (prevCount - nowCount) }
             }
+            // The unmatched previous items of each key, in the previous view's order.
+            for item in previous.items {
+                let key = matchKey(windowId: item.windowId, role: item.role, label: item.label)
+                let matched = currentCounts[key, default: 0]
+                guard matched > 0 else {
+                    changes.append(
+                        AgentViewChange(
+                            mark: nil, role: item.role, label: item.label, value: item.value, kind: .disappeared))
+                    continue
+                }
+                currentCounts[key] = matched - 1
+            }
         }
 
         return AgentView(
@@ -196,8 +257,36 @@ public struct AgentView: Sendable, Equatable {
             tier: snapshot.tier,
             truncated: snapshot.truncated,
             items: items,
-            removedCount: removedCount
+            removedCount: removedCount,
+            changes: changes
         )
+    }
+
+    /// The changes as short factual lines for the verify result, at most `limit` of them:
+    /// `[3] statictext "State": "inbox" → "archived"`, `[7] button "Undo" appeared`, `button "Archive" disappeared`.
+    public func renderChanges(limit: Int = 6) -> String {
+        func subject(_ change: AgentViewChange) -> String {
+            var text = change.mark.map { "[\($0)] " } ?? ""
+            text += change.role
+            if let label = change.label, !label.isEmpty { text += " \"\(Self.renderedValue(label, role: ""))\"" }
+            return text
+        }
+        func quoted(_ value: String?) -> String {
+            "\"" + Self.renderedValue(value ?? "", role: "") + "\""
+        }
+        var lines = changes.prefix(limit).map { change -> String in
+            switch change.kind {
+            case .valueChanged(let from):
+                return "\(subject(change)): \(quoted(from)) → \(quoted(change.value))"
+            case .appeared:
+                let value = change.value.map { $0.isEmpty ? "" : " = \(quoted($0))" } ?? ""
+                return "\(subject(change)) appeared\(value)"
+            case .disappeared:
+                return "\(subject(change)) disappeared"
+            }
+        }
+        if changes.count > limit { lines.append("… and \(changes.count - limit) more") }
+        return lines.joined(separator: "\n")
     }
 
     private static func matchKey(windowId: Int?, role: String, label: String?) -> String {

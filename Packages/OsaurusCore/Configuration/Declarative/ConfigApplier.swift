@@ -1179,7 +1179,6 @@ enum ConfigApplier {
         if let v = caps.browserUseEnabled { agent.settings.browserUseEnabled = v }
         if let apps = ConfigPlanner.appleApps(from: caps) { agent.settings.enabledAppleApps = apps }
         if let v = caps.imageEnabled { agent.settings.imageEnabled = v }
-        if let v = caps.applescriptEnabled { agent.settings.appleScriptEnabled = v }
         if let v = caps.speakEnabled { agent.settings.speakEnabled = v }
         if let v = caps.renderChartEnabled { agent.settings.renderChartEnabled = v }
         if let v = caps.calculatorEnabled { agent.settings.calculatorEnabled = v }
@@ -1299,11 +1298,6 @@ enum ConfigApplier {
         let hints = desired.removedKeyHints
         _ = SubagentConfigurationStore.mutate { config in
             if let v = desired.localTextEnabled { config.localTextDelegationEnabled = v }
-            if let raw = desired.applescriptExecutionMode,
-                let mode = ConfigAppBehaviorEnums.applescriptMode(forKey: raw)
-            {
-                config.defaultAppleScriptExecutionMode = mode
-            }
             if let ids = resolvedAgentIDs { config.spawnableAgentIDs = ids }
             if let refs = resolvedWorkspaceRefs {
                 config.spawnableWorkspaceAgents = refs

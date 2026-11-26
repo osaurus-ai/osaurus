@@ -3,7 +3,7 @@
 //  OsaurusCore — Subagent framework
 //
 //  The single optional handoff middleware for model-swapping subagent kinds
-//  (text, Browser Use, Computer Use, AppleScript and compaction). When a kind
+//  (text, Browser Use, Computer Use and compaction). When a kind
 //  resolves a DIFFERENT local model than the
 //  resident orchestrator, the chat model must be unloaded so the subagent
 //  model takes the GPU exclusively, then reloaded after the run. Same-model

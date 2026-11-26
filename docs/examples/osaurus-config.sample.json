@@ -56,7 +56,6 @@
         "browser_use_enabled": false,
         "computer_use_enabled": false,
         "image_enabled": false,
-        "applescript_enabled": false,
         "apple_apps": [],
         "relay_enabled": false
       },

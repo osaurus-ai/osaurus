@@ -65,10 +65,15 @@ public struct ComputerUseEvalHarness: @unchecked Sendable {
     }
 }
 
-final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning, @unchecked Sendable {
+final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning, SubagentContextAdmission,
+    @unchecked Sendable
+{
     let capability = SubagentCapabilityRegistry.computerUse
 
     private let goal: String
+    /// The app the caller named; `nil` means the frontmost app, once the user
+    /// agrees to hand it over.
+    private let app: String?
     private let limits: RunLimits
     /// Eval seam (nil in production). When set, `resolveModel`/`run` use the
     /// injected model + scripted driver/gate instead of the live desktop.
@@ -89,6 +94,12 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
     /// override, or the same local model already resident).
     private var residencyPlan: ResidencyPlan = .none
     private var invokingParentModelName: String?
+    /// The history-window ceiling the loop enforces and admission prices:
+    /// the resolved model window, or less when admission fitted it to the
+    /// memory left. `nil` until `resolveModel` (and for evals).
+    private var contextPositions: Int?
+    private(set) var minimumAdmissionContextPositions: Int?
+    private(set) var admissionContextWasMemoryFitted = false
 
     /// Funnel attribution for `ComputerUseTool`. `loopStarted` flips the
     /// moment `run` hands control to `ComputerUseLoop` (from then on the run
@@ -104,8 +115,9 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
     /// so this bounds only the pre-unload wait, not the run.
     private static let residencyIdleWaitSeconds = 120
 
-    init(goal: String, limits: RunLimits, evalHarness: ComputerUseEvalHarness? = nil) {
+    init(goal: String, app: String? = nil, limits: RunLimits, evalHarness: ComputerUseEvalHarness? = nil) {
         self.goal = goal
+        self.app = app
         self.limits = limits
         self.evalHarness = evalHarness
     }
@@ -129,7 +141,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
         // off the Default agent or turning Tools back on.
         try await validateAuthority(scope)
         // One shared path for precedence (per-agent `computer_use` override →
-        // the parent agent's model), the availability fallback, and the live
+        // Model Defaults → Computer Use Model → the parent agent's model), the
+        // fail-closed check on an assigned model, and the live
         // residency decision (reject-before-evict; a remote override / the
         // inherited model needs no swap). The chat model is already idle here —
         // the parent turn is awaiting this tool result. `evalModel` is nil: the
@@ -149,6 +162,11 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
                     + "make room).",
                 unavailableMessage:
                     "No model is selected for this agent, so Computer Use can't run. Pick a model first.",
+                assignedUnavailableMessage: { id in
+                    "Computer Use is set to use \(id), which isn't installed or connected. Download it in "
+                        + "Local Models → Computer Use, reconnect its provider, or choose another model in "
+                        + "Model Defaults → Computer Use Model or this agent's Computer Use settings."
+                },
                 defaultModel: { scope.parentModelName ?? AgentManager.shared.effectiveModel(for: agentId) }
             )
         } catch SubagentError.denied(let message) {
@@ -167,13 +185,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             () -> (ceiling: AutonomyCeiling?, policy: AutonomyPolicy, vision: VisionContext) in
             let ceiling = AgentManager.shared.agent(for: agentId)?.settings.computerUseCeiling
             let policy = ComputerUsePolicyStore.load()
-            let vision = VisionContext(
-                modelAcceptsImages: ComputerUseTool.modelAcceptsImages(modelId),
-                modelIsLocal: ModelManager.findInstalledModel(named: modelId) != nil,
-                cloudConsent: CloudVisionConsent.shared.isGranted,
-                cloudScrubMode: CloudVisionConsent.shared.scrubMode
-            )
-            return (ceiling, policy, vision)
+            return (ceiling, policy, VisionContext.resolved(for: modelId))
         }
         self.config = RunConfig(
             ceiling: snapshot.ceiling,
@@ -185,7 +197,31 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             )
         )
         self.residencyPlan = resolved.decision.plan
+        let window = await AgentLoopBudget.resolveContextWindow(modelId: modelId)
+        contextPositions = window
+        minimumAdmissionContextPositions = min(
+            window,
+            ComputerUseLoop.minimumStepPositions(
+                goal: goal, policySummary: config?.policySummary ?? "", vision: snapshot.vision
+            )
+        )
+        admissionContextWasMemoryFitted = false
         return ResolvedModel(name: modelId, id: resolved.installedModelID, isLocal: resolved.decision.isLocal)
+    }
+
+    func admissionRequestEstimate() -> SubagentChildRequestEstimate? {
+        contextPositions.map {
+            SubagentChildRequestEstimate(seedCharacters: nil, maxOutputTokens: nil, enforcedPositionCeiling: $0)
+        }
+    }
+
+    func tightenAdmissionContextPositions(to limit: Int) -> Bool {
+        guard let current = contextPositions, let minimum = minimumAdmissionContextPositions,
+            limit >= minimum, limit < current
+        else { return false }
+        contextPositions = limit
+        admissionContextWasMemoryFitted = true
+        return true
     }
 
     func refreshedResidencyPlanAfterAdmission(for resolved: ResolvedModel) async throws -> ResidencyPlan {
@@ -274,6 +310,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
                 feed: feed,
                 interrupt: interrupt,
                 confirm: { _ in true },
+                targetApp: app,
                 limits: limits,
                 policySummary: "",
                 vision: evalHarness.vision,
@@ -293,12 +330,21 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
         loopStarted = true
         let toolCallId = scope.toolCallId
         // The confirm/consent overlay drains off `ComputerUsePromptQueue`; clear
-        // any pending prompts for this run when it ends (mirrors the old tool's
-        // defer). The host only unregisters the feed + interrupt.
+        // any pending prompts for this run on Stop and when it ends (mirrors the
+        // old tool's defer). The host only unregisters the feed + interrupt.
+        let promptCancel = ComputerUsePromptQueue.cancelOnInterrupt(interrupt, toolCallId: toolCallId)
         defer {
+            interrupt.removeInterruptObserver(promptCancel)
             Task { @MainActor in
                 ComputerUsePromptQueue.shared.cancelAll(forToolCallId: toolCallId)
             }
+        }
+
+        var limits = limits
+        limits.contextPositions = contextPositions
+        let locksTarget = config.policy.lockAppWhileWorking
+        let takeover = await MainActor.run {
+            TakeoverController(locksTarget: locksTarget, onStop: { interrupt.interrupt() })
         }
 
         let result = await ComputerUseLoop.run(
@@ -325,12 +371,26 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
                         : "no chat window is open to show the approval card"
                 }
             },
+            targetApp: app,
+            confirmTakeover: { appName in
+                await ComputerUsePromptQueue.shared.requestConfirmation(
+                    ActionPreview(
+                        appName: appName,
+                        actionLabel: L("Take over"),
+                        targetLabel: nil,
+                        effect: .navigate,
+                        note: L("Computer Use will work in this app until it finishes or you press Stop.")
+                    ),
+                    toolCallId: toolCallId
+                )
+            },
             limits: limits,
             policySummary: config.policySummary,
             vision: config.vision,
             sessionId: scope.sessionId,
             enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
-            reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name)
+            reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
+            presenter: TakeoverPresenter(controller: takeover)
         )
 
         await MainActor.run {
@@ -365,6 +425,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             )
         case .interrupted:
             throw SubagentError.userDenied("Computer Use was stopped by the user.")
+        case .declined:
+            throw SubagentError.userDenied(result.outcome.summary)
         case .gaveUp, .deadEnd, .stepCapReached, .failed:
             throw SubagentError.executionFailed(message: result.outcome.summary, retryable: false)
         }

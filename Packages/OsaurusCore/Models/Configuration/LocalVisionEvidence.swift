@@ -524,12 +524,36 @@ enum LocalVisionEvidence {
     static func tensorPayloadSizes(_ directory: URL) throws -> [String: UInt64] {
         let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
         let indexExists = FileManager.default.fileExists(atPath: indexURL.path)
-        let index = object(indexURL)?["weight_map"] as? [String: String]
+        var index = object(indexURL)?["weight_map"] as? [String: String]
         if indexExists && (index == nil || index!.isEmpty) {
             throw InvalidWeights(detail: "invalid safetensors index")
         }
+        // URL listing refuses a symlinked bundle directory (ENOTDIR), which is
+        // how model stores mirror bundles; list the target instead.
+        let present = try FileManager.default.contentsOfDirectory(
+            at: directory.resolvingSymlinksInPath(), includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "safetensors" && !$0.lastPathComponent.hasPrefix("jangtq_runtime") }
+        var staleIndexFamily: [URL]? = nil
+        if let named = index.map({ Set($0.values) }),
+            named.isDisjoint(with: present.map(\.lastPathComponent))
+        {
+            // None of the indexed files exist: the index describes another
+            // layout of the bundle (converters often copy the source
+            // model's index). The runtime then loads what is on disk — a
+            // JANG bundle only as one complete numbered shard family, any
+            // other bundle as every safetensors file — so verify the same.
+            if FileManager.default.fileExists(atPath: directory.appendingPathComponent("jang_config.json").path) {
+                guard let family = completeNumberedShardFamily(present) else {
+                    throw InvalidWeights(detail: "index names files that are not in the bundle")
+                }
+                staleIndexFamily = family
+            }
+            index = nil
+        }
         let files: [URL]
-        if let index {
+        if let staleIndexFamily {
+            files = staleIndexFamily
+        } else if let index {
             files = try Set(index.values).sorted().map { name in
                 guard !name.contains("/"), name.hasSuffix(".safetensors") else {
                     throw InvalidWeights(detail: "invalid shard path")
@@ -537,8 +561,7 @@ enum LocalVisionEvidence {
                 return directory.appendingPathComponent(name)
             }
         } else {
-            files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-                .filter { $0.pathExtension == "safetensors" && !$0.lastPathComponent.hasPrefix("jangtq_runtime") }
+            files = present
         }
         guard !files.isEmpty else { throw InvalidWeights(detail: "no safetensors weight files") }
         // Group the index by shard once; filtering the whole weight map per
@@ -588,5 +611,27 @@ enum LocalVisionEvidence {
             }
         }
         return sizes
+    }
+
+    /// The one complete `model-NNNNN-of-MMMMM.safetensors` family among
+    /// `files` (1…M all present, a single M), in shard order; the same rule
+    /// vMLX's loader applies to a JANG bundle whose index is stale.
+    static func completeNumberedShardFamily(_ files: [URL]) -> [URL]? {
+        var byTotal: [Int: [Int: URL]] = [:]
+        for file in files {
+            let name = file.lastPathComponent
+            guard name.hasPrefix("model-"), name.hasSuffix(".safetensors") else { continue }
+            let numbers = name.dropFirst("model-".count).dropLast(".safetensors".count)
+                .components(separatedBy: "-of-")
+            guard numbers.count == 2,
+                numbers.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } }),
+                let index = Int(numbers[0]), let total = Int(numbers[1])
+            else { continue }
+            byTotal[total, default: [:]][index] = file
+        }
+        guard byTotal.count == 1, let (total, family) = byTotal.first, total > 0,
+            Set(family.keys) == Set(1...total)
+        else { return nil }
+        return (1...total).map { family[$0]! }
     }
 }

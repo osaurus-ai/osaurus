@@ -14,7 +14,7 @@ Osaurus comes with 9 built-in skills ready to use. Each one teaches the AI a con
 |-------|-------------|
 | **Web Researcher** | Live web research with source retrieval, cross-checking, and cited reports |
 | **Content Summarizer** | Extract key points and create structured summaries |
-| **Mac Automator** | Control and query Mac apps with AppleScript automation |
+| **Mac Automator** | Control Mac apps on screen with Computer Use |
 | **Personal Organizer** | Manage calendar events, reminders, email, and messages |
 | **Document Builder** | Create spreadsheets and presentations, delivered as downloadable files |
 | **Workspace Assistant** | Work on files in the mounted folder: read, edit, search, run commands, commit |

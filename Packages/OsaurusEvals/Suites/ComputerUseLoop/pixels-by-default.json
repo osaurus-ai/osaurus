@@ -1,0 +1,29 @@
+{
+  "id": "computer_use_loop.pixels-by-default",
+  "domain": "computer_use_loop",
+  "label": "CU loop • an image model sees the screen from the first turn",
+  "query": "Save the document.",
+  "notes": "Deterministic (scripted-model) case for pixels by default: the run is for an on-device model that takes images, so the first decision already carries a marked screenshot (600×400 pixels of the 1200×800 window) without a `screenshot` step. The model clicks pixel (70, 37), which maps to screen point (140, 74) on Save. Discard must not be clicked.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Pages",
+      "maxSteps": 4,
+      "preset": "trusted",
+      "vision": "local",
+      "elements": [
+        { "id": "save", "role": "button", "label": "Save", "onClick": { "setValues": [{ "id": "status", "value": "Saved" }] } },
+        { "id": "discard", "role": "button", "label": "Discard", "onClick": { "setValues": [{ "id": "status", "value": "Discarded" }] } },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "Edited" }
+      ],
+      "successValues": [{ "id": "status", "equals": "Saved" }],
+      "successClicked": ["save"],
+      "failIfClicked": ["discard"],
+      "feedTitleContains": ["Attached a screenshot"],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"point\":{\"x\":70,\"y\":37}},\"note\":\"save\"}",
+        "{\"verb\":\"done\",\"reason\":\"saved the document\"}"
+      ]
+    }
+  }
+}

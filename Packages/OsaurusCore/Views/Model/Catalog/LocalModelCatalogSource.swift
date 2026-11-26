@@ -88,7 +88,7 @@ final class LocalModelCatalogSources: ObservableObject {
         case .speech: created = SpeechCatalogSource()
         case .embedding: created = EmbeddingCatalogSource()
         case .detection: created = PrivacyDetectionCatalogSource()
-        case .appleScript: created = AppleScriptCatalogSource()
+        case .computerUse: created = ComputerUseCatalogSource()
         }
         sources[kind] = created
         return created

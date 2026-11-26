@@ -105,6 +105,11 @@ struct SettingsSearchIndexTests {
                     ChatWindowState.WorkflowsDestination(subTab: subTab) != nil,
                     "\(entry.id): \(subTab) is not a Workflows window tab or page"
                 )
+            case .computerUse:
+                #expect(
+                    ComputerUseTab(rawValue: subTab) != nil,
+                    "\(entry.id): \(subTab) is not a ComputerUseTab raw value"
+                )
             default:
                 Issue.record(
                     "\(entry.id) declares subTab \(subTab) but \(entry.tab.rawValue) has no sub-tab routing in ManagementView.handleResultSelected"

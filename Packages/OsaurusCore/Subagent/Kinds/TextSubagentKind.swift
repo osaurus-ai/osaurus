@@ -73,7 +73,7 @@ final class TextSubagentKind:
     /// open. Spawn-relevant launcher, target, and shared residency values stay
     /// in the semantic fingerprint. Scoped configuration revisions catch a
     /// relevant ABA save/restore without treating an unrelated Image or
-    /// AppleScript editor save as a Spawn authority change.
+    /// Video editor save as a Spawn authority change.
     private struct AuthoritySnapshot: Sendable, Equatable {
         let configurationRevision: SpawnConfigurationAuthorityRevision
         let launcher: SpawnLauncherAuthority

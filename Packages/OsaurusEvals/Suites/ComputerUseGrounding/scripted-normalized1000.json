@@ -1,0 +1,15 @@
+{
+  "id": "computer_use_grounding.scripted-normalized1000",
+  "domain": "computer_use_grounding",
+  "label": "CU grounding • scoring adopts 0–1000 for answers written in 0–1000",
+  "query": "Click the named button on each synthetic screen.",
+  "notes": "Model-free. Answers are synthesized at each target's center on a 0–1000 scale, against screens sized to the selected model's budget. Proves the screens fit the budget and that only the 0–1000 reading hits.",
+  "fixtures": {},
+  "expect": {
+    "computerUseGrounding": {
+      "scriptedFrame": "normalized1000",
+      "expectFrame": "normalized1000",
+      "minHitFraction": 1.0
+    }
+  }
+}

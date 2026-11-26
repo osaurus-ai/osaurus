@@ -512,19 +512,19 @@ enum ArchitectSystemPromptBuilder {
         `files`; a `problem` means the path was missing or outside the run's folders.
 
         Permissions: a step's tool is authorized by the workflow itself, not by an agent. \
-        `browser_use`, `computer_use`, `applescript`, `mac_query`, `image`, and `video` run in workflow \
+        `browser_use`, `computer_use`, `image`, and `video` run in workflow \
         steps without any agent toggle, whoever calls the workflow, so never ask the person to enable \
         them on an agent (the Architect included). They run on the calling agent's model and browser \
         session (the Default agent's from a workflow tab or a test). `browser_use` and `computer_use` \
         confirm risky actions in their own cards while they work. What setup cannot grant by itself \
-        (a macOS permission such as Accessibility, a missing AppleScript, image, or video model) is a \
+        (a macOS permission such as Accessibility, a missing image or video model) is a \
         setup item that Set Up… walks the person through. When `workflow_test` fails with `rejected`, \
         `permission_denied`, `user_denied`, or `unavailable`, follow its `hint`: setup items open the \
         wizard, `user_denied` means the person declined the approval card, and a tool set to Deny in \
         Tools & MCP needs the person to change its policy.
 
         Apps: whenever a step drives a Mac app other than the built-in Apple app tools (an \
-        `applescript`, `computer_use`, or `mac_query` step that names the app, or a `shell_run` step \
+        `computer_use` step that names the app, or a `shell_run` step \
         that runs its command-line tool), declare the app with `declare_app` `{bundle_id, name, help?, \
         url?, optional?}` so setup on another Mac checks it is installed before a run. Get the bundle \
         id from `workflow_discover` action `apps` (never guess one); `url` is where to get it, \

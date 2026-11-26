@@ -49,6 +49,14 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
                         + "Example: \"In System Settings, turn on Night Shift from sunset to sunrise.\""
                 ),
             ]),
+            "app": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "The app to work in, by name or bundle id (e.g. \"Calculator\", \"com.apple.Safari\"). "
+                        + "Set it whenever the task names or implies an app: it is opened in the background "
+                        + "and targeted. Without it, the user is asked before the frontmost app is taken over."
+                ),
+            ]),
             "max_steps": .object([
                 "type": .string("integer"),
                 "description": .string(
@@ -119,6 +127,7 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         case .deadEnd: return "dead_end"
         case .stepCapReached: return "step_cap"
         case .interrupted: return "interrupted"
+        case .declined: return "declined"
         case .failed: return "failed"
         }
     }
@@ -148,6 +157,21 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
             )
         }
 
+        var app: String? = nil
+        if let raw = args["app"], !(raw is NSNull) {
+            guard let appName = raw as? String else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`app` must be a string.",
+                    field: "app",
+                    expected: "app name or bundle id",
+                    tool: name
+                )
+            }
+            let trimmed = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+            app = trimmed.isEmpty ? nil : trimmed
+        }
+
         // Limits: honour an explicit `max_steps`, clamped to a sane range.
         var limits = RunLimits()
         if let raw = args["max_steps"], !(raw is NSNull) {
@@ -167,7 +191,7 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         // Model resolution, the per-action gate + confirm overlay, the live
         // feed, the interrupt token, and the compact result all run through the
         // shared `SubagentSession` host via `ComputerUseKind`.
-        let kind = ComputerUseKind(goal: goal, limits: limits)
+        let kind = ComputerUseKind(goal: goal, app: app, limits: limits)
         let envelope = await SubagentSession.run(kind, tool: name)
         // Funnel: a run that reached the loop already emitted its own
         // `computer_use_run`. Anything else that came back as a failure was a
@@ -208,9 +232,49 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         let goal = modelGoal.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = userRequest?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !request.isEmpty else { return goal }
-        return AppleScriptToolDispatch.authoritativeReplacementTask(
+        return ComputerUseGoalAuthority.authoritativeReplacementTask(
             parentTask: goal,
             latestUserTask: request
+        )
+    }
+}
+
+extension VisionContext {
+    /// The vision posture of a run on `modelId`: image support, local vs
+    /// remote, the user's cloud-vision consent and scrub mode, and for a
+    /// local bundle the frame budget from its preprocessor config plus its
+    /// grounding profile (or the calibration it still needs).
+    @MainActor
+    public static func resolved(for modelId: String) -> VisionContext {
+        let acceptsImages = ComputerUseTool.modelAcceptsImages(modelId)
+        guard let localModel = ModelManager.findInstalledMLXModel(named: modelId) else {
+            return VisionContext(
+                modelAcceptsImages: acceptsImages,
+                modelIsLocal: false,
+                cloudConsent: CloudVisionConsent.shared.isGranted,
+                cloudScrubMode: CloudVisionConsent.shared.scrubMode
+            )
+        }
+        let budget = FrameBudget.resolve(modelDirectory: localModel.localDirectory)
+        var grounding: GroundingProfile? = nil
+        var pending: GroundingCalibrationKey? = nil
+        if acceptsImages {
+            switch GroundingProfileResolver.resolve(
+                modelId: modelId, directory: localModel.localDirectory, budget: budget
+            ) {
+            case .resolved(let profile): grounding = profile
+            case .marksOnly: break
+            case .needsCalibration(let key): pending = key
+            }
+        }
+        return VisionContext(
+            modelAcceptsImages: acceptsImages,
+            modelIsLocal: true,
+            cloudConsent: CloudVisionConsent.shared.isGranted,
+            cloudScrubMode: CloudVisionConsent.shared.scrubMode,
+            frameBudget: budget,
+            grounding: grounding,
+            pendingCalibration: pending
         )
     }
 }

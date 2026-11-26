@@ -90,7 +90,6 @@ final class HarnessGrantStore: @unchecked Sendable {
     /// `HarnessError.unsupportedPath` instead of running on defaults.
     static let builtInLoopToolNames: Set<String> = [
         ComputerUseTool.toolName, BrowserUseTool.toolName,
-        AppleScriptTool.toolName, MacQueryTool.toolName,
     ]
 
     /// The Architect's fixed surface on any harness: its draft tools, the

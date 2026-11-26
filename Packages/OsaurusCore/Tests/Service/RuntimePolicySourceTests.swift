@@ -781,7 +781,7 @@ struct RuntimePolicySourceTests {
         // plus the orphan tool-call closer strip (vmlx-swift#115) that
         // removes stray `</parameter></function></zyphra_tool_call>`
         // closer runs from the visible stream in ZAYA / Gemma-4
-        // AppleScript agent-loop rows,
+        // agent-loop rows,
         // plus the GPU-stream-driver serialization (vmlx-swift#116) that
         // re-locks eval/asyncEval/item + synchronize/clearCache to kill the
         // Metal concurrent-encoder crash class (Sentry: end_encoding,
@@ -1911,7 +1911,7 @@ struct RuntimePolicySourceTests {
         #expect(!enrichment.contains("specs(forTools: Array(visibleDelegation))"))
     }
 
-    @Test("Capability controls show readiness; the Orchestrator has no Image/AppleScript toggles")
+    @Test("Capability controls show readiness; the Orchestrator has no Image toggle")
     func capabilityControlsExposeReadiness() throws {
         let agents = try Self.source("Views/Agent/AgentsView.swift")
         let mainChat = try Self.source("Views/Settings/SubagentSettingsSection.swift")
@@ -1920,9 +1920,9 @@ struct RuntimePolicySourceTests {
         #expect(agents.contains("private func subagentReadiness("))
         #expect(agents.contains(#"\(callableSubagentCount) \(L("callable"))"#))
         #expect(agents.contains("readiness.statusMessage"))
-        // Image / AppleScript are custom-agent abilities only: the
-        // Orchestrator's Subagents section offers the allow-list and its
-        // readiness, never a media or AppleScript switch.
+        // Image is a custom-agent ability only: the Orchestrator's
+        // Subagents section offers the allow-list and its readiness, never a
+        // media switch.
         #expect(!mainChat.contains("imageDelegationEnabled"))
         #expect(!mainChat.contains("appleScriptDelegationEnabled"))
         #expect(mainChat.contains("mainSpawnReadiness"))
@@ -3167,6 +3167,33 @@ struct RuntimePolicySourceTests {
         )
         #expect(committedWait.lowerBound < managerMark.lowerBound)
         #expect(cancelPrecommit.lowerBound < managerMark.lowerBound)
+    }
+
+    /// The previous turn's idle timer must not unload the model while a new chat turn is still in preflight: the
+    /// turn's task takes its residency hold before any other work, and the hold re-resolves the idle policy (which
+    /// drops the pending timer) only after it is registered.
+    @Test("a chat turn holds its model before its preflight starts")
+    func chatTurnHoldsItsModelBeforePreflight() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        let beginBody = try Self.functionBody("func beginTurnResidencyHold(", in: runtime)
+        let register = try #require(beginBody.range(of: "conversationHolds.register(hold, model: name)"))
+        let reschedule = try #require(beginBody.range(of: "await scheduleIdleResidency(for: name)"))
+        #expect(register.lowerBound < reschedule.lowerBound)
+
+        let taskStart = try #require(chatView.range(of: "currentTask = Task { @MainActor [weak self] in"))
+        let hold = try #require(
+            chatView.range(
+                of: "await ModelRuntime.shared.beginTurnResidencyHold(modelName: turnModelId)",
+                range: taskStart.upperBound ..< chatView.endIndex))
+        let release = try #require(
+            chatView.range(
+                of: "await ModelRuntime.shared.releaseConversationResidencyHold(turnHold)",
+                range: hold.upperBound ..< chatView.endIndex))
+        let firstWork = try #require(
+            chatView.range(of: "ChatTurnGenerationControls.captureForSend(", range: taskStart.upperBound ..< chatView.endIndex))
+        #expect(hold.lowerBound < firstWork.lowerBound)
+        #expect(release.lowerBound < firstWork.lowerBound, "released from a defer at the top of the task")
     }
 
     @Test("RuntimeConfig snapshot does not hop to MainActor before model load")

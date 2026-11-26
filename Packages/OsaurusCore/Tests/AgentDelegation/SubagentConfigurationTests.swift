@@ -35,52 +35,24 @@ struct SubagentConfigurationTests {
         #expect(config.budgets.maxDelegateTurns == 24)
         #expect(config.budgets.maxElapsedSeconds == 900)
         #expect(config.budgets.maxParallelSpawns == 3)
-        // AppleScript keeps its model warm after a run by default for the
-        // back-to-back automation latency win.
-        #expect(config.appleScriptLoadPolicy == .keepWarmAfterJob)
     }
 
-    @Test("AppleScript load policy round-trips and decodes leniently")
-    func appleScriptLoadPolicyRoundTrips() throws {
-        let config = SubagentConfiguration(appleScriptLoadPolicy: .singleResidency)
-        let data = try JSONEncoder().encode(config)
-        let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
-        #expect(decoded.appleScriptLoadPolicy == .singleResidency)
-
-        // Absent (legacy config) → the keep-warm default.
+    @Test("a config saved with the removed AppleScript fields still decodes")
+    func legacyAppleScriptFieldsDecode() throws {
         let legacy = try JSONDecoder().decode(
             SubagentConfiguration.self,
-            from: Data(#"{"localTextDelegationEnabled":true}"#.utf8)
+            from: Data(
+                #"""
+                {"localTextDelegationEnabled":true,"defaultAppleScriptModelId":"OsaurusAI/Osaurus-AppleScript-4B",
+                "appleScriptLoadPolicy":"single_residency","appleScriptQueryPrefersResidentModel":false,
+                "permissionDefaults":{"policies":{"applescript":"always_allow","spawn":"deny"}}}
+                """#.utf8)
         )
-        #expect(legacy.appleScriptLoadPolicy == .keepWarmAfterJob)
-
-        // An invalid/renamed raw value → the default, not a decode failure.
-        #expect(AppleScriptLoadPolicy(storedValue: "garbage") == .keepWarmAfterJob)
-        #expect(AppleScriptLoadPolicy(storedValue: "single_residency") == .singleResidency)
-        #expect(AppleScriptLoadPolicy.singleResidency.keepWarmSeconds == 0)
-        #expect(AppleScriptLoadPolicy.keepWarmAfterJob.keepWarmSeconds == 90)
-    }
-
-    @Test("mac_query read-model split defaults on, round-trips, and survives normalize")
-    func appleScriptQueryResidentModelRoundTrips() throws {
-        // Default ON: the read path skips the dedicated-model handoff.
-        #expect(SubagentConfiguration.default.appleScriptQueryPrefersResidentModel == true)
-
-        // An explicit opt-out survives encode → decode → normalized (the
-        // store normalizes on every save+load; dropping it back to the init
-        // default would make the toggle un-disableable).
-        let config = SubagentConfiguration(appleScriptQueryPrefersResidentModel: false)
-        let data = try JSONEncoder().encode(config)
-        let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
-        #expect(decoded.appleScriptQueryPrefersResidentModel == false)
-        #expect(decoded.normalized.appleScriptQueryPrefersResidentModel == false)
-
-        // Absent (legacy config) → on.
-        let legacy = try JSONDecoder().decode(
-            SubagentConfiguration.self,
-            from: Data(#"{"localTextDelegationEnabled":true}"#.utf8)
-        )
-        #expect(legacy.appleScriptQueryPrefersResidentModel == true)
+        #expect(legacy.localTextDelegationEnabled == true)
+        #expect(legacy.permissionDefaults.policy(for: "spawn") == .deny)
+        let reencoded = String(decoding: try JSONEncoder().encode(legacy), as: UTF8.self)
+        #expect(!reencoded.contains("defaultAppleScriptModelId"))
+        #expect(!reencoded.contains("appleScriptLoadPolicy"))
     }
 
     @Test("budget normalization clamps invalid values")

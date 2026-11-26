@@ -3,7 +3,7 @@
   "domain": "judge_calibration",
   "label": "Judge • verbatim fidelity vs. paraphrase",
   "query": "(calibration) The judge must verify an exact quoted phrase, not accept a close paraphrase.",
-  "notes": "Verbatim probe mirroring the AppleScript liveProof lane: one condition demands the exact phrase (the reply paraphrased it → fail), the other only demands the topic (pass). A judge that treats paraphrase as quotation fails condition 1.",
+  "notes": "Verbatim probe: one condition demands the exact phrase (the reply paraphrased it → fail), the other only demands the topic (pass). A judge that treats paraphrase as quotation fails condition 1.",
   "fixtures": {},
   "expect": {
     "judgeCalibration": {

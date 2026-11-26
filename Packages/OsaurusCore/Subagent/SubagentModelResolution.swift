@@ -113,7 +113,8 @@ enum SubagentModelResolution {
     /// `agentId` is the launching agent whose override map + settings are read
     /// (spawn/computer_use pass `scope.agentId`). `defaultModel` is the kind's
     /// default model source, evaluated on the main actor only when no override
-    /// is configured. An unavailable configured override fails closed.
+    /// is configured. An unavailable configured override fails closed, with
+    /// `assignedUnavailableMessage(id)` when given so the error names the model.
     ///
     /// The delegated dispatcher carries the resolved model into the child so
     /// execution uses the same model admission priced.
@@ -125,6 +126,7 @@ enum SubagentModelResolution {
         idleWaitSeconds: Int,
         deniedMessage: String,
         unavailableMessage: String,
+        assignedUnavailableMessage: (@Sendable (String) -> String)? = nil,
         honorConfiguredOverride: Bool = true,
         defaultModel: @escaping @Sendable @MainActor () -> String?
     ) async throws -> Resolved {
@@ -149,7 +151,9 @@ enum SubagentModelResolution {
                 )
                 if let configuredOverride = trimmedNonEmpty(configuredOverride) {
                     guard let available = availableOverride(configuredOverride) else {
-                        throw SubagentError.unavailable(unavailableMessage)
+                        throw SubagentError.unavailable(
+                            assignedUnavailableMessage?(configuredOverride) ?? unavailableMessage
+                        )
                     }
                     return available
                 }

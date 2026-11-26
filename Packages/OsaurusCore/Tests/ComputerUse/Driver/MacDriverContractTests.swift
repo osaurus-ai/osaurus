@@ -47,6 +47,13 @@ final class MacDriverKeyVocabularyTests: XCTestCase {
         XCTAssertFalse(flags.contains(.maskControl))
         XCTAssertTrue(parseModifierFlags(nil).isEmpty)
     }
+
+    func testEveryAcceptedModifierNameMapsToAFlag() throws {
+        for name in AgentAction.modifierNames {
+            XCTAssertFalse(parseModifierFlags([name]).isEmpty, name)
+        }
+        XCTAssertTrue(parseModifierFlags(["q"]).isEmpty)
+    }
 }
 
 final class MacDriverCaptureModeTests: XCTestCase {

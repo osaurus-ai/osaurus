@@ -146,6 +146,7 @@ public struct NativeMacDriver: MacDriver {
                 if let maxElements { filter.maxElements = maxElements }
                 if focusedWindowOnly { filter.focusedWindowOnly = true }
                 filter.interactiveOnly = interactiveOnly
+                filter.passiveValueLimit = ElementFilter.capturePassiveValueLimit
                 return AccessibilityManager.shared.traverse(filter: filter)
             }
             return mapSnapshot(snapshot, tier: .ax, image: nil)
@@ -156,7 +157,8 @@ public struct NativeMacDriver: MacDriver {
                 mode: mode,
                 windowId: windowId,
                 maxElements: maxElements,
-                focusedWindowOnly: focusedWindowOnly
+                focusedWindowOnly: focusedWindowOnly,
+                interactiveOnly: interactiveOnly
             )
             return mapSnapshot(som.snapshot, tier: tier, image: som.image.map(mapImage))
         }
@@ -209,6 +211,14 @@ public struct NativeMacDriver: MacDriver {
             case let .clearField(id):
                 return mapActionResult(ElementInteraction.shared.clearElement(id: id))
 
+            case let .selectOption(id, option):
+                return mapActionResult(ElementInteraction.shared.selectOption(id: id, option: option))
+
+            case let .adjust(id, increment, steps):
+                return mapActionResult(
+                    ElementInteraction.shared.adjustElement(id: id, increment: increment, steps: steps)
+                )
+
             case let .typeText(id, pid, text, replace):
                 // Resolve target pid: explicit > derived from element id > most recent.
                 let resolvedPid: Int32? =
@@ -224,6 +234,13 @@ public struct NativeMacDriver: MacDriver {
                         // case typing simply appends.
                         _ = ElementInteraction.shared.clearElement(id: elementId)
                     }
+                }
+
+                if let pid = resolvedPid,
+                    AXTextInsertion.isEligible(text: text, isChromium: BundleClass.isChromium(pid: pid)),
+                    ElementInteraction.shared.insertAtCaret(id: id, pid: pid, text: text)
+                {
+                    return CUActionResult.ok(delta: computeFocusDelta(pid: pid).map(mapDelta))
                 }
 
                 let result: InputResult
@@ -287,8 +304,9 @@ public struct NativeMacDriver: MacDriver {
             case let .scroll(direction, amount, x, y, pid):
                 let dir = mapScroll(direction)
                 if let pid {
+                    let point = x.flatMap { x in y.map { CGPoint(x: x, y: $0) } }
                     return mapInputResult(
-                        BackgroundDriver.shared.scroll(pid: pid, direction: dir, amount: amount),
+                        BackgroundDriver.shared.scroll(pid: pid, direction: dir, amount: amount, at: point),
                         routeUsed: inputRoute(pidAddressed: true)
                     )
                 }
@@ -297,6 +315,16 @@ public struct NativeMacDriver: MacDriver {
                     MouseController.shared.scroll(direction: dir, amount: amount),
                     routeUsed: inputRoute(pidAddressed: false)
                 )
+
+            case let .move(x, y, pid):
+                let point = CGPoint(x: x, y: y)
+                if let pid {
+                    return mapInputResult(
+                        BackgroundDriver.shared.move(pid: pid, to: point),
+                        routeUsed: inputRoute(pidAddressed: true)
+                    )
+                }
+                return mapInputResult(MouseController.shared.moveTo(point), routeUsed: inputRoute(pidAddressed: false))
 
             case let .drag(startX, startY, endX, endY, pid):
                 let start = CGPoint(x: startX, y: startY)
@@ -325,6 +353,19 @@ public struct NativeMacDriver: MacDriver {
         guard let captured = await ScreenshotController.shared.capture(options: opts) else {
             return nil
         }
+        return mapImage(captured)
+    }
+
+    /// Longest side of a zoom close-up, in pixels.
+    static let maxZoomPixelEdge = 1568
+
+    public func zoom(pid: Int32, region: CUScreenRegion) async -> CUImage? {
+        var opts = ScreenshotOptions()
+        opts.pid = pid
+        opts.crop = CGRect(x: region.x, y: region.y, width: region.w, height: region.h)
+        opts.scale = 1
+        opts.maxPixelEdge = Self.maxZoomPixelEdge
+        guard let captured = await ScreenshotController.shared.capture(options: opts) else { return nil }
         return mapImage(captured)
     }
 
@@ -387,7 +428,15 @@ private func mapSnapshot(
 }
 
 private func mapImage(_ c: CapturedImage) -> CUImage {
-    CUImage(base64: c.base64, mimeType: c.mimeType, width: c.width, height: c.height)
+    CUImage(
+        base64: c.base64,
+        mimeType: c.mimeType,
+        width: c.width,
+        height: c.height,
+        region: c.bounds.map {
+            CUScreenRegion(x: Double($0.minX), y: Double($0.minY), w: Double($0.width), h: Double($0.height))
+        }
+    )
 }
 
 private func mapDelta(_ d: FocusDelta) -> CUFocusDelta {

@@ -159,7 +159,6 @@ public final class ComputerUsePromptQueue: ObservableObject {
     }
 
     static let typedTextDetailLimit = 2_000
-    static let scriptDetailLimit = 4_000
 
     /// The step as the owner's other devices show it before answering.
     static func detail(for preview: ActionPreview) -> Data? {
@@ -171,11 +170,6 @@ public final class ComputerUsePromptQueue: ObservableObject {
         if let typed = preview.typedText, !typed.isEmpty {
             let clipped = AttentionDetail.clip(typed, typedTextDetailLimit)
             object["typedText"] = clipped.text
-            cut = cut || clipped.cut
-        }
-        if let script = preview.scriptBody, !script.isEmpty {
-            let clipped = AttentionDetail.clip(script, scriptDetailLimit)
-            object["script"] = clipped.text
             cut = cut || clipped.cut
         }
         if cut { object["truncated"] = true }
@@ -286,6 +280,15 @@ public final class ComputerUsePromptQueue: ObservableObject {
 
     // MARK: - Teardown
 
+    /// Deny every pending prompt for `toolCallId` as soon as `interrupt` trips,
+    /// whichever control tripped it (feed Stop, takeover pill, Esc). Returns
+    /// the observer to remove when the run ends.
+    nonisolated static func cancelOnInterrupt(_ interrupt: InterruptToken, toolCallId: String) -> UUID {
+        interrupt.observeInterrupt {
+            Task { @MainActor in ComputerUsePromptQueue.shared.cancelAll(forToolCallId: toolCallId) }
+        }
+    }
+
     /// Deny + clear every pending prompt (confirm + consent) for a run and drop
     /// its "approve remaining" thresholds. Called on interrupt / teardown, and
     /// by the feed's Stop control so Stop works even while a card is up.
@@ -332,7 +335,6 @@ extension ComputerUsePromptQueue {
             if let target = preview.targetLabel { row["target"] = target }
             if let note = preview.note { row["note"] = note }
             if let typed = preview.typedText { row["typed_text"] = typed }
-            if let script = preview.scriptBody { row["script"] = script }
             return row
         }
         rows += pendingConsent.filter(\.fromPairedPhone).map { request -> [String: Any] in

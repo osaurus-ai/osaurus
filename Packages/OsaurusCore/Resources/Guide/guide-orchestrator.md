@@ -56,7 +56,7 @@ Custom agents with delegation turned on hand work to other agents with `spawn_ag
 
 Agents teammates share into a workspace you belong to are delegation targets too. Ask "who can I delegate to?" and the Configurator lists them (name, owner, workspace, online/offline, whether each is already in **Allowed subagents**). The Orchestrator addresses them as `Name@Workspace`. If a shared agent is offline the call is refused with the reason and the Orchestrator re-plans to another agent or tells you. See the Workspaces topic for sharing, workspace credits, and what comes back from a teammate's Mac.
 
-Image generation, AppleScript, Browser Use, and Computer Use are custom-agent abilities. Give such an agent to the Orchestrator through **Allowed subagents**; there are no Orchestrator-level toggles for them.
+Image generation, Browser Use, and Computer Use are custom-agent abilities. Give such an agent to the Orchestrator through **Allowed subagents**; there are no Orchestrator-level toggles for them.
 
 ## Workflows and automations
 

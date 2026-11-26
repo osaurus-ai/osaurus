@@ -450,9 +450,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let speakEnabled: Bool?
         /// Expose the `search_memory` recall tool.
         public let searchMemoryEnabled: Bool?
-        /// Expose `applescript` / `mac_query` delegation tools (requires an
-        /// installed AppleScript model at run time).
-        public let appleScriptEnabled: Bool?
         /// Expose the `calculate` tool.
         public let calculatorEnabled: Bool?
         /// Expose `detect_pii` / `redact_file` in host-folder runs.
@@ -475,7 +472,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             renderChartEnabled: Bool? = nil,
             speakEnabled: Bool? = nil,
             searchMemoryEnabled: Bool? = nil,
-            appleScriptEnabled: Bool? = nil,
             calculatorEnabled: Bool? = nil,
             redactionToolsEnabled: Bool? = nil,
             taskChecklistEnabled: Bool? = nil,
@@ -490,7 +486,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.renderChartEnabled = renderChartEnabled
             self.speakEnabled = speakEnabled
             self.searchMemoryEnabled = searchMemoryEnabled
-            self.appleScriptEnabled = appleScriptEnabled
             self.calculatorEnabled = calculatorEnabled
             self.redactionToolsEnabled = redactionToolsEnabled
             self.taskChecklistEnabled = taskChecklistEnabled
@@ -506,7 +501,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public var requestsAnyCapability: Bool {
             (dbEnabled ?? false) || (selfSchedulingEnabled ?? false)
                 || (renderChartEnabled ?? false) || (speakEnabled ?? false)
-                || (searchMemoryEnabled ?? false) || (appleScriptEnabled ?? false)
+                || (searchMemoryEnabled ?? false)
                 || (calculatorEnabled ?? false) || (redactionToolsEnabled ?? false)
                 || taskChecklistEnabled == false || clarifyEnabled == false
                 || artifactsEnabled == false
@@ -785,6 +780,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// actually drive Computer Use", with no real Accessibility / Screen
         /// Recording and no flaky on-screen UI.
         public let computerUseLoop: ComputerUseLoopExpectations?
+        /// Expectation for `domain == "computer_use_grounding"` cases: the
+        /// model is shown the synthetic calibration screens and scored on
+        /// point-in-box accuracy per coordinate frame, with token/s.
+        public let computerUseGrounding: ComputerUseGroundingExpectations?
         /// Behaviour expectation for `domain == "default_agent"` cases. Drives
         /// `DefaultAgentConfigurationEvaluator` (the multi-turn loop pinned to
         /// the built-in Default configuration agent) and scores deterministic
@@ -807,16 +806,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// scripted lane is CI-safe (no model); the spawn/image lanes skip
         /// gracefully when the host has no spawnable agent / image model.
         public let subagent: SubagentExpectations?
-        /// Capability expectation for `domain == "apple_script"` cases. Drives
-        /// the production `AppleScriptLoop` through `AppleScriptEvaluator` in one
-        /// of three lanes (`scripted` model-free, `live` real-model + mock
-        /// executor, `liveProof` real-model + real executor) and scores the run:
-        /// status / outcome, placeholder use, generated-script matchers, captured
-        /// values, blocked writes, effect classes, mock-world (or real) final
-        /// state, step / token ceilings, and an optional LLM-judge rubric. The
-        /// scripted lane is CI-safe (no model); the `live` / `liveProof` lanes
-        /// skip gracefully when no AppleScript model is installed.
-        public let appleScript: AppleScriptExpectations?
         /// Calibration expectation for `domain == "judge_calibration"` cases:
         /// a frozen assistant reply + rubric conditions whose correct verdicts
         /// are KNOWN. The runner grades the reply with the resolved judge and
@@ -909,10 +898,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             agentLoop: AgentLoopExpectations? = nil,
             computerUse: ComputerUseExpectations? = nil,
             computerUseLoop: ComputerUseLoopExpectations? = nil,
+            computerUseGrounding: ComputerUseGroundingExpectations? = nil,
             defaultAgent: DefaultAgentExpectations? = nil,
             screenContext: ScreenContextExpectations? = nil,
             subagent: SubagentExpectations? = nil,
-            appleScript: AppleScriptExpectations? = nil,
             judgeCalibration: JudgeCalibrationExpectations? = nil,
             microPerf: MicroPerfExpectations? = nil,
             reasoning: ReasoningChannelExpectations? = nil,
@@ -941,10 +930,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.agentLoop = agentLoop
             self.computerUse = computerUse
             self.computerUseLoop = computerUseLoop
+            self.computerUseGrounding = computerUseGrounding
             self.defaultAgent = defaultAgent
             self.screenContext = screenContext
             self.subagent = subagent
-            self.appleScript = appleScript
             self.judgeCalibration = judgeCalibration
             self.microPerf = microPerf
             self.reasoning = reasoning
@@ -2995,6 +2984,24 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     /// `ComputerUseLoop` finishes. The model only ever sees the rendered
     /// `AgentView` (numbered marks, roles, labels, values) — never the
     /// element ids or this scene definition.
+    public struct ComputerUseGroundingExpectations: Sendable, Codable {
+        /// Fraction of screens the measured frame must hit. Default 2/3, the
+        /// same bar calibration uses to adopt a frame.
+        public let minHitFraction: Double?
+        /// The frame the model must point in (`pixels`, `normalized1000`,
+        /// `normalizedUnit`), when the case pins one.
+        public let expectFrame: String?
+        /// Model-free lane: synthesize answers at each target's center in
+        /// this frame instead of calling the model.
+        public let scriptedFrame: String?
+
+        public init(minHitFraction: Double? = nil, expectFrame: String? = nil, scriptedFrame: String? = nil) {
+            self.minHitFraction = minHitFraction
+            self.expectFrame = expectFrame
+            self.scriptedFrame = scriptedFrame
+        }
+    }
+
     public struct ComputerUseLoopExpectations: Sendable, Codable {
 
         /// One scripted element in the fake accessibility tree. `role` mirrors
@@ -3044,6 +3051,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             /// The element is below the fold: absent until the loop performs a
             /// `scroll`, then it stays visible. Exercises scroll-to-find.
             public let revealOnScroll: Bool?
+            /// Titles a `select` on this element can pick; picking one sets
+            /// the element's value. nil → the element has no option list.
+            public let options: [String]?
 
             public init(
                 id: String,
@@ -3058,7 +3068,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 minTier: String? = nil,
                 clickFailures: Int? = nil,
                 revealAfterCaptures: Int? = nil,
-                revealOnScroll: Bool? = nil
+                revealOnScroll: Bool? = nil,
+                options: [String]? = nil
             ) {
                 self.id = id
                 self.role = role
@@ -3073,6 +3084,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 self.clickFailures = clickFailures
                 self.revealAfterCaptures = revealAfterCaptures
                 self.revealOnScroll = revealOnScroll
+                self.options = options
             }
         }
 
@@ -3198,6 +3210,13 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// the capture right after it is empty — the "app launched but exposed
         /// no window in time" shape the loop must report as a failed open.
         public let openNotReady: Bool?
+        /// The `app` argument of `computer_use`: the run opens it in the
+        /// background before the first step. nil → the run starts in the
+        /// frontmost app after the takeover question.
+        public let targetApp: String?
+        /// When true, the user answers no to "Take over <app>?". Only asked
+        /// when `targetApp` is nil.
+        public let declineTakeover: Bool?
         /// `RunLimits.requireVerifiedChangeForDone`. nil → the production
         /// default (true). Set false only for scenes that intentionally
         /// exercise gate/parse contracts with a static tree.
@@ -3212,6 +3231,20 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// feed event title — how a case pins loop-side reporting (e.g. an
         /// "Open X: not ready" event) that never lands in the tree or summary.
         public let feedTitleContains: [String]?
+        /// Case-insensitive substrings no feed event title may contain — how a
+        /// case pins that typed text stays out of the stored feed.
+        public let feedTitleExcludes: [String]?
+        /// `local` runs the loop as for an on-device model that takes images,
+        /// so `screenshot` / `zoom` frames and `target.point` are live; `none`
+        /// keeps every pixel from the model. nil → a model-driven case uses
+        /// the model's own vision posture (as the chat path resolves it, with
+        /// cloud-vision consent off), a scripted case gets no pixels.
+        public let vision: String?
+        /// Bounds on `metrics.confirmsRequested`. nil → not scored.
+        public let minConfirms: Int?
+        public let maxConfirms: Int?
+        /// Ceiling on `metrics.actsAttempted` (driver acts). nil → not scored.
+        public let maxActsAttempted: Int?
 
         public init(
             app: String,
@@ -3234,10 +3267,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             confirmDelaySeconds: Double? = nil,
             confirmUnavailable: Bool? = nil,
             openNotReady: Bool? = nil,
+            targetApp: String? = nil,
+            declineTakeover: Bool? = nil,
             requireVerifiedChangeForDone: Bool? = nil,
             minUnverifiedActs: Int? = nil,
             minVerifyChanged: Int? = nil,
-            feedTitleContains: [String]? = nil
+            feedTitleContains: [String]? = nil,
+            feedTitleExcludes: [String]? = nil,
+            vision: String? = nil,
+            minConfirms: Int? = nil,
+            maxConfirms: Int? = nil,
+            maxActsAttempted: Int? = nil
         ) {
             self.app = app
             self.elements = elements
@@ -3259,10 +3299,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.confirmDelaySeconds = confirmDelaySeconds
             self.confirmUnavailable = confirmUnavailable
             self.openNotReady = openNotReady
+            self.targetApp = targetApp
+            self.declineTakeover = declineTakeover
             self.requireVerifiedChangeForDone = requireVerifiedChangeForDone
             self.minUnverifiedActs = minUnverifiedActs
             self.minVerifyChanged = minVerifyChanged
             self.feedTitleContains = feedTitleContains
+            self.feedTitleExcludes = feedTitleExcludes
+            self.vision = vision
+            self.minConfirms = minConfirms
+            self.maxConfirms = maxConfirms
+            self.maxActsAttempted = maxActsAttempted
         }
     }
 
@@ -3755,314 +3802,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectResidencyPhases = expectResidencyPhases
             self.maxPhaseSeconds = maxPhaseSeconds
             self.expectPostRunCache = expectPostRunCache
-        }
-    }
-
-    /// Expectation for `domain == "apple_script"` cases. Selects a lane via
-    /// `lane` and scores the resulting `AppleScriptEvalTranscript`:
-    ///   - `scripted`  — model-free. A canned sequence of `run_applescript`
-    ///     arguments drives the REAL `AppleScriptLoop` (gate / literal
-    ///     expansion / effect classification / verification) against a mock
-    ///     executor, so the whole mechanic runs in CI with no tokens.
-    ///   - `live`      — the real on-device AppleScript model proposes scripts;
-    ///     a mock executor (canned results or a keyed "app world") answers, so
-    ///     there are NO OS side effects. The capability / edge lane.
-    ///   - `liveProof` — the real model + the REAL `AppleScriptExecutor` against
-    ///     actual app state (permission-gated, run locally) — verbatim ground
-    ///     truth.
-    /// The `live` / `liveProof` lanes SKIP (not fail) when no AppleScript model
-    /// is installed. Every present matcher must pass; an empty matcher set just
-    /// records the transcript.
-    public struct AppleScriptExpectations: Sendable, Codable {
-
-        // MARK: - Lane + run inputs
-
-        /// `"scripted"` (default) | `"live"` | `"liveProof"`.
-        public let lane: String?
-        /// `"automate"` (default) | `"query"` — the loop's run mode.
-        public let mode: String?
-        /// `AppleScriptExecutionMode` raw value: `"confirmEach"` |
-        /// `"autoRunWithWarning"` (the eval default). `confirmEach` also
-        /// exercises the confirm gate, auto-answered by `confirmApproves`.
-        public let executionMode: String?
-        /// A single verbatim literal, inserted via the `{{content}}` placeholder.
-        public let content: String?
-        /// Several named verbatim literals `{ name: text }`, each inserted via
-        /// its own `{{name}}` placeholder (the multi-literal contract). Wins over
-        /// `content` on a shared `content` key.
-        public let contents: [String: String]?
-        /// The confirm-each answer for `automate` runs. nil → approve.
-        public let confirmApproves: Bool?
-        /// Productive-step budget for the loop. nil → 12.
-        public let maxSteps: Int?
-        /// Wall-clock budget for the whole run, seconds. nil → 240. Long
-        /// multi-step cases (slow models, 6+ sequential scripts) need more.
-        public let wallClockSeconds: Double?
-        /// Per-model-step inference budget, seconds. nil → the loop default
-        /// (90). A slow model's step gets cancelled + retried at this bound,
-        /// so multi-step cases against slow models must raise it.
-        public let modelStepTimeoutSeconds: Double?
-        /// EXPLICIT sampling-temperature override (e.g. `0` for a greedy
-        /// isolation A/B). nil → the model bundle's own generation defaults.
-        /// This is a case-declared override recorded with the run — never a
-        /// hidden synthetic default.
-        public let samplingTemperature: Double?
-        /// Scripted lane only: `run_applescript` arguments-JSON strings, one per
-        /// step, that drive the loop with no model call. Ignored on live lanes.
-        public let scriptedCalls: [String]?
-        /// Optional desktop-context string injected into the run (e.g. a
-        /// frontmost / running-apps snapshot), so a case can prove the model
-        /// uses the injected context. Honored only when the harness
-        /// `includeDesktopContext` is on (the shipped default). nil → none.
-        public let environmentContext: String?
-
-        // MARK: - Executor
-
-        /// How the loop's `execute:` seam is satisfied. nil → a mock that
-        /// returns success for every script (pure mechanics). `liveProof` always
-        /// forces the real executor regardless of this.
-        public let executor: ExecutorSpec?
-
-        // MARK: - Harness levers (the sweep variables)
-
-        public let harness: HarnessSpec?
-
-        // MARK: - Assertions (any subset; an empty set just records)
-
-        /// Aggregate task status that must be reached: `"succeeded"` |
-        /// `"partial"` | `"failed"`.
-        public let expectStatus: String?
-        /// Acceptable loop outcomes: `"done"` | `"stepCapReached"` |
-        /// `"interrupted"` | `"failed"`. nil → not scored.
-        public let expectOutcome: [String]?
-        /// Literal names that MUST appear as `{{name}}` in at least one script
-        /// the model emitted (proven from the pre-expansion proposal) — the
-        /// "insert verbatim, don't re-type" check.
-        public let mustUsePlaceholders: [String]?
-        /// Case-sensitive substrings at least one EXECUTED (expanded) script must
-        /// contain.
-        public let scriptMustContain: [String]?
-        /// Substrings NO executed script may contain (e.g. a destructive verb).
-        public let scriptMustNotContain: [String]?
-        /// Regexes at least one executed script must match.
-        public let scriptMustMatch: [String]?
-        /// Case-insensitive substrings the captured value (`lastOutput`) must
-        /// contain — the `mac_query` / read-back result check.
-        public let valuesContain: [String]?
-        /// Assert a write was blocked and never executed (query-mode safety).
-        public let expectBlockedWrite: Bool?
-        /// Effect classes that must appear across the model's proposals:
-        /// `"read"` | `"edit"` | `"consequential"`.
-        public let expectEffects: [String]?
-        /// Effect classes that must NOT appear (e.g. `"consequential"` when no
-        /// destructive verb was requested).
-        public let forbidEffects: [String]?
-        /// Final-state predicates against the mock world. Keys: `"note:<name>"`,
-        /// `"volume"`. Empty on the real / canned executors (records only).
-        public let finalState: [StatePredicate]?
-        /// Efficiency ceiling: scripts executed must be ≤ this. nil → reported
-        /// only.
-        public let scoredMaxSteps: Int?
-        /// Cost ceiling: total model tokens must be ≤ this. nil → reported only.
-        public let scoredMaxModelTokens: Int?
-        /// LLM-judge rubric — Grok grades whether the generated script correctly
-        /// accomplishes the task (robust to script variety, unlike string
-        /// matching). Only run on `live` / `liveProof`; skipped (recorded) when
-        /// the resolved judge would be the run model itself.
-        public let rubric: [String]?
-
-        /// How the loop's `execute:` seam is backed for a case.
-        public struct ExecutorSpec: Sendable, Codable {
-            /// `"mock"` (default) | `"real"`.
-            public let kind: String?
-            /// Mock: canned per-step results (repeats the last once exhausted).
-            /// Empty / nil → success for every script.
-            public let mockResults: [ResultSpec]?
-            /// Mock: seed a keyed "app world" (note bodies, volume) that records
-            /// writes and answers reads, for `finalState` assertions. Takes
-            /// precedence over `mockResults` when present.
-            public let mockWorld: WorldSeed?
-            /// Real executor only: a tiny READ-ONLY probe script against the
-            /// same app the task automates, run with a short bound before the
-            /// model loop. If it can't answer (pending/denied Automation
-            /// consent on an unattended host) the case SKIPs honestly instead
-            /// of parking the suite on the consent dialog until the per-case
-            /// watchdog kills the whole process (observed live: 600s trip +
-            /// 14 downstream cases lost, for every model).
-            public let probe: String?
-
-            public init(
-                kind: String? = nil,
-                mockResults: [ResultSpec]? = nil,
-                mockWorld: WorldSeed? = nil,
-                probe: String? = nil
-            ) {
-                self.kind = kind
-                self.mockResults = mockResults
-                self.mockWorld = mockWorld
-                self.probe = probe
-            }
-
-            /// One canned execution result the mock hands back.
-            public struct ResultSpec: Sendable, Codable {
-                /// `AppleScriptExecutionResult.Status` raw value: `"success"` |
-                /// `"compileError"` | `"runtimeError"` | `"permissionRequired"` |
-                /// `"timedOut"` (snake_case aliases accepted). nil → success.
-                public let status: String?
-                public let output: String?
-                public let errorNumber: Int?
-                public let errorMessage: String?
-
-                public init(
-                    status: String? = nil,
-                    output: String? = nil,
-                    errorNumber: Int? = nil,
-                    errorMessage: String? = nil
-                ) {
-                    self.status = status
-                    self.output = output
-                    self.errorNumber = errorNumber
-                    self.errorMessage = errorMessage
-                }
-            }
-
-            /// Seed state for the mock "app world".
-            public struct WorldSeed: Sendable, Codable {
-                /// Note name → seeded body.
-                public let notes: [String: String]?
-                /// Seeded system output volume (0–100).
-                public let volume: Int?
-                /// Seeded front Safari document URL.
-                public let safariURL: String?
-                /// Seeded Mail inbox unread count.
-                public let mailUnread: Int?
-                /// Seeded frontmost application process name (System Events).
-                public let frontmostApp: String?
-                /// Seeded Finder folder names (each reads as existing).
-                public let folders: [String]?
-
-                public init(
-                    notes: [String: String]? = nil,
-                    volume: Int? = nil,
-                    safariURL: String? = nil,
-                    mailUnread: Int? = nil,
-                    frontmostApp: String? = nil,
-                    folders: [String]? = nil
-                ) {
-                    self.notes = notes
-                    self.volume = volume
-                    self.safariURL = safariURL
-                    self.mailUnread = mailUnread
-                    self.frontmostApp = frontmostApp
-                    self.folders = folders
-                }
-            }
-        }
-
-        /// `AppleScriptHarnessOptions` toggles surfaced to the suite so a case /
-        /// sweep can A/B the harness against the fixed model. nil fields keep
-        /// today's shipped production behavior.
-        public struct HarnessSpec: Sendable, Codable {
-            public let verifyReadBack: Bool?
-            public let includeDesktopContext: Bool?
-            /// Inject the target app's distilled scripting dictionary (sdef).
-            public let includeDictionaryContext: Bool?
-            /// Inject the curated per-app AppleScript idiom tips.
-            public let includeAppRecipes: Bool?
-            /// `"standard"` | `"concise"`.
-            public let promptVariant: String?
-            /// `"namePreview"` | `"nameOnly"` | `"minimal"`.
-            public let literalAnnouncementStyle: String?
-
-            public init(
-                verifyReadBack: Bool? = nil,
-                includeDesktopContext: Bool? = nil,
-                includeDictionaryContext: Bool? = nil,
-                includeAppRecipes: Bool? = nil,
-                promptVariant: String? = nil,
-                literalAnnouncementStyle: String? = nil
-            ) {
-                self.verifyReadBack = verifyReadBack
-                self.includeDesktopContext = includeDesktopContext
-                self.includeDictionaryContext = includeDictionaryContext
-                self.includeAppRecipes = includeAppRecipes
-                self.promptVariant = promptVariant
-                self.literalAnnouncementStyle = literalAnnouncementStyle
-            }
-        }
-
-        /// A final-state assertion against one mock-world key.
-        public struct StatePredicate: Sendable, Codable {
-            /// `"note:<name>"` or `"volume"`.
-            public let key: String
-            public let equals: String?
-            public let contains: String?
-
-            public init(key: String, equals: String? = nil, contains: String? = nil) {
-                self.key = key
-                self.equals = equals
-                self.contains = contains
-            }
-        }
-
-        public init(
-            lane: String? = nil,
-            mode: String? = nil,
-            executionMode: String? = nil,
-            content: String? = nil,
-            contents: [String: String]? = nil,
-            confirmApproves: Bool? = nil,
-            maxSteps: Int? = nil,
-            wallClockSeconds: Double? = nil,
-            modelStepTimeoutSeconds: Double? = nil,
-            samplingTemperature: Double? = nil,
-            scriptedCalls: [String]? = nil,
-            environmentContext: String? = nil,
-            executor: ExecutorSpec? = nil,
-            harness: HarnessSpec? = nil,
-            expectStatus: String? = nil,
-            expectOutcome: [String]? = nil,
-            mustUsePlaceholders: [String]? = nil,
-            scriptMustContain: [String]? = nil,
-            scriptMustNotContain: [String]? = nil,
-            scriptMustMatch: [String]? = nil,
-            valuesContain: [String]? = nil,
-            expectBlockedWrite: Bool? = nil,
-            expectEffects: [String]? = nil,
-            forbidEffects: [String]? = nil,
-            finalState: [StatePredicate]? = nil,
-            scoredMaxSteps: Int? = nil,
-            scoredMaxModelTokens: Int? = nil,
-            rubric: [String]? = nil
-        ) {
-            self.lane = lane
-            self.mode = mode
-            self.executionMode = executionMode
-            self.content = content
-            self.contents = contents
-            self.confirmApproves = confirmApproves
-            self.maxSteps = maxSteps
-            self.wallClockSeconds = wallClockSeconds
-            self.modelStepTimeoutSeconds = modelStepTimeoutSeconds
-            self.samplingTemperature = samplingTemperature
-            self.scriptedCalls = scriptedCalls
-            self.environmentContext = environmentContext
-            self.executor = executor
-            self.harness = harness
-            self.expectStatus = expectStatus
-            self.expectOutcome = expectOutcome
-            self.mustUsePlaceholders = mustUsePlaceholders
-            self.scriptMustContain = scriptMustContain
-            self.scriptMustNotContain = scriptMustNotContain
-            self.scriptMustMatch = scriptMustMatch
-            self.valuesContain = valuesContain
-            self.expectBlockedWrite = expectBlockedWrite
-            self.expectEffects = expectEffects
-            self.forbidEffects = forbidEffects
-            self.finalState = finalState
-            self.scoredMaxSteps = scoredMaxSteps
-            self.scoredMaxModelTokens = scoredMaxModelTokens
-            self.rubric = rubric
         }
     }
 

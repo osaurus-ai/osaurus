@@ -88,6 +88,62 @@ final class EffectClassifierTests: XCTestCase {
         XCTAssertEqual(EffectClassifier.classify(action: bareReturn), .edit)
     }
 
+    func testDeleteQuitAndForceQuitChordsAreConsequential() {
+        let chords: [(String, [String])] = [
+            ("delete", ["cmd"]),
+            ("backspace", ["command"]),
+            ("forwarddelete", ["cmd"]),
+            ("delete", ["shift", "cmd"]),
+            ("q", ["cmd"]),
+            ("Q", ["shift", "cmd"]),
+            ("q", ["ctrl", "cmd"]),
+            ("escape", ["option", "cmd"]),
+            ("esc", ["alt", "command"]),
+        ]
+        for (key, modifiers) in chords {
+            let action = AgentAction(verb: .pressKey, key: key, modifiers: modifiers)
+            let effect = EffectClassifier.classify(action: action)
+            XCTAssertEqual(effect, .consequential, "\(modifiers) \(key)")
+            XCTAssertEqual(AutonomyPreset.trusted.disposition(for: effect), .confirm, "\(modifiers) \(key)")
+        }
+
+        let editChords: [(String, [String])] = [
+            ("delete", []),
+            ("q", []),
+            ("escape", []),
+            ("escape", ["cmd"]),
+            ("s", ["cmd"]),
+        ]
+        for (key, modifiers) in editChords {
+            let action = AgentAction(verb: .pressKey, key: key, modifiers: modifiers)
+            XCTAssertEqual(EffectClassifier.classify(action: action), .edit, "\(modifiers) \(key)")
+        }
+    }
+
+    /// Live finding: after the user declined ⌘Q under Trusted, the model clicked
+    /// the Apple menu's "Force Quit Calculator", which auto-ran as navigate.
+    func testMenuItemsThatEndSomethingAreConsequential() {
+        let labels = [
+            "Force Quit Calculator", "Quit Calculator", "Force Quit…", "Restart…", "Shut Down…",
+            "Lock Screen", "Log Out Taylor…",
+        ]
+        for label in labels {
+            let effect = EffectClassifier.classify(
+                action: AgentAction(verb: .click, target: AgentTarget(mark: 4)),
+                resolvedRole: "AXMenuItem",
+                resolvedLabel: label
+            )
+            XCTAssertEqual(effect, .consequential, label)
+            XCTAssertEqual(AutonomyPreset.trusted.disposition(for: effect), .confirm, label)
+        }
+        let about = EffectClassifier.classify(
+            action: AgentAction(verb: .click, target: AgentTarget(mark: 4)),
+            resolvedRole: "AXMenuItem",
+            resolvedLabel: "About This Mac"
+        )
+        XCTAssertEqual(about, .navigate)
+    }
+
     func testAmbiguousClickIsStricter() {
         // No mark resolution, no role, no describe → escalate navigate → edit.
         let blind = AgentAction(verb: .click, target: AgentTarget(describe: ""))
@@ -176,6 +232,18 @@ final class AutonomyPolicyTests: XCTestCase {
         let data = try JSONEncoder().encode(policy)
         let decoded = try JSONDecoder().decode(AutonomyPolicy.self, from: data)
         XCTAssertEqual(decoded, policy)
+    }
+
+    func testLockAppWhileWorkingDefaultsOnAndRoundTrips() throws {
+        let legacy = try JSONDecoder().decode(
+            AutonomyPolicy.self,
+            from: Data(#"{"globalPreset":"balanced","perApp":{}}"#.utf8)
+        )
+        XCTAssertTrue(legacy.lockAppWhileWorking, "policies saved before the setting existed lock by default")
+        var policy = AutonomyPolicy()
+        policy.lockAppWhileWorking = false
+        let decoded = try JSONDecoder().decode(AutonomyPolicy.self, from: JSONEncoder().encode(policy))
+        XCTAssertFalse(decoded.lockAppWhileWorking)
     }
 }
 

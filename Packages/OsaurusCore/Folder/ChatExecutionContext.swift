@@ -197,7 +197,7 @@ public enum ChatExecutionContext {
     @TaskLocal public static var toolResultImagesEnabled: Bool = false
 
     /// Explicit Thinking choice frozen for the logical parent turn. Nested
-    /// Computer Use, AppleScript, Browser Use, and spawn loops reconstruct their
+    /// Computer Use, Browser Use, and spawn loops reconstruct their
     /// own requests, so they read this value through `SubagentScope` instead of
     /// falling back to a different bundle default midway through one user turn.
     /// `nil` means the user made no explicit choice and the target bundle keeps

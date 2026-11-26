@@ -120,8 +120,7 @@ struct GenerationParameters: Sendable {
     /// choice (never accelerated) for paths that don't set it explicitly.
     let requestSource: RequestSource
     /// How the Privacy Filter confirms fresh detections for this request.
-    /// `.autoScrub` is set only by delegated loops (Computer Use,
-    /// AppleScript) so their model steps never wait on a review sheet.
+    /// `.autoScrub` is set only by delegated loops (Computer Use) so their model steps never wait on a review sheet.
     let privacyReviewMode: PrivacyReviewMode
     /// Whether this generation's model load may disturb a model someone else is
     /// using. `.interactive` (the default) keeps today's behaviour: a human is

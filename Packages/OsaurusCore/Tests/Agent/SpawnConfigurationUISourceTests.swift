@@ -95,7 +95,6 @@ struct SpawnConfigurationUISourceTests {
     func globalEditorsDoNotReplaceStaleSharedSnapshots() throws {
         let paths = [
             "Views/Settings/DelegationSettingsView.swift",
-            "Views/Model/AppleScriptAutomationView.swift",
             "Views/ImageGeneration/ImageGenerationView.swift",
         ]
 

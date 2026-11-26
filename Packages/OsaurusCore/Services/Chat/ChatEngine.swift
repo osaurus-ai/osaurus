@@ -263,7 +263,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         let repPenalty = request.generation.repetitionPenalty
         let seedBits: UInt64? = request.generation.seed.map { UInt64(bitPattern: Int64($0)) }
         let isJSONObject = (request.generation.outputFormat?.type == "json_object")
-        // Internal UI-owned agent loops (Computer Use, AppleScript, and
+        // Internal UI-owned agent loops (Computer Use and
         // delegated text agents) construct fresh requests on every step. They
         // do not own a composer-local option snapshot, so resolve the same
         // persisted per-model choice the visible picker writes. Keep this
@@ -328,10 +328,6 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             request.generation, to: modelOptions, modelID: request.model)
         try DeclaredReasoningEffort.validateModeRequest(modelId: request.model, options: modelOptions)
         ComputerUseTraceLog.recordEffectiveDispatch(
-            request: request,
-            modelOptions: modelOptions
-        )
-        AppleScriptTraceLog.recordEffectiveDispatch(
             request: request,
             modelOptions: modelOptions
         )

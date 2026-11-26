@@ -160,34 +160,6 @@ extension EvalRunner {
             )
         }
 
-        // AppleScript delegation cases need an installed AppleScript model —
-        // the tool schema is withheld otherwise (same semantics as the
-        // apple_script suite's live lanes).
-        let wantsAppleScript =
-            testCase.fixtures.agentCapabilities?.appleScriptEnabled == true
-            || (testCase.expect.agentLoop?.mustCallTools ?? []).contains(where: {
-                $0 == "applescript" || $0 == "mac_query"
-            })
-            || (testCase.expect.agentLoop?.mustCallAnyTools ?? []).contains(where: {
-                $0 == "applescript" || $0 == "mac_query"
-            })
-        if wantsAppleScript {
-            let ready = await MainActor.run { EvalHostBootstrap.hasReadyAppleScriptModel }
-            if !ready {
-                return .terminal(
-                    id: testCase.id,
-                    label: label,
-                    domain: testCase.domain,
-                    outcome: .skipped,
-                    notes: [
-                        "no AppleScript model installed; applescript/mac_query delegation "
-                            + "tools withheld — case skipped"
-                    ],
-                    modelId: modelId
-                )
-            }
-        }
-
         // Fresh per-case workspace. Deleted in all exits below.
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-agentloop-eval-\(UUID().uuidString)", isDirectory: true)
@@ -977,7 +949,6 @@ extension EvalRunner {
                 searchMemoryEnabled: caps?.searchMemoryEnabled ?? false,
                 selfSchedulingEnabled: caps?.selfSchedulingEnabled ?? false,
                 spawnDelegationEnabled: !(caps?.spawnAgents?.isEmpty ?? true),
-                appleScriptEnabled: caps?.appleScriptEnabled ?? false,
                 spawnableAgentIDs: spawnableAgentIDs,
                 subagentBudgets: {
                     var budgets = caps?.childBudgets ?? SubagentBudgets()

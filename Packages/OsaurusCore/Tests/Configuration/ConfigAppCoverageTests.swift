@@ -27,10 +27,7 @@ struct ConfigAppBehaviorEnumTests {
         // value rename upstream must fail here, not in a live apply.
         #expect(ConfigAppBehaviorEnums.permissionPolicies.contains("always_allow"))
         #expect(!ConfigAppBehaviorEnums.permissionKindIds.isEmpty)
-        #expect(ConfigAppBehaviorEnums.applescriptMode(forKey: "confirm_each") == .confirmEach)
-        #expect(
-            ConfigAppBehaviorEnums.applescriptMode(forKey: "auto_run_with_warning")
-                == .autoRunWithWarning)
+        #expect(!ConfigAppBehaviorEnums.permissionKindIds.contains("applescript"))
     }
 
     @Test
@@ -93,11 +90,9 @@ struct ConfigAppCoveragePlannerTests {
     func invalidEnumValues_failWithCanonicalLists() {
         let issues = planIssues { document in
             var delegation = DelegationSection()
-            delegation.applescriptExecutionMode = "just_run_it"
             delegation.permissionDefaults = ["spawn": "maybe"]
             document.delegation = delegation
         }
-        #expect(issues.contains { $0.contains("delegation.applescript_execution_mode") })
         #expect(issues.contains { $0.contains("delegation.permission_defaults") })
     }
 
@@ -163,15 +158,11 @@ struct ConfigAppCoveragePlannerTests {
         let plan = try plan { document in
             var section = DelegationSection()
             section.permissionDefaults = [kind: "always_allow"]
-            section.applescriptExecutionMode = "auto_run_with_warning"
             section.ramSafetyPreflight = false
             document.delegation = section
         }
         if current?.permissionDefaults?[kind] != "always_allow" {
             #expect(plan.risks.contains(ConfigRisk.alwaysAllowSubagent(kind)))
-        }
-        if current?.applescriptExecutionMode != "auto_run_with_warning" {
-            #expect(plan.risks.contains(ConfigRisk.applescriptAutoRun))
         }
         if current?.ramSafetyPreflight != false {
             #expect(plan.risks.contains(ConfigRisk.ramPreflightDisabled))

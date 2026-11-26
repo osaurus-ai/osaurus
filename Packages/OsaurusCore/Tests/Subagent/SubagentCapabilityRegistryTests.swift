@@ -208,7 +208,7 @@ struct SubagentCapabilityRegistryTests {
     @Test("the registry represents every shipped kind")
     func allRepresentsEveryKind() {
         let ids = Set(SubagentCapabilityRegistry.all.map(\.id))
-        #expect(ids == ["computer_use", "browser_use", "spawn", "image", "video", "applescript"])
+        #expect(ids == ["computer_use", "browser_use", "spawn", "image", "video"])
     }
 
     @Test("the modelSource axis records how each kind resolves its model")
@@ -243,9 +243,6 @@ struct SubagentCapabilityRegistryTests {
         #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .spawn)?.id == "spawn")
         #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .image)?.id == "image")
         #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .video)?.id == "video")
-        #expect(
-            SubagentCapabilityRegistry.capability(forPerAgentFlag: .appleScript)?.id == "applescript"
-        )
     }
 
     @Test("every descriptor carries a display label + icon for the feed and chip")
@@ -263,7 +260,7 @@ struct SubagentCapabilityRegistryTests {
         // One card per flag; image and video are independent media capabilities.
         #expect(
             SubagentCapabilityRegistry.perAgentToggleFlags
-                == [.computerUse, .browserUse, .spawn, .image, .video, .appleScript]
+                == [.computerUse, .browserUse, .spawn, .image, .video]
         )
     }
 
@@ -279,17 +276,12 @@ struct SubagentCapabilityRegistryTests {
         #expect(ToolRegistry.agentDelegationSpawnToolNames == Set(SubagentCapabilityRegistry.spawn.toolNames))
         #expect(ToolRegistry.agentDelegationImageToolNames == Set(SubagentCapabilityRegistry.image.toolNames))
         #expect(ToolRegistry.agentDelegationVideoToolNames == Set(SubagentCapabilityRegistry.video.toolNames))
-        #expect(
-            ToolRegistry.agentDelegationAppleScriptToolNames
-                == Set(SubagentCapabilityRegistry.appleScript.toolNames)
-        )
         // The "all" set is exactly the union of the per-family sets.
         #expect(
             ToolRegistry.agentDelegationAllToolNames
                 == ToolRegistry.agentDelegationSpawnToolNames
                 .union(ToolRegistry.agentDelegationImageToolNames)
                 .union(ToolRegistry.agentDelegationVideoToolNames)
-                .union(ToolRegistry.agentDelegationAppleScriptToolNames)
         )
     }
 
@@ -356,55 +348,6 @@ struct SubagentCapabilityRegistryTests {
                 isDefault: false,
                 config: config,
                 settings: nil
-            ) == nil
-        )
-    }
-
-    @Test("effectiveAppleScriptModel: automatic custom agents inherit the global default")
-    func effectiveAppleScriptModelResolves() {
-        let config = SubagentConfiguration(
-            defaultAppleScriptModelId: "global-applescript"
-        )
-        var custom = AgentSettings.defaultDisabled
-        custom.appleScriptModelId = "agent-applescript"
-
-        #expect(
-            SubagentToolVisibility.effectiveAppleScriptModel(
-                isDefault: true,
-                config: config,
-                settings: custom
-            ) == "global-applescript"
-        )
-        #expect(
-            SubagentToolVisibility.effectiveAppleScriptModel(
-                isDefault: false,
-                config: config,
-                settings: custom
-            ) == "agent-applescript"
-        )
-
-        custom.appleScriptModelId = nil
-        #expect(
-            SubagentToolVisibility.effectiveAppleScriptModel(
-                isDefault: false,
-                config: config,
-                settings: custom
-            ) == "global-applescript"
-        )
-        #expect(
-            SubagentToolVisibility.effectiveAppleScriptModel(
-                isDefault: false,
-                config: config,
-                settings: nil
-            ) == "global-applescript"
-        )
-
-        let emptyGlobal = SubagentConfiguration(defaultAppleScriptModelId: "  ")
-        #expect(
-            SubagentToolVisibility.effectiveAppleScriptModel(
-                isDefault: false,
-                config: emptyGlobal,
-                settings: AgentSettings.defaultDisabled
             ) == nil
         )
     }

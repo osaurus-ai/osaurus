@@ -113,10 +113,6 @@ struct ComputerUseConfirmOverlay: View {
                     }
                 }.catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.confirmCard.verticalGap2")
 
-                if let script = preview.scriptBody, !script.isEmpty {
-                    scriptField(script)
-                }
-
                 if let note = preview.note, !note.isEmpty {
                     Text(note)
                         .promptText(.body, fallback: .footnote, theme: theme)
@@ -201,36 +197,6 @@ struct ComputerUseConfirmOverlay: View {
         }.catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.typedTextField.verticalGap")
     }
 
-    /// The generated AppleScript shown on the confirm card, in a scrollable
-    /// monospaced block so the user reads exactly what will run before
-    /// approving. Bounded in height so a long script doesn't push the buttons
-    /// off-screen.
-    @ViewBuilder
-    private func scriptField(_ script: String) -> some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s4, theme))) {
-            Text("Script", bundle: .module)
-                .promptText(.caption, fallback: .micro, weight: 600, theme: theme)
-                .foregroundColor(theme.text.tertiary)
-            ScrollView {
-                Text(script)
-                    .promptText(.code, fallback: .footnote, family: .code, theme: theme)
-                    .foregroundColor(theme.text.primary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.vertical")
-            }
-            .frame(maxHeight: 160)
-            .background(
-                RoundedRectangle(cornerRadius: theme.radius.medium)
-                    .fill(theme.surface.hover)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: theme.radius.medium).stroke(theme.border.default, lineWidth: theme.stroke.default)
-                    )
-            )
-        }.catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.verticalGap")
-    }
-
     // MARK: Consent card
 
     private func consentCard(for request: CloudVisionConsentRequest) -> some View {
@@ -310,8 +276,7 @@ extension ComputerUseConfirmOverlay {
             renderer.inspectionRequest = .init(toolCallId: "inspector-display-only", preview: .init(
                 appName: "Local sample", actionLabel: "Review sample text", targetLabel: "Sample field",
                 effect: .edit, note: "Display only. No pending action exists.",
-                typedText: "A longer local text sample for checking the original payload presentation.",
-                scriptBody: "-- Display only; never executed\nreturn \"Sample\""))
+                typedText: "A longer local text sample for checking the original payload presentation."))
         }
         return renderer
     }

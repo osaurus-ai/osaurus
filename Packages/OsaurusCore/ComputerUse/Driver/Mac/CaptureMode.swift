@@ -17,10 +17,10 @@ import Foundation
 //             with rich AX trees.
 //   .vision — screenshot only, no AX tree. Smallest payload for
 //             vision-first VLMs that ground on pixels.
-//   .som    — set-of-mark: AX tree + screenshot, with element-id
-//             numbers drawn on every actionable element. Default: lets
-//             pixel-grounded models reason visually while still using
-//             stable element ids for clicks.
+//   .som    — set-of-mark: AX tree + screenshot. The Computer Use loop
+//             draws each element's mark number on the frame
+//             (`FramePreparer`), so the image carries the same numbers as
+//             the element list and never the internal element ids.
 
 enum CaptureMode: String, Codable, Sendable {
     case ax
@@ -75,12 +75,16 @@ func buildCapture(
     mode: CaptureMode,
     windowId: Int? = nil,
     maxElements: Int? = nil,
-    focusedWindowOnly: Bool = false
+    focusedWindowOnly: Bool = false,
+    interactiveOnly: Bool = true
 ) async -> SOMResult {
+    await AccessibilityManager.shared.prepareAndAwaitTree(pid: pid)
     let snapshot = await AccessibilityManager.runOffMain { () -> TraversalResult in
         var filter = ElementFilter(pid: pid)
         if let maxElements { filter.maxElements = maxElements }
         if focusedWindowOnly { filter.focusedWindowOnly = true }
+        filter.interactiveOnly = interactiveOnly
+        filter.passiveValueLimit = ElementFilter.capturePassiveValueLimit
         return AccessibilityManager.shared.traverse(filter: filter)
     }
 
@@ -102,10 +106,10 @@ func buildCapture(
         var opts = ScreenshotOptions()
         opts.pid = pid
         if let wid = windowId { opts.windowId = CGWindowID(wid) }
-        // SOM annotation reuses the existing element-id overlay; the agent
-        // gets both the numeric index in `elements[]` and the visual id label
-        // burned onto the image.
-        opts.annotate = (mode == .som)
+        // Full backing resolution up to the standard long edge; the loop fits
+        // the frame to the model's own budget and draws the marks.
+        opts.scale = 1
+        opts.maxPixelEdge = FrameBudget.standard.maxLongEdge
         imageContent = await ScreenshotController.shared.capture(options: opts)
     }
 

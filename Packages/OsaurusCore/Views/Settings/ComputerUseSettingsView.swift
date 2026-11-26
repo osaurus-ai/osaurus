@@ -5,8 +5,8 @@
 //  Capabilities → Computer & Browser Use. The overview reads top-down for a
 //  first-time user: what the feature is, whether it's set up (permissions),
 //  and how to turn it on per agent. Autonomy (the safety model, the stance
-//  picker and, under Advanced, per-app rules / allowlist / cloud vision),
-//  Screen Context and AppleScript open as drill-ins; Browser is a child tab.
+//  picker and, under Advanced, per-app rules / allowlist / cloud vision) and
+//  Screen Context open as drill-ins; Browser is a child tab.
 //
 
 import SwiftUI
@@ -15,25 +15,23 @@ import SwiftUI
 
 /// Drill-in pages of Computer & Browser Use. Raw values are stable deep-link
 /// ids (`computerUseSubTabRequest`). `setup` lands on the overview (where
-/// setup now lives); `models` forwards to Local Models → AppleScript.
+/// setup now lives); `models` forwards to Local Models → Computer Use.
 enum ComputerUseTab: String, CaseIterable, SettingsDrillInItem {
     case setup = "Setup"
     case autonomy = "Autonomy"
     case screenContext = "Screen Context"
-    case appleScript = "AppleScript"
     case models = "Models"
 
     var id: String { rawValue }
 
-    static let drillInItems: [ComputerUseTab] = [.autonomy, .screenContext, .appleScript]
+    static let drillInItems: [ComputerUseTab] = [.autonomy, .screenContext]
 
     var title: String {
         switch self {
         case .setup: return L("Setup")
         case .autonomy: return L("Autonomy")
         case .screenContext: return L("Screen Context")
-        case .appleScript: return L("AppleScript")
-        case .models: return L("AppleScript Models")
+        case .models: return L("Computer Use Models")
         }
     }
 
@@ -42,7 +40,6 @@ enum ComputerUseTab: String, CaseIterable, SettingsDrillInItem {
         case .setup: return "checklist"
         case .autonomy: return "slider.horizontal.3"
         case .screenContext: return "rectangle.on.rectangle.angled"
-        case .appleScript: return "applescript"
         case .models: return "arrow.down.circle"
         }
     }
@@ -52,8 +49,7 @@ enum ComputerUseTab: String, CaseIterable, SettingsDrillInItem {
         case .setup: return ""
         case .autonomy: return L("How much an agent may do on its own; per-app rules, allowlist and cloud vision.")
         case .screenContext: return L("Share a text snapshot of your open windows at the start of each chat.")
-        case .appleScript: return L("Automation permission and how generated scripts are gated.")
-        case .models: return L("Download on-device AppleScript models.")
+        case .models: return L("Download on-device models for Computer Use.")
         }
     }
 }
@@ -66,9 +62,11 @@ struct ComputerUseSettingsView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    /// The editable autonomy policy, loaded from `ComputerUsePolicyStore` on
-    /// appear and persisted on every change.
-    @State private var policy: AutonomyPolicy = .defaultPolicy
+    /// The editable autonomy policy, persisted on every change. Seeded from the
+    /// store at creation: the drill-in detail closure keeps the state snapshot
+    /// of the first render, so a value assigned later in `onAppear` would not
+    /// reach it until some other edit re-rendered the page.
+    @State private var policy: AutonomyPolicy = ComputerUsePolicyStore.load()
     @State private var newOverrideApp: String = ""
     @State private var newAllowlistApp: String = ""
 
@@ -77,9 +75,8 @@ struct ComputerUseSettingsView: View {
     @State private var showAdvanced = false
 
     @State private var selection: ComputerUseTab?
-    /// Installed curated AppleScript model count, for the models row badge.
-    /// Refreshed on appear and whenever local models change.
-    @State private var appleScriptInstalledCount = 0
+    /// Installed Computer Use catalog models, for the models row badge.
+    @State private var installedModelCount = 0
 
     var body: some View {
         SettingsDrillInHost(rootTitle: L("Computer & Browser Use"), selection: $selection) {
@@ -90,16 +87,15 @@ struct ComputerUseSettingsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
-        .task { await refreshAppleScriptInstalledCount() }
+        .task { installedModelCount = ComputerUseModelCatalog.installedModels().count }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
-            Task { await refreshAppleScriptInstalledCount() }
+            installedModelCount = ComputerUseModelCatalog.installedModels().count
         }
         .onChange(of: managementState.computerUseSubTabRequest) { _, _ in
             applySubTabRequestIfNeeded()
         }
         .onAppear {
             applySubTabRequestIfNeeded()
-            policy = ComputerUsePolicyStore.load()
             permissionService.startPeriodicRefresh(interval: 2.0)
         }
         .onDisappear {
@@ -112,7 +108,7 @@ struct ComputerUseSettingsView: View {
         managementState.computerUseSubTabRequest = nil
         switch ComputerUseTab(rawValue: requested) {
         case .setup: selection = nil
-        case .models: managementState.openLocalModels(kind: .appleScript)
+        case .models: managementState.openLocalModels(kind: .computerUse)
         case let tab?: selection = tab
         case nil: break
         }
@@ -140,10 +136,10 @@ struct ComputerUseSettingsView: View {
                     icon: ComputerUseTab.models.icon,
                     title: ComputerUseTab.models.title,
                     subtitle: ComputerUseTab.models.subtitle,
-                    badge: appleScriptInstalledCount,
+                    badge: installedModelCount,
                     anchorId: "computerUse.models"
                 ) {
-                    managementState.openLocalModels(kind: .appleScript)
+                    managementState.openLocalModels(kind: .computerUse)
                 }
             }
         }
@@ -151,30 +147,18 @@ struct ComputerUseSettingsView: View {
 
     @ViewBuilder
     private func detail(_ item: ComputerUseTab) -> some View {
-        switch item {
-        case .appleScript:
-            VStack(spacing: theme.space.s0) {
-                SettingsPageHeader(title: item.title, subtitle: item.subtitle)
-                AppleScriptAutomationView()
-            }
-        default:
-            SettingsPage {
-                SettingsPageHeader(title: item.title, subtitle: item.subtitle)
-            } content: {
-                switch item {
-                case .screenContext:
-                    screenContextCard
-                default:
-                    consentCard
-                    policyCard
-                    advancedCard
-                }
+        SettingsPage {
+            SettingsPageHeader(title: item.title, subtitle: item.subtitle)
+        } content: {
+            switch item {
+            case .screenContext:
+                screenContextCard
+            default:
+                consentCard
+                policyCard
+                advancedCard
             }
         }
-    }
-
-    private func refreshAppleScriptInstalledCount() async {
-        appleScriptInstalledCount = AppleScriptModelCatalog.installedModels().count
     }
 
     // MARK: - About card
@@ -301,6 +285,19 @@ struct ComputerUseSettingsView: View {
                     icon: "stop.circle.fill",
                     color: theme.action.primary.default.background,
                     text: L("You can stop a run at any time from the activity feed in chat.")
+                )
+                SettingsToggle(
+                    title: "Lock App While Working",
+                    description:
+                        "Tints the window the agent is using and blocks your clicks and keystrokes to it until the run ends. Press Esc or Stop on the status pill to take back control.",
+                    anchorId: "computerUse.lockApp",
+                    isOn: Binding(
+                        get: { policy.lockAppWhileWorking },
+                        set: {
+                            policy.lockAppWhileWorking = $0
+                            persist()
+                        }
+                    )
                 )
             }
         }

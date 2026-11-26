@@ -9,7 +9,9 @@
 //
 //  What it catches beyond the verb floor:
 //    • Irreversible / cross-boundary commits — a `click` on a button labeled
-//      "Send", "Delete", "Purchase", "Publish" jumps navigate → consequential.
+//      "Send", "Delete", "Purchase", "Publish" jumps navigate → consequential,
+//      as does a menu item that ends something ("Quit", "Force Quit…",
+//      "Restart…", "Shut Down…"), the menu forms of the rule-4 chords.
 //    • Recipients on a commit — a "Save" / "Done" / "Add" press while the
 //      surrounding text mentions invitees / recipients / attendees becomes
 //      consequential (the spec's "calendar-save-with-invitees" case).
@@ -56,8 +58,14 @@ public enum EffectClassifier {
         // Target text = what the control IS (label + roleDescription + value +
         // the model's `describe`), excluding the free-text rationale (`note`) so
         // an icon-only control with a descriptive note isn't treated as labeled.
+        //
+        // A `point` target is identified only by what's under it: the model's
+        // `describe` is unverified there and must not make an unlabeled hit
+        // look labeled. A `select` also carries the option it picks.
+        let describeSignal = action.target?.point == nil ? action.target?.describe : nil
+        let optionSignal = action.verb == .select ? action.option : nil
         let targetText =
-            [resolvedLabel, resolvedRoleDescription, valueSignal, action.target?.describe]
+            [resolvedLabel, resolvedRoleDescription, valueSignal, describeSignal, optionSignal]
             .compactMap { $0 }
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespaces)
@@ -93,13 +101,17 @@ public enum EffectClassifier {
             effect = EffectClass.max(effect, .edit)
         }
 
-        // 4) ⌘Return / ⌘Enter — the conventional submit/send chord.
+        // 4) Chords that submit, delete or end something: ⌘Return / ⌘Enter
+        //    (submit/send), ⌘Delete / ⌘⌦ (Move to Trash, delete the selection),
+        //    ⌘Q with any extras (quit, ⇧ log out, ⌃ lock screen), ⌥⌘Esc
+        //    (Force Quit).
         if action.verb == .pressKey {
             let key = (action.key ?? "").lowercased()
             let mods = Set(action.modifiers.map { $0.lowercased() })
-            let isReturn = key == "return" || key == "enter" || key == "\r"
             let hasCommand = mods.contains("cmd") || mods.contains("command")
-            if isReturn, hasCommand {
+            let hasOption = mods.contains("option") || mods.contains("opt") || mods.contains("alt")
+            let isForceQuit = hasOption && (key == "escape" || key == "esc")
+            if hasCommand, Self.consequentialCommandKeys.contains(key) || isForceQuit {
                 effect = EffectClass.max(effect, .consequential)
             }
         }
@@ -108,7 +120,7 @@ public enum EffectClassifier {
         //    target exposes no readable text — an unidentifiable hit (empty role)
         //    OR an icon-only button (a known control role with no label/value/
         //    description) — could do anything, so confirm it rather than auto-run.
-        if action.verb == .click || action.verb == .doubleClick || action.verb == .rightClick {
+        if [.click, .doubleClick, .rightClick, .select].contains(action.verb) {
             let isControl = role.isEmpty || Self.actionableControlRoles.contains(role)
             if targetText.isEmpty, isControl {
                 effect = EffectClass.max(effect, .edit)
@@ -144,8 +156,8 @@ public enum EffectClassifier {
         "delete", "remove", "discard", "trash", "erase", "destroy",
         "purchase", "buy", "pay", "checkout", "transfer", "withdraw",
         "unsubscribe", "uninstall", "deactivate", "logout", "forward", "overwrite",
-        "permanently", "wire",
-        "log out", "sign out", "reply all", "move to trash", "empty trash",
+        "permanently", "wire", "quit", "restart", "shutdown",
+        "log out", "sign out", "shut down", "lock screen", "reply all", "move to trash", "empty trash",
         "delete account", "place order", "confirm purchase", "send invites",
     ]
 
@@ -154,6 +166,11 @@ public enum EffectClassifier {
     static let commitSignals: Set<String> = [
         "save", "done", "apply", "ok", "add", "create", "confirm", "update",
         "schedule", "invite", "save changes",
+    ]
+
+    /// Keys that make a ⌘ chord consequential (rule 4).
+    static let consequentialCommandKeys: Set<String> = [
+        "return", "enter", "\r", "delete", "backspace", "forwarddelete", "q",
     ]
 
     /// Recipients / cross-boundary audience signals.

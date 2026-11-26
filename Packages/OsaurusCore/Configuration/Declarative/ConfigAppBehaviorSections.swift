@@ -31,8 +31,6 @@ public struct DelegationSection: Codable, Equatable, Sendable {
     /// helper → run → unload helper → reload chat model) for every agent;
     /// OFF runs a different-model local helper without that sequence.
     public var localTextEnabled: Bool?
-    /// One of: confirm_each, auto_run_with_warning (HIGH RISK).
-    public var applescriptExecutionMode: String?
     /// Custom agent NAMES the Orchestrator may spawn. Replaces the pool.
     public var spawnableAgents: [String]?
     /// Teammates' shared workspace agents the Orchestrator may spawn, as
@@ -72,9 +70,11 @@ public struct DelegationSection: Codable, Equatable, Sendable {
     /// (`agents[].capabilities.video`), matching `image`; the Orchestrator
     /// never carries the `video` tool itself. Decoded for the hint only.
     public var videoEnabled: Bool?
-    /// REMOVED: AppleScript delegation moved to custom agents
-    /// (`agents[].capabilities.applescript`). Decoded for the hint only.
+    /// REMOVED: AppleScript automation was replaced by Computer Use.
+    /// Decoded for the hint only.
     public var applescriptEnabled: Bool?
+    /// REMOVED with the AppleScript subagent. Decoded for the hint only.
+    public var applescriptExecutionMode: String?
     /// REMOVED: bare-model workers no longer exist; delegate to an agent.
     public var spawnableModels: [String]?
     /// REMOVED with bare-model workers.
@@ -99,8 +99,13 @@ public struct DelegationSection: Codable, Equatable, Sendable {
         }
         if applescriptEnabled != nil {
             hints.append(
-                "delegation.applescript_enabled was removed: enable AppleScript on a custom "
-                    + "agent (agents[].capabilities.applescript_enabled) and delegate to it.")
+                "delegation.applescript_enabled was removed: AppleScript automation was replaced "
+                    + "by Computer Use (agents[].capabilities.computer_use_enabled).")
+        }
+        if applescriptExecutionMode != nil {
+            hints.append(
+                "delegation.applescript_execution_mode was removed with the AppleScript subagent: "
+                    + "Computer Use actions are gated by Settings → Computer Use → Autonomy.")
         }
         if spawnableModels != nil {
             hints.append(
@@ -118,7 +123,6 @@ public struct DelegationSection: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case localTextEnabled = "local_text_enabled"
-        case applescriptExecutionMode = "applescript_execution_mode"
         case spawnableAgents = "spawnable_agents"
         case spawnableWorkspaceAgents = "spawnable_workspace_agents"
         case workspaceAutoJoin = "workspace_auto_join"
@@ -134,6 +138,7 @@ public struct DelegationSection: Codable, Equatable, Sendable {
         case imageEnabled = "image_enabled"
         case videoEnabled = "video_enabled"
         case applescriptEnabled = "applescript_enabled"
+        case applescriptExecutionMode = "applescript_execution_mode"
         case spawnableModels = "spawnable_models"
         case spawnToolAccess = "spawn_tool_access"
         case budgetMaxToolCalls = "budget_max_tool_calls"
@@ -142,7 +147,6 @@ public struct DelegationSection: Codable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(localTextEnabled, forKey: .localTextEnabled)
-        try c.encodeIfPresent(applescriptExecutionMode, forKey: .applescriptExecutionMode)
         try c.encodeIfPresent(spawnableAgents, forKey: .spawnableAgents)
         try c.encodeIfPresent(spawnableWorkspaceAgents, forKey: .spawnableWorkspaceAgents)
         try c.encodeIfPresent(workspaceAutoJoin, forKey: .workspaceAutoJoin)
@@ -171,20 +175,4 @@ enum ConfigAppBehaviorEnums {
     static let permissionKindIds =
         SubagentCapabilityRegistry.all.map { $0.id }
         + [SubagentPermissionDefaults.workspaceSpawnKindId]
-    static let applescriptExecutionModes = ["confirm_each", "auto_run_with_warning"]
-
-    static func applescriptModeKey(for mode: AppleScriptExecutionMode) -> String {
-        switch mode {
-        case .confirmEach: return "confirm_each"
-        case .autoRunWithWarning: return "auto_run_with_warning"
-        }
-    }
-
-    static func applescriptMode(forKey key: String) -> AppleScriptExecutionMode? {
-        switch key.lowercased() {
-        case "confirm_each": return .confirmEach
-        case "auto_run_with_warning": return .autoRunWithWarning
-        default: return nil
-        }
-    }
 }

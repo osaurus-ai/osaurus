@@ -16,7 +16,7 @@ set -euo pipefail
 #                    baseline without re-running the reference lane).
 #
 # Classes are triage SUGGESTIONS to seed a manual pass, not verdicts:
-#   SUBSYSTEM           AppleScript-16B live/liveProof + live image lanes
+#   SUBSYSTEM           live image lanes
 #                       (matches EvalMatrixBuilder.isSubsystemCase)
 #   EVAL-CONTRACT?      judge failed on narration-shaped rubric wording
 #   HARNESS-INVESTIGATE compaction-family rows (verify watermark behavior)
@@ -69,9 +69,6 @@ def models_in(d):
 
 def is_subsystem(cid, domain):
     # Mirrors EvalMatrixBuilder.isSubsystemCase.
-    if domain == "apple_script":
-        lower = cid.lower()
-        return "liveproof" in lower or ".live-" in lower
     return domain == "subagent" and cid.startswith("subagent.image-")
 
 

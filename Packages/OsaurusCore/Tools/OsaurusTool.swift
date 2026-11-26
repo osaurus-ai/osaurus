@@ -447,6 +447,19 @@ public enum ArgumentCoercion {
         return nil
     }
 
+    /// Coerce to a finite `Double`: native number or string-encoded number (`"12.5"`).
+    public static func double(_ value: Any?) -> Double? {
+        let parsed: Double?
+        if let n = value as? NSNumber {
+            parsed = CFGetTypeID(n) == CFBooleanGetTypeID() ? nil : n.doubleValue
+        } else if let s = value as? String {
+            parsed = Double(s.trimmingCharacters(in: .whitespacesAndNewlines))
+        } else {
+            parsed = nil
+        }
+        return parsed.flatMap { $0.isFinite ? $0 : nil }
+    }
+
     /// Coerce to `Bool`: native bool, string variants (`"true"`, `"1"`, `"yes"`), or `NSNumber`.
     public static func bool(_ value: Any?) -> Bool? {
         if let b = value as? Bool { return b }

@@ -269,8 +269,8 @@ public enum EvalRunner {
     /// pure-data domains (schema, coercion, …) are excluded so their rows
     /// stay telemetry-free instead of carrying a noisy process footprint.
     private static let resourceSampledDomains: Set<String> = [
-        "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
-        "default_agent", "orchestrator", "configurator", "subagent", "apple_script", "micro_perf",
+        "agent_loop", "capability_claims", "computer_use_loop", "computer_use_grounding", "capability_search",
+        "default_agent", "orchestrator", "configurator", "subagent", "micro_perf",
         "reasoning_channel", "cache_proof", "memory", "http_api", "agent_creation", "chat_import_reader",
     ]
 
@@ -681,10 +681,10 @@ public enum EvalRunner {
             return runComputerUseCase(testCase, modelId: modelId)
         case "computer_use_loop":
             return await runComputerUseLoopCase(testCase, modelId: modelId)
+        case "computer_use_grounding":
+            return await runComputerUseGroundingCase(testCase, modelId: modelId)
         case "subagent":
             return await runSubagentCase(testCase, modelId: modelId)
-        case "apple_script":
-            return await runAppleScriptCase(testCase, modelId: modelId)
         case "screen_context":
             return await runScreenContextCase(
                 testCase,

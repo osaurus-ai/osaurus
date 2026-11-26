@@ -172,9 +172,10 @@ enum ComputerUseGateInspector {
 
     private static func isGatedVerb(_ verb: AgentVerb) -> Bool {
         switch verb {
-        case .observe, .wait, .find, .done, .giveUp:
+        case .observe, .wait, .find, .done, .giveUp, .zoom, .screenshot, .batch:
             return false
-        case .click, .doubleClick, .rightClick, .drag, .type, .setValue, .clear, .pressKey, .scroll, .open:
+        case .click, .doubleClick, .rightClick, .drag, .type, .setValue, .clear, .pressKey, .scroll, .open,
+            .hover, .select:
             return true
         }
     }
@@ -194,8 +195,21 @@ enum ComputerUseGateInspector {
                 roles: nonEmpty(input.targetRole).map { [$0] } ?? [],
                 note: note
             )
-        case .click, .doubleClick, .rightClick:
+        case .click, .doubleClick, .rightClick, .hover:
             return AgentAction(verb: input.verb, target: target, note: note)
+        case .select:
+            return AgentAction(
+                verb: .select,
+                target: target,
+                option: nonEmpty(input.text) ?? "option",
+                note: note
+            )
+        case .zoom:
+            return AgentAction(verb: .zoom, region: AgentRegion(x: 0, y: 0, width: 100, height: 100), note: note)
+        case .screenshot:
+            return AgentAction(verb: .screenshot, note: note)
+        case .batch:
+            return AgentAction(verb: .batch, note: note)
         case .drag:
             return AgentAction(verb: .drag, target: target, to: AgentTarget(describe: "destination"), note: note)
         case .type:

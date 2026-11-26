@@ -1,0 +1,11 @@
+{
+  "id": "computer_use_grounding.point-in-box",
+  "domain": "computer_use_grounding",
+  "label": "CU grounding • the model points at a labeled button on synthetic screens",
+  "query": "Click the named button on each synthetic screen.",
+  "notes": "Live row. The model sees the five synthetic calibration screens, sized to its own frame budget, with a schema and prompt that name no coordinate convention. Each answer is scored under pixels, 0–1000, and 0–1. Passes when one frame alone hits at least two thirds of the screens and agrees with any frame the bundle declares or states. Records decode tok/s.",
+  "fixtures": {},
+  "expect": {
+    "computerUseGrounding": {}
+  }
+}

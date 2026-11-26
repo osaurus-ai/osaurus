@@ -2029,6 +2029,383 @@
         }
       }
     },
+    "Any installed chat model can run Computer Use. Choose one in Models → Model Defaults → Computer Use Model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jedes installierte Chat-Modell kann Computer Use ausführen. Wähle eines unter Modelle → Modellstandards → Computer-Use-Modell."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설치된 모든 채팅 모델로 컴퓨터 제어를 실행할 수 있습니다. 모델 → 모델 기본값 → 컴퓨터 제어 모델에서 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать компьютер может любая установленная модель чата. Выберите её в разделе «Модели → Модели по умолчанию → Модель для использования компьютера»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任何已安装的聊天模型都可以运行电脑操控。请在“模型 → 模型默认值 → 电脑操控模型”中选择。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任何已安裝的聊天模型都可以執行電腦操作。請在「模型 → 模型預設值 → 電腦操作模型」中選擇。"
+          }
+        }
+      }
+    },
+    "AppleScript automation was replaced by Computer Use. Osaurus no longer uses this model; delete it to free disk space." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die AppleScript-Automatisierung wurde durch Computer Use ersetzt. Osaurus verwendet dieses Modell nicht mehr; lösche es, um Speicherplatz freizugeben."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppleScript 자동화는 컴퓨터 제어로 대체되었습니다. Osaurus는 더 이상 이 모델을 사용하지 않으니 삭제하여 디스크 공간을 확보하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматизация AppleScript заменена использованием компьютера. Osaurus больше не использует эту модель; удалите её, чтобы освободить место на диске."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppleScript 自动化已由电脑操控取代。Osaurus 不再使用此模型；删除它可释放磁盘空间。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppleScript 自動化已由電腦操作取代。Osaurus 不再使用此模型；刪除它可釋放磁碟空間。"
+          }
+        }
+      }
+    },
+    "Batch" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stapel"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "일괄 실행"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пакет"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批量"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批次"
+          }
+        }
+      }
+    },
+    "Computer Use Model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer-Use-Modell"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컴퓨터 제어 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель для использования компьютера"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电脑操控模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "電腦操作模型"
+          }
+        }
+      }
+    },
+    "Computer Use Models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer-Use-Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컴퓨터 제어 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модели для использования компьютера"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电脑操控模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "電腦操作模型"
+          }
+        }
+      }
+    },
+    "Control Mac apps on screen with Computer Use" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Apps mit Computer Use auf dem Bildschirm steuern"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컴퓨터 제어로 화면의 Mac 앱 제어"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Управление приложениями Mac на экране через использование компьютера"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过电脑操控在屏幕上控制 Mac 应用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "透過電腦操作在螢幕上控制 Mac 應用"
+          }
+        }
+      }
+    },
+    "Delegating to other agents, image and video costs, and Computer or Browser Use." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delegieren an andere Agenten, Kosten für Bilder und Videos sowie Computer Use oder Browser Use."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다른 에이전트에 위임, 이미지 및 동영상 비용, 컴퓨터 제어 또는 Browser Use."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Делегирование другим агентам, расходы на изображения и видео, использование компьютера или браузера."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "委派给其他智能体、图片和视频费用，以及电脑操控或浏览器使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "委派給其他智能體、圖片和影片費用，以及電腦操作或瀏覽器使用。"
+          }
+        }
+      }
+    },
+    "Deny, send and delete, destructive MCP tools, configuration changes, delegation, media costs, and Computer or Browser Use still ask." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„Ablehnen“, Senden und Löschen, destruktive MCP-Tools, Konfigurationsänderungen, Delegierung, Medienkosten sowie Computer Use oder Browser Use fragen weiterhin."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "거부, 보내기 및 삭제, 파괴적 MCP 도구, 설정 변경, 위임, 미디어 비용, 컴퓨터 제어 또는 Browser Use는 계속 묻습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запреты, отправка и удаление, деструктивные инструменты MCP, изменения конфигурации, делегирование, расходы на медиа и использование компьютера или браузера по-прежнему спрашиваются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“拒绝”、发送和删除、破坏性 MCP 工具、配置更改、委派、媒体费用，以及电脑操控或浏览器使用仍会询问。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「拒絕」、傳送和刪除、破壞性 MCP 工具、設定變更、委派、媒體費用，以及電腦操作或瀏覽器使用仍會詢問。"
+          }
+        }
+      }
+    },
+    "Download on-device models for Computer Use." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lade lokale Modelle für Computer Use herunter."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컴퓨터 제어용 온디바이스 모델을 다운로드합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скачайте локальные модели для использования компьютера."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下载用于电脑操控的本地模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下載用於電腦操作的本機模型。"
+          }
+        }
+      }
+    },
+    "Download recommended models in Local Models → Computer Use." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Empfohlene Modelle findest du unter Lokale Modelle → Computer Use."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "추천 모델은 로컬 모델 → 컴퓨터 제어에서 다운로드하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рекомендуемые модели можно скачать в разделе «Локальные модели → Использование компьютера»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在“本地模型 → 电脑操控”中下载推荐模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在「本地模型 → 電腦操作」中下載推薦模型。"
+          }
+        }
+      }
+    },
+    "esc to stop" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esc zum Stoppen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esc로 중지"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esc — остановить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按 Esc 停止"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按 Esc 停止"
+          }
+        }
+      }
+    },
+    "For text, Browser Use, Computer Use, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap." : {
+
+    },
     "List tool approvals waiting for an answer" : {
       "localizations" : {
         "de" : {
@@ -2145,6 +2522,278 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "列出已安裝的工作流程及其輸入"
+          }
+        }
+      }
+    },
+    "Lock App While Working" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App während der Arbeit sperren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "작업 중 앱 잠금"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Блокировать приложение во время работы"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作时锁定应用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作時鎖定 App"
+          }
+        }
+      }
+    },
+    "On-device models that see the screen and operate apps for Computer Use" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokale Modelle, die für Computer Use den Bildschirm sehen und Apps bedienen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컴퓨터 제어를 위해 화면을 보고 앱을 조작하는 온디바이스 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальные модели, которые видят экран и управляют приложениями при использовании компьютера"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "能看到屏幕并为电脑操控操作应用的本地模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "能看見螢幕並為電腦操作操控 App 的本機模型"
+          }
+        }
+      }
+    },
+    "Operates apps when an agent uses Computer Use. Unset uses the agent's chat model. Each agent can override it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bedient Apps, wenn ein Agent Computer Use verwendet. Ohne Auswahl wird das Chat-Modell des Agenten verwendet. Jeder Agent kann es überschreiben."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 컴퓨터 제어를 사용할 때 앱을 조작합니다. 설정하지 않으면 에이전트의 채팅 모델을 사용합니다. 에이전트마다 재정의할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Управляет приложениями, когда агент использует компьютер. Если не задано, используется модель чата агента. Каждый агент может её переопределить."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在智能体使用电脑操控时操作应用。未设置时使用智能体的聊天模型。每个智能体都可以覆盖此设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在代理使用電腦操作時操控 App。未設定時使用代理的聊天模型。每個代理都可以覆寫此設定。"
+          }
+        }
+      }
+    },
+    "Osaurus is using %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus verwendet %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 %@ 사용 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus использует %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 正在使用 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 正在使用 %@"
+          }
+        }
+      }
+    },
+    "Osaurus is using your computer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus verwendet deinen Computer"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 컴퓨터를 사용 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus использует ваш компьютер"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 正在使用你的电脑"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 正在使用你的電腦"
+          }
+        }
+      }
+    },
+    "Retired" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eingestellt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용 중단"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Устарело"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已停用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已停用"
+          }
+        }
+      }
+    },
+    "Screenshot" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bildschirmfoto"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "스크린샷"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Снимок экрана"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截图"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截圖"
+          }
+        }
+      }
+    },
+    "Select option" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Option auswählen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "옵션 선택"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выбор варианта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择选项"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇選項"
           }
         }
       }
@@ -2348,6 +2997,9 @@
           }
         }
       }
+    },
+    "The Orchestrator hands real work to these agents. Each runs as its own chat session with its own prompt, model, tools, and folder (it inherits the Orchestrator's folder when it has none). Media, Browser Use, and Computer Use live on custom agents — add such an agent here so the Orchestrator can delegate to it." : {
+
     },
     "The plugin's `osr_host_api` mirror struct does not match the host's v6 layout — most often the v5 `log_structured` slot is skipped, which shifts every later slot by 8 bytes. The plugin then dispatches `host->free_string` to the wrong host trampoline and `libc free()` aborts on a non-malloc pointer, killing the host." : {
       "localizations" : {
@@ -2625,6 +3277,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未批准"
+          }
+        }
+      }
+    },
+    "This model isn't installed or connected, so Computer Use won't run until you download it or pick another." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Modell ist nicht installiert oder verbunden. Computer Use läuft erst, wenn du es herunterlädst oder ein anderes wählst."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 모델이 설치되어 있지 않거나 연결되어 있지 않아, 다운로드하거나 다른 모델을 선택할 때까지 컴퓨터 제어가 실행되지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта модель не установлена или не подключена, поэтому использование компьютера не запустится, пока вы её не скачаете или не выберете другую."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型未安装或未连接，在你下载它或选择其他模型之前，电脑操控不会运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型未安裝或未連線，在你下載它或選擇其他模型之前，電腦操作不會執行。"
+          }
+        }
+      }
+    },
+    "Tints the window the agent is using and blocks your clicks and keystrokes to it until the run ends. Press Esc or Stop on the status pill to take back control." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Färbt das Fenster, das der Agent verwendet, und blockiert deine Klicks und Tastatureingaben dafür, bis der Lauf endet. Drücke Esc oder Stopp in der Statusanzeige, um die Kontrolle zurückzuholen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 사용하는 창에 색조를 입히고 실행이 끝날 때까지 해당 창에 대한 클릭과 키 입력을 차단합니다. 다시 제어하려면 Esc를 누르거나 상태 표시의 중지를 누르세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подсвечивает окно, с которым работает агент, и блокирует ваши щелчки и нажатия клавиш в нём до завершения запуска. Нажмите Esc или «Стоп» на индикаторе состояния, чтобы вернуть управление."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为代理正在使用的窗口加上色调，并在运行结束前阻止你对它的点击和按键。按 Esc 或状态胶囊上的“停止”即可收回控制。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "為代理正在使用的視窗加上色調，並在執行結束前阻擋你對它的點按與按鍵。按 Esc 或狀態膠囊上的「停止」即可收回控制。"
+          }
+        }
+      }
+    },
+    "Use Model Defaults" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modellstandards verwenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 기본값 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать модели по умолчанию"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用模型默认值"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用模型預設值"
           }
         }
       }
@@ -9729,6 +10483,40 @@
     },
     "Your Context Window Cap, not the model's own window, set this limit." : {
 
+    },
+    "Zoom" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zoomen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "확대"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увеличение"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放大"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放大"
+          }
+        }
+      }
     },
     "—" : {
       "comment" : "A placeholder text to indicate missing data.",
@@ -59842,76 +60630,6 @@
         }
       }
     },
-    "AppleScript Model" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "AppleScript model"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "AppleScript model"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель AppleScript"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript 模型"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript 模型"
-          }
-        }
-      }
-    },
-    "AppleScript Models" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript-Modelle"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript 모델"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модели AppleScript"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript 模型"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript 模型"
-          }
-        }
-      }
-    },
     "AppleScript models are made exclusively for Mac automation, so they live under Computer Use instead of the chat catalog." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -59946,44 +60664,6 @@
           }
         }
       }
-    },
-    "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript는 이 Mac에서 실행됩니다. 에이전트가 처음으로 앱을 제어할 때 macOS가 Osaurus에 대한 자동화 허용 여부를 묻습니다. AppleScript 모델은 설정 → 컴퓨터 제어 → 모델에서 다운로드하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript выполняется на этом Mac. Когда агент впервые управляет приложением, macOS попросит разрешить автоматизацию для Osaurus. Модели AppleScript можно загрузить в «Настройки» → «Использование компьютера» → «Модели»."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript 在此 Mac 上运行。当智能体首次控制某个应用时，macOS 会要求你允许 Osaurus 的自动化权限。请在「设置 → 电脑操控 → 模型」中下载 AppleScript 模型。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript 在此 Mac 上運行。當智能體首次控制某個應用時，macOS 會要求你允許 Osaurus 的自動化權限。請在「設置 → 電腦使用 → 模型」中下載 AppleScript 模型。"
-          }
-        }
-      }
-    },
-    "AppleScript will ask for Automation permission the first time it controls an app." : {
-
     },
     "Application behavior and system integration." : {
       "extractionState" : "stale",
@@ -94926,6 +95606,34 @@
         }
       }
     },
+    "Computer Use will work in this app until it finishes or you press Stop." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer Use arbeitet in dieser App, bis es fertig ist oder du auf „Stopp“ drückst."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer Use는 작업을 마치거나 중지를 누를 때까지 이 앱에서 작동합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer Use будет работать в этом приложении, пока не закончит или пока вы не нажмёте «Остановить»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer Use 会在此应用中工作，直到完成或你按下“停止”。"
+          }
+        }
+      }
+    },
     "Computer Use needs the Accessibility permission. Grant it in System Settings." : {
 
     },
@@ -101768,40 +102476,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "連續批處理"
-          }
-        }
-      }
-    },
-    "Control and query Mac apps with AppleScript automation" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Control and query Mac apps with AppleScript automation"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Control and query Mac apps with AppleScript automation"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Control and query Mac apps with AppleScript automation"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通过 AppleScript 自动化控制和查询 Mac 应用"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通過 AppleScript 自動化控制和查詢 Mac 應用"
           }
         }
       }
@@ -116053,40 +116727,6 @@
         }
       }
     },
-    "Delegating to other agents, image and video costs, AppleScript confirmation, and Computer or Browser Use." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Delegieren an andere Agenten, Kosten für Bilder und Videos, AppleScript-Bestätigung sowie Computer Use oder Browser Use."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "다른 에이전트에 위임, 이미지 및 동영상 비용, AppleScript 확인, 컴퓨터 제어 또는 Browser Use."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Делегирование другим агентам, расходы на изображения и видео, подтверждение AppleScript, использование компьютера или браузера."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "委派给其他智能体、图片和视频费用、AppleScript 确认，以及电脑操控或浏览器使用。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "委派給其他智能體、圖片和影片費用、AppleScript 確認，以及電腦操作或瀏覽器使用。"
-          }
-        }
-      }
-    },
     "Delegation" : {
       "localizations" : {
         "de" : {
@@ -118626,40 +119266,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "拒絕"
-          }
-        }
-      }
-    },
-    "Deny, send and delete, destructive MCP tools, configuration changes, delegation, media costs, AppleScript, and Computer or Browser Use still ask." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "„Ablehnen“, Senden und Löschen, destruktive MCP-Tools, Konfigurationsänderungen, Delegierung, Medienkosten, AppleScript sowie Computer Use oder Browser Use fragen weiterhin."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "거부, 보내기 및 삭제, 파괴적 MCP 도구, 설정 변경, 위임, 미디어 비용, AppleScript, 컴퓨터 제어 또는 Browser Use는 계속 묻습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запреты, отправка и удаление, деструктивные инструменты MCP, изменения конфигурации, делегирование, расходы на медиа, AppleScript и использование компьютера или браузера по-прежнему спрашиваются."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "“拒绝”、发送和删除、破坏性 MCP 工具、配置更改、委派、媒体费用、AppleScript，以及电脑操控或浏览器使用仍会询问。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「拒絕」、傳送和刪除、破壞性 MCP 工具、設定變更、委派、媒體費用、AppleScript，以及電腦操作或瀏覽器使用仍會詢問。"
           }
         }
       }
@@ -124735,41 +125341,6 @@
         }
       }
     },
-    "Download a model in Local Models → AppleScript to choose one." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lade unter Lokale Modelle → AppleScript ein Modell, um eines auszuwählen."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "모델을 선택하려면 로컬 모델 → AppleScript에서 다운로드하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Чтобы выбрать модель, загрузите её в разделе «Локальные модели → AppleScript»."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在“本地模型 → AppleScript”中下载模型后即可选择。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在「本機模型 → AppleScript」中下載模型後即可選擇。"
-          }
-        }
-      }
-    },
     "Download and manage on-device speech models." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -125146,41 +125717,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在模型管理器中下載模型後，它們會自動在這裡開放。"
-          }
-        }
-      }
-    },
-    "Download on-device AppleScript models." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript-Modelle auf das Gerät laden."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "기기 내 AppleScript 모델을 다운로드합니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Загрузка локальных моделей AppleScript."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下载本地 AppleScript 模型。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下載本機 AppleScript 模型。"
           }
         }
       }
@@ -149887,9 +150423,6 @@
         }
       }
     },
-    "For text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap." : {
-
-    },
     "For the Rest of This Reply" : {
       "localizations" : {
         "de" : {
@@ -162476,7 +163009,38 @@
       }
     },
     "Hover" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Darüberfahren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "마우스 올리기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Наведение"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "悬停"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "懸停"
+          }
+        }
+      }
     },
     "Hover to reveal delete option" : {
       "extractionState" : "stale",
@@ -183280,41 +183844,6 @@
         }
       }
     },
-    "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Позвольте агенту автоматизировать этот Mac: писать и запускать AppleScript с помощью локальной модели. Каждый сценарий показывается для подтверждения или запускается автоматически с предупреждением — в зависимости от режима ниже."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "让智能体通过使用设备端模型编写和运行 AppleScript 来自动化此 Mac。每个脚本都会显示以供你批准，或根据下方模式带警告自动运行。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "讓智能體通過使用設備端模型編寫和運行 AppleScript 來自動化此 Mac。每個腳本都會顯示以供你批准，或根據下方模式帶警告自動運行。"
-          }
-        }
-      }
-    },
     "Let the agent browse the web in its own persistent browser session — sign-ins stick around between chats. Reads and navigation run automatically; typing and anything consequential pause for your approval." : {
       "comment" : "Description of a per-agent capability when the user can use the browser.",
       "isCommentAutoGenerated" : true,
@@ -190050,40 +190579,6 @@
     },
     "Looking at how it ran" : {
 
-    },
-    "Looking for AppleScript models?" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Suchen Sie AppleScript-Modelle?"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript 모델을 찾고 계신가요?"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ищете модели AppleScript?"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在寻找 AppleScript 模型？"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在尋找 AppleScript 模型？"
-          }
-        }
-      }
     },
     "Looking for image and video models…" : {
 
@@ -203126,41 +203621,6 @@
         }
       }
     },
-    "Models that write and run AppleScript to automate this Mac" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modelle, die AppleScript schreiben und ausführen, um diesen Mac zu automatisieren"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript를 작성하고 실행해 이 Mac을 자동화하는 모델"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модели, которые пишут и запускают AppleScript для автоматизации этого Mac"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "编写并运行 AppleScript 来自动化此 Mac 的模型"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "撰寫並執行 AppleScript 來自動化此 Mac 的模型"
-          }
-        }
-      }
-    },
     "Moderate" : {
       "comment" : "Text describing the impact of an agent's ability on the model's working space.",
       "isCommentAutoGenerated" : true
@@ -207580,9 +208040,6 @@
 
     },
     "Needs setup: install a compatible image model" : {
-
-    },
-    "Needs setup: install an AppleScript model" : {
 
     },
     "Needs You" : {
@@ -212051,44 +212508,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未选择应用事件"
-          }
-        }
-      }
-    },
-    "No AppleScript model is installed. Download one in Settings → Local Models → AppleScript." : {
-
-    },
-    "No AppleScript models installed yet. Download one in Settings → Computer Use → Models." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "No AppleScript models installed yet. Download one in Settings → Computer Use → Models."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "아직 설치된 AppleScript 모델이 없습니다. 설정 → 컴퓨터 제어 → 모델에서 다운로드하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модели AppleScript ещё не установлены. Загрузите одну в «Настройки» → «Использование компьютера» → «Модели»."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "尚未安装 AppleScript 模型。请在「设置 → 电脑操控 → 模型」中下载。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "尚未安裝 AppleScript 模型。請在「設置 → 電腦使用 → 模型」中下載。"
           }
         }
       }
@@ -273952,40 +274371,6 @@
         }
       }
     },
-    "Read-only Mac queries run on the already-loaded chat model when it supports tools, skipping the model swap. Automation tasks always use the AppleScript model, and queries still can't change anything." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Schreibgeschützte Mac-Abfragen laufen auf dem bereits geladenen Chat-Modell, wenn es Tools unterstützt — der Modellwechsel entfällt. Automationsaufgaben verwenden immer das AppleScript-Modell, und Abfragen können weiterhin nichts ändern."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "읽기 전용 Mac 질의는 채팅 모델이 도구를 지원하면 이미 로드된 채팅 모델에서 실행되어 모델 교체를 건너뜁니다. 자동화 작업은 항상 AppleScript 모델을 사용하며, 질의는 여전히 아무것도 변경할 수 없습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запросы к Mac только на чтение выполняются на уже загруженной модели чата, если она поддерживает инструменты, — без смены модели. Задачи автоматизации всегда используют модель AppleScript, а запросы по-прежнему ничего не изменяют."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "当聊天模型支持工具时，只读 Mac 查询会在已加载的聊天模型上运行，跳过模型切换。自动化任务始终使用 AppleScript 模型，查询仍然无法更改任何内容。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "當聊天模型支持工具時，只讀 Mac 查詢會在已加載的聊天模型上運行，跳過模型切換。自動化任務始終使用 AppleScript 模型，查詢仍然無法更改任何內容。"
-          }
-        }
-      }
-    },
     "Read-only snapshot of the cached permission and consent state Computer Use already uses." : {
       "localizations" : {
         "de" : {
@@ -298094,40 +298479,6 @@
       "comment" : "Section title for running an example workflow.",
       "isCommentAutoGenerated" : true
     },
-    "Run AppleScript" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Run AppleScript"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Run AppleScript"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запустить AppleScript"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "运行 AppleScript"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "運行 AppleScript"
-          }
-        }
-      }
-    },
     "Run as" : {
       "comment" : "Vault sign-in sessions and Run as",
       "extractionState" : "manual",
@@ -300308,41 +300659,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Running again; the last run failed here."
-          }
-        }
-      }
-    },
-    "Running AppleScript that controls another app needs macOS Automation permission. The first time an agent controls an app, macOS asks you to allow it for Osaurus. You can prime the System Events grant now." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Running AppleScript that controls another app needs macOS Automation permission. The first time an agent controls an app, macOS asks you to allow it for Osaurus. You can prime the System Events grant now."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Running AppleScript that controls another app needs macOS Automation permission. The first time an agent controls an app, macOS asks you to allow it for Osaurus. You can prime the System Events grant now."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Для AppleScript, который управляет другим приложением, требуется разрешение macOS «Автоматизация». Когда агент впервые управляет приложением, macOS попросит разрешить это для Osaurus. Сейчас можно заранее выдать доступ к System Events."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "运行控制其他应用的 AppleScript 需要 macOS 自动化权限。当智能体首次控制某个应用时，macOS 会要求你允许 Osaurus 对其进行控制。你可以现在预先授予 System Events 权限。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "運行控制其他應用的 AppleScript 需要 macOS 自動化權限。當智能體首次控制某個應用時，macOS 會要求你允許 Osaurus 對其進行控制。你可以現在預先授予系統事件權限。"
           }
         }
       }
@@ -323225,41 +323541,6 @@
         }
       }
     },
-    "Show AppleScript Models" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript-Modelle anzeigen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript 모델 보기"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показать модели AppleScript"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "显示 AppleScript 模型"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "顯示 AppleScript 模型"
-          }
-        }
-      }
-    },
     "Show Archived" : {
       "localizations" : {
         "de" : {
@@ -342968,6 +343249,34 @@
     "Take Down…" : {
 
     },
+    "Take over" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Übernehmen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제어하기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Взять управление"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接管"
+          }
+        }
+      }
+    },
     "Take over Relay on %@" : {
       "localizations" : {
         "de" : {
@@ -354015,9 +354324,6 @@
         }
       }
     },
-    "The Orchestrator hands real work to these agents. Each runs as its own chat session with its own prompt, model, tools, and folder (it inherits the Orchestrator's folder when it has none). Media, AppleScript, Browser Use, and Computer Use live on custom agents — add such an agent here so the Orchestrator can delegate to it." : {
-
-    },
     "The Orchestrator has its own home in Settings: give it a name, write its persona, tune its generation, and choose exactly which agents and models it may delegate to. Delegation stays off until you allow specific helpers." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -358186,6 +358492,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "是否开启使用数据由你决定。它只发送匿名统计，例如大家完成了哪些设置步骤，绝不包含你的聊天、提示词、文件或密钥。"
+          }
+        }
+      }
+    },
+    "The user declined letting Computer Use take over %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Nutzer hat abgelehnt, dass Computer Use %@ übernimmt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용자가 Computer Use의 %@ 제어를 거부했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пользователь не разрешил Computer Use взять управление %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用户拒绝让 Computer Use 接管 %@。"
           }
         }
       }
@@ -390174,6 +390508,12 @@
             "state" : "translated",
             "value" : "正在等待你的批准"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待你的核准"
+          }
         }
       }
     },
@@ -415018,34 +415358,6 @@
         }
       }
     },
-    "With Swap Local Models for Subagents on, the AppleScript model stays ready for a short while so follow-up requests in the same chat start faster." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wenn „Lokale Modelle für Subagenten tauschen“ aktiv ist, bleibt das AppleScript-Modell kurz bereit, damit Folgeanfragen im selben Chat schneller starten."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "'하위 에이전트용 로컬 모델 교체'가 켜져 있으면 AppleScript 모델이 잠시 준비 상태로 남아 같은 채팅의 후속 요청이 더 빨리 시작됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Когда включено «Подменять локальные модели для субагентов», модель AppleScript недолго остаётся готовой, чтобы следующие запросы в том же чате начинались быстрее."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开启“为子智能体切换本地模型”后，AppleScript 模型会短暂保持就绪，让同一聊天中的后续请求更快开始。"
-          }
-        }
-      }
-    },
     "%lld providers added" : {
       "localizations" : {
         "de" : {
@@ -416166,34 +416478,6 @@
         }
       }
     },
-    "Keep AppleScript Model Loaded" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript-Modell geladen lassen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript 모델 로드 유지"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Держать модель AppleScript загруженной"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保持 AppleScript 模型加载"
-          }
-        }
-      }
-    },
     "A new search & memory model takes effect after Osaurus restarts. Search indexes rebuild in the background." : {
       "localizations" : {
         "de" : {
@@ -416386,34 +416670,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "文本 + 图片"
-          }
-        }
-      }
-    },
-    "With Swap Local Models for Subagents on, your chat model comes back right after each AppleScript run." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wenn „Lokale Modelle für Subagenten tauschen“ aktiv ist, kehrt dein Chatmodell direkt nach jeder AppleScript-Ausführung zurück."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "'하위 에이전트용 로컬 모델 교체'가 켜져 있으면 AppleScript 실행이 끝날 때마다 채팅 모델이 바로 돌아옵니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Когда включено «Подменять локальные модели для субагентов», модель чата возвращается сразу после каждого запуска AppleScript."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开启“为子智能体切换本地模型”后，每次 AppleScript 运行结束，聊天模型会立即恢复。"
           }
         }
       }

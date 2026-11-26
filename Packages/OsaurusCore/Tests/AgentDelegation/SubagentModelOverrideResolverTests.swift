@@ -106,4 +106,42 @@ struct SubagentModelOverrideResolverTests {
             ) == nil
         )
     }
+
+    @Test("Computer Use: agent override, then Model Defaults, then inherit")
+    func computerUseFallsBackToModelDefault() {
+        let config = SubagentConfiguration(subagentModelOverrides: ["computer_use": "global-cu"])
+        var own = AgentSettings.defaultDisabled
+        own.subagentModelOverrides = ["computer_use": "agent-cu"]
+        var blank = AgentSettings.defaultDisabled
+        blank.subagentModelOverrides = ["computer_use": "  "]
+
+        func resolve(_ settings: AgentSettings?, _ config: SubagentConfiguration) -> String? {
+            SubagentToolVisibility.effectiveSubagentModel(
+                capabilityId: "computer_use", isDefault: false, config: config, settings: settings
+            )
+        }
+        #expect(resolve(own, config) == "agent-cu")
+        #expect(resolve(AgentSettings.defaultDisabled, config) == "global-cu")
+        #expect(resolve(blank, config) == "global-cu")
+        #expect(resolve(nil, config) == "global-cu")
+        #expect(resolve(AgentSettings.defaultDisabled, .default) == nil)
+    }
+
+    @Test("only kinds with a Model Defaults row fall back to the global map")
+    func globalFallbackIsPerKind() {
+        #expect(SubagentCapabilityRegistry.computerUse.hasGlobalModelDefault)
+        #expect(!SubagentCapabilityRegistry.spawn.hasGlobalModelDefault)
+        #expect(!SubagentCapabilityRegistry.browserUse.hasGlobalModelDefault)
+        let config = SubagentConfiguration(subagentModelOverrides: [
+            "spawn": "main-chat-spawn", "browser_use": "global-browser",
+        ])
+        for kind in ["spawn", "browser_use"] {
+            #expect(
+                SubagentToolVisibility.effectiveSubagentModel(
+                    capabilityId: kind, isDefault: false, config: config,
+                    settings: AgentSettings.defaultDisabled
+                ) == nil
+            )
+        }
+    }
 }

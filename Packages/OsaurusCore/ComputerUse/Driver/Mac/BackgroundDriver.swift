@@ -58,13 +58,13 @@ public enum InputRoute: String, Codable, Sendable {
 /// Coarse classification of a target app — drives whether we need the
 /// Chromium "primer click" trick and whether SkyLight routing is worth
 /// trying first.
-private enum AppClass {
+enum AppClass {
     case chromium
     case cocoa
     case unknown
 }
 
-private enum BundleClass {
+enum BundleClass {
 
     // pid → AppClass cache. Apps don't change bundle ids during their
     // lifetime, so a one-time lookup is safe.
@@ -170,7 +170,11 @@ final class BackgroundDriver: @unchecked Sendable {
         var postToPid: @Sendable (CGEvent, pid_t) -> Void
         var hidPost: @Sendable (CGEvent) -> Void
         var isChromium: @Sendable (pid_t) -> Bool
-        var focusWithoutRaise: @Sendable (pid_t) -> Void
+        var focusWithoutRaise: @Sendable (pid_t, CGWindowID?) -> Void
+        /// The target's frontmost on-screen window containing a point, for
+        /// pointer events whose caller doesn't know the window.
+        var windowAt: @Sendable (pid_t, CGPoint) -> CGWindowID?
+        var pause: @Sendable (TimeInterval) -> Void
 
         static let live = Transports(
             isWindowServerVisible: { SkyLightBridge.isWindowServerVisible(pid: $0) },
@@ -179,7 +183,9 @@ final class BackgroundDriver: @unchecked Sendable {
             postToPid: { $0.postToPid($1) },
             hidPost: { $0.post(tap: .cghidEventTap) },
             isChromium: { BundleClass.isChromium(pid: $0) },
-            focusWithoutRaise: { _ = SkyLightBridge.focusWithoutRaise(pid: $0) }
+            focusWithoutRaise: { _ = SkyLightBridge.focusWithoutRaise(pid: $0, windowId: $1) },
+            windowAt: { WindowBinding.window(ownedBy: $0, containing: $1) },
+            pause: { Thread.sleep(forTimeInterval: $0) }
         )
     }
 
@@ -218,6 +224,7 @@ final class BackgroundDriver: @unchecked Sendable {
     /// mouseDown that we already posted via HID).
     @discardableResult
     private func route(event: CGEvent, pid: pid_t, forceHID: Bool = false) -> InputRoute {
+        ComputerUseEventTag.mark(event)
         if forceHID {
             transports.hidPost(event)
             record(route: .hidFallback)
@@ -261,6 +268,13 @@ final class BackgroundDriver: @unchecked Sendable {
         return .perPid
     }
 
+    /// `route` drops events for a pid with no WindowServer connection (it
+    /// quit, or never had a GUI), so input for one must not report success.
+    private func undeliverable(_ pid: pid_t) -> InputResult? {
+        guard !transports.isWindowServerVisible(pid) else { return nil }
+        return .fail("pid \(pid) has no WindowServer connection (the app may have quit); input was not posted")
+    }
+
     private func record(route: InputRoute) {
         routeLock.lock()
         _lastRoute = route
@@ -270,8 +284,10 @@ final class BackgroundDriver: @unchecked Sendable {
     // MARK: - Public API: clicks
 
     /// Click at a point in global screen coordinates, addressed to `pid`.
-    /// Optional `windowId` is forwarded to `focusWithoutRaise` so we can
-    /// flip AppKit-active routing for that specific window without raising.
+    /// The events are bound to `windowId` (else the target's window under the
+    /// point) so, with several windows open, they land in that window rather
+    /// than wherever macOS routes an unbound event; focus-without-raise is
+    /// aimed at the same window.
     func click(
         pid: pid_t,
         point: CGPoint,
@@ -279,26 +295,34 @@ final class BackgroundDriver: @unchecked Sendable {
         clickCount: Int = 1,
         windowId: CGWindowID? = nil
     ) -> InputResult {
-        transports.focusWithoutRaise(pid)
+        if let failure = undeliverable(pid) { return failure }
+        let window = windowId ?? transports.windowAt(pid, point)
+        transports.focusWithoutRaise(pid, window)
 
         if transports.isChromium(pid) {
             // (-1, -1) decoy click ticks Chromium's user-activation gate so the
             // real click that follows is treated as a trusted user gesture.
             // The renderer drops the decoy because no window claims that pixel.
-            _ = postClickPair(pid: pid, point: CGPoint(x: -1, y: -1), button: .left, clickCount: 1)
+            _ = postClickPair(pid: pid, point: CGPoint(x: -1, y: -1), button: .left, clickCount: 1, windowId: nil)
             // Small gap so the renderer has a chance to update its activation
             // state before the real click arrives.
-            Thread.sleep(forTimeInterval: 0.01)
+            transports.pause(0.01)
         }
 
-        return postClickPair(pid: pid, point: point, button: button, clickCount: clickCount)
+        return postClickPair(pid: pid, point: point, button: button, clickCount: clickCount, windowId: window)
     }
 
-    func doubleClick(pid: pid_t, point: CGPoint, button: MouseButton = .left) -> InputResult {
-        let r1 = click(pid: pid, point: point, button: button, clickCount: 1)
+    func doubleClick(
+        pid: pid_t,
+        point: CGPoint,
+        button: MouseButton = .left,
+        windowId: CGWindowID? = nil
+    ) -> InputResult {
+        let window = windowId ?? transports.windowAt(pid, point)
+        let r1 = click(pid: pid, point: point, button: button, clickCount: 1, windowId: window)
         if !r1.success { return r1 }
-        Thread.sleep(forTimeInterval: 0.05)
-        return click(pid: pid, point: point, button: button, clickCount: 2)
+        transports.pause(0.05)
+        return click(pid: pid, point: point, button: button, clickCount: 2, windowId: window)
     }
 
     /// Build the down/up event pair and route both to `pid`.
@@ -306,7 +330,8 @@ final class BackgroundDriver: @unchecked Sendable {
         pid: pid_t,
         point: CGPoint,
         button: MouseButton,
-        clickCount: Int
+        clickCount: Int,
+        windowId: CGWindowID?
     ) -> InputResult {
         let downType: CGEventType
         let upType: CGEventType
@@ -345,9 +370,34 @@ final class BackgroundDriver: @unchecked Sendable {
         }
         down.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
         up.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
+        WindowBinding.bind(down, to: windowId)
+        WindowBinding.bind(up, to: windowId)
 
         _ = route(event: down, pid: pid)
         _ = route(event: up, pid: pid)
+        return .ok()
+    }
+
+    /// Move the pointer to `point` in `pid`'s window without clicking, as
+    /// a short approach so hover tracking sees motion into the target.
+    func move(pid: pid_t, to point: CGPoint, windowId: CGWindowID? = nil) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
+        let window = windowId ?? transports.windowAt(pid, point)
+        for at in [CGPoint(x: point.x - 6, y: point.y - 6), point] {
+            guard
+                let moved = CGEvent(
+                    mouseEventSource: source,
+                    mouseType: .mouseMoved,
+                    mouseCursorPosition: at,
+                    mouseButton: .left
+                )
+            else {
+                return .fail("Failed to create mouse move event")
+            }
+            WindowBinding.bind(moved, to: window)
+            _ = route(event: moved, pid: pid)
+            transports.pause(0.02)
+        }
         return .ok()
     }
 
@@ -363,22 +413,23 @@ final class BackgroundDriver: @unchecked Sendable {
     /// gate with the same off-screen decoy click `click` uses. Without this,
     /// app shortcuts like Cmd+K posted to Slack "succeed" but never land.
     private func prepareForKeyboard(pid: pid_t) {
-        transports.focusWithoutRaise(pid)
+        transports.focusWithoutRaise(pid, nil)
         if transports.isChromium(pid) {
-            _ = postClickPair(pid: pid, point: CGPoint(x: -1, y: -1), button: .left, clickCount: 1)
-            Thread.sleep(forTimeInterval: 0.01)
+            _ = postClickPair(pid: pid, point: CGPoint(x: -1, y: -1), button: .left, clickCount: 1, windowId: nil)
+            transports.pause(0.01)
         }
     }
 
     /// Type a string of text. Per-pid routing means the user can keep typing
     /// in their own focused app while we type into `pid`.
     func type(pid: pid_t, text: String) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
         prepareForKeyboard(pid: pid)
         for char in text {
             if let result = typeCharacter(pid: pid, char: char), !result.success {
                 return result
             }
-            Thread.sleep(forTimeInterval: 0.005)
+            transports.pause(0.005)
         }
         return .ok()
     }
@@ -404,6 +455,7 @@ final class BackgroundDriver: @unchecked Sendable {
 
     /// Press a single key with optional modifiers, routed to `pid`.
     func pressKey(pid: pid_t, keyCode: CGKeyCode, modifiers: CGEventFlags = []) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
         prepareForKeyboard(pid: pid)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
             let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
@@ -420,7 +472,17 @@ final class BackgroundDriver: @unchecked Sendable {
 
     // MARK: - Public API: scroll
 
-    func scroll(pid: pid_t, direction: ScrollDirection, amount: Int32 = 3) -> InputResult {
+    /// Scroll `pid`. With a `point` the wheel event is placed there, so the
+    /// app (which receives it per-process) hit-tests that scroll area rather
+    /// than the spot under the user's cursor. Wheel events do not carry the
+    /// window-under-pointer fields, so they are placed, not window-bound.
+    func scroll(
+        pid: pid_t,
+        direction: ScrollDirection,
+        amount: Int32 = 3,
+        at point: CGPoint? = nil
+    ) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
         let deltaX: Int32
         let deltaY: Int32
         switch direction {
@@ -441,22 +503,39 @@ final class BackgroundDriver: @unchecked Sendable {
         else {
             return .fail("Failed to create scroll event")
         }
+        if let point { event.location = point }
         _ = route(event: event, pid: pid)
         return .ok()
     }
 
     // MARK: - Public API: drag
-    //
-    // Drag is the one operation that can NOT be cleanly backgrounded for
-    // arbitrary apps: many apps key drag tracking on the global cursor
-    // location, so the cursor genuinely needs to move during the drag.
-    // We post via SkyLight when possible (which avoids the warp inside other
-    // apps) but force HID tap for the down/drag/up sequence so the system
-    // sees a coherent gesture. Tests should treat drag as cursor-warping.
 
-    func drag(pid: pid_t, from start: CGPoint, to end: CGPoint, button: MouseButton = .left)
-        -> InputResult
-    {
+    /// Intermediate `dragged` events between `start` and `end`. Apps that
+    /// track a drag (sliders, list reordering, selection) follow a path of
+    /// moves; a single jump from down to up reads as a click.
+    static func dragPath(from start: CGPoint, to end: CGPoint) -> [CGPoint] {
+        let distance = hypot(end.x - start.x, end.y - start.y)
+        let steps = min(30, max(4, Int(distance / 20)))
+        return (1 ... steps).map { i in
+            let t = CGFloat(i) / CGFloat(steps)
+            return CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)
+        }
+    }
+
+    /// Drag from `start` to `end`, addressed to `pid` and bound to its window
+    /// under `start`, along an interpolated path. Every event takes the same
+    /// per-app route as a click (per-pid for Cocoa, SkyLight for Chromium),
+    /// so the user's cursor stays put. Apps that track drags by the global
+    /// cursor won't follow; the verify step reports that, and the pid-less
+    /// `MouseController.drag` remains the explicit cursor-moving fallback.
+    func drag(
+        pid: pid_t,
+        from start: CGPoint,
+        to end: CGPoint,
+        button: MouseButton = .left,
+        windowId: CGWindowID? = nil
+    ) -> InputResult {
+        if let failure = undeliverable(pid) { return failure }
         let downType: CGEventType
         let dragType: CGEventType
         let upType: CGEventType
@@ -480,6 +559,9 @@ final class BackgroundDriver: @unchecked Sendable {
             mouseButton = .center
         }
 
+        let window = windowId ?? transports.windowAt(pid, start)
+        transports.focusWithoutRaise(pid, window)
+
         guard
             let down = CGEvent(
                 mouseEventSource: source,
@@ -490,11 +572,12 @@ final class BackgroundDriver: @unchecked Sendable {
         else {
             return .fail("Failed to create mouse down event")
         }
-        _ = route(event: down, pid: pid, forceHID: true)
+        down.setIntegerValueField(.mouseEventClickState, value: 1)
+        WindowBinding.bind(down, to: window)
+        _ = route(event: down, pid: pid)
 
-        // CRITICAL: always release the button. Same invariant as the
-        // MouseController.drag — if we somehow fail to post the up event, the
-        // OS believes the user is still holding the mouse button down.
+        // CRITICAL: always release the button. If the up event is never
+        // posted, the target believes the button is still held.
         var releaseFired = false
         defer {
             if !releaseFired,
@@ -505,25 +588,31 @@ final class BackgroundDriver: @unchecked Sendable {
                     mouseButton: mouseButton
                 )
             {
-                _ = route(event: release, pid: pid, forceHID: true)
+                WindowBinding.bind(release, to: window)
+                _ = route(event: release, pid: pid)
             }
         }
 
-        Thread.sleep(forTimeInterval: 0.05)
-
-        guard
-            let dragEvent = CGEvent(
-                mouseEventSource: source,
-                mouseType: dragType,
-                mouseCursorPosition: end,
-                mouseButton: mouseButton
-            )
-        else {
-            return .fail("Failed to create mouse drag event")
+        transports.pause(0.05)
+        var previous = start
+        for point in Self.dragPath(from: start, to: end) {
+            guard
+                let moved = CGEvent(
+                    mouseEventSource: source,
+                    mouseType: dragType,
+                    mouseCursorPosition: point,
+                    mouseButton: mouseButton
+                )
+            else {
+                return .fail("Failed to create mouse drag event")
+            }
+            moved.setIntegerValueField(.mouseEventDeltaX, value: Int64((point.x - previous.x).rounded()))
+            moved.setIntegerValueField(.mouseEventDeltaY, value: Int64((point.y - previous.y).rounded()))
+            WindowBinding.bind(moved, to: window)
+            _ = route(event: moved, pid: pid)
+            previous = point
+            transports.pause(0.008)
         }
-        _ = route(event: dragEvent, pid: pid, forceHID: true)
-
-        Thread.sleep(forTimeInterval: 0.05)
 
         guard
             let up = CGEvent(
@@ -535,9 +624,45 @@ final class BackgroundDriver: @unchecked Sendable {
         else {
             return .fail("Failed to create mouse up event")
         }
-        _ = route(event: up, pid: pid, forceHID: true)
+        up.setIntegerValueField(.mouseEventClickState, value: 1)
+        WindowBinding.bind(up, to: window)
+        _ = route(event: up, pid: pid)
         releaseFired = true
 
         return .ok()
     }
 }
+
+// MARK: - Window binding
+
+/// Ties synthesized pointer events to one WindowServer window.
+enum WindowBinding {
+    static func bind(_ event: CGEvent, to windowId: CGWindowID?) {
+        guard let windowId else { return }
+        event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(windowId))
+        event.setIntegerValueField(
+            .mouseEventWindowUnderMousePointerThatCanHandleThisEvent,
+            value: Int64(windowId)
+        )
+    }
+
+    /// Frontmost on-screen normal window of `pid` whose bounds contain `point`
+    /// (global top-left coordinates).
+    static func window(ownedBy pid: pid_t, containing point: CGPoint) -> CGWindowID? {
+        let info =
+            (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[CFString: Any]]) ?? []
+        for entry in info {
+            guard (entry[kCGWindowOwnerPID] as? Int32) == pid,
+                (entry[kCGWindowLayer] as? Int ?? 0) == 0,
+                let boundsDict = entry[kCGWindowBounds] as? NSDictionary,
+                let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+                bounds.contains(point),
+                let number = entry[kCGWindowNumber] as? Int
+            else { continue }
+            return CGWindowID(number)
+        }
+        return nil
+    }
+}
+

@@ -210,7 +210,7 @@ enum SubagentConfigurationStore {
     ///   Spawn permission, budgets, model override, and child-tool grant.
     ///
     /// This keeps ABA protection for relevant changes without rejecting a
-    /// pending Spawn merely because an Image or AppleScript editor saved the
+    /// pending Spawn merely because an Image or Video editor saved the
     /// same shared configuration document.
     nonisolated static func snapshotWithSpawnAuthorityRevisions() -> (
         configuration: SubagentConfiguration,

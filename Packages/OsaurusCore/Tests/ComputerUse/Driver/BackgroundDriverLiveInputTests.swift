@@ -28,7 +28,7 @@ final class BackgroundDriverLiveInputTests: XCTestCase {
         try XCTSkipUnless(AXIsProcessTrusted(), "Test runner lacks Accessibility permission.")
 
         let pid = try launchTextEdit()
-        defer { NSRunningApplication(processIdentifier: pid)?.terminate() }
+        defer { terminateAndWait(pid) }
 
         NSRunningApplication(processIdentifier: pid)?.activate()
         Thread.sleep(forTimeInterval: 0.7)
@@ -53,10 +53,104 @@ final class BackgroundDriverLiveInputTests: XCTestCase {
             phrase.lowercased(),
             "expected single insertion of each character; got \(value ?? "nil")"
         )
-        XCTAssertEqual(BackgroundDriver.shared.lastRoute, .skyLight)
+        XCTAssertEqual(BackgroundDriver.shared.lastRoute, .perPid, "Cocoa apps take the public per-pid route")
+    }
+
+    /// Focus-without-raise makes the target AppKit-active for routing while
+    /// another app stays frontmost. This pins whether the user's own
+    /// keystrokes (an untagged HID event) follow it into the target: if they
+    /// did, the keyboard guard, which keys off the frontmost app, would not
+    /// see them.
+    func testFocusWithoutRaiseDoesNotCaptureTheUsersKeystrokes() throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["OSAURUS_CU_LIVE_INPUT"] == "1",
+            "Live input test — set OSAURUS_CU_LIVE_INPUT=1 (needs Accessibility permission) to run."
+        )
+        try XCTSkipUnless(AXIsProcessTrusted(), "Test runner lacks Accessibility permission.")
+
+        let pid = try launchTextEdit()
+        defer { terminateAndWait(pid) }
+        guard let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first
+        else { throw XCTSkip("Finder is not running.") }
+        finder.activate()
+        Thread.sleep(forTimeInterval: 0.8)
+        try XCTSkipUnless(
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == finder.processIdentifier,
+            "Could not put Finder in front."
+        )
+        let before = try XCTUnwrap(focusedValue(pid: pid), "TextEdit's document must be readable")
+
+        XCTAssertTrue(SkyLightBridge.focusWithoutRaise(pid: pid), "focus-without-raise symbols unavailable")
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertEqual(
+            NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            finder.processIdentifier,
+            "focus-without-raise must not change the frontmost app"
+        )
+
+        // A user keystroke: untagged, through the HID tap like a real keyboard.
+        let source = CGEventSource(stateID: .hidSystemState)
+        let down = try XCTUnwrap(CGEvent(keyboardEventSource: source, virtualKey: 7, keyDown: true))
+        let up = try XCTUnwrap(CGEvent(keyboardEventSource: source, virtualKey: 7, keyDown: false))
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.6)
+
+        let after = focusedValue(pid: pid) ?? ""
+        XCTAssertEqual(after, before, "the user's keystroke reached the background target")
+
+        // Control: the driver's own per-pid input does reach the same field.
+        XCTAssertTrue(BackgroundDriver.shared.type(pid: pid, text: "ok").success)
+        Thread.sleep(forTimeInterval: 0.6)
+        XCTAssertEqual(
+            focusedValue(pid: pid)?.lowercased(),
+            (before + "ok").lowercased(),
+            "the control keystrokes should land, proving the field read is live"
+        )
+        XCTAssertEqual(
+            NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            finder.processIdentifier,
+            "typing into the background target must not take the front"
+        )
+    }
+
+    /// The AX rung against a real background TextEdit, with Finder kept in
+    /// front: text is inserted at the caret through `AXSelectedText` and read
+    /// back, and no event is posted.
+    func testAXRungInsertsTextAtTheCaretInTheBackground() throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["OSAURUS_CU_LIVE_INPUT"] == "1",
+            "Live input test — set OSAURUS_CU_LIVE_INPUT=1 (needs Accessibility permission) to run."
+        )
+        try XCTSkipUnless(AXIsProcessTrusted(), "Test runner lacks Accessibility permission.")
+
+        let pid = try launchTextEdit()
+        defer { terminateAndWait(pid) }
+        guard let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first
+        else { throw XCTSkip("Finder is not running.") }
+        finder.activate()
+        Thread.sleep(forTimeInterval: 0.8)
+
+        XCTAssertTrue(ElementInteraction.shared.insertAtCaret(id: nil, pid: pid, text: "hello rung"))
+        XCTAssertEqual(focusedValue(pid: pid), "hello rung")
+        XCTAssertTrue(ElementInteraction.shared.insertAtCaret(id: nil, pid: pid, text: " again"))
+        XCTAssertEqual(focusedValue(pid: pid), "hello rung again", "inserts at the caret, keeping prior text")
+        XCTAssertEqual(
+            NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            finder.processIdentifier,
+            "the AX rung must not take the front"
+        )
     }
 
     // MARK: Helpers
+
+    private func terminateAndWait(_ pid: pid_t) {
+        guard let app = NSRunningApplication(processIdentifier: pid) else { return }
+        app.terminate()
+        let deadline = Date().addingTimeInterval(5)
+        while !app.isTerminated, Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
+        if !app.isTerminated { app.forceTerminate() }
+    }
 
     private func launchTextEdit() throws -> pid_t {
         let tmp = "/tmp/cu_live_\(getpid()).txt"

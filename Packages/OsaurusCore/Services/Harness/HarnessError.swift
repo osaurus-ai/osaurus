@@ -20,7 +20,7 @@ public enum HarnessError: LocalizedError, Sendable, Equatable {
     /// The harness rejected the message outright (Pi `success: false`).
     case rejected(runtime: String, detail: String)
     /// The caller is a path that cannot drive an external harness in v1
-    /// (HTTP agent runs, delegation, Computer Use, AppleScript).
+    /// (HTTP agent runs, delegation, Computer Use).
     case unsupportedPath(agentName: String)
 
     public var errorDescription: String? {

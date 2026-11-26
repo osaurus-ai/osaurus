@@ -50,7 +50,7 @@ extension AgentManager {
     }
 
     /// The typed refusal for surfaces that only run the built-in loop
-    /// (`/agents/{id}/run`, `spawn_agent`, Computer Use, AppleScript).
+    /// (`/agents/{id}/run`, `spawn_agent`, Computer Use).
     /// Running a harness agent there with built-in defaults would silently
     /// be a different agent.
     public func harnessUnsupportedError(for agentId: UUID) -> HarnessError? {

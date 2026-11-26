@@ -122,8 +122,16 @@ struct ComputerUseDiagnosticsPanel: View {
     }
 
     private var agentInputs: [ComputerUseAgentAvailabilityInput] {
-        agentManager.agents.map { agent in
-            let model = agentManager.effectiveModel(for: agent.id)?
+        let config = SubagentConfigurationStore.snapshot()
+        return agentManager.agents.map { agent in
+            let model =
+                SubagentToolVisibility.effectiveSubagentModel(
+                    capabilityId: SubagentCapabilityRegistry.computerUse.id,
+                    isDefault: agent.id == Agent.defaultId,
+                    config: config,
+                    settings: agent.settings
+                )
+                ?? agentManager.effectiveModel(for: agent.id)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return ComputerUseAgentAvailabilityInput(
                 id: agent.id,
@@ -197,7 +205,7 @@ struct ComputerUseDiagnosticsPanel: View {
         VStack(alignment: .leading, spacing: theme.space.s6) {
             fieldLabel(L("Verb"))
             SettingsMenuPicker(selection: $previewVerb) {
-                ForEach(AgentVerb.allCases, id: \.self) { verb in
+                ForEach(AgentVerb.allCases.filter { $0 != .batch }, id: \.self) { verb in
                     Text(verbatim: verbLabel(verb)).tag(verb)
                 }
             }
@@ -412,6 +420,11 @@ struct ComputerUseDiagnosticsPanel: View {
         case .clear: return L("Clear")
         case .pressKey: return L("Press key")
         case .scroll: return L("Scroll")
+        case .hover: return L("Hover")
+        case .select: return L("Select option")
+        case .zoom: return L("Zoom")
+        case .screenshot: return L("Screenshot")
+        case .batch: return L("Batch")
         case .open: return L("Open app")
         case .done: return L("Done")
         case .giveUp: return L("Give up")

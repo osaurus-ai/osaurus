@@ -413,7 +413,7 @@ final class ChatTurn: ObservableObject, Identifiable {
     @Published var toolCallDurations: [String: TimeInterval] = [:] {
         didSet { toolStateRevision &+= 1 }
     }
-    /// Finished Computer Use / AppleScript step logs by call id, captured
+    /// Finished subagent step logs by call id, captured
     /// when the result lands (the live feed is dropped seconds later).
     var toolCallLogs: [String: SubagentRunLog] = [:]
     /// Why a call ran without its approval card, by call id: the tool row's

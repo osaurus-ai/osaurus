@@ -329,7 +329,7 @@ final class ModelShareService: ObservableObject {
         for (id, state) in ModelDownloadService.shared.downloadStates {
             switch state {
             case .downloading, .paused:
-                for kind in [ModelShareKind.language, .embedding, .applescript] {
+                for kind in [ModelShareKind.language, .embedding] {
                     busy.insert(ShareableModel.id(kind: kind, localId: id))
                 }
             default: break

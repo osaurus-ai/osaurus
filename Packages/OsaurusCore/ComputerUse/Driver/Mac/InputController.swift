@@ -107,8 +107,8 @@ final class MouseController: @unchecked Sendable {
         mouseDown.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
         mouseUp.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
 
-        mouseDown.post(tap: .cghidEventTap)
-        mouseUp.post(tap: .cghidEventTap)
+        mouseDown.postTagged(tap: .cghidEventTap)
+        mouseUp.postTagged(tap: .cghidEventTap)
 
         return .ok()
     }
@@ -134,7 +134,7 @@ final class MouseController: @unchecked Sendable {
             return .fail("Failed to create mouse move event")
         }
 
-        event.post(tap: .cghidEventTap)
+        event.postTagged(tap: .cghidEventTap)
         return .ok()
     }
 
@@ -170,7 +170,7 @@ final class MouseController: @unchecked Sendable {
             return .fail("Failed to create scroll event")
         }
 
-        event.post(tap: .cgSessionEventTap)
+        event.postTagged(tap: .cgSessionEventTap)
         return .ok()
     }
 
@@ -215,7 +215,7 @@ final class MouseController: @unchecked Sendable {
         else {
             return .fail("Failed to create mouse down event")
         }
-        mouseDown.post(tap: .cghidEventTap)
+        mouseDown.postTagged(tap: .cghidEventTap)
 
         // Always release the button, even on error. This is the critical safety:
         // without it a stray failure would leave the OS believing the user is
@@ -230,7 +230,7 @@ final class MouseController: @unchecked Sendable {
                     mouseButton: mouseButton
                 )
             {
-                release.post(tap: .cghidEventTap)
+                release.postTagged(tap: .cghidEventTap)
             }
         }
 
@@ -246,7 +246,7 @@ final class MouseController: @unchecked Sendable {
         else {
             return .fail("Failed to create mouse drag event")
         }
-        mouseDrag.post(tap: .cghidEventTap)
+        mouseDrag.postTagged(tap: .cghidEventTap)
 
         Thread.sleep(forTimeInterval: 0.05)
 
@@ -260,7 +260,7 @@ final class MouseController: @unchecked Sendable {
         else {
             return .fail("Failed to create mouse up event")
         }
-        mouseUp.post(tap: .cghidEventTap)
+        mouseUp.postTagged(tap: .cghidEventTap)
         releaseFired = true
 
         return .ok()
@@ -315,8 +315,8 @@ final class KeyboardController: @unchecked Sendable {
             unicodeString: &unicodeString
         )
 
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
+        keyDown.postTagged(tap: .cghidEventTap)
+        keyUp.postTagged(tap: .cghidEventTap)
 
         return nil
     }
@@ -346,8 +346,8 @@ final class KeyboardController: @unchecked Sendable {
         keyDown.flags = modifiers
         keyUp.flags = modifiers
 
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
+        keyDown.postTagged(tap: .cghidEventTap)
+        keyUp.postTagged(tap: .cghidEventTap)
 
         return .ok()
     }

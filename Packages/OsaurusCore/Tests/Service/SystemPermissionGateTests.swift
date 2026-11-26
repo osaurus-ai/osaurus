@@ -307,25 +307,6 @@ struct SystemPermissionGateTests {
             }
         }
     }
-
-    // MARK: - AppleScript targets
-
-    @Test("the AppleScript preflight finds every app a script addresses")
-    func appleScriptTargets() {
-        let source = """
-            tell application "Mail" to get name
-            tell app "Notes"
-            end tell
-            tell application id "com.apple.TextEdit" to activate
-            tell application "mail" to get name
-            """
-        #expect(
-            AppleScriptAutomationConsent.targets(in: source) == [
-                .bundleIdentifier("com.apple.TextEdit"), .name("Mail"), .name("Notes"),
-            ])
-        #expect(AppleScriptAutomationConsent.targets(in: #"Application("Calendar").calendars()"#) == [.name("Calendar")])
-        #expect(AppleScriptAutomationConsent.targets(in: "return 1 + 1").isEmpty)
-    }
 }
 
 private struct CalendarPermissionFixture: OsaurusTool, PermissionedTool {

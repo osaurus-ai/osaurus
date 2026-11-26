@@ -102,7 +102,7 @@ On import, `MCPServerResolution` decides what each template server means on this
 
 Every agent creation path (create, duplicate, config apply, bundle import, backup restore, template use) marks the agent in `AgentSetupStateStore` (`~/.osaurus/agents/setup-pending.json`). The marker survives relaunch and is cleared only when `AgentSetupChecker` finds nothing to fix or the user finishes the wizard.
 
-`AgentSetupChecker` reports the machine-local gaps a creator cannot grant on someone else's Mac: a working folder path with no usable bookmark (blocking), a pinned model that does not resolve (blocking), Computer Use without Accessibility (blocking), knowledge on with no collection (advisory), AppleScript without Automation (advisory), manual tools no server or plugin here provides (advisory).
+`AgentSetupChecker` reports the machine-local gaps a creator cannot grant on someone else's Mac: a working folder path with no usable bookmark (blocking), a pinned model that does not resolve (blocking), Computer Use without Accessibility (blocking), knowledge on with no collection (advisory), manual tools no server or plugin here provides (advisory).
 
 Where it runs:
 

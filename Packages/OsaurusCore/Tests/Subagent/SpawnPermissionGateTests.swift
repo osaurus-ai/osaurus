@@ -522,7 +522,7 @@ struct SpawnPermissionGateTests {
                 )
             )
 
-            // Image and AppleScript residency settings share the same
+            // Image model settings share the same
             // persisted configuration document but cannot alter this Spawn
             // target, budget, model, or permission. Their editor save must
             // not invalidate the approval.
@@ -533,8 +533,8 @@ struct SpawnPermissionGateTests {
                         var unrelated = askConfig
                         unrelated.defaultImageGenerationModelId =
                             "image/unrelated"
-                        unrelated.defaultAppleScriptModelId =
-                            "applescript/unrelated"
+                        unrelated.defaultImageEditModelId =
+                            "image-edit/unrelated"
                         SubagentConfigurationStore.save(unrelated)
                         return .allowOnce
                     }
@@ -551,7 +551,7 @@ struct SpawnPermissionGateTests {
                 }
             guard case .ready = unrelatedApproval else {
                 Issue.record(
-                    "Expected unrelated Image/AppleScript save to retain direct Spawn approval"
+                    "Expected unrelated Image save to retain direct Spawn approval"
                 )
                 return
             }

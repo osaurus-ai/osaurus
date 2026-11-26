@@ -293,7 +293,7 @@ enum PrivacyReviewMode: Sendable, Equatable {
     /// origins follow `requireReviewForNonInteractive`.
     case interactive
     /// Model steps inside a delegated loop the user is not looking at
-    /// (Computer Use, AppleScript). Every fresh detection is redacted
+    /// (Computer Use). Every fresh detection is redacted
     /// without a sheet: a sheet opened in the chat window while the
     /// agent drives another app goes unanswered, the loop's per-step
     /// timeout cancels it, and the run fails. Scrubbing everything keeps

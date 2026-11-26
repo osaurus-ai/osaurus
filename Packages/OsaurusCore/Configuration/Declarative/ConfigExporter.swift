@@ -222,7 +222,6 @@ enum ConfigExporter {
         caps.browserUseEnabled = agent.settings.browserUseEnabled
         caps.appleApps = AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue)
         caps.imageEnabled = agent.settings.imageEnabled
-        caps.applescriptEnabled = agent.settings.appleScriptEnabled
         caps.speakEnabled = agent.settings.speakEnabled
         caps.renderChartEnabled = agent.settings.renderChartEnabled
         caps.calculatorEnabled = agent.settings.calculatorEnabled
@@ -324,8 +323,6 @@ enum ConfigExporter {
         let agents = AgentManager.shared.agents
         var section = DelegationSection()
         section.localTextEnabled = config.localTextDelegationEnabled
-        section.applescriptExecutionMode =
-            ConfigAppBehaviorEnums.applescriptModeKey(for: config.defaultAppleScriptExecutionMode)
         // The pool stores agent UUIDs; the document uses names. Ids without a
         // live agent are dropped (matching the store's own pruning intent).
         section.spawnableAgents = config.spawnableAgentIDs.compactMap { id in

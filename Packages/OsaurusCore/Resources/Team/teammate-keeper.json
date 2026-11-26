@@ -39,7 +39,6 @@
       "db_enabled": false,
       "computer_use_enabled": false,
       "browser_use_enabled": false,
-      "applescript_enabled": false,
       "image_enabled": false,
       "speak_enabled": false,
       "render_chart_enabled": false

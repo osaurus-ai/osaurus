@@ -1389,7 +1389,6 @@ struct AgentDetailView: View {
     private var spawnDelegationEnabled: Bool { subagentToggles[.spawn] ?? false }
     private var imageEnabled: Bool { subagentToggles[.image] ?? false }
     private var videoEnabled: Bool { subagentToggles[.video] ?? false }
-    private var appleScriptEnabled: Bool { subagentToggles[.appleScript] ?? false }
     /// Per-agent `spawn_agent` allow-list (which agents this agent may spawn).
     /// Mirrored from / into `AgentSettings.spawnableAgentIDs`; empty hides the
     /// `spawn_agent` tool.
@@ -1414,12 +1413,6 @@ struct AgentDetailView: View {
     @State private var imageEditModelId: String? = nil
     @State private var textToVideoTarget: MediaModelTarget? = nil
     @State private var imageToVideoTarget: MediaModelTarget? = nil
-    /// Per-agent AppleScript model bundle id (`nil` resolves to the first
-    /// installed catalog model at run time) and execution mode (confirm each
-    /// script vs auto-run with a warning). Mirrored from / into
-    /// `AgentSettings.appleScriptModelId` / `appleScriptExecutionMode`.
-    @State private var appleScriptModelId: String? = nil
-    @State private var appleScriptExecutionMode: AppleScriptExecutionMode = .default
     /// Per-agent delegation permissions (spawn / image) + spawn budgets. Mirrored
     /// from / into `AgentSettings`.
     @State private var subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults()
@@ -3130,7 +3123,6 @@ struct AgentDetailView: View {
             spawnDelegationEnabled: spawnDelegationEnabled,
             imageEnabled: imageEnabled,
             videoEnabled: videoEnabled,
-            appleScriptEnabled: appleScriptEnabled,
             spawnableAgentIDs: spawnableAgentIDs,
             spawnConfiguration: spawnConfiguration,
             enabledAppleApps: enabledAppleApps,
@@ -4027,14 +4019,6 @@ struct AgentDetailView: View {
                         "Let the agent generate local or cloud text-to-video and image-to-video jobs. Cloud jobs require a price quote.",
                     icon: "film"
                 )
-            case .appleScript:
-                return PerAgentFeature(
-                    flag: .appleScript,
-                    title: "AppleScript",
-                    subtitle:
-                        "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below.",
-                    icon: "applescript"
-                )
             case .browserUse:
                 return PerAgentFeature(
                     flag: .browserUse,
@@ -4073,10 +4057,18 @@ struct AgentDetailView: View {
     ) -> AgentCapabilityReadiness {
         let configured = subagentToggles[flag] ?? false
         let capability = SubagentCapabilityRegistry.capability(forPerAgentFlag: flag)
-        let override = capability.flatMap { subagentModelOverrides[$0.id] }?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var draftSettings = agent.settings
+        draftSettings.subagentModelOverrides = subagentModelOverrides
+        let override = capability.flatMap {
+            SubagentToolVisibility.effectiveSubagentModel(
+                capabilityId: $0.id,
+                isDefault: agent.id == Agent.defaultId,
+                config: SubagentConfigurationStore.snapshot(),
+                settings: draftSettings
+            )
+        }
         let hasResolvedModel =
-            !(override?.isEmpty ?? true)
+            override != nil
             || agentManager.effectiveModel(for: agent.id) != nil
 
         var configuredSpawnTargetCount = 0
@@ -4121,7 +4113,6 @@ struct AgentDetailView: View {
             isCheckingSpawnTargets: checkingSpawnTargets,
             hasReadyImageModel: ModelPickerItemCache.shared.hasReadyImageModel,
             hasReadyVideoModel: ModelPickerItemCache.shared.hasReadyVideoGenerationModel,
-            hasReadyAppleScriptModel: ModelPickerItemCache.shared.hasReadyAppleScriptModel,
             permission: permission,
             // Computer Use's runtime floor is Accessibility (the registry
             // permission gate fails the first call without it). Only that
@@ -4296,18 +4287,6 @@ struct AgentDetailView: View {
             subagentFootnote(
                 "Local jobs are free and cancellable. Cloud approval includes the current price; queued paid jobs continue recovery after Stop or relaunch."
             )
-        case .appleScript:
-            // AppleScript owns its own dedicated model (supportsModelOverride is
-            // false, so the generic override row above is skipped): pick which
-            // installed AppleScript model this agent uses, plus how each script
-            // is gated. The consent surface is the execution-mode gate, so there
-            // is no permission row.
-            appleScriptModelPickerRow
-            subagentPanelDivider
-            appleScriptExecutionModeRow
-            subagentFootnote(
-                "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models."
-            )
         case .browserUse:
             // The model-override row is rendered generically above (registry
             // `supportsModelOverride`). Approval behavior follows the shared
@@ -4359,53 +4338,6 @@ struct AgentDetailView: View {
         pickerItems.videoGenerationDelegateCandidates.filter { $0.mediaModel?.kind == kind }
     }
 
-    /// The installed AppleScript models this agent can pick. AppleScript bundles
-    /// stay in the picker cache (only hidden from the chat picker), so they're
-    /// filtered straight out of `pickerItems`.
-    private var appleScriptModelCandidates: [ModelPickerItem] {
-        pickerItems.filter(\.isAppleScriptCatalogModel)
-    }
-
-    /// AppleScript model picker for the AppleScript card. `nil` (Choose
-    /// automatically) inherits the global Computer Use AppleScript model, then
-    /// falls back to the first installed catalog model when no global model is
-    /// configured. A stored id no longer on disk shows an "(unavailable)" row.
-    private var appleScriptModelPickerRow: some View {
-        VStack(alignment: .leading, spacing: theme.space.s8) {
-            SettingsFieldLabel("Model")
-            subagentModelPicker(
-                title: "AppleScript Model",
-                selection: appleScriptModelSelection,
-                candidates: appleScriptModelCandidates
-            )
-            if appleScriptModelCandidates.isEmpty {
-                subagentFootnote(
-                    "No AppleScript models installed yet. Download one in Settings → Computer Use → Models."
-                )
-            }
-        }
-    }
-
-    /// Execution-mode control for the AppleScript card: confirm each script
-    /// (safe default) vs auto-run with a warning. The caption spells out the
-    /// safety trade-off of the selected mode.
-    private var appleScriptExecutionModeRow: some View {
-        VStack(alignment: .leading, spacing: theme.space.s6) {
-            subagentControlRow("Script execution") {
-                AssignedBaseSegmentedPicker(
-                    selection: appleScriptExecutionModeSelection,
-                    options: AppleScriptExecutionMode.allCases.map { .init($0, $0.displayName, verbatim: true) }
-                )
-                .fixedSize()
-                .accessibilityLabel(Text("Script execution", bundle: .module))
-            }
-            Text(verbatim: appleScriptExecutionMode.caption)
-                .font(SettingsFont.rowDescription)
-                .foregroundColor(theme.text.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
     /// A labeled model picker for the inline card: an empty choice ("Choose
     /// automatically") first, and a stored id no longer offered shown as
     /// "(unavailable)".
@@ -4424,13 +4356,16 @@ struct AgentDetailView: View {
     /// The standard per-capability model-override picker for any chat-driven
     /// kind that sets `supportsModelOverride` (computer_use /
     /// spawn). Empty selection = inherit the kind's default model source; the
-    /// empty-tag label is derived from the kind's `modelSource` ("Use the agent's
-    /// model" for spawn, else "Inherit parent model") so the row needs no
-    /// per-kind copy. Lists chat-capable candidates; a stale stored id shows an
-    /// "(unavailable)" tag. Binds per-agent via `subagentModelOverrideBinding`.
+    /// empty-tag label is derived from the kind ("Use Model Defaults" when it
+    /// has an app-wide default, "Use the agent's model" for spawn, else "Inherit
+    /// parent model") so the row needs no per-kind copy. Lists chat-capable
+    /// candidates; a stale stored id shows an "(unavailable)" tag. Binds
+    /// per-agent via `subagentModelOverrideBinding`.
     private func subagentModelOverrideRow(_ capability: SubagentCapability) -> some View {
         let inheritLabel =
-            capability.modelSource == .agent ? L("Use the agent's model") : L("Inherit parent model")
+            capability.hasGlobalModelDefault
+            ? L("Use Model Defaults")
+            : capability.modelSource == .agent ? L("Use the agent's model") : L("Inherit parent model")
         return subagentModelPicker(
             title: "Model",
             selection: subagentModelOverrideBinding(for: capability.id),
@@ -4559,26 +4494,6 @@ struct AgentDetailView: View {
         guard let pickerID else { return nil }
         guard let item = candidates.first(where: { $0.id == pickerID }) else { return nil }
         return item.mediaModel?.target ?? MediaModelTarget(backend: .local, modelID: item.id)
-    }
-
-    private var appleScriptModelSelection: Binding<String> {
-        Binding(
-            get: { appleScriptModelId ?? "" },
-            set: {
-                appleScriptModelId = normalizedModelSelection($0)
-                debouncedSave()
-            }
-        )
-    }
-
-    private var appleScriptExecutionModeSelection: Binding<AppleScriptExecutionMode> {
-        Binding(
-            get: { appleScriptExecutionMode },
-            set: {
-                appleScriptExecutionMode = $0
-                debouncedSave()
-            }
-        )
     }
 
     private func subagentPermissionBinding(for kindId: String) -> Binding<SubagentPermissionPolicy> {
@@ -5978,8 +5893,6 @@ struct AgentDetailView: View {
         imageEditModelId = agent.settings.imageEditModelId
         textToVideoTarget = agent.settings.textToVideoTarget
         imageToVideoTarget = agent.settings.imageToVideoTarget
-        appleScriptModelId = agent.settings.appleScriptModelId
-        appleScriptExecutionMode = agent.settings.appleScriptExecutionMode
         subagentPermissions = agent.settings.subagentPermissions
         loadedSubagentPermissions = agent.settings.subagentPermissions
         subagentBudgets = SpawnBatchConcurrencyContract.applyingSharedLimit(
@@ -6158,14 +6071,6 @@ struct AgentDetailView: View {
                 spawnDelegationEnabled: spawnDelegationEnabled,
                 imageEnabled: imageEnabled,
                 videoEnabled: videoEnabled,
-                // AppleScript enable + model + execution mode, declared right
-                // after imageEnabled to match the AgentSettings initializer's
-                // parameter order. Persist unconditionally (like the image
-                // fields): a stored choice is ignored while the capability is
-                // off, so a toggle round-trip keeps the user's pick.
-                appleScriptEnabled: appleScriptEnabled,
-                appleScriptModelId: appleScriptModelId,
-                appleScriptExecutionMode: appleScriptExecutionMode,
                 // Persist the configured pool even while Spawn is off. The
                 // capability flag still hides/refuses the tool, while a later
                 // re-enable restores the user's deliberate agents instead of

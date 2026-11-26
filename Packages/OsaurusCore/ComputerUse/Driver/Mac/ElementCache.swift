@@ -121,9 +121,8 @@ final class ElementInteraction: @unchecked Sendable {
     private init() {}
 
     /// Click an element by id. Tries AXPress first (fully backgrounded),
-    /// then a per-pid SkyLight click at the element's center, and finally
-    /// the HID-tap path that warps the cursor (only happens when both
-    /// SkyLight and `CGEvent.postToPid` are unavailable).
+    /// then a per-app click at the element's center bound to the element's
+    /// own window (see `BackgroundDriver.route` for the transport choice).
     func clickElement(id: String) -> ElementActionResult {
         switch resolve(id: id) {
         case .failure(let err): return err
@@ -131,11 +130,16 @@ final class ElementInteraction: @unchecked Sendable {
             if element.supportsAction("AXPress") && element.performAction("AXPress") {
                 return .ok(delta: computeFocusDelta(pid: element.pid))
             }
+            element.scrollToVisibleIfSupported()
             guard let frame = element.getCurrentFrame() else {
                 return .removed(id)
             }
             let center = CGPoint(x: frame.midX, y: frame.midY)
-            let result = driver.click(pid: element.pid, point: center)
+            let result = driver.click(
+                pid: element.pid,
+                point: center,
+                windowId: element.windowNumber(near: center)
+            )
             if result.success {
                 return .ok(delta: computeFocusDelta(pid: element.pid))
             }
@@ -147,9 +151,14 @@ final class ElementInteraction: @unchecked Sendable {
         switch resolve(id: id) {
         case .failure(let err): return err
         case .ok(let element):
+            element.scrollToVisibleIfSupported()
             guard let frame = element.getCurrentFrame() else { return .removed(id) }
             let center = CGPoint(x: frame.midX, y: frame.midY)
-            let result = driver.doubleClick(pid: element.pid, point: center)
+            let result = driver.doubleClick(
+                pid: element.pid,
+                point: center,
+                windowId: element.windowNumber(near: center)
+            )
             if result.success {
                 return .ok(delta: computeFocusDelta(pid: element.pid))
             }
@@ -179,9 +188,15 @@ final class ElementInteraction: @unchecked Sendable {
             if element.supportsAction("AXShowMenu") && element.performAction("AXShowMenu") {
                 return .ok(delta: computeFocusDelta(pid: element.pid))
             }
+            element.scrollToVisibleIfSupported()
             guard let frame = element.getCurrentFrame() else { return .removed(id) }
             let center = CGPoint(x: frame.midX, y: frame.midY)
-            let result = driver.click(pid: element.pid, point: center, button: .right)
+            let result = driver.click(
+                pid: element.pid,
+                point: center,
+                button: .right,
+                windowId: element.windowNumber(near: center)
+            )
             if result.success {
                 // Heads-up: Chromium coerces synthetic right-clicks on web content
                 // to left-clicks at the renderer-IPC boundary. AXShowMenu above is
@@ -257,5 +272,104 @@ final class ElementInteraction: @unchecked Sendable {
             }
             return .fail(del.error ?? "Failed to clear field")
         }
+    }
+
+    /// Step a slider / stepper / incrementor with its own AX actions.
+    func adjustElement(id: String, increment: Bool, steps: Int) -> ElementActionResult {
+        switch resolve(id: id) {
+        case .failure(let err): return err
+        case .ok(let element):
+            let action = increment ? AXAdjustment.increment : AXAdjustment.decrement
+            guard element.supportsAction(action) else {
+                return .fail("This control can't be stepped with \(action).")
+            }
+            for _ in 0 ..< min(max(1, steps), AXAdjustment.maxSteps) {
+                guard element.performAction(action) else { return .fail("\(action) failed") }
+            }
+            return .ok(delta: computeFocusDelta(pid: element.pid))
+        }
+    }
+
+    /// Pick the option titled `option`. A combo box takes it as its value
+    /// (checked by read-back); a popup or menu button is opened and the
+    /// matching menu item pressed. An unmatched menu is cancelled and the
+    /// available titles reported.
+    func selectOption(id: String, option: String) -> ElementActionResult {
+        switch resolve(id: id) {
+        case .failure(let err): return err
+        case .ok(let element):
+            if AXOptionPicker.isComboBox(role: element.role) {
+                let set = AXUIElementSetAttributeValue(
+                    element.axElement,
+                    kAXValueAttribute as CFString,
+                    option as CFTypeRef
+                )
+                if set == .success, AXOptionPicker.string(element.axElement, kAXValueAttribute) == option {
+                    return .ok(delta: computeFocusDelta(pid: element.pid))
+                }
+            }
+            let opener = element.supportsAction("AXPress") ? "AXPress" : "AXShowMenu"
+            guard element.supportsAction(opener), element.performAction(opener) else {
+                return .fail("This control doesn't open a list of options. Click it, then click the option.")
+            }
+            var items: [(item: AXUIElement, title: String)] = []
+            let deadline = Date().addingTimeInterval(AXOptionPicker.menuWaitSeconds)
+            repeat {
+                items = AXOptionPicker.menuItems(under: element.axElement)
+                if !items.isEmpty { break }
+                Thread.sleep(forTimeInterval: 0.05)
+            } while Date() < deadline
+            if let index = AXOptionPicker.match(option, in: items.map(\.title)),
+                AXUIElementPerformAction(items[index].item, kAXPressAction as CFString) == .success
+            {
+                // A popup shows its pick as its value; a menu button has none
+                // and the loop's verify judges the command it ran.
+                let title = items[index].title
+                guard AXOptionPicker.string(element.axElement, kAXValueAttribute) != nil else {
+                    return .ok(delta: computeFocusDelta(pid: element.pid))
+                }
+                var shown: String?
+                let readBack = Date().addingTimeInterval(AXOptionPicker.readBackSeconds)
+                repeat {
+                    shown = AXOptionPicker.string(element.axElement, kAXValueAttribute)
+                    if AXOptionPicker.shows(shown, title: title) {
+                        return .ok(delta: computeFocusDelta(pid: element.pid))
+                    }
+                    Thread.sleep(forTimeInterval: 0.05)
+                } while Date() < readBack
+                return .fail("Picked \"\(title)\", but the control still shows \"\(shown ?? "")\".")
+            }
+            for menu in AXOptionPicker.children(of: element.axElement)
+            where AXOptionPicker.string(menu, kAXRoleAttribute) == (kAXMenuRole as String) {
+                _ = AXUIElementPerformAction(menu, kAXCancelAction as CFString)
+            }
+            if items.isEmpty {
+                return .fail("The control opened no readable list of options. Click it, then click the option.")
+            }
+            let titles = items.prefix(15).map(\.title).joined(separator: ", ")
+            return .fail("No single option matches \"\(option)\". Options: \(titles).")
+        }
+    }
+
+    /// Insert `text` at the caret of element `id`, else of `pid`'s focused
+    /// element, through `AXSelectedText`. True only when a read-back shows it.
+    func insertAtCaret(id: String?, pid: Int32, text: String) -> Bool {
+        let target: AXUIElement?
+        if let id, case .found(let element) = AccessibilityManager.shared.lookup(id: id) {
+            target = element.axElement
+        } else {
+            var focused: CFTypeRef?
+            let app = AccessibilityManager.axApp(pid)
+            if AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+                let focused, CFGetTypeID(focused) == AXUIElementGetTypeID()
+            {
+                // swiftlint:disable:next force_cast
+                target = (focused as! AXUIElement)
+            } else {
+                target = nil
+            }
+        }
+        guard let target else { return false }
+        return AXTextInsertion.insert(text, into: target)
     }
 }

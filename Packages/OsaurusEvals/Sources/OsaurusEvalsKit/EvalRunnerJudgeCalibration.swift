@@ -5,7 +5,7 @@
 //  Runner for the `judge_calibration` domain: grade a FROZEN assistant
 //  reply with the resolved judge and score the JUDGE against known
 //  verdicts. Every rubric-graded domain (capability_claims, agent_loop,
-//  default_agent, apple_script, screen_context) trusts the judge's
+//  default_agent, screen_context) trusts the judge's
 //  booleans; this is the lane that measures whether that trust is
 //  earned — and makes "swap JUDGE_MODEL" a diffable change instead of
 //  an invisible shift in every rubric grade.

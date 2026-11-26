@@ -24,7 +24,7 @@
 //
 //  CAPABILITY SURFACE CONTRACT — the delegated child IS the target agent:
 //  it carries the target agent's full direct-chat tool surface, including
-//  its single-level subagent kinds (image, computer use, AppleScript) when
+//  its single-level subagent kinds (image, video, computer use) when
 //  the target enables them, with per-tool permission gates applying exactly
 //  as in a direct chat with that agent. This is deliberately BROADER than
 //  the legacy bounded child (which intersected with the audited toolset and

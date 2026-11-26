@@ -2,7 +2,7 @@
 //  PrivacyReviewModeTests.swift
 //  osaurus / PrivacyFilter Tests
 //
-//  Delegated loops (Computer Use, AppleScript) send with `.autoScrub`:
+//  Delegated loops (Computer Use) send with `.autoScrub`:
 //  fresh detections are redacted without opening the review sheet, which
 //  would otherwise sit unanswered in the chat window until the loop's
 //  per-step timeout failed the run. Also pins the multimodal diff: text

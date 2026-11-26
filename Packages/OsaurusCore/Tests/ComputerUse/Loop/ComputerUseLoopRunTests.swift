@@ -20,6 +20,18 @@ import XCTest
 
 @testable import OsaurusCore
 
+/// Trips Stop as soon as the first action has been posted.
+private struct InterruptingPresenter: ComputerUsePresenting {
+    let token: InterruptToken
+    func begin(goal: String) async {}
+    func targetChanged(_ target: ComputerUsePresenceTarget?) async {}
+    func willAct(_ act: ComputerUsePresenceAct) async {}
+    func didAct() async { token.interrupt() }
+    func confirmPending(_ pending: Bool) async {}
+    func heartbeat() async {}
+    func end(_ outcome: RunOutcome) async {}
+}
+
 final class ComputerUseLoopRunTests: XCTestCase {
 
     // MARK: - Fixtures
@@ -209,6 +221,31 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertFalse(toolResults.contains { $0.contains("Action succeeded") })
     }
 
+    /// App hints join the leading system message; Qwen3.5-family templates
+    /// raise "System message must be at the beginning" on any other.
+    func testAppGuidanceStaysInTheLeadingSystemMessage() async {
+        let d = driver([el("go", "button", "Go")])
+        let recorder = ModelStepInputRecorder()
+        _ = await run(
+            d,
+            provider: { input in
+                let calls = await recorder.record(input)
+                return ModelActionCall(
+                    id: "c\(calls)",
+                    arguments: AgentAction(verb: .giveUp, reason: "stop").argumentsJSON()
+                )
+            }
+        )
+        let inputs = await recorder.inputs
+        XCTAssertFalse(inputs.isEmpty)
+        for input in inputs {
+            let roles = input.transcript.map(\.role)
+            XCTAssertEqual(roles.first, "system")
+            XCTAssertEqual(roles.filter { $0 == "system" }.count, 1, "roles: \(roles)")
+        }
+        XCTAssertTrue(inputs.first?.transcript.first?.text.contains("Hints for Demo:") == true)
+    }
+
     /// No surface can render the confirm card: the gated action fails fast
     /// with the typed reason and the run ends as gaveUp instead of parking on
     /// the card until the wall clock.
@@ -226,6 +263,7 @@ final class ComputerUseLoopRunTests: XCTestCase {
                 return true
             },
             confirmUnavailable: { "no chat window is open to show the approval card" },
+            targetApp: "Mail",
             limits: RunLimits(wallClockSeconds: 30),
             sessionId: "cu-test",
             nextAction: ComputerUseLoop.scriptedProvider([
@@ -241,6 +279,194 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertEqual(result.metrics.confirmsRequested, 0)
         let clicks = await d.elementActions
         XCTAssertTrue(clicks.isEmpty, "The gated action must not run")
+        let opens = await d.openCalls
+        XCTAssertTrue(opens.isEmpty, "The gated open must not run")
+    }
+
+    // MARK: - Target app
+
+    /// A named app is opened in the background before the first perceive,
+    /// and the run works in it rather than in whatever is in front.
+    func testNamedAppIsOpenedBehindAndTargeted() async {
+        let pid: Int32 = 5150
+        func calculator(_ id: Int, display: String) -> CUSnapshot {
+            CUSnapshot(
+                snapshotId: id, pid: pid, app: "Calculator", focusedWindow: "Calculator", tier: .ax,
+                truncated: false,
+                windows: [CUWindowSummary(id: 1, title: "Calculator", focused: true, x: 0, y: 0, w: 300, h: 400)],
+                elements: [el("seven", "button", "7"), el("display", "statictext", "Display", value: display)],
+                image: nil
+            )
+        }
+        let before = calculator(1, display: "0")
+        let after = calculator(2, display: "7")
+        let d = MockMacDriver(
+            availability: MacDriverAvailability(accessibility: true, screenRecording: true, skyLight: true),
+            apps: [CUAppListing(pid: pid, bundleId: "com.apple.calculator", name: "Calculator", active: false, hidden: false)],
+            activeWindow: CUActiveWindow(pid: 999, app: "Google Chrome", title: "Inbox", x: 0, y: 0, w: 800, h: 600),
+            snapshots: [pid: [before, before, after]]
+        )
+        let takeoverAsked = TakeoverAskCounter()
+        let result = await ComputerUseLoop.run(
+            goal: "Press 7",
+            modelId: "test-model",
+            driver: d,
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous, allowlist: ["Calculator"])),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "Press 7"),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            targetApp: "Calculator",
+            confirmTakeover: { _ in
+                await takeoverAsked.increment()
+                return true
+            },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1), note: "7"),
+                AgentAction(verb: .done, reason: "pressed"),
+            ])
+        )
+        XCTAssertTrue(result.outcome.isSuccess, "got \(result.outcome)")
+        let opens = await d.openCalls
+        XCTAssertEqual(opens.map(\.identifier), ["Calculator"])
+        XCTAssertEqual(opens.first?.background, true, "The target must open behind the user's work")
+        let clicks = await d.elementActions
+        guard case .click(let id, _, _)? = clicks.first, clicks.count == 1 else {
+            return XCTFail("Expected one click; got \(clicks)")
+        }
+        XCTAssertEqual(id, "seven", "The click must land in the named app's view, not the frontmost app")
+        let asked = await takeoverAsked.value
+        XCTAssertEqual(asked, 0, "A named app needs no takeover question")
+    }
+
+    /// Without a named app, the user is asked before the frontmost app is
+    /// taken over; saying no ends the run with nothing done.
+    func testDeclinedTakeoverEndsTheRunWithNoActions() async {
+        let d = driver([el("send", "button", "Send")])
+        let result = await ComputerUseLoop.run(
+            goal: "Send it",
+            modelId: "test-model",
+            driver: d,
+            gate: HardwiredGate(),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "Send it"),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            confirmTakeover: { app in app != "Demo" },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: { _ in
+                XCTFail("The model must not be asked for a step after a declined takeover")
+                return nil
+            }
+        )
+        guard case .declined(let app) = result.outcome else {
+            return XCTFail("Expected declined; got \(result.outcome)")
+        }
+        XCTAssertEqual(app, "Demo", "The question names the frontmost app")
+        XCTAssertEqual(result.metrics.takeoverApproved, false)
+        XCTAssertEqual(result.metrics.confirmsDeclined, 0, "The takeover answer is not an action confirm")
+        let clicks = await d.elementActions
+        XCTAssertTrue(clicks.isEmpty)
+        let captures = await d.captureCount
+        XCTAssertEqual(captures, 0, "Nothing is perceived before the user agrees")
+    }
+
+    // MARK: - Action audit
+
+    /// The model addresses marks; the feed records what they resolved to —
+    /// role, label and app — and typed text only as a length.
+    func testFeedNamesResolvedElementsAndKeepsTypedTextOut() async {
+        let d = driver(sequence: [
+            [el("to", "textfield", "To", value: ""), el("send", "button", "Send")],
+            [el("to", "textfield", "To", value: "sam@example.com"), el("send", "button", "Send")],
+            [el("to", "textfield", "To", value: "sam@example.com"), el("status", "statictext", "Sent")],
+        ])
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "Send it")
+        let result = await ComputerUseLoop.run(
+            goal: "Send it",
+            modelId: "test-model",
+            driver: d,
+            gate: AlwaysConfirmGate(),
+            feed: feed,
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .type, target: AgentTarget(mark: 1), text: "sam@example.com"),
+                AgentAction(verb: .click, target: AgentTarget(mark: 2)),
+                AgentAction(verb: .done, reason: "sent"),
+            ])
+        )
+        XCTAssertTrue(result.outcome.isSuccess, "got \(result.outcome)")
+        let titles = feed.currentEvents().map(\.title)
+        func has(_ kind: SubagentActivityEvent.Kind, _ title: String) -> Bool {
+            feed.currentEvents().contains { $0.kind == kind && $0.title == title }
+        }
+        XCTAssertTrue(has(.propose, #"Type 15 characters into textfield "To" in Demo"#), "\(titles)")
+        XCTAssertTrue(has(.act, #"Type 15 characters into textfield "To" in Demo"#), "\(titles)")
+        XCTAssertTrue(has(.propose, #"Click button "Send" in Demo"#), "\(titles)")
+        XCTAssertTrue(has(.act, #"Click button "Send" in Demo"#), "\(titles)")
+        XCTAssertTrue(has(.confirmRequested, #"Confirm: Click button "Send" in Demo"#), "\(titles)")
+        XCTAssertTrue(has(.confirmed, #"Approved: Click button "Send" in Demo"#), "\(titles)")
+        XCTAssertFalse(titles.contains { $0.contains("sam@example.com") }, "Typed text leaked: \(titles)")
+        XCTAssertFalse(titles.contains { $0.contains("mark ") }, "A resolved target is named, not numbered")
+    }
+
+    /// Nothing in front and no named app: the run refuses instead of guessing.
+    func testNoTargetAppGivesUpWithoutActing() async {
+        let d = MockMacDriver(
+            availability: MacDriverAvailability(accessibility: true, screenRecording: true, skyLight: true),
+            apps: [],
+            snapshots: [:]
+        )
+        let result = await ComputerUseLoop.run(
+            goal: "Do something",
+            modelId: "test-model",
+            driver: d,
+            gate: HardwiredGate(),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "Do something"),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([AgentAction(verb: .done, reason: "x")])
+        )
+        guard case .gaveUp(let reason) = result.outcome else {
+            return XCTFail("Expected gaveUp; got \(result.outcome)")
+        }
+        XCTAssertTrue(reason.contains("`app`"), "The refusal must name the fix; got: \(reason)")
+    }
+
+    /// The takeover question can't be shown: refuse with the reason instead
+    /// of taking the frontmost app unasked.
+    func testTakeoverConfirmUnavailableGivesUp() async {
+        let d = driver([el("send", "button", "Send")])
+        let result = await ComputerUseLoop.run(
+            goal: "Send it",
+            modelId: "test-model",
+            driver: d,
+            gate: HardwiredGate(),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "Send it"),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            confirmUnavailable: { "no chat window is open to show the approval card" },
+            confirmTakeover: { _ in
+                XCTFail("The takeover card must not be awaited when it can't be shown")
+                return true
+            },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([AgentAction(verb: .done, reason: "x")])
+        )
+        guard case .gaveUp(let reason) = result.outcome else {
+            return XCTFail("Expected gaveUp; got \(result.outcome)")
+        }
+        XCTAssertTrue(reason.contains("no chat window is open"), "got: \(reason)")
+        XCTAssertEqual(result.metrics.confirmsUnpresentable, 1)
+        let clicks = await d.elementActions
+        XCTAssertTrue(clicks.isEmpty)
     }
 
     /// Time the user spends on a confirm card is credited back to the wall
@@ -370,6 +596,205 @@ final class ComputerUseLoopRunTests: XCTestCase {
         guard case .interrupted = result.outcome else {
             return XCTFail("Expected interrupted; got \(result.outcome)")
         }
+    }
+
+    /// Stop lands while the model is deciding; the click it then returns must
+    /// not be posted.
+    func testStopDuringModelStepPostsNoAction() async {
+        let d = driver([el("go", "button", "Go")])
+        let token = InterruptToken()
+        let scripted = ComputerUseLoop.scriptedProvider([
+            AgentAction(verb: .click, target: AgentTarget(mark: 1), note: "click go")
+        ])
+        let result = await run(
+            d,
+            provider: { input in
+                token.interrupt()
+                return try await scripted(input)
+            },
+            interrupt: token
+        )
+        guard case .interrupted = result.outcome else {
+            return XCTFail("Expected interrupted; got \(result.outcome)")
+        }
+        let elementActions = await d.elementActions
+        let coordinateActions = await d.coordinateActions
+        XCTAssertTrue(elementActions.isEmpty)
+        XCTAssertTrue(coordinateActions.isEmpty)
+        XCTAssertEqual(result.metrics.actsAttempted, 0)
+    }
+
+    /// Stop pressed while the approval card is up wins over a late Approve.
+    func testStopDuringApprovalPostsNoAction() async {
+        let d = driver([el("field", "textfield", "Note", value: "")])
+        let token = InterruptToken()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .type, text: "hello", note: "fill note")
+            ]),
+            confirm: { _ in
+                token.interrupt()
+                return true
+            },
+            interrupt: token
+        )
+        guard case .interrupted = result.outcome else {
+            return XCTFail("Expected interrupted; got \(result.outcome)")
+        }
+        XCTAssertEqual(result.metrics.confirmsRequested, 1)
+        let elementActions = await d.elementActions
+        let coordinateActions = await d.coordinateActions
+        XCTAssertTrue(elementActions.isEmpty)
+        XCTAssertTrue(coordinateActions.isEmpty)
+    }
+
+    /// Stop withdraws a card nobody answered: the run ends as stopped, not as
+    /// the user declining the action.
+    func testStopWithdrawingTheCardEndsAsStoppedNotDeclined() async {
+        let d = driver([el("field", "textfield", "Note", value: "")])
+        let token = InterruptToken()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .type, text: "hello", note: "fill note")
+            ]),
+            confirm: { _ in
+                token.interrupt()
+                return false
+            },
+            interrupt: token
+        )
+        guard case .interrupted = result.outcome else {
+            return XCTFail("Expected interrupted; got \(result.outcome)")
+        }
+        XCTAssertEqual(result.metrics.confirmsRequested, 1)
+        XCTAssertEqual(result.metrics.confirmsDeclined, 0)
+        let elementActions = await d.elementActions
+        XCTAssertTrue(elementActions.isEmpty)
+    }
+
+    /// The target quit after it was perceived: the click is not posted into the
+    /// dead pid, and the model is told to reopen the app.
+    func testTargetThatQuitReceivesNoInput() async {
+        let d = driver([el("go", "button", "Go")])
+        await d.markExited(pid: 4242)
+        let results = ToolResultLog()
+        let script = ComputerUseLoop.scriptedProvider([
+            AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+            AgentAction(verb: .giveUp, reason: "app is gone"),
+        ])
+        let result = await run(
+            d,
+            provider: { input in
+                await results.record(input.lastToolResult)
+                return try await script(input)
+            }
+        )
+        guard case .gaveUp = result.outcome else {
+            return XCTFail("Expected gaveUp; got \(result.outcome)")
+        }
+        let elementActions = await d.elementActions
+        let coordinateActions = await d.coordinateActions
+        XCTAssertTrue(elementActions.isEmpty)
+        XCTAssertTrue(coordinateActions.isEmpty)
+        let seen = await results.results.compactMap { $0 }
+        XCTAssertTrue(
+            seen.contains { $0.contains("no longer running") && $0.contains("Use `open`") },
+            "The model should be told the app quit: \(seen)"
+        )
+    }
+
+    /// Live finding: Calculator quit while its approval card was up; after
+    /// Approve the click must not be posted, nor retried at the old frame.
+    func testTargetThatQuitDuringApprovalReceivesNoInput() async {
+        let d = driver([el("field", "textfield", "Note", value: "")])
+        let results = ToolResultLog()
+        let script = ComputerUseLoop.scriptedProvider([
+            AgentAction(verb: .type, text: "hello", note: "fill note"),
+            AgentAction(verb: .giveUp, reason: "app is gone"),
+        ])
+        let result = await run(
+            d,
+            provider: { input in
+                await results.record(input.lastToolResult)
+                return try await script(input)
+            },
+            confirm: { _ in
+                await d.markExited(pid: 4242)
+                return true
+            }
+        )
+        XCTAssertEqual(result.metrics.confirmsRequested, 1)
+        XCTAssertEqual(result.metrics.coordinateFallbacks, 0)
+        let elementActions = await d.elementActions
+        let coordinateActions = await d.coordinateActions
+        XCTAssertTrue(elementActions.isEmpty)
+        XCTAssertTrue(coordinateActions.isEmpty)
+        let seen = await results.results.compactMap { $0 }
+        XCTAssertTrue(seen.contains { $0.contains("no longer running") }, "\(seen)")
+    }
+
+    /// Stop between two batched steps: the first ran, the second is not posted.
+    func testStopInsideBatchHaltsRemainingSteps() async {
+        let d = driver([el("a", "button", "A"), el("b", "button", "B")])
+        let token = InterruptToken()
+        let presenter = InterruptingPresenter(token: token)
+        let result = await ComputerUseLoop.run(
+            goal: "test goal",
+            modelId: "test-model",
+            driver: d,
+            gate: HardwiredGate(),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal"),
+            interrupt: token,
+            confirm: { _ in true },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(
+                    verb: .batch,
+                    actions: [
+                        AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                        AgentAction(verb: .click, target: AgentTarget(mark: 2)),
+                    ]
+                )
+            ]),
+            presenter: presenter
+        )
+        guard case .interrupted = result.outcome else {
+            return XCTFail("Expected interrupted; got \(result.outcome)")
+        }
+        let elementActions = await d.elementActions
+        let coordinateActions = await d.coordinateActions
+        XCTAssertEqual(elementActions.count + coordinateActions.count, 1)
+    }
+
+    /// A model step that never yields is cancelled by Stop instead of being
+    /// waited out.
+    func testStopCancelsInFlightModelStep() async {
+        let token = InterruptToken()
+        let started = Date()
+        Task {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            token.interrupt()
+        }
+        do {
+            _ = try await ComputerUseLoop.runModelStep(
+                { () async throws -> Int in
+                    try await Task.sleep(nanoseconds: 30_000_000_000)
+                    return 0
+                },
+                timeout: 0,
+                maxRetries: 2,
+                interrupt: token,
+                feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal"),
+                step: 1
+            )
+            XCTFail("An interrupted model step must throw")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "got \(error)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 
     // MARK: - Gate decline
@@ -742,6 +1167,11 @@ private actor ModelStepInputRecorder {
 }
 
 private struct TestInferenceError: Error {}
+
+private actor TakeoverAskCounter {
+    private(set) var value = 0
+    func increment() { value += 1 }
+}
 
 /// Confirms every action, so tests can exercise the confirm seam with a
 /// read-effect click that `HardwiredGate` would otherwise auto-run.

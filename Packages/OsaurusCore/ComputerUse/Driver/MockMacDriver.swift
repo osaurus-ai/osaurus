@@ -29,11 +29,15 @@ public actor MockMacDriver: MacDriver {
     /// Optional queue of action results; when empty, actions succeed.
     private var actionResultQueue: [CUActionResult] = []
 
+    /// Pids reported as exited by `isRunning`; every other pid is unknown.
+    private var exitedPids: Set<Int32> = []
+
     // MARK: Recorded calls (for assertions)
 
     public private(set) var elementActions: [CUElementAction] = []
     public private(set) var coordinateActions: [CUCoordinateAction] = []
     public private(set) var openCalls: [(identifier: String, background: Bool)] = []
+    public private(set) var zoomCalls: [CUScreenRegion] = []
     public private(set) var narrations: [(note: String, step: Int?, total: Int?)] = []
     public private(set) var captureCount: Int = 0
     /// `interactiveOnly` argument from the most recent `capture` call, so tests
@@ -76,6 +80,7 @@ public actor MockMacDriver: MacDriver {
     public func enqueueActionResults(_ results: [CUActionResult]) {
         actionResultQueue.append(contentsOf: results)
     }
+    public func markExited(pid: Int32) { exitedPids.insert(pid) }
 
     // MARK: MacDriver
 
@@ -88,6 +93,8 @@ public actor MockMacDriver: MacDriver {
     public func activeWindow() async -> CUActiveWindow? { active }
 
     public func focusedContent(pid: Int32) async -> CUFocusedContent? { focusedContentByPid[pid] }
+
+    public func isRunning(pid: Int32) async -> Bool? { exitedPids.contains(pid) ? false : nil }
 
     public func open(
         identifier: String,
@@ -171,6 +178,18 @@ public actor MockMacDriver: MacDriver {
 
     public func screenshot(pid: Int32?, windowId: Int?, annotate: Bool) async -> CUImage? {
         CUImage(base64: "", mimeType: "image/jpeg", width: 0, height: 0)
+    }
+
+    /// A close-up at one pixel per point of the requested region.
+    public func zoom(pid: Int32, region: CUScreenRegion) async -> CUImage? {
+        zoomCalls.append(region)
+        return CUImage(
+            base64: "",
+            mimeType: "image/png",
+            width: max(1, Int(region.w)),
+            height: max(1, Int(region.h)),
+            region: region
+        )
     }
 
     public func narrate(_ note: String, step: Int?, total: Int?) async {

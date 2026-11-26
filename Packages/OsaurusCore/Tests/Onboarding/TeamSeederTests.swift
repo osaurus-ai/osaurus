@@ -90,7 +90,7 @@ struct BundledTeamTests {
             #expect(caps.searchMemoryEnabled == false)
             #expect(caps.redactionToolsEnabled == false, "Keeper's redaction is a discovery")
             #expect(caps.computerUseEnabled == false && caps.browserUseEnabled == false)
-            #expect(caps.applescriptEnabled == false && caps.calculatorEnabled == false)
+            #expect(caps.applescriptEnabled == nil && caps.calculatorEnabled == false)
             #expect(try entry(teammate).subagents?.enabled == false)
         }
         let keeper = try entry(.keeper)

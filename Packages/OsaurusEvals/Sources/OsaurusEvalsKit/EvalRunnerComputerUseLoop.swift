@@ -67,6 +67,7 @@ extension EvalRunner {
             return true
         }
         let confirmIsUnavailable = exp.confirmUnavailable ?? false
+        let declinesTakeover = exp.declineTakeover ?? false
         let confirmUnavailable: @Sendable () async -> String? = {
             confirmIsUnavailable ? "no chat window is open to show the approval card" : nil
         }
@@ -129,6 +130,18 @@ extension EvalRunner {
             }
         }
 
+        let vision: VisionContext
+        switch exp.vision {
+        case "local":
+            vision = VisionContext(modelAcceptsImages: true, modelIsLocal: true, cloudConsent: false)
+        case "none":
+            vision = .none
+        default:
+            vision =
+                scriptedProvider == nil
+                ? await MainActor.run { VisionContext.resolved(for: modelId) }.withConsent(false) : .none
+        }
+
         let started = Date()
         let result = await ComputerUseLoop.run(
             goal: testCase.query,
@@ -139,9 +152,11 @@ extension EvalRunner {
             interrupt: interrupt,
             confirm: confirm,
             confirmUnavailable: confirmUnavailable,
+            targetApp: exp.targetApp,
+            confirmTakeover: { _ in !declinesTakeover },
             limits: limits,
             policySummary: "",
-            vision: .none,
+            vision: vision,
             sessionId: "eval-cu-\(testCase.id)",
             nextAction: scriptedProvider
         )
@@ -311,6 +326,37 @@ extension EvalRunner {
                 fail: "no feed event title contained '\(needle)' (titles: \(feedTitles))"
             )
         }
+        for needle in exp.feedTitleExcludes ?? [] {
+            let leaked = feedTitles.filter { $0.localizedCaseInsensitiveContains(needle) }
+            check(
+                leaked.isEmpty,
+                pass: "feed kept out '\(needle)'",
+                fail: "\(leaked.count) feed event title(s) contained excluded text"
+            )
+        }
+
+        // 10. Gate and act counts.
+        if let minConfirms = exp.minConfirms {
+            check(
+                metrics.confirmsRequested >= minConfirms,
+                pass: "confirms ok: \(metrics.confirmsRequested) ≥ \(minConfirms)",
+                fail: "confirms \(metrics.confirmsRequested) < \(minConfirms)"
+            )
+        }
+        if let maxConfirms = exp.maxConfirms {
+            check(
+                metrics.confirmsRequested <= maxConfirms,
+                pass: "confirms ok: \(metrics.confirmsRequested) ≤ \(maxConfirms)",
+                fail: "confirms \(metrics.confirmsRequested) > \(maxConfirms)"
+            )
+        }
+        if let maxActs = exp.maxActsAttempted {
+            check(
+                metrics.actsAttempted <= maxActs,
+                pass: "acts ok: \(metrics.actsAttempted) ≤ \(maxActs)",
+                fail: "acts \(metrics.actsAttempted) > \(maxActs)"
+            )
+        }
 
         // Telemetry summary (always present so a pass is still legible).
         if redactEvidenceValues {
@@ -345,7 +391,8 @@ extension EvalRunner {
                         outcome: result.outcome,
                         invalidActions: invalidActions,
                         metrics: metrics,
-                        acted: acted
+                        acted: acted,
+                        observes: events.filter { $0.kind == .propose && $0.title == "Observe" }.count
                     )
             )
             if redactEvidenceValues {
@@ -412,18 +459,22 @@ extension EvalRunner {
         case .stepCapReached: return "stepCapReached"
         case .deadEnd: return "deadEnd"
         case .interrupted: return "interrupted"
+        case .declined: return "declined"
         case .failed: return "failed"
         }
     }
 
     /// One-line failure attribution so a reader can tell WHY a model failed
-    /// without replaying the trace: JSON-shape (re-asks), planning (gave up /
-    /// never acted), or targeting (couldn't resolve the elements it picked).
-    private static func attributeFailure(
+    /// without replaying the trace: JSON-shape (re-asks), loop (repeated an
+    /// action that had already worked), targeting (unresolvable picks, or
+    /// repeats that changed nothing), budget (the clock ran out), or planning
+    /// (never acted / didn't reach the goal).
+    nonisolated static func attributeFailure(
         outcome: RunOutcome,
         invalidActions: Int,
         metrics: ComputerUseRunMetrics,
-        acted: Int
+        acted: Int,
+        observes: Int = 0
     ) -> String {
         if case .gaveUp(let reason) = outcome, reason.localizedCaseInsensitiveContains("valid action") {
             return "JSON-shape — model could not emit a valid agent_action (\(invalidActions) re-asks)."
@@ -431,16 +482,28 @@ extension EvalRunner {
         if invalidActions >= 3 {
             return "JSON-shape — \(invalidActions) invalid agent_action shapes."
         }
-        if case .deadEnd = outcome {
-            return "targeting — repeatedly couldn't resolve a chosen target "
-                + "(axResolvable \(metrics.targetResolveSuccesses)/\(metrics.targetResolveAttempts))."
-        }
+        let resolved = "axResolvable \(metrics.targetResolveSuccesses)/\(metrics.targetResolveAttempts)"
         if let rate = metrics.axResolvableRate, rate < 0.5, metrics.targetResolveAttempts >= 2 {
-            return "targeting — low target-resolution rate "
-                + "(\(metrics.targetResolveSuccesses)/\(metrics.targetResolveAttempts))."
+            return "targeting — low target-resolution rate (\(resolved))."
+        }
+        if case .deadEnd(let reason) = outcome {
+            if reason.localizedCaseInsensitiveContains("Repeated the same action") {
+                if metrics.verifyChanged > 0 {
+                    return "loop — repeated an action after it had changed the view "
+                        + "(\(metrics.verifyChanged) changed, \(metrics.unverifiedActs) unchanged; \(resolved))."
+                }
+                return "targeting — repeated an action that never changed the view: the wrong control, "
+                    + "or input that did not land (\(metrics.unverifiedActs) unchanged; \(resolved))."
+            }
+            if reason.localizedCaseInsensitiveContains("time limit") {
+                return "budget — reached the time limit after \(acted) acts and \(observes) observes."
+            }
+            return "dead end — \(reason)"
         }
         if acted == 0 {
-            return "planning — model never executed an action before the run ended."
+            return observes > 0
+                ? "planning — only observed (\(observes) observes); never acted."
+                : "planning — model never executed an action before the run ended."
         }
         return "planning — acted but didn't reach the goal state within the step budget."
     }

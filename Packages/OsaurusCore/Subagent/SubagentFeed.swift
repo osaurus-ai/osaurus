@@ -418,12 +418,11 @@ public struct SubagentRunLog: Codable, Sendable, Equatable {
     /// Events dropped from the front to fit `maxPersistedEvents`.
     public let truncatedEventCount: Int
 
-    /// Kinds whose step log is worth keeping after the run. Computer Use and
-    /// AppleScript narrate every perceive/act/verify step; other kinds either
-    /// have their own transcript (spawn opens a real chat) or nothing to show.
+    /// Kinds whose step log is worth keeping after the run. Computer Use
+    /// narrates every perceive/act/verify step; other kinds either have their
+    /// own transcript (spawn opens a real chat) or nothing to show.
     static let persistedKindIds: Set<String> = [
-        SubagentCapabilityRegistry.computerUse.id,
-        SubagentCapabilityRegistry.appleScript.id,
+        SubagentCapabilityRegistry.computerUse.id
     ]
     /// Bounds on what one turn row stores. The live feed already caps at
     /// 2,000 events; a saved log keeps the tail the user cares about.
