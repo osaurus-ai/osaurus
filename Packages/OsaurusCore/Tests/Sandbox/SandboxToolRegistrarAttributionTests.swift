@@ -34,6 +34,7 @@ struct SandboxToolRegistrarAttributionTests {
     }
 
     private func clearFailureStore() {
+        SandboxStartupMetricsStore.flushPendingWrites()
         try? FileManager.default.removeItem(
             at: OsaurusPaths.container().appendingPathComponent("startup-failures.json")
         )

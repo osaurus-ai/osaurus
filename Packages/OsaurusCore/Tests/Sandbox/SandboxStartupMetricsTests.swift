@@ -21,6 +21,7 @@ struct SandboxStartupMetricsTests {
     }
 
     private func clearStore() {
+        SandboxStartupMetricsStore.flushPendingWrites()
         try? FileManager.default.removeItem(
             at: OsaurusPaths.container().appendingPathComponent("startup-metrics.json")
         )

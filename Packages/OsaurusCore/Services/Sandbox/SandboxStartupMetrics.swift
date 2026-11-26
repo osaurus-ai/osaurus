@@ -138,6 +138,17 @@ import Foundation
     public enum SandboxStartupMetricsStore {
         static let maxSamples = 20
 
+        /// Serial queue that owns every read-modify-write of the metrics
+        /// files. Recording is fire-and-forget on this queue so callers —
+        /// notably the `@MainActor` `SandboxToolRegistrar` — never block on
+        /// disk I/O (an atomic write's `rename(2)` can stall for seconds on
+        /// a busy volume and hang the UI). Reads hop onto the same queue so
+        /// they observe every write enqueued before them.
+        private static let ioQueue = DispatchQueue(
+            label: "ai.osaurus.sandbox.startup-metrics",
+            qos: .utility
+        )
+
         static func fileURL() -> URL {
             OsaurusPaths.container().appendingPathComponent("startup-metrics.json")
         }
@@ -147,59 +158,79 @@ import Foundation
         }
 
         public static func load() -> [SandboxBootSample] {
-            guard let data = try? Data(contentsOf: fileURL()) else { return [] }
-            return (try? JSONDecoder().decode([SandboxBootSample].self, from: data)) ?? []
+            let url = fileURL()
+            return ioQueue.sync { readSamples(from: url) }
         }
 
         public static func record(_ sample: SandboxBootSample) {
-            var samples = load()
-            samples.append(sample)
-            if samples.count > maxSamples {
-                samples.removeFirst(samples.count - maxSamples)
+            let url = fileURL()
+            let directory = OsaurusPaths.container()
+            ioQueue.async {
+                var samples = readSamples(from: url)
+                samples.append(sample)
+                if samples.count > maxSamples {
+                    samples.removeFirst(samples.count - maxSamples)
+                }
+                write(samples, to: url, directory: directory)
             }
-            persist(samples)
         }
 
         /// Attach the first-agent-ready duration to the most recent boot
         /// sample. Called once per boot by `SandboxAgentProvisioner` for
         /// the first agent that completes provisioning.
         public static func recordFirstAgentReady(seconds: Double) {
-            var samples = load()
-            guard let last = samples.indices.last,
-                samples[last].firstAgentReady == nil
-            else { return }
-            samples[last].firstAgentReady = seconds
-            persist(samples)
+            let url = fileURL()
+            let directory = OsaurusPaths.container()
+            ioQueue.async {
+                var samples = readSamples(from: url)
+                guard let last = samples.indices.last,
+                    samples[last].firstAgentReady == nil
+                else { return }
+                samples[last].firstAgentReady = seconds
+                write(samples, to: url, directory: directory)
+            }
         }
 
         public static func loadFailures() -> [SandboxStartupFailureSample] {
-            guard let data = try? Data(contentsOf: failureFileURL()) else { return [] }
-            return (try? JSONDecoder().decode([SandboxStartupFailureSample].self, from: data)) ?? []
+            let url = failureFileURL()
+            return ioQueue.sync { readFailures(from: url) }
         }
 
         public static func recordFailure(_ sample: SandboxStartupFailureSample) {
-            var samples = loadFailures()
-            samples.append(sample)
-            if samples.count > maxSamples {
-                samples.removeFirst(samples.count - maxSamples)
+            let url = failureFileURL()
+            let directory = OsaurusPaths.container()
+            ioQueue.async {
+                var samples = readFailures(from: url)
+                samples.append(sample)
+                if samples.count > maxSamples {
+                    samples.removeFirst(samples.count - maxSamples)
+                }
+                write(samples, to: url, directory: directory)
             }
-            persistFailures(samples)
         }
 
-        private static func persist(_ samples: [SandboxBootSample]) {
-            OsaurusPaths.ensureExistsSilent(OsaurusPaths.container())
+        /// Block until every write enqueued so far has hit disk. For tests
+        /// that inspect or delete the backing files directly.
+        static func flushPendingWrites() {
+            ioQueue.sync {}
+        }
+
+        private static func readSamples(from url: URL) -> [SandboxBootSample] {
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            return (try? JSONDecoder().decode([SandboxBootSample].self, from: data)) ?? []
+        }
+
+        private static func readFailures(from url: URL) -> [SandboxStartupFailureSample] {
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            return (try? JSONDecoder().decode([SandboxStartupFailureSample].self, from: data)) ?? []
+        }
+
+        private static func write<T: Encodable>(_ samples: [T], to url: URL, directory: URL) {
+            OsaurusPaths.ensureExistsSilent(directory)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             guard let data = try? encoder.encode(samples) else { return }
-            try? data.write(to: fileURL(), options: .atomic)
-        }
-
-        private static func persistFailures(_ samples: [SandboxStartupFailureSample]) {
-            OsaurusPaths.ensureExistsSilent(OsaurusPaths.container())
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            guard let data = try? encoder.encode(samples) else { return }
-            try? data.write(to: failureFileURL(), options: .atomic)
+            try? data.write(to: url, options: .atomic)
         }
 
         /// One-line, copy-pasteable digest of a failure sample for the
