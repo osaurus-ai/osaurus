@@ -386,9 +386,11 @@ let package = Package(
         // vmlx-swift#797: a Qwen3-VL prefix restored from the L2 disk cache prefills its suffix at the cache offset
         // (it restarted at position 0 and the model recited its prompt), a text prompt after an image no longer
         // decodes with the image's M-RoPE delta, and each request's delta stays with its own cache.
+        // vmlx-swift#798 loads transformers 5 qwen3_5 exports that declare `Qwen3_5Tokenizer` (Holo-3.1, Holo4)
+        // with the family's Qwen2Tokenizer.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "bbd2377508bca45a240ffdac7cd55d0f1c8b6785"
+            revision: "da012c50fd61fcccb69e9652ef32a73d4ee9f9b7"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the

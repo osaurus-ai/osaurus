@@ -6112,7 +6112,11 @@ public actor ModelRuntime {
         } else if ModelFamilyNames.isZayaFamily(modelName) {
             tags.append("layers=zayaCCA")
             tags.append("prefix=path-dependent-disk")
-        } else if Self.isKnownHybridModel(name: modelName) {
+        } else if Self.isKnownHybridModel(name: modelName)
+            || cacheTopology?.requiresRecurrentSSMCompanionState == true
+        {
+            // The loaded topology catches hybrids whose bundle id names no
+            // known family (fine-tunes such as Holo4 or NorthCUA on qwen3_5).
             tags.append("layers=hybrid-ssm")
         }
 

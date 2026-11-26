@@ -3253,6 +3253,8 @@ public enum ComputerUseLoop {
     /// Inject a per-app recipe hint exactly once per app (e.g. the address-bar
     /// flow for browsers). No-op when the app has no recipe or was already
     /// hinted; the app is marked hinted regardless so we don't re-check it.
+    /// The hint joins the leading system message: Qwen3.5-family templates
+    /// raise on a system message anywhere else.
     private static func appendAppGuidance(
         app: String?,
         into messages: inout [ChatMessage],
@@ -3263,7 +3265,7 @@ public enum ComputerUseLoop {
         guard !hinted.contains(key) else { return }
         hinted.insert(key)
         guard let text = AppRecipes.guidanceText(for: app) else { return }
-        messages.append(ChatMessage(role: "system", content: text))
+        SystemPromptComposer.appendSystemContent(text, into: &messages)
     }
 
     // MARK: - System prompt

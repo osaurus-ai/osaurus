@@ -221,6 +221,31 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertFalse(toolResults.contains { $0.contains("Action succeeded") })
     }
 
+    /// App hints join the leading system message; Qwen3.5-family templates
+    /// raise "System message must be at the beginning" on any other.
+    func testAppGuidanceStaysInTheLeadingSystemMessage() async {
+        let d = driver([el("go", "button", "Go")])
+        let recorder = ModelStepInputRecorder()
+        _ = await run(
+            d,
+            provider: { input in
+                let calls = await recorder.record(input)
+                return ModelActionCall(
+                    id: "c\(calls)",
+                    arguments: AgentAction(verb: .giveUp, reason: "stop").argumentsJSON()
+                )
+            }
+        )
+        let inputs = await recorder.inputs
+        XCTAssertFalse(inputs.isEmpty)
+        for input in inputs {
+            let roles = input.transcript.map(\.role)
+            XCTAssertEqual(roles.first, "system")
+            XCTAssertEqual(roles.filter { $0 == "system" }.count, 1, "roles: \(roles)")
+        }
+        XCTAssertTrue(inputs.first?.transcript.first?.text.contains("Hints for Demo:") == true)
+    }
+
     /// No surface can render the confirm card: the gated action fails fast
     /// with the typed reason and the run ends as gaveUp instead of parking on
     /// the card until the wall clock.

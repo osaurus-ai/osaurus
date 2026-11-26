@@ -1556,6 +1556,40 @@ struct MLXBatchAdapterTests {
         #expect(!key.contains("turbo("))
     }
 
+    @Test func unrecognizedBundleWithRecurrentTopologyGetsHybridTag() {
+        let qwen35Shape = ModelCacheTopologySnapshot(
+            layerCount: 40,
+            kvLayerCount: 10,
+            arraysLayerCount: 30
+        )
+        for name in ["mlx-community/Holo4-35B-A3B-4bit", "beipo-ai/NorthCUA-Nano", "OsaurusAI/Qwen3.8-27B-JANGH2"] {
+            #expect(!ModelRuntime.isKnownHybridModel(name: name), "\(name)")
+            let key = ModelRuntime.cacheCoordinatorModelKey(
+                modelName: name,
+                kvModeTag: "fp16",
+                weightsFingerprint: "testfp",
+                cacheTopology: qwen35Shape
+            )
+            #expect(key.contains("layers=hybrid-ssm"), "\(name)")
+            #expect(key.contains("companion=ssm"), "\(name)")
+        }
+
+        let dense = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "mlx-community/Holo4-27B-dense-test",
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
+            cacheTopology: ModelCacheTopologySnapshot(layerCount: 32, kvLayerCount: 32)
+        )
+        #expect(!dense.contains("layers=hybrid-ssm"))
+
+        let knownWithoutTopology = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
+        )
+        #expect(knownWithoutTopology.contains("layers=hybrid-ssm"))
+    }
+
     @Test func cacheDiskDirectoryOverrideHonorsBlockDiskDirectory() {
         var settings = VMLXServerRuntimeSettings()
         settings.cache.prefix.enabled = true
