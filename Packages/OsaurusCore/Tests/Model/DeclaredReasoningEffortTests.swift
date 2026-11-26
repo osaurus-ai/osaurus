@@ -778,4 +778,56 @@ extension DeclaredReasoningEffortTests {
         #expect(off?.id == toggle?.id)
         #expect(off?.value == toggle?.value)
     }
+
+    @Test("ERNIE 5.5 Flash exposes Off/Low/Medium/High and maps kwargs cleanly")
+    func ernie55ExposesAllFourRails() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-ernie-reasoning-\(UUID().uuidString)", isDirectory: true)
+        let bundle = root.appendingPathComponent("ERNIE-5.5-Flash-Preview-JANGHT2.4", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"{"model_type":"ernie5_5_moe"}"#.utf8).write(
+            to: bundle.appendingPathComponent("config.json"))
+
+        let cap = try #require(LocalReasoningCapability.ernieReasoningCapability(at: bundle))
+        #expect(cap.efforts == ["low", "medium", "high"])
+        let localCap = LocalReasoningCapability.detect(at: bundle)
+        #expect(localCap.supportsThinking)
+        #expect(localCap.defaultThinkingOn)
+
+        var kwargs: [String: [String: DeclaredReasoningEffort.ReasoningModeValue]] = [
+            "none": ["enable_thinking": .bool(false)]
+        ]
+        for effort in cap.efforts {
+            kwargs[effort] = ["enable_thinking": .bool(true), "reasoning_effort": .string(effort)]
+        }
+        let declaration = DeclaredReasoningEffort.Declaration(
+            control: .modeKwargs(cap.efforts, defaultLevel: "high", kwargs: kwargs),
+            preserveThinking: nil)
+        let model = "baidu/ERNIE-5.5-Flash-Preview-JANGHT2.4"
+        try withOverride(declaration, forModelId: model) {
+            let caps = try #require(DeclaredReasoningEffort.capabilities(forModelId: model))
+            #expect(caps.levels.map(\.id) == ["none", "low", "medium", "high"])
+            #expect(caps.defaultLevelId == "high")
+            let offCtx = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil, maxTokens: 64,
+                    modelOptions: ["reasoningEffort": .string("none")]),
+                modelName: model)
+            #expect(offCtx["enable_thinking"] as? Bool == false)
+            #expect(offCtx["reasoning_effort"] == nil)
+            for effort in ["low", "medium", "high"] {
+                let ctx = MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(
+                        temperature: nil, maxTokens: 64,
+                        modelOptions: ["reasoningEffort": .string(effort)]),
+                    modelName: model)
+                #expect(ctx["enable_thinking"] as? Bool == true)
+                #expect(ctx["reasoning_effort"] as? String == effort)
+            }
+            let bgOff = try #require(ModelProfileRegistry.thinkingOffStoredOption(for: model))
+            #expect(bgOff.id == "reasoningEffort")
+            #expect(bgOff.value == .string("none"))
+        }
+    }
 }

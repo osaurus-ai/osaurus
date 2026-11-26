@@ -165,6 +165,13 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         upstream.encode(text: text, addSpecialTokens: addSpecialTokens)
     }
 
+    func encodeOrdinaryText(_ text: String) throws -> [Int] {
+        guard let tokenizer = upstream as? VMLXTokenizers.PreTrainedTokenizer else {
+            throw MLXLMCommon.TokenizerError.missingChatTemplate
+        }
+        return try tokenizer.encodeOrdinaryText(text)
+    }
+
     func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
         upstream.decode(tokens: tokenIds, skipSpecialTokens: skipSpecialTokens)
     }
