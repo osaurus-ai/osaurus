@@ -347,6 +347,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // is fully launched. See `bootstrapRuntimeSettings()`.
         serverController.bootstrapRuntimeSettings()
 
+        // Load the chat configuration cache now, at a predictable point in
+        // launch, rather than lazily from whichever caller touches it first
+        // (e.g. the StorageMaintenance tick ~30s later, which then stalled
+        // the main thread inside the lazy initializer).
+        _ = AppConfiguration.shared
+
         // Wire up the periodic SQLite maintenance ticker (PRAGMA
         // optimize / wal_checkpoint / VACUUM at sensible intervals).
         // Idempotent — safe even if some DBs aren't open yet, the

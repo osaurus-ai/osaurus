@@ -23,9 +23,10 @@ struct SettingsCallout<Actions: View>: View {
     /// Someone's own words (a reviewer's note), shown verbatim and set off
     /// below the message.
     var quote: String?
-    /// Adds a close button for a suggestion the user may decline. The caller
-    /// persists the dismissal.
-    var onDismiss: (() -> Void)?
+    /// Adds a close button for a suggestion the user may decline (`dismissible(_:)`). The caller
+    /// persists the dismissal. A modifier, not an init parameter: an optional closure before `actions`
+    /// took every unlabeled trailing closure, so callouts' buttons became a close button instead.
+    private var onDismiss: (() -> Void)?
     @ViewBuilder let actions: Actions
 
     init(
@@ -34,7 +35,6 @@ struct SettingsCallout<Actions: View>: View {
         message: String,
         tone: ThemeStatusKind? = nil,
         quote: String? = nil,
-        onDismiss: (() -> Void)? = nil,
         @ViewBuilder actions: () -> Actions = { EmptyView() }
     ) {
         self.icon = icon
@@ -42,8 +42,14 @@ struct SettingsCallout<Actions: View>: View {
         self.message = message
         self.tone = tone
         self.quote = quote
-        self.onDismiss = onDismiss
         self.actions = actions()
+    }
+
+    /// This callout with a close button that runs `action`.
+    func dismissible(_ action: @escaping () -> Void) -> Self {
+        var callout = self
+        callout.onDismiss = action
+        return callout
     }
 
     private var tint: Color? {

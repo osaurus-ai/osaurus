@@ -67,6 +67,9 @@ final class SyncStatusModel: ObservableObject {
     private var watchers = 0
     private var poll: Task<Void, Never>?
     private var pairingExpiry: Task<Void, Never>?
+    /// Bumped by every `startPairing` and anything that ends pairing, so an offer the core
+    /// returns late (after a cancel, a join or a newer request) isn't shown.
+    private var pairingAttempt = 0
     private var unreachableSince: Date?
 
     /// How long Same Network finds nobody before suggesting Anywhere.
@@ -325,22 +328,41 @@ final class SyncStatusModel: ObservableObject {
 
     func startPairing() {
         guard let core = SyncService.shared.core else { return }
-        do {
-            let offer = try core.pairingOffer(ttlMs: Self.pairingTTL)
-            pairing = .offering(offer)
-            pairingExpiry?.cancel()
-            pairingExpiry = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(Int(Self.pairingTTL)))
-                guard !Task.isCancelled, let self, case .offering = self.pairing else { return }
-                // Not `.idle`: that reads as a code still being made, and the sheet span on it for good.
-                self.pairing = .expired
+        pairingAttempt += 1
+        let attempt = pairingAttempt
+        let ttl = Self.pairingTTL
+        // `.idle` reads as a code still being made while the core prepares it.
+        if pairing == .expired { pairing = .idle }
+        Task { [weak self] in
+            // The core takes its own lock to make an offer, and that lock can be held by sync work
+            // for seconds: never wait on it from the main actor.
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try core.pairingOffer(ttlMs: ttl) }
+            }.value
+            guard let self, attempt == self.pairingAttempt else { return }
+            // A confirmation or a finished pairing that arrived meanwhile wins over the new code.
+            switch self.pairing {
+            case .idle, .offering: break
+            default: return
             }
-        } catch {
-            pairing = .failed(error.syncUserMessage)
+            switch result {
+            case let .success(offer):
+                self.pairing = .offering(offer)
+                self.pairingExpiry?.cancel()
+                self.pairingExpiry = Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(Int(Self.pairingTTL)))
+                    guard !Task.isCancelled, let self, case .offering = self.pairing else { return }
+                    // Not `.idle`: that reads as a code still being made, and the sheet span on it for good.
+                    self.pairing = .expired
+                }
+            case let .failure(error):
+                self.pairing = .failed(error.syncUserMessage)
+            }
         }
     }
 
     func cancelPairing() {
+        pairingAttempt += 1
         pairingExpiry?.cancel()
         SyncService.shared.core?.cancelPairing()
         pairing = .idle
@@ -389,6 +411,7 @@ final class SyncStatusModel: ObservableObject {
             return
         }
         guard let core = SyncService.shared.core else { return }
+        pairingAttempt += 1
         pairing = .joining
         pairingExpiry?.cancel()
         pairingExpiry = Task { [weak self] in

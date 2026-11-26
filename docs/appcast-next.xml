@@ -3,6 +3,31 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>1.0.13</title>
+            <pubDate>Wed, 25 Nov 2026 19:43:50 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.13</sparkle:version>
+            <sparkle:shortVersionString>1.0.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.13/Osaurus-1.0.13.dmg" length="126326179" type="application/octet-stream" sparkle:edSignature="ezVN/zBHkw3feuXNTQvUa7M2Hxrz+WLh+dw/iy35bJZ787c26aH7fHeu3kcHy78G4+S+jHTLbt5CVBRRrxqoCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Polish agent pages, providers and the chat launch state by @tpae in https://github.com/osaurus-ai/osaurus/pull/3544
+* Load Bonsai 2.5 Prism and JANG in Osaurus by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3545
+* Repin the runtime for Inkling JANGHT bundles by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3541
+* Run delegated first-run work on the Cloud stand-in while the local model downloads by @tpae in https://github.com/osaurus-ai/osaurus/pull/3547
+* restore settings callout action buttons by @RaajeevChandran in https://github.com/osaurus-ai/osaurus/pull/3548
+* Create pairing offer off the main thread to prevent UI hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3543
+* Probe Foundation Models off the main thread during AppConfiguration startup by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3542
+* i18n(ja): continue Japanese localization (Settings and Chat labels, batch 2) by @eightman999 in https://github.com/osaurus-ai/osaurus/pull/3549
+* Make settings search match localized setting labels by @eightman999 in https://github.com/osaurus-ai/osaurus/pull/3540
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.12...1.0.13
+]]></description>
+        </item>
+        <item>
             <title>1.0.12</title>
             <pubDate>Tue, 24 Nov 2026 08:51:59 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

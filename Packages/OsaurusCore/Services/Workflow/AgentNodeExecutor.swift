@@ -407,7 +407,11 @@ enum AgentNodeExecutor {
         // The child's picker drops a model whose provider has not connected
         // yet and would run on whatever else is listed; naming it keeps the
         // agent's own model, so routing waits for the provider or says why.
-        let model = await MainActor.run { dispatchModel(for: target) { AgentManager.shared.effectiveModel(for: $0) } }
+        // A local model still downloading runs on its Cloud stand-in, unless
+        // the agent is locked to it.
+        let model = await MainActor.run {
+            dispatchModel(for: target) { LocalSetupBridge.runModel(forAgent: $0) }
+        }
         let outcome = try await AgentDelegationDispatcher.run(
             target: target.dispatchTarget, targetAgentName: target.name, input: task,
             maxElapsedSeconds: seconds, model: model, feed: feed, interrupt: InterruptToken(),

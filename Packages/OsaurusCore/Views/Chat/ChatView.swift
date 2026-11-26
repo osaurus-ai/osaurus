@@ -1846,16 +1846,8 @@ final class ChatSession: ObservableObject {
     /// paused, or failed. nil once the model lands (or was never in that
     /// setup window).
     static func pendingLocalDefaultModelId(for agentId: UUID?, in optionIds: [String]) -> String? {
-        guard
-            let model = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId),
-            !optionIds.contains(model)
-        else { return nil }
-        switch ModelManager.shared.downloadStates[model] {
-        case .downloading, .paused, .failed:
-            return model
-        case .completed, .notStarted, nil:
-            return nil
-        }
+        let model = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
+        return LocalSetupBridge.isPending(model, availableIds: optionIds) ? model : nil
     }
 
     /// The pinned-but-still-downloading local default for this session. Stays

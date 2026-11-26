@@ -514,6 +514,7 @@
       "onboarding.bundled-contracts",
       "onboarding.bundled-references",
       "onboarding.default-workflows",
+      "onboarding.delegated-on-bridge",
       "onboarding.discovery",
       "onboarding.held-on-bridge",
       "onboarding.isolation",

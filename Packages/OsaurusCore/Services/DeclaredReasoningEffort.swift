@@ -39,6 +39,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 
 enum DeclaredReasoningEffort {
     /// What the bundle says about the `reasoning_effort` kwarg.
@@ -158,6 +159,23 @@ enum DeclaredReasoningEffort {
     private static func resolve(modelId: String) -> Declaration? {
         guard let dir = LocalReasoningCapability.localDirectory(forModelId: modelId) else {
             return nil
+        }
+        if let capability = LocalReasoningCapability.ernieReasoningCapability(at: dir) {
+            var kwargs: [String: [String: ReasoningModeValue]] = [
+                "none": ["enable_thinking": .bool(false)]
+            ]
+            for effort in capability.efforts {
+                kwargs[effort] = [
+                    "enable_thinking": .bool(true),
+                    Ernie55EffortPolicy.templateKey: .string(effort),
+                ]
+            }
+            return Declaration(
+                control: .modeKwargs(
+                    capability.efforts,
+                    defaultLevel: Ernie55EffortPolicy.defaultEffort,
+                    kwargs: kwargs),
+                preserveThinking: nil)
         }
         if let data = LocalReasoningCapability.readSmallConfigFile(
             dir.appendingPathComponent("jang_config.json")),

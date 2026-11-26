@@ -118,6 +118,13 @@ public enum SetupChecker {
         var structuredOutput: (String, [JSONValue]) -> StructuredOutputSupport = { _, _ in .supported }
         /// The user's default model, used by `.preferred` slots left unbound.
         var defaultModel: String? = nil
+        /// The default model is a local model still downloading.
+        var defaultModelDownloading: Bool = false
+        /// The Osaurus Cloud model that stands in for the default model
+        /// while it downloads (`LocalSetupBridge`); nil otherwise.
+        var bridgeModel: String? = nil
+        /// Templates whose local-only slots may run on `bridgeModel`.
+        var bridgeableTemplateIDs: Set<UUID> = []
         /// Whether a resolved model id can call tools; nil when unknown.
         var toolCalling: (String) -> Bool? = { _ in nil }
         /// Whether the code-node runtime (the JavaScriptCore helper) exists.
@@ -220,6 +227,11 @@ public enum SetupChecker {
             env.workspacesLoaded = WorkspaceRosterStore.shared.lastRefreshedAt != nil
             env.stepAgent = { WorkflowStepAgent.resolveLive($0) }
             env.attended = attended
+            let pickerItems = ModelPickerItemCache.shared.items
+            env.defaultModelDownloading = LocalSetupBridge.isPending(
+                env.defaultModel, availableIds: pickerItems.map(\.id))
+            env.bridgeModel = LocalSetupBridge.standIn(for: env.defaultModel, items: pickerItems)
+            env.bridgeableTemplateIDs = LocalSetupBridge.bridgeableTemplateIDs
             return env
         }
 
@@ -349,14 +361,26 @@ public enum SetupChecker {
 
     /// The model id a slot runs on. An `always` slot runs only on its
     /// required model, whatever is bound. Otherwise: the binding, else the
-    /// template's preferred model when present, else the default model.
+    /// template's preferred model when present, else the default model, or
+    /// its Cloud stand-in while it downloads when the slot allows the cloud.
     static func resolvedModel(
         for slot: ModelRequirement, bindings: InstallBindings, environment env: Environment
     ) -> String? {
         if let required = slot.requiredModel { return resolve(required, env) }
         if let bound = bindings.models[slot.slot] { return resolve(bound, env) }
         if let preferred = resolve(slot.preferred, env) { return preferred }
-        return resolve(env.defaultModel, env)
+        if let model = resolve(env.defaultModel, env) { return model }
+        return slot.locality == .localOnly ? nil : resolve(env.bridgeModel, env)
+    }
+
+    /// The slot as it runs now: while the default model downloads, a
+    /// bridgeable template's local-only slot may use the cloud stand-in.
+    static func runSlot(_ slot: ModelRequirement, templateID: UUID, environment env: Environment) -> ModelRequirement {
+        guard slot.locality == .localOnly, env.bridgeModel != nil, env.bridgeableTemplateIDs.contains(templateID)
+        else { return slot }
+        var relaxed = slot
+        relaxed.locality = .cloudAllowed
+        return relaxed
     }
 
     private static func resolve(_ raw: String?, _ env: Environment) -> String? {
@@ -414,7 +438,7 @@ public enum SetupChecker {
         let reqs = template.requirements
         let def = template.workflow
 
-        for slot in reqs.models {
+        for slot in reqs.models.map({ runSlot($0, templateID: template.id, environment: env) }) {
             let label =
                 WorkflowSummary.slotSteps(slot.slot, in: def).isEmpty
                 ? L("Model slot \"\(slot.slot)\"") : WorkflowSummary.slotLabel(slot.slot, in: def)
@@ -430,9 +454,16 @@ public enum SetupChecker {
             }
             guard let model = resolvedModel(for: slot, bindings: bindings, environment: env) else {
                 let wanted = slot.requiredModel ?? bindings.models[slot.slot] ?? slot.preferred
+                let waitsForDownload =
+                    slot.requiredModel == nil && bindings.models[slot.slot] == nil && env.defaultModelDownloading
                 let detail: String
                 if let required = slot.requiredModel {
                     detail = L("This workflow requires \(required). Install it or connect its provider.")
+                } else if waitsForDownload, let model = env.defaultModel {
+                    detail =
+                        slot.locality == .localOnly
+                        ? L("This slot is local only, so it waits for \(model) to finish downloading.")
+                        : L("This slot waits for \(model) to finish downloading.")
                 } else if let wanted, wanted.caseInsensitiveCompare("default") != .orderedSame {
                     detail = L("\(wanted) is not available here and no default model is set. Choose a model for this slot.")
                 } else {
@@ -441,7 +472,7 @@ public enum SetupChecker {
                 items.append(
                     SetupItem(
                         kind: .model, severity: .blocking, title: label, detail: detail, value: slot.slot,
-                        hasNoModel: slot.requiredModel == nil))
+                        hasNoModel: slot.requiredModel == nil && !waitsForDownload))
                 continue
             }
             if slot.locality == .localOnly, !isLocalModel(model, catalog: env.modelCatalog) {

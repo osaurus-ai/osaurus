@@ -388,9 +388,10 @@ let package = Package(
         // decodes with the image's M-RoPE delta, and each request's delta stays with its own cache.
         // vmlx-swift#798 loads transformers 5 qwen3_5 exports that declare `Qwen3_5Tokenizer` (Holo-3.1, Holo4)
         // with the family's Qwen2Tokenizer.
+        // vmlx-swift#799 adds the ERNIE 5.5 Flash runtime with native DSpark speculation.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "da012c50fd61fcccb69e9652ef32a73d4ee9f9b7"
+            revision: "06e3aa2c7790f3e7f389b588176759be8faa0242"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the

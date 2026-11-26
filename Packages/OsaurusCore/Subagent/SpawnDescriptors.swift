@@ -526,12 +526,20 @@ public enum SpawnDescriptors {
         // directly and bypass the internal agent(for:) lookup entirely.
         let manager = AgentManager.shared
         let agents = manager.agents
+        let pickerItems = ModelPickerItemCache.shared.items
         return agents.map { agent in
-            AgentSource(
+            // Advertise the model dispatch runs on: a local model still
+            // downloading runs on its Cloud stand-in unless the agent is
+            // locked to it.
+            let model = manager.effectiveModel(for: agent)
+            let runModel =
+                AgentManager.lockedModel(of: agent) != nil
+                ? model : LocalSetupBridge.runModel(for: model, items: pickerItems)
+            return AgentSource(
                 id: agent.id,
                 name: agent.name,
                 description: agent.routingDescription,
-                modelId: manager.effectiveModel(for: agent),
+                modelId: runModel,
                 // Same source of truth as the dispatch-folder fallback
                 // (`BackgroundTaskManager.resolveDispatchFolder`), so the
                 // folder the prompt advertises is the folder the child runs in.

@@ -3,44 +3,27 @@
   <channel>
     <title>Osaurus</title>
         <item>
-            <title>1.0.12</title>
-            <pubDate>Tue, 24 Nov 2026 08:51:59 +0000</pubDate>
-            <sparkle:version>1.0.12</sparkle:version>
-            <sparkle:shortVersionString>1.0.12</sparkle:shortVersionString>
+            <title>1.0.13</title>
+            <pubDate>Wed, 25 Nov 2026 19:43:50 +0000</pubDate>
+            <sparkle:version>1.0.13</sparkle:version>
+            <sparkle:shortVersionString>1.0.13</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.12/Osaurus-1.0.12.dmg" length="126257063" type="application/octet-stream" sparkle:edSignature="vQ7nuFmPCPNnJL93ZTKQ4bpvJBJNFEe4k4eXa2hY2K7wE0F4FKhvNNL8hfaLiMO14S2YXMcFWdoZun55umRQCg=="/>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.13/Osaurus-1.0.13.dmg" length="126326179" type="application/octet-stream" sparkle:edSignature="ezVN/zBHkw3feuXNTQvUa7M2Hxrz+WLh+dw/iy35bJZ787c26aH7fHeu3kcHy78G4+S+jHTLbt5CVBRRrxqoCQ=="/>
             <description sparkle:format="markdown"><![CDATA[
 ## What's Changed
-* Repin Osaurus to the merged reasoning runtime for 1.0.11 by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3508
-* Configurator handoff: move settings catalog search off the main thread by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3503
-* Scope built-in chat reasoning and speculation to the conversation by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3355
-* Match image controls to native family capabilities by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3358
-* Keep previous identities on each Mac and let users switch back by @tpae in https://github.com/osaurus-ai/osaurus/pull/3509
-* Repin vMLX for stop strings flushed at the token cap by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3511
-* Keep session state extraction on the chat turn's speculation setting by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3512
-* Model downloads: avoid synchronous lstat on MainActor in partURL by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3513
-* Catalog: route nearby sharing rebuilds off-main and group shard index by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3515
-* Bypass agent lookup in effectiveRuntime during spawn descriptor resolution by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3334
-* Resume the OCR continuation once when Vision rejects an image by @tpae in https://github.com/osaurus-ai/osaurus/pull/3519
-* Give the auth gate test its own agent addresses by @tpae in https://github.com/osaurus-ai/osaurus/pull/3520
-* agent calls: arranged calls listed on the mac and the iphone inbox, with cancel call by @RaajeevChandran in https://github.com/osaurus-ai/osaurus/pull/3510
-* Read embedding catalog bundles off the main thread by @tpae in https://github.com/osaurus-ai/osaurus/pull/3528
-* Check installed models off the main thread during config export by @tpae in https://github.com/osaurus-ai/osaurus/pull/3529
-* CLI overhaul: approve the CLI once, no duplicate launches, workflow/agent/MCP commands by @tpae in https://github.com/osaurus-ai/osaurus/pull/3517
-* Stop chat rows resizing under the titlebar during tiling by @tpae in https://github.com/osaurus-ai/osaurus/pull/3530
-* Let trusted channel senders use Apple app tools, and say why they were refused (#3518) by @tpae in https://github.com/osaurus-ai/osaurus/pull/3532
-* i18n(ja): start Japanese localization (menus, Settings, Chat basics) by @eightman999 in https://github.com/osaurus-ai/osaurus/pull/3523
-* Chat: estimate tool schema tokens in UTF-8 bytes by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3514
-* Use LCached for static FileChangesPanel labels to prevent main-thread hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3534
-* Save onboarding plan off the main thread by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3533
-* Polish chat activity, dialogs and sidebars by @tpae in https://github.com/osaurus-ai/osaurus/pull/3535
-* Pull every model from a nearby Mac locally, not just the first by @tpae in https://github.com/osaurus-ai/osaurus/pull/3536
+* Polish agent pages, providers and the chat launch state by @tpae in https://github.com/osaurus-ai/osaurus/pull/3544
+* Load Bonsai 2.5 Prism and JANG in Osaurus by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3545
+* Repin the runtime for Inkling JANGHT bundles by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3541
+* Run delegated first-run work on the Cloud stand-in while the local model downloads by @tpae in https://github.com/osaurus-ai/osaurus/pull/3547
+* restore settings callout action buttons by @RaajeevChandran in https://github.com/osaurus-ai/osaurus/pull/3548
+* Create pairing offer off the main thread to prevent UI hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3543
+* Probe Foundation Models off the main thread during AppConfiguration startup by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3542
+* i18n(ja): continue Japanese localization (Settings and Chat labels, batch 2) by @eightman999 in https://github.com/osaurus-ai/osaurus/pull/3549
+* Make settings search match localized setting labels by @eightman999 in https://github.com/osaurus-ai/osaurus/pull/3540
 
-## New Contributors
-* @eightman999 made their first contribution in https://github.com/osaurus-ai/osaurus/pull/3523
 
-**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.11...1.0.12
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.12...1.0.13
 ]]></description>
             <sparkle:channel>beta</sparkle:channel>
             <sparkle:minimumAutoupdateVersion>1.0.0</sparkle:minimumAutoupdateVersion>
