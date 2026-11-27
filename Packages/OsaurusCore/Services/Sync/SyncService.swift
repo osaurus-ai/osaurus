@@ -401,10 +401,17 @@ final class SyncService: @unchecked Sendable {
         private var observers: [NSObjectProtocol] = []
         private let pathMonitor = NWPathMonitor()
         private let backfill: BackfillPolicyMonitor
+        private let sleepGate: SyncSleepGate
 
         init(core: SyncCore) {
             self.core = core
             self.backfill = BackfillPolicyMonitor(core: core)
+            self.sleepGate = SyncSleepGate(timeout: 5) { [core] in
+                try? SyncConversationStore.shared.performWrite {
+                    SyncAgentDirectory.writePresence(.sleeping, core: $0)
+                }
+                try? await core.suspend()
+            }
         }
 
         func start() {
@@ -420,22 +427,11 @@ final class SyncService: @unchecked Sendable {
                 // are current values). Turn off here once a storing peer keeps history.
                 try? core.setCompactWithoutStorage(on: true)
             }
+            // The presence write and suspend should land before the Mac sleeps.
+            // The gate holds the IOKit sleep acknowledgment (up to 5s) on its own
+            // queue, so a slow core (e.g. mid-compaction) never blocks the main thread.
+            sleepGate.start()
             let workspace = NSWorkspace.shared.notificationCenter
-            observers.append(
-                workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) {
-                    [core] _ in
-                    // Blocks on purpose: AppKit acknowledges sleep once this
-                    // returns, so the presence write and suspend should land
-                    // first. Both run in one detached job so the whole wait,
-                    // including any queued store writes, stays under 5s.
-                    _ = SyncService.blocking(timeout: 5) {
-                        try? SyncConversationStore.shared.performWrite {
-                            SyncAgentDirectory.writePresence(.sleeping, core: $0)
-                        }
-                        try await core.suspend()
-                    }
-                }
-            )
             observers.append(
                 workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: nil) {
                     [core] _ in
@@ -470,6 +466,7 @@ final class SyncService: @unchecked Sendable {
                 NotificationCenter.default.removeObserver(observer)
             }
             observers.removeAll()
+            sleepGate.stop()
             pathMonitor.cancel()
             backfill.stop()
         }
