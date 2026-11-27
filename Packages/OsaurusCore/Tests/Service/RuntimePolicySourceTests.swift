@@ -2812,7 +2812,7 @@ struct RuntimePolicySourceTests {
         )
         let taskBody = String(runtime[taskStart.lowerBound ..< taskEnd.lowerBound])
         let install = try #require(
-            taskBody.range(of: "await Self.installCacheCoordinator(on: holder)")
+            taskBody.range(of: "await Self.installCacheCoordinator(on: holder, keepCacheInRAM: keepCacheInRAM)")
         )
         let returnHolder = try #require(
             taskBody.range(of: "return holder", range: install.upperBound ..< taskBody.endIndex)

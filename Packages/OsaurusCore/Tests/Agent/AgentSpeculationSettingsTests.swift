@@ -118,11 +118,15 @@ struct AgentSpeculationSettingsTests {
         server.cache.pagedKV.enabled = false
         let inherited = ModelRuntime.effectiveCacheSettings(inheriting: server, keepCacheInRAM: nil)
         #expect(inherited.cache.pagedKV.enabled == false)
+        #expect(ModelRuntime.keepCacheInRAMResidentByteBudget(for: inherited) == 0)
         let ramEnabled = ModelRuntime.effectiveCacheSettings(inheriting: server, keepCacheInRAM: true)
         #expect(ramEnabled.cache.pagedKV.enabled == true)
+        #expect(ramEnabled.cache.prefix.enabled == true)
+        #expect(ModelRuntime.keepCacheInRAMResidentByteBudget(for: ramEnabled) >= 512 * 1_048_576)
         #expect(server.cache.pagedKV.enabled == false)
         let ssdForced = ModelRuntime.effectiveCacheSettings(inheriting: ramEnabled, keepCacheInRAM: false)
         #expect(ssdForced.cache.pagedKV.enabled == false)
+        #expect(ModelRuntime.keepCacheInRAMResidentByteBudget(for: ssdForced) == 0)
     }
 
     @Test("missing heads prepare once; Off and returning to Default reuse a compatible graph")

@@ -5832,6 +5832,9 @@ public actor ModelRuntime {
             )
         )
         config.defaultKVMode = effectiveDefaultKVMode
+        if config.residentEntryBytes == 0 {
+            config.residentEntryBytes = Self.keepCacheInRAMResidentByteBudget(for: resolvedSettings)
+        }
         if diskCacheDir != nil, !diskDirUsable {
             config.enableDiskCache = false
             config.diskCacheDir = nil
@@ -6198,9 +6201,24 @@ public actor ModelRuntime {
     ) -> VMLXServerRuntimeSettings {
         var resolved = base
         if let keepCacheInRAM {
+            if keepCacheInRAM {
+                resolved.cache.prefix.enabled = true
+            }
             resolved.cache.pagedKV.enabled = keepCacheInRAM
         }
         return resolved
+    }
+
+    /// Resident RAM budget for DiskCache when Keep Cache in RAM is enabled.
+    /// Paged-incompatible topologies (ERNIE 5.5, DSV4, ZAYA) use DiskCache's resident RAM tier
+    /// instead of paged blocks; paged-compatible models keep `residentByteBudget = 0` inside
+    /// `CacheCoordinator` so RAM is never double-allocated.
+    nonisolated static func keepCacheInRAMResidentByteBudget(
+        for settings: VMLXServerRuntimeSettings
+    ) -> Int {
+        guard settings.cache.prefix.enabled, settings.cache.pagedKV.enabled else { return 0 }
+        let budgetMB = max(512, settings.cache.prefix.memoryLimitMB ?? 4096)
+        return budgetMB * 1_048_576
     }
 
     private nonisolated static func installCacheCoordinator(
@@ -6224,7 +6242,7 @@ public actor ModelRuntime {
         let topologyTags = cacheTopology.topologyTags.joined(separator: ",")
 
         genLog.info(
-            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) paged_ram=\(settings.cache.pagedKV.enabled, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(cacheTopology.requiresSSMCompanionState, privacy: .public) topology=\(topologyTags, privacy: .public) kv_cap=\(cacheConfig.defaultMaxKVSize ?? -1, privacy: .public) long_prompt_mult=\(cacheConfig.longPromptMultiplier, privacy: .public) (slider-resolved from memory-safety plan)"
+            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) paged_ram=\(settings.cache.pagedKV.enabled, privacy: .public) resident_mb=\(cacheConfig.residentEntryBytes / 1_048_576, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(cacheTopology.requiresSSMCompanionState, privacy: .public) topology=\(topologyTags, privacy: .public) kv_cap=\(cacheConfig.defaultMaxKVSize ?? -1, privacy: .public) long_prompt_mult=\(cacheConfig.longPromptMultiplier, privacy: .public) (slider-resolved from memory-safety plan)"
         )
     }
 
