@@ -272,6 +272,7 @@ enum AgentSubagentRunner {
                 generationSettings?.apply(to: &request.generation)
                 request.context.agentReasoningDefaults = AgentReasoningDefaults(settings: generationSettings)
                 request.context.speculativeDecoding = generationSettings?.speculativeDecoding
+                request.context.keepCacheInRAM = generationSettings?.keepCacheInRAM
                 request.context.admissionPositionLimit = admissionPositionLimit ?? contextWindow
                 request.context.samplingParametersAreImplicit = true
                 request.context.isAgentRequest = isAgentRequest

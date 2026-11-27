@@ -126,6 +126,7 @@ struct ChatTurnGenerationControls: Sendable, Equatable, Codable {
         request.chat_template_kwargs = overrides.templateKwargs ?? agentSettings?.templateKwargs
         request.inferenceContext.agentReasoningDefaults = AgentReasoningDefaults(settings: agentSettings, overrides: overrides)
         request.inferenceContext.speculativeDecoding = agentSettings?.speculativeDecoding
+        request.inferenceContext.keepCacheInRAM = agentSettings?.keepCacheInRAM
     }
 
     func apply(to request: inout ResponsesInferenceRequest) {
@@ -141,6 +142,7 @@ struct ChatTurnGenerationControls: Sendable, Equatable, Codable {
         overrides.apply(to: &request)
         request.context.agentReasoningDefaults = AgentReasoningDefaults(settings: agentSettings, overrides: overrides)
         request.context.speculativeDecoding = agentSettings?.speculativeDecoding
+        request.context.keepCacheInRAM = agentSettings?.keepCacheInRAM
     }
 }
 

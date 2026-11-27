@@ -90,6 +90,45 @@ struct AgentSpeculationSettingsTests {
         #expect(snapshot.mtp == server)
     }
 
+    @Test("per-agent keepCacheInRAM is nullable, host-only, and overrides pagedKV without mutating Server defaults")
+    func keepCacheInRAMPersistenceAndResolution() throws {
+        #expect(try JSONDecoder().decode(AgentGenerationSettings.self, from: Data("{}".utf8)).keepCacheInRAM == nil)
+        for value: Bool? in [nil, false, true] {
+            let settings = AgentGenerationSettings(keepCacheInRAM: value)
+            #expect(settings.isEmpty == (value == nil))
+            let draft = AgentGenerationDraft(settings: settings)
+            #expect(draft.overrideCount == (value == nil ? 0 : 1))
+            #expect(try draft.validated().settings?.keepCacheInRAM == value)
+            var controls = ChatTurnGenerationControls.capture(activeModelOptions: [:])
+            controls.agentSettings = settings
+            let frozen = try JSONDecoder().decode(ChatTurnGenerationControls.self, from: JSONEncoder().encode(controls))
+            #expect(frozen.agentSettings?.keepCacheInRAM == value)
+            var request = ResponsesInferenceRequest(model: "fixture", input: [])
+            frozen.apply(to: &request)
+            #expect(request.context.keepCacheInRAM == value)
+            let chat = request.chatCompletionsCompatibilityRequest()
+            #expect(ResponsesInferenceRequest(chatCompletion: chat).context.keepCacheInRAM == value)
+            let wire = String(decoding: try JSONEncoder().encode(chat), as: UTF8.self)
+            #expect(!wire.contains("keepCacheInRAM"))
+            #expect(!wire.contains("keep_cache_in_ram"))
+        }
+
+        // Default server settings keep pagedKV off; per-agent On enables paged RAM without mutating server snapshot.
+        var server = VMLXServerRuntimeSettings()
+        server.cache.pagedKV.enabled = false
+        let inherited = ModelRuntime.effectiveCacheSettings(inheriting: server, keepCacheInRAM: nil)
+        #expect(inherited.cache.pagedKV.enabled == false)
+        #expect(ModelRuntime.keepCacheInRAMResidentByteBudget(for: inherited) == 0)
+        let ramEnabled = ModelRuntime.effectiveCacheSettings(inheriting: server, keepCacheInRAM: true)
+        #expect(ramEnabled.cache.pagedKV.enabled == true)
+        #expect(ramEnabled.cache.prefix.enabled == true)
+        #expect(ModelRuntime.keepCacheInRAMResidentByteBudget(for: ramEnabled) >= 512 * 1_048_576)
+        #expect(server.cache.pagedKV.enabled == false)
+        let ssdForced = ModelRuntime.effectiveCacheSettings(inheriting: ramEnabled, keepCacheInRAM: false)
+        #expect(ssdForced.cache.pagedKV.enabled == false)
+        #expect(ModelRuntime.keepCacheInRAMResidentByteBudget(for: ssdForced) == 0)
+    }
+
     @Test("missing heads prepare once; Off and returning to Default reuse a compatible graph")
     func graphTransitions() {
         var off = VMLXServerMTPSettings()

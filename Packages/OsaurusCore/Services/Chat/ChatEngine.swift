@@ -204,7 +204,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         effectiveModel: String
     ) async throws {
         let defaults = request.context.agentReasoningDefaults
-        guard defaults != nil || request.context.speculativeDecoding != nil else { return }
+        guard defaults != nil || request.context.speculativeDecoding != nil || request.context.keepCacheInRAM != nil else { return }
         guard !request.context.runAsRemoteAgent else {
             throw ChatTurnOverrides.ValidationError.invalid(
                 "Configure saved reasoning defaults on the remote agent's host; its effective model is owned there.")
@@ -212,6 +212,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         if request.context.speculativeDecoding != nil, !(service is MLXService) {
             throw ChatTurnOverrides.ValidationError.invalid(
                 "Saved speculative decoding controls require a local model on this host. Choose Inherit for a remote model.")
+        }
+        if request.context.keepCacheInRAM != nil, !(service is MLXService) {
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "Saved RAM cache controls require a local model on this host. Choose Inherit for a remote model.")
         }
         // Speculation eligibility is re-evaluated by the real load/admission plan. Do not rescan
         // safetensor headers on every tool iteration just to validate saved reasoning values.
@@ -350,6 +354,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             modelOptions: modelOptions,
             templateKwargs: request.generation.templateKwargs,
             speculativeDecoding: request.context.speculativeDecoding,
+            keepCacheInRAM: request.context.keepCacheInRAM,
             sessionId: request.sessionID,
             activitySource: activitySource,
             ttftTrace: trace,

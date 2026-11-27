@@ -391,7 +391,7 @@ let package = Package(
         // vmlx-swift#799 adds the ERNIE 5.5 Flash runtime with native DSpark speculation.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "85b09386ca249268c441a95329a97cc151d6c7c8"
+            revision: "723306785c30d27f1e85d58f3018a6b140af66d6"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the

@@ -846,7 +846,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "85b09386ca249268c441a95329a97cc151d6c7c8"
+        let expectedRuntimeHardenedRevision = "723306785c30d27f1e85d58f3018a6b140af66d6"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -2812,7 +2812,7 @@ struct RuntimePolicySourceTests {
         )
         let taskBody = String(runtime[taskStart.lowerBound ..< taskEnd.lowerBound])
         let install = try #require(
-            taskBody.range(of: "await Self.installCacheCoordinator(on: holder)")
+            taskBody.range(of: "await Self.installCacheCoordinator(on: holder, keepCacheInRAM: keepCacheInRAM)")
         )
         let returnHolder = try #require(
             taskBody.range(of: "return holder", range: install.upperBound ..< taskBody.endIndex)
@@ -2821,7 +2821,7 @@ struct RuntimePolicySourceTests {
         #expect(install.lowerBound < returnHolder.lowerBound)
         #expect(
             runtime.contains(
-                "private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async"
+                "private nonisolated static func installCacheCoordinator("
             )
         )
 

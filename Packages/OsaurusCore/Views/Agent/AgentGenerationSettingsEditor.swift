@@ -100,6 +100,7 @@ struct AgentGenerationSettingsEditor: View {
                 )
                 reasoningControls
                 speculationControls
+                cacheInRAMControls
                 stopSequences
             }
             group("Repetition", subtitle: "Discourage repeated text") {
@@ -237,6 +238,31 @@ struct AgentGenerationSettingsEditor: View {
                     Text("Saved speculation override is unavailable for this model.", bundle: .module)
                         .font(SettingsFont.rowDescription).foregroundColor(theme.status.warning.foreground)
                     SettingsButton(.tertiary, "Use Inherit", size: .compact) { draft.speculation = "inherit" }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cacheInRAMControls: some View {
+        let isLocalTarget = modelIsLocal || (modelID.flatMap { LocalReasoningCapability.localDirectory(forModelId: $0) } != nil)
+        if isLocalTarget || draft.keepCacheInRAM != "inherit" {
+            rowLabel(
+                "Keep Cache in RAM",
+                "Off uses SSD caching to keep RAM near the model's disk size. On keeps paged KV blocks in unified RAM for this agent."
+            )
+            AssignedBaseSegmentedPicker(
+                selection: $draft.keepCacheInRAM,
+                options: [.init("inherit", "Inherit"), .init("off", "Off (SSD)"), .init("on", "On (RAM)")]
+            )
+            .fixedSize()
+            .accessibilityLabel(Text("Keep Cache in RAM", bundle: .module))
+            .settingsLandingAnchor("agents.generation.keepCacheInRAM")
+            if !isLocalTarget && draft.keepCacheInRAM != "inherit" {
+                HStack {
+                    Text("Saved RAM cache override requires a local model on this host.", bundle: .module)
+                        .font(SettingsFont.rowDescription).foregroundColor(theme.status.warning.foreground)
+                    SettingsButton(.tertiary, "Use Inherit", size: .compact) { draft.keepCacheInRAM = "inherit" }
                 }
             }
         }

@@ -70,6 +70,8 @@ struct GenerationParameters: Sendable {
     /// never derived from `maxTokens`.
     var reasoningBudgetTokens: Int? = nil
     let speculativeDecoding: Bool?
+    /// Per-agent host override for the paged in-RAM KV cache tier (`nil` inherits Server settings).
+    let keepCacheInRAM: Bool?
     /// Session identifier for chat/history grouping. Not threaded into the
     /// MLX cache layer — vmlx's `CacheCoordinator` handles prefix reuse
     /// autonomously via content addressing.
@@ -186,6 +188,7 @@ struct GenerationParameters: Sendable {
         modelOptions: [String: ModelOptionValue] = [:],
         templateKwargs: [String: JSONValue]? = nil,
         speculativeDecoding: Bool? = nil,
+        keepCacheInRAM: Bool? = nil,
         sessionId: String? = nil,
         activityID: UUID = UUID(),
         activitySource: RequestSource? = nil,
@@ -224,6 +227,7 @@ struct GenerationParameters: Sendable {
         self.modelOptions = modelOptions
         self.templateKwargs = templateKwargs
         self.speculativeDecoding = speculativeDecoding
+        self.keepCacheInRAM = keepCacheInRAM
         self.sessionId = sessionId
         self.activityID = activityID
         self.activitySource = activitySource ?? requestSource
