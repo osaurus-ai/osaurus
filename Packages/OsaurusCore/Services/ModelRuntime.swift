@@ -6210,14 +6210,13 @@ public actor ModelRuntime {
         {
             return true
         }
-        // Qwen 3.5 / 3.6 MoE family (qwen3_5 / qwen3_5_moe model_type) covers Holo3 and Holo4 too.
+        // Qwen 3.5 / 3.6 MoE family (qwen3_5_moe model_type) covers Holo3 too.
         // vmlx `Models/Qwen35.swift` + `Qwen35JANGTQ.swift` allocate
-        // `MambaCache` / `ArraysCache` for the linear-attention slots.
+        // `ArraysCache` for the linear-attention slots.
         if lower.contains("qwen3.5") || lower.contains("qwen3.6")
             || lower.contains("qwen3_5") || lower.contains("qwen3_6")
             || lower.contains("qwen35") || lower.contains("qwen36")
             || lower.contains("holo3") || lower.contains("holo-3")
-            || lower.contains("holo4") || lower.contains("holo-4")
         {
             return true
         }

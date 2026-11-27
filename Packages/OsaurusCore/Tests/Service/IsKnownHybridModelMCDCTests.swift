@@ -120,15 +120,6 @@ struct IsKnownHybridModelMCDCTests {
         #expect(ModelRuntime.isKnownHybridModel(name: "holo-3-mxfp4"))
     }
 
-    @Test("B2.holo4 and holo-4 independently flip Block 2")
-    func b2_holo4() {
-        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Holo4-27B-JANG_4D"))
-        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Holo4-27B-JANGH2"))
-        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Holo4-35B-A3B-JANG_4M"))
-        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Holo4-35B-A3B-JANGH2"))
-        #expect(ModelRuntime.isKnownHybridModel(name: "holo-4-27b-jang_4d"))
-    }
-
     @Test("B2.ornith family (qwen3_5/qwen3_5_moe model_type, no qwen substring) flips")
     func b2_ornith() {
         // Ornith 1.0 bundles are qwen3_5 (9B dense) / qwen3_5_moe (35B MoE)
