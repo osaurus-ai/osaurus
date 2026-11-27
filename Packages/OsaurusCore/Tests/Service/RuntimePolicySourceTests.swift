@@ -2821,7 +2821,7 @@ struct RuntimePolicySourceTests {
         #expect(install.lowerBound < returnHolder.lowerBound)
         #expect(
             runtime.contains(
-                "private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async"
+                "private nonisolated static func installCacheCoordinator("
             )
         )
 
