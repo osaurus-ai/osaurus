@@ -329,17 +329,22 @@ public actor ModelRuntime {
         let isBlocked: Bool
         let measuredFamilyAutoDepth: Int?
         var bundledDFlash2 = false
+        /// Dedicated `dflash2/` directory (distinct from `dspark/`), prioritized over inline/bundled DSpark.
+        var bundledDedicatedDFlash2 = false
         var selectedDFlash2 = false
         /// A `uno/` self-speculation adapter in the bundle that fits it (validated by the engine).
         var bundledUno = false
-        /// DeepSeek V4.1 stores its separate speculative head in `dspark/`.
+        /// DeepSeek V4.1 / ERNIE 5.5 / MiniMax-M3.1 / Inkling store their speculative head in `dspark/` or inline.
         var bundledDSpark = false
-        var hasCompatibleDrafter: Bool { bundledDFlash2 || selectedDFlash2 || bundledUno || bundledDSpark }
+        var hasCompatibleDrafter: Bool {
+            bundledDedicatedDFlash2 || bundledDFlash2 || selectedDFlash2 || bundledUno || bundledDSpark
+        }
         var speculationAvailable: Bool { hasCompatibleDrafter || (bundleHasMTP && isTargetMTPFamily) }
         var speculationBlocked: Bool { !hasCompatibleDrafter && isBlocked }
         var familyDefaultOn: Bool { hasCompatibleDrafter || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
         var speculationCapabilityDescription: String {
             if selectedDFlash2 { return "Compatible selected DFlash 2 drafter detected" }
+            if bundledDedicatedDFlash2 { return "Compatible bundled DFlash 2 drafter detected" }
             if bundledDSpark { return "Bundled DSpark drafter detected" }
             if bundledUno { return "Bundled Uno self-speculation adapter detected" }
             if bundledDFlash2 { return "Compatible bundled DFlash 2 drafter detected" }
@@ -378,7 +383,9 @@ public actor ModelRuntime {
         guard let status = try? MTPBundleInspector.inspect(modelDirectory: directory)
         else { return nil }
         let config = try? Data(contentsOf: directory.appendingPathComponent("config.json"))
-        let bundledDFlash2 = VMLXServerRuntimeSettings().bundledDFlash2Drafter(
+        let bundledDedicatedDFlash2 = VMLXServerRuntimeSettings().bundledDedicatedDFlash2Drafter(
+            configData: config, bundleDirectory: directory) != nil
+        let bundledDFlash2 = bundledDedicatedDFlash2 || VMLXServerRuntimeSettings().bundledDFlash2Drafter(
             configData: config, bundleDirectory: directory) != nil
         let bundledUno = VMLXServerRuntimeSettings().bundledUnoAdapter(
             configData: config, bundleDirectory: directory) != nil
@@ -401,6 +408,7 @@ public actor ModelRuntime {
                 || status.nativeMTPTuning?.manualBlocked == true,
             measuredFamilyAutoDepth: status.measuredFamilyAutoDepth,
             bundledDFlash2: bundledDFlash2,
+            bundledDedicatedDFlash2: bundledDedicatedDFlash2,
             selectedDFlash2: selectedDFlash2,
             bundledUno: bundledUno,
             bundledDSpark: bundledDSpark,

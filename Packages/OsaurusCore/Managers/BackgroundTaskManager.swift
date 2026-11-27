@@ -489,23 +489,34 @@ public final class BackgroundTaskManager: ObservableObject {
     /// would evict the first and cancel its stream. Sessions currently
     /// attached to a window are excluded (the window-scan side of the check
     /// already counts those).
-    func isAnyDetachedTaskStreamingLocalModel(excludingSession excluded: ChatSession? = nil) -> Bool {
-        detachedTaskStreamingLocalModel(excludingSession: excluded) != nil
+    func isAnyDetachedTaskStreamingLocalModel(
+        excludingSession excluded: ChatSession? = nil,
+        forModel targetModel: String? = nil
+    ) -> Bool {
+        detachedTaskStreamingLocalModel(excludingSession: excluded, forModel: targetModel) != nil
     }
 
     /// The detached task currently holding the single local-model slot, if any.
     ///
-    /// Same predicate as ``isAnyDetachedTaskStreamingLocalModel(excludingSession:)``,
+    /// Same predicate as ``isAnyDetachedTaskStreamingLocalModel(excludingSession:forModel:)``,
     /// but returning the id instead of a bool, because a caller that has just
     /// refused the user's send needs to be able to *act* on that run — stop it,
     /// or reopen its window. Answering only "yes, something is running" is what
     /// left the busy alert telling people to wait for a window that no longer
     /// exists.
-    func detachedTaskStreamingLocalModel(excludingSession excluded: ChatSession? = nil) -> UUID? {
+    func detachedTaskStreamingLocalModel(
+        excludingSession excluded: ChatSession? = nil,
+        forModel targetModel: String? = nil
+    ) -> UUID? {
         backgroundTasks.values.first { state in
             guard let session = state.chatSession, session !== excluded else { return false }
             guard !isTaskAttachedToWindow(state.id) else { return false }
-            return session.isStreamingLocalModel
+            guard session.isStreamingLocalModel else { return false }
+            guard targetModel != nil else { return true }
+            return ChatWindowManager.localModelConflicts(
+                streamingModel: session.selectedModel,
+                requestedModel: targetModel
+            )
         }?.id
     }
 

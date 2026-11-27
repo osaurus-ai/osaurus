@@ -299,6 +299,38 @@ struct AgentDelegationDispatcherTests {
         }
     }
 
+    /// Sending in a second chat targeting the EXACT SAME resident local model
+    /// must not conflict (BatchEngine shares the loaded model cleanly); only a
+    /// different local model is an eviction conflict.
+    @Test func sameLocalModelDoesNotConflictAcrossWindows() async {
+        await MainActor.run {
+            #expect(
+                ChatWindowManager.localModelConflicts(
+                    streamingModel: "OsaurusAI/ERNIE-5.5-Flash-Preview-JANGHT2.4",
+                    requestedModel: "OsaurusAI/ERNIE-5.5-Flash-Preview-JANGHT2.4"
+                ) == false
+            )
+            #expect(
+                ChatWindowManager.localModelConflicts(
+                    streamingModel: "OsaurusAI/ERNIE-5.5-Flash-Preview-JANGHT2.4",
+                    requestedModel: "osaurusai/ernie-5.5-flash-preview-janght2.4"
+                ) == false
+            )
+            #expect(
+                ChatWindowManager.localModelConflicts(
+                    streamingModel: "OsaurusAI/ERNIE-5.5-Flash-Preview-JANGHT2.4",
+                    requestedModel: "OsaurusAI/Inkling-2-Mini-JANGHT4.2"
+                ) == true
+            )
+            #expect(
+                ChatWindowManager.localModelConflicts(
+                    streamingModel: "OsaurusAI/ERNIE-5.5-Flash-Preview-JANGHT2.4",
+                    requestedModel: nil
+                ) == true
+            )
+        }
+    }
+
     // MARK: - Delegation gating on TextSubagentKind
 
     @Test func agentTargetsDelegateOnlyWithoutTheEvalSeam() {
