@@ -185,10 +185,12 @@ struct AgentGenerationSettingsEditor: View {
             let id = modelID
             let local = modelIsLocal
             let snapshot = await Task.detached(priority: .utility) {
+                let effectiveLocal =
+                    local || (id.flatMap { LocalReasoningCapability.localDirectory(forModelId: $0) } != nil)
                 let runtime = await RuntimeConfig.snapshot()
-                let bundle = id.flatMap { local ? LocalGenerationDefaults.defaults(forModelId: $0) : nil } ?? .empty
-                let applicability = AgentGenerationApplicability.resolve(modelID: id, isLocal: local)
-                return (runtime.generation, bundle, applicability)
+                let bundle = id.flatMap { effectiveLocal ? LocalGenerationDefaults.defaults(forModelId: $0) : nil } ?? .empty
+                let applicability = AgentGenerationApplicability.resolve(modelID: id, isLocal: effectiveLocal)
+                return (runtime.generation, bundle, applicability, effectiveLocal)
             }.value
             guard !Task.isCancelled else { return }
             runtimeDefaults = snapshot.0
@@ -197,7 +199,7 @@ struct AgentGenerationSettingsEditor: View {
             defaultsModelID = modelID
             guard let modelID else { return }
             var resolved = await AgentGenerationReasoningChoices.resolve(
-                modelID: modelID, isLocal: modelIsLocal, includeSpeculation: true)
+                modelID: modelID, isLocal: snapshot.3, includeSpeculation: true)
             guard !Task.isCancelled else { return }
             if let catalogCapabilities { resolved.efforts = catalogCapabilities }
             choices = resolved

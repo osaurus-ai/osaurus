@@ -2279,6 +2279,7 @@ extension ModelManager {
             // vision probe) — an observed hang under disk pressure.
             for model in scanned {
                 _ = LocalReasoningCapability.capability(forModelId: model.id)
+                _ = DeclaredReasoningEffort.declaration(forModelId: model.id)
                 _ = VLMDetection.isVLM(modelId: model.id)
             }
         }
