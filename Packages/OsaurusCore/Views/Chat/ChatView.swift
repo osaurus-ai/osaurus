@@ -2309,10 +2309,12 @@ final class ChatSession: ObservableObject {
     var localModelBusyInOtherWindow: Bool {
         // Mode 2 (remote agent run) never touches the local runtime — the
         // host executes the turn — so another window's local stream is not
-        // a conflict, whatever the pinned model string says.
+        // a conflict, whatever the pinned model string says. Two chats targeting
+        // the exact same resident local model share its BatchEngine cleanly.
         !isRemoteAgentTarget && selectedModelIsLocal
             && ChatWindowManager.shared.isOtherWindowStreamingLocalModel(
-                excluding: windowState?.windowId
+                excluding: windowState?.windowId,
+                forModel: selectedModel
             )
     }
 
@@ -10733,14 +10735,22 @@ struct ChatView: View {
     /// the original "wait for that reply" wording is accurate.
     private var blockingDetachedTaskId: UUID? {
         BackgroundTaskManager.shared.detachedTaskStreamingLocalModel(
-            excludingSession: session)
+            excludingSession: session,
+            forModel: session.selectedModel)
     }
 
     /// The sibling TAB in this window whose local-model run holds the slot,
     /// if that is the blocker. Tabs share the single inference slot exactly
     /// like windows do, but the fix is one click away: jump to that tab.
     private var blockingSiblingTab: ChatTab? {
-        windowState.tabs.first { $0.session !== session && $0.session.isStreamingLocalModel }
+        windowState.tabs.first {
+            $0.session !== session
+                && $0.session.isStreamingLocalModel
+                && ChatWindowManager.localModelConflicts(
+                    streamingModel: $0.session.selectedModel,
+                    requestedModel: session.selectedModel
+                )
+        }
     }
 
     /// Telling someone to "wait for that reply to finish" is only true while a

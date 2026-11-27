@@ -788,21 +788,46 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowStates.values.contains { $0.session.promptQueue.current != nil }
     }
 
+    /// Returns true when another session streaming `streamingModel` would be evicted by
+    /// loading `requestedModel`. Two sessions targeting the exact same local model share
+    /// the resident weights and `BatchEngine` cleanly (continuously batching when
+    /// `maxBatchSize > 1`, or queueing sequentially when `maxBatchSize == 1`), so only a
+    /// different local model is an eviction conflict.
+    static func localModelConflicts(streamingModel: String?, requestedModel: String?) -> Bool {
+        guard let requested = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !requested.isEmpty
+        else { return true }
+        guard let streaming = streamingModel?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !streaming.isEmpty
+        else { return true }
+        return streaming.caseInsensitiveCompare(requested) != .orderedSame
+    }
+
     /// True when a chat window OTHER than `excluding` is currently streaming a
-    /// local model, or a detached registry task is. Enforces one local
-    /// generation at a time across windows AND background runs: the shared
-    /// inference context can only run one, and loading a second would evict
-    /// the first and cancel its in-flight stream.
-    func isOtherWindowStreamingLocalModel(excluding windowId: UUID?) -> Bool {
+    /// DIFFERENT local model, or a detached registry task is. Loading a second
+    /// model would evict the first and cancel its in-flight stream; requests for
+    /// the same already-loaded local model share the resident `BatchEngine`.
+    func isOtherWindowStreamingLocalModel(
+        excluding windowId: UUID?,
+        forModel targetModel: String? = nil
+    ) -> Bool {
         // Exclude only the excluded window's ACTIVE session — a sibling tab
-        // in the same window streaming a local model contends for the single
-        // shared inference slot exactly like another window does.
+        // in the same window streaming a different local model contends for
+        // model residency exactly like another window does.
         let excludedSession = windowId.flatMap { windowStates[$0]?.session }
         return windowStates.values.contains { state in
-            state.tabSessions.contains { $0 !== excludedSession && $0.isStreamingLocalModel }
+            state.tabSessions.contains {
+                $0 !== excludedSession
+                    && $0.isStreamingLocalModel
+                    && Self.localModelConflicts(
+                        streamingModel: $0.selectedModel,
+                        requestedModel: targetModel
+                    )
+            }
         }
             || BackgroundTaskManager.shared.isAnyDetachedTaskStreamingLocalModel(
-                excludingSession: excludedSession
+                excludingSession: excludedSession,
+                forModel: targetModel
             )
     }
 

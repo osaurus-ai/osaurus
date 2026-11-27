@@ -291,6 +291,15 @@ struct NativeMTPPreloadDetectionTests {
             #expect(status.familyDefaultOn)
             #expect(!status.speculationBlocked)
         }
+        var both = ModelRuntime.LoadingModelMTPStatus(
+            name: "inkling-dflash2", bundleHasMTP: false, isTargetMTPFamily: false,
+            isBlocked: false, measuredFamilyAutoDepth: nil, bundledDFlash2: true,
+            bundledDedicatedDFlash2: true, bundledDSpark: true, statusLine: "mtp: none")
+        #expect(both.speculationAvailable)
+        #expect(both.familyDefaultOn)
+        #expect(both.speculationCapabilityDescription == "Compatible bundled DFlash 2 drafter detected")
+        both.bundledDedicatedDFlash2 = false
+        #expect(both.speculationCapabilityDescription == "Bundled DSpark drafter detected")
     }
 
     private func fixture(
