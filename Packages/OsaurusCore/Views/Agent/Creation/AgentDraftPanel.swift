@@ -547,7 +547,9 @@ struct AgentDraftPanel: View {
 
     private func generationSheet(_ draft: AgentDraft) -> some View {
         let modelID = agentManager.effectiveModel(for: draft.agent)
-        let model = pickerItems.first { $0.id == modelID }
+        let model = modelID.flatMap { id in
+            pickerItems.first { $0.id.caseInsensitiveCompare(id) == .orderedSame }
+        }
         return SettingsSheet(
             icon: "slider.horizontal.3", title: "Generation Overrides",
             width: SettingsSheetWidth.wide, maxBodyHeight: 540,

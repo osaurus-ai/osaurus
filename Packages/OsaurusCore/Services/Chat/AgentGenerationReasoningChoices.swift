@@ -12,7 +12,16 @@ struct AgentGenerationReasoningChoices: Equatable, Sendable {
     var showsThinkingControl: Bool { supportsThinking && thinkingControlIsCanonical != false }
 
     static func resolve(modelID: String, isLocal: Bool, includeSpeculation: Bool = false) async -> Self {
-        let local = isLocal
+        let resolvedLocal: Bool
+        if isLocal {
+            resolvedLocal = true
+        } else {
+            await ModelManager.awaitLocalModelsCacheReadyForDispatch()
+            resolvedLocal = await Task.detached(priority: .utility) {
+                LocalReasoningCapability.localDirectory(forModelId: modelID) != nil
+            }.value
+        }
+        let local = resolvedLocal
             ? await LocalReasoningCapability.resolveForDispatch(modelId: modelID)
             : .none
         var choices = resolved(
@@ -21,7 +30,7 @@ struct AgentGenerationReasoningChoices: Equatable, Sendable {
             efforts: ModelProfileRegistry.reasoningCapabilities(for: modelID),
             options: ModelProfileRegistry.options(for: modelID)
         )
-        if isLocal && includeSpeculation {
+        if resolvedLocal && includeSpeculation {
             choices.speculation = await Task.detached(priority: .utility) {
                 ModelRuntime.inspectLoadingModelMTP(name: modelID)
             }.value

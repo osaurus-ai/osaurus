@@ -241,7 +241,10 @@ extension ModelPickerItem {
     }
 
     /// Create a local MLX model picker item from an MLXModel.
-    static func fromMLXModel(_ model: MLXModel) -> ModelPickerItem {
+    static func fromMLXModel(
+        _ model: MLXModel,
+        reasoningCapabilities: ModelReasoningCapabilities? = nil
+    ) -> ModelPickerItem {
         return ModelPickerItem(
             id: model.id,
             displayName: model.name,
@@ -254,7 +257,8 @@ extension ModelPickerItem {
             isEmbedding: model.isEmbedding,
             isDecision: model.isDecision,
             description: model.description,
-            externalSource: model.externalSource
+            externalSource: model.externalSource,
+            reasoningCapabilities: reasoningCapabilities
         )
     }
 

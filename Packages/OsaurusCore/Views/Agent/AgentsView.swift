@@ -3016,10 +3016,13 @@ struct AgentDetailView: View {
                 .foregroundColor(theme.text.tertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
+                let matchedPickerItem = generationModelID.flatMap { id in
+                    pickerItems.first(where: { $0.id.caseInsensitiveCompare(id) == .orderedSame })
+                }
                 AgentGenerationSettingsEditor(
                     modelID: generationModelID,
-                    modelIsLocal: pickerItems.first(where: { $0.id == generationModelID })?.source == .local,
-                    catalogCapabilities: pickerItems.first(where: { $0.id == generationModelID })?.reasoningCapabilities,
+                    modelIsLocal: matchedPickerItem?.source == .local,
+                    catalogCapabilities: matchedPickerItem?.reasoningCapabilities,
                     savedTemperature: Float(temperature), savedMaxTokens: Int(maxTokens),
                     savedSettings: generationSettings
                 ) { values in

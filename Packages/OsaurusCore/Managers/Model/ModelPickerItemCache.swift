@@ -296,7 +296,7 @@ final class ModelPickerItemCache: ObservableObject {
             options.append(.foundation())
         }
 
-        let localModels = await Task.detached(priority: .userInitiated) {
+        let localResult = await Task.detached(priority: .userInitiated) {
             // Exclude embedding/encoder-only bundles (e.g. potion-base-4M
             // pulled into the HF cache by the memory feature): they can't
             // generate chat completions. They remain visible in the Models
@@ -305,19 +305,29 @@ final class ModelPickerItemCache: ObservableObject {
             // main actor, like the `isVLM` warm-up below.
             let models = ModelManager.discoverLocalModels()
                 .filter { !$0.isEmbedding && !$0.isDecision }
-            // Warm the memoized VLM + MLX-format verdicts while still off the
-            // main actor: `fromMLXModel` below reads both `isVLM` and
-            // `isMLXFormat` on the MainActor, and a cold cache would otherwise
-            // fault config.json / safetensors-header reads per model there.
+            // Warm the memoized VLM, MLX-format, thinking, and declared
+            // reasoning-effort verdicts while still off the main actor:
+            // Model Selector and Agent Creation/Edit read these immediately
+            // on the MainActor, and a cold cache would otherwise return nil
+            // on the first paint (especially for externally registered bundles).
+            var localCapabilities: [String: ModelReasoningCapabilities] = [:]
             for model in models {
                 _ = model.isVLM
                 _ = model.isMLXFormat
+                _ = LocalReasoningCapability.capability(forModelId: model.id)
+                if let caps = DeclaredReasoningEffort.capabilities(forModelId: model.id),
+                    !caps.isEmpty
+                {
+                    localCapabilities[model.id] = caps
+                }
             }
-            return models
+            return (models, localCapabilities)
         }.value
 
-        for model in localModels {
-            options.append(.fromMLXModel(model))
+        for model in localResult.0 {
+            options.append(
+                .fromMLXModel(model, reasoningCapabilities: localResult.1[model.id])
+            )
         }
 
         let manager = RemoteProviderManager.shared

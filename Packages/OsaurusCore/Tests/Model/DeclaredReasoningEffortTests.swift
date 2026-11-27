@@ -830,4 +830,140 @@ extension DeclaredReasoningEffortTests {
             #expect(bgOff.value == .string("none"))
         }
     }
+
+    @Test("Holo4-27B exposes None/Low/Medium/XHigh in picker and agent editor even when isLocal starts false")
+    func holo4_27BReasoningEffortsDetectedEndToEnd() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-holo4-27b-\(UUID().uuidString)", isDirectory: true)
+        let bundle = root.appendingPathComponent("OsaurusAI/Holo4-27B-JANG_4D", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try Data(#"""
+            {
+              "reasoning": {
+                "supported": true,
+                "parser": "qwen3",
+                "default": "on",
+                "think_in_template": true,
+                "enable_kwarg": "enable_thinking",
+                "off_is_prefilled_closed_block": true,
+                "reasoning_effort_supported": true,
+                "supported_reasoning_efforts": ["low", "medium", "xhigh"],
+                "default_reasoning_effort": "xhigh",
+                "reasoning_effort_transport": "chat_template_kwarg"
+              }
+            }
+            """#.utf8).write(to: bundle.appendingPathComponent("jang_config.json"))
+        try Data(#"""
+            {%- if enable_thinking is undefined or enable_thinking is true %}
+                {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+                {%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}
+                    {{- raise_exception('Unexpected reasoning effort') }}
+                {%- endif %}
+            {%- endif %}
+            {%- if enable_thinking is defined and enable_thinking is false %}<think></think>{%- else %}<think>{%- endif %}
+            """#.utf8).write(to: bundle.appendingPathComponent("chat_template.jinja"))
+
+        for name in ["config.json", "tokenizer.json", "model.safetensors"] {
+            try Data("{}".utf8).write(to: bundle.appendingPathComponent(name))
+        }
+        let modelId = "OsaurusAI/Holo4-27B-JANG_4D"
+        let prevRoots = ExternalModelLocator.testRootsOverride
+        ExternalModelLocator.testRootsOverride = [(root, .customModelFolder)]
+        ExternalModelLocator.invalidateInMemory()
+        _ = ExternalModelLocator.rescan()
+        LocalReasoningCapability.invalidate()
+        defer {
+            ExternalModelLocator.testRootsOverride = prevRoots
+            ExternalModelLocator.invalidateInMemory()
+            _ = ExternalModelLocator.rescan()
+            LocalReasoningCapability.invalidate()
+        }
+
+        // Resolve via AgentGenerationReasoningChoices even when pickerItems didn't pre-identify local.
+        let choices = await AgentGenerationReasoningChoices.resolve(
+            modelID: modelId, isLocal: false, includeSpeculation: false)
+        #expect(choices.efforts?.levels.map(\.id) == ["none", "low", "medium", "xhigh"])
+        #expect(choices.efforts?.defaultLevelId == "xhigh")
+        #expect(choices.supportsThinking)
+        #expect(!choices.showsThinkingControl)
+
+        // Dispatch checks: xhigh/medium/low, high snaps to xhigh, none disables thinking without effort kwarg.
+        let highCtx = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(temperature: nil, maxTokens: 64,
+                modelOptions: ["reasoningEffort": .string("high")]),
+            modelName: modelId)
+        #expect(highCtx["enable_thinking"] as? Bool == true)
+        #expect(highCtx["reasoning_effort"] as? String == "xhigh")
+
+        let offCtx = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(temperature: nil, maxTokens: 64,
+                modelOptions: ["reasoningEffort": .string("none")]),
+            modelName: modelId)
+        #expect(offCtx["enable_thinking"] as? Bool == false)
+        #expect(offCtx["reasoning_effort"] == nil)
+    }
+
+    @Test("Holo4-35B-A3B exposes Thinking On/Off without unsupported effort tiers")
+    func holo4_35BThinkingDetectedEndToEnd() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-holo4-35b-\(UUID().uuidString)", isDirectory: true)
+        let bundle = root.appendingPathComponent("OsaurusAI/Holo4-35B-A3B-JANG_4M", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try Data(#"""
+            {
+              "reasoning": {
+                "supported": true,
+                "parser": "qwen3",
+                "default": "on",
+                "think_in_template": true,
+                "enable_kwarg": "enable_thinking",
+                "off_is_prefilled_closed_block": true,
+                "reasoning_effort_supported": false,
+                "supported_reasoning_efforts": [],
+                "default_reasoning_effort": null,
+                "reasoning_effort_transport": null
+              }
+            }
+            """#.utf8).write(to: bundle.appendingPathComponent("jang_config.json"))
+        try Data(#"""
+            {%- if enable_thinking is defined and enable_thinking is false %}<think></think>{%- else %}<think>{%- endif %}
+            """#.utf8).write(to: bundle.appendingPathComponent("chat_template.jinja"))
+
+        for name in ["config.json", "tokenizer.json", "model.safetensors"] {
+            try Data("{}".utf8).write(to: bundle.appendingPathComponent(name))
+        }
+        let modelId = "OsaurusAI/Holo4-35B-A3B-JANG_4M"
+        let prevRoots = ExternalModelLocator.testRootsOverride
+        ExternalModelLocator.testRootsOverride = [(root, .customModelFolder)]
+        ExternalModelLocator.invalidateInMemory()
+        _ = ExternalModelLocator.rescan()
+        LocalReasoningCapability.invalidate()
+        defer {
+            ExternalModelLocator.testRootsOverride = prevRoots
+            ExternalModelLocator.invalidateInMemory()
+            _ = ExternalModelLocator.rescan()
+            LocalReasoningCapability.invalidate()
+        }
+
+        let choices = await AgentGenerationReasoningChoices.resolve(
+            modelID: modelId, isLocal: false, includeSpeculation: false)
+        #expect(choices.efforts == nil)
+        #expect(choices.supportsThinking)
+        #expect(choices.showsThinkingControl)
+
+        let cap = LocalReasoningCapability.capability(forModelId: modelId)
+        #expect(cap.defaultThinkingOn)
+
+        // Explicit effort from an API client must NOT send reasoning_effort to 35B's template.
+        let highCtx = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(temperature: nil, maxTokens: 64,
+                modelOptions: ["reasoningEffort": .string("high")]),
+            modelName: modelId)
+        #expect(highCtx["enable_thinking"] as? Bool == true)
+        #expect(highCtx["reasoning_effort"] == nil)
+    }
 }
