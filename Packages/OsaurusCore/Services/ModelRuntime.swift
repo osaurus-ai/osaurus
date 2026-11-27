@@ -4896,6 +4896,7 @@ public actor ModelRuntime {
         alignmentRepairActivity: UUID? = nil,
         alignmentRepairSession: String? = nil,
         mtp: VMLXServerMTPSettings? = nil,
+        keepCacheInRAM: Bool? = nil,
         pinForGeneration: Bool = false
     ) async throws -> SessionHolder {
         let gate = preparationGates[name] ?? MLXBatchAdapter.SoloGenerationGate()
@@ -4921,12 +4922,21 @@ public actor ModelRuntime {
                     try await strictEvict(name)
                 }
             }
+            let desiredPagedKV = keepCacheInRAM ?? ServerRuntimeSettingsStore.snapshot().cache.pagedKV.enabled
+            if let existing = modelCache[name], existing.cacheSettings?.pagedKV.enabled != desiredPagedKV {
+                try await ModelLease.shared.waitForZeroCancellable(name)
+                try Task.checkCancellation()
+                if let resident = modelCache[name], resident.cacheSettings?.pagedKV.enabled != desiredPagedKV {
+                    await Self.installCacheCoordinator(on: resident, keepCacheInRAM: keepCacheInRAM)
+                }
+            }
             while true {
                 let holder = try await loadContainer(
                     id: id, name: name, intent: intent,
                     restoreOwnershipToken: restoreOwnershipToken,
                     alignmentRepairActivity: alignmentRepairActivity,
-                    alignmentRepairSession: alignmentRepairSession, mtp: mtp)
+                    alignmentRepairSession: alignmentRepairSession, mtp: mtp,
+                    keepCacheInRAM: keepCacheInRAM)
                 // A cancelled warmup can already have published this holder. Return it
                 // leased so generation's post-load cancellation cleanup can unload it;
                 // throwing here would orphan the resident graph before that cleanup.
@@ -4954,7 +4964,8 @@ public actor ModelRuntime {
         restoreOwnershipToken: ModelResidencyOwnershipToken? = nil,
         alignmentRepairActivity: UUID? = nil,
         alignmentRepairSession: String? = nil,
-        mtp: VMLXServerMTPSettings? = nil
+        mtp: VMLXServerMTPSettings? = nil,
+        keepCacheInRAM: Bool? = nil
     ) async throws -> SessionHolder {
         try Task.checkCancellation()
         let parentRetention = ParentResidencyRetentionContext.current
@@ -5618,7 +5629,7 @@ public actor ModelRuntime {
             // SSD prefix. Keeping this inside the single shared load task makes
             // "load complete" mean the configured prefix/paged/L2 policy is
             // already attached for every waiter.
-            await Self.installCacheCoordinator(on: holder)
+            await Self.installCacheCoordinator(on: holder, keepCacheInRAM: keepCacheInRAM)
             return holder
         }
 
@@ -6178,11 +6189,30 @@ public actor ModelRuntime {
         }
     }
 
-    /// Installs the cache coordinator on a freshly-loaded holder.
-    private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async {
+    /// Installs (or reconfigures) the cache coordinator on a loaded holder.
+    /// Per-agent `keepCacheInRAM` overrides `cache.pagedKV.enabled` without mutating the shared
+    /// Server store, keeping ordinary default loads off the paged RAM cache.
+    nonisolated static func effectiveCacheSettings(
+        inheriting base: VMLXServerRuntimeSettings,
+        keepCacheInRAM: Bool?
+    ) -> VMLXServerRuntimeSettings {
+        var resolved = base
+        if let keepCacheInRAM {
+            resolved.cache.pagedKV.enabled = keepCacheInRAM
+        }
+        return resolved
+    }
+
+    private nonisolated static func installCacheCoordinator(
+        on holder: SessionHolder,
+        keepCacheInRAM: Bool? = nil
+    ) async {
         let cacheTopology = await holder.container.cacheTopologySnapshot()
         holder.cacheTopology = cacheTopology
-        let settings = ServerRuntimeSettingsStore.snapshot()
+        let settings = effectiveCacheSettings(
+            inheriting: ServerRuntimeSettingsStore.snapshot(),
+            keepCacheInRAM: keepCacheInRAM
+        )
         let cacheConfig = buildCacheCoordinatorConfig(
             modelName: holder.name,
             weightsFingerprint: holder.weightsFingerprint,
@@ -6194,7 +6224,7 @@ public actor ModelRuntime {
         let topologyTags = cacheTopology.topologyTags.joined(separator: ",")
 
         genLog.info(
-            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(cacheTopology.requiresSSMCompanionState, privacy: .public) topology=\(topologyTags, privacy: .public) kv_cap=\(cacheConfig.defaultMaxKVSize ?? -1, privacy: .public) long_prompt_mult=\(cacheConfig.longPromptMultiplier, privacy: .public) (slider-resolved from memory-safety plan)"
+            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) paged_ram=\(settings.cache.pagedKV.enabled, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(cacheTopology.requiresSSMCompanionState, privacy: .public) topology=\(topologyTags, privacy: .public) kv_cap=\(cacheConfig.defaultMaxKVSize ?? -1, privacy: .public) long_prompt_mult=\(cacheConfig.longPromptMultiplier, privacy: .public) (slider-resolved from memory-safety plan)"
         )
     }
 
@@ -6460,6 +6490,7 @@ public actor ModelRuntime {
                     ? activityID : nil,
                 alignmentRepairSession: parameters.sessionId,
                 mtp: cfg.mtp,
+                keepCacheInRAM: parameters.keepCacheInRAM,
                 pinForGeneration: true
             )
             // Settings may change without reloading weights (Auto ↔ manual

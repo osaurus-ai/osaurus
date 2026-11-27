@@ -3851,6 +3851,15 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.generation.keepCacheInRAM",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Keep Cache in RAM",
+            keywords: ["agent paged kv", "in ram cache", "ssd cache", "keep cache in ram", "per-agent cache"],
+            disambiguation: "Custom agent → General → Advanced Settings → Generation Overrides. Local models only. Inherit uses Server settings; Off keeps KV cache on SSD; On enables the in-RAM paged KV cache tier for this agent.",
+            declarativeSection: "agents"
+        ),
+        .init(
             id: "agents.generation.templateKwargs",
             tab: .agents,
             section: "Generation Overrides",

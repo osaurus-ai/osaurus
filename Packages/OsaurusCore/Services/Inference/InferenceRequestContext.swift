@@ -27,6 +27,8 @@ struct InferenceRequestContext: Sendable {
     var agentReasoningDefaults: AgentReasoningDefaults? = nil
     /// Local execution preference; never encoded into provider Responses/Chat payloads.
     var speculativeDecoding: Bool? = nil
+    /// Local KV cache residency preference; never encoded into provider Responses/Chat payloads.
+    var keepCacheInRAM: Bool? = nil
     var modelOptions: [String: ModelOptionValue]? = nil
     var ttftTrace: TTFTTrace? = nil
     var turnId: UUID? = nil
