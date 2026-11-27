@@ -1072,4 +1072,32 @@ struct AgentDatabaseTests {
         let lines = contents.split(separator: "\n", omittingEmptySubsequences: true)
         #expect(lines.count == 250)
     }
+
+    // MARK: - Schema with expression / rowid indexes
+
+    /// Regression: `PRAGMA index_info` reports a NULL column name for
+    /// expression index keys, which used to trap in `schema()`.
+    @Test
+    func schemaToleratesExpressionIndex() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "notes",
+            purpose: "test rows",
+            columns: [
+                AgentColumnSpec(name: "title", type: "TEXT", nullable: false)
+            ],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        _ = try db.execute(
+            sql: "CREATE INDEX idx_test ON notes(lower(title))",
+            actor: .agent,
+            runId: nil
+        )
+        let schema = try db.schema()
+        let table = try #require(schema.tables.first { $0.name == "notes" })
+        let index = try #require(table.indexes.first { $0.name == "idx_test" })
+        #expect(index.columns == ["<expression>"])
+    }
 }
