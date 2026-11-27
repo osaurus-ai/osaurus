@@ -16,6 +16,21 @@ import Testing
 
 struct ManagementTabTests {
 
+    // MARK: - Localized labels
+
+    /// Labels are memoized via `LCached`; repeated reads must stay non-empty
+    /// and identical so the sidebar renders consistently.
+    @Test func cachedLabelsAreStableAcrossReads() {
+        for tab in ManagementTab.allCases {
+            let first = tab.label
+            #expect(!first.isEmpty, "\(tab.rawValue) needs a label")
+            #expect(tab.label == first, "\(tab.rawValue) label must be stable across reads")
+        }
+        for section in ManagementSection.allCases where section != .home {
+            #expect(!section.title.isEmpty, "\(section.rawValue) needs a title")
+        }
+    }
+
     // MARK: - Hierarchy
 
     @Test func everyTabIsACategoryOrAChild() {
