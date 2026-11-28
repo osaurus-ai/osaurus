@@ -679,7 +679,7 @@ See [WORKFLOWS.md](./WORKFLOWS.md).
 - `Folder/FolderTools.swift` — File / shell / git tool implementations + `FolderToolFactory`
 - `Folder/ChatExecutionContext.swift` — TaskLocal session/agent/batch IDs plus the executing chat's folder root, read by tools at execution time
 - `Folder/ExecutionMode.swift` — First-class `.hostFolder | .sandbox(hostRead:) | .none` enum (the sandbox case carries an optional read-only host folder for combined mode)
-- `Folder/FileOperation.swift`, `Folder/FileOperationLog.swift` — Per-op log used for undo
+- `Services/FileHistory/FileChangeJournal.swift`, `Services/FileHistory/FileChangeModels.swift` — Per-session file change history used for undo
 - `Models/Chat/AgentTodo.swift`, `Models/Chat/AgentTodoStore.swift` — Markdown checklist parser + per-session store
 - `Models/Chat/SharedArtifact.swift` — Artifact model surfaced via `share_artifact`
 
