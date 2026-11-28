@@ -14,8 +14,15 @@
 import Foundation
 
 enum ModelSSDResidency {
-    /// Tensor-name marker of the SSD-resident n-gram table. Must match vmlx-swift's loader rule.
+    /// Tensor-name markers of SSD-resident tables (Qwen4Exp PLE n-gram tables and Hy4-flash Engram tables).
+    /// Must match vmlx-swift's `SSDTableMetadata.ssdResidentTensorMarkers`.
     static let ngramTensorMarker = ".ple.ngram_embedding."
+    static let engramTensorMarker = ".engram_layer.multi_head_embedding.embedding."
+    static let ssdResidentTensorMarkers = [ngramTensorMarker, engramTensorMarker]
+
+    static func isSSDResidentTensor(_ name: String) -> Bool {
+        ssdResidentTensorMarkers.contains { name.contains($0) }
+    }
 
     static func weightFilesCacheKey(_ repoId: String) -> String { repoId + "#target-weight-files-v1" }
 
@@ -104,7 +111,7 @@ enum ModelSSDResidency {
                 let map = object["weight_map"] as? [String: String], !map.isEmpty
             else { return nil }
             weightMap = map
-            shards = Set(map.filter { $0.key.contains(ngramTensorMarker) }.values).sorted()
+            shards = Set(map.filter { Self.isSSDResidentTensor($0.key) }.values).sorted()
         }
         var total: Int64 = 0
         for shard in shards {
@@ -130,8 +137,8 @@ enum ModelSSDResidency {
             else { return nil }
             if let map = weightMap {
                 guard let tensors = (try? JSONSerialization.jsonObject(with: response.data)) as? [String: Any],
-                    Set(tensors.keys.filter { $0.contains(ngramTensorMarker) })
-                        == Set(map.filter { $0.value == shard && $0.key.contains(ngramTensorMarker) }.keys)
+                    Set(tensors.keys.filter { Self.isSSDResidentTensor($0) })
+                        == Set(map.filter { $0.value == shard && Self.isSSDResidentTensor($0.key) }.keys)
                 else { return nil }
             }
             let (sum, overflow) = total.addingReportingOverflow(bytes)
@@ -177,7 +184,7 @@ enum ModelSSDResidency {
                 offsets[0] >= 0, offsets[1] >= offsets[0],
                 payloadLength.map({ offsets[1] <= $0 }) ?? true
             else { return nil }
-            spans.append((offsets[0], offsets[1], name.contains(ngramTensorMarker)))
+            spans.append((offsets[0], offsets[1], Self.isSSDResidentTensor(name)))
         }
         var end: Int64 = 0
         var total: Int64 = 0

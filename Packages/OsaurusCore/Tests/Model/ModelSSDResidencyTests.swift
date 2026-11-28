@@ -296,4 +296,28 @@ struct ModelSSDResidencyTests {
         #expect(ModelMetadataParser.parameterCount(from: "publisher/Example-7B-\(format)") == "7B")
     }
 
+    @Test func localScanCountsHy4FlashEngramPayloadsAsSSDResident() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ssd-hy4-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(#"{"model_type":"hy_v4_flash"}"#.utf8).write(to: dir.appendingPathComponent("config.json"))
+        let engramBytes = 8192
+        let computeBytes = 2048
+        let header: [String: Any] = [
+            "model.layers.1.engram_layer.multi_head_embedding.embedding.weight":
+                ["dtype": "BF16", "shape": [engramBytes / 2], "data_offsets": [0, engramBytes]],
+            "model.layers.1.mlp.gate.weight":
+                ["dtype": "BF16", "shape": [computeBytes / 2], "data_offsets": [engramBytes, engramBytes + computeBytes]],
+        ]
+        let bytes = try JSONSerialization.data(withJSONObject: header)
+        var length = UInt64(bytes.count).littleEndian
+        var file = withUnsafeBytes(of: &length) { Data($0) }
+        file.append(bytes)
+        file.append(Data(count: engramBytes + computeBytes))
+        try file.write(to: dir.appendingPathComponent("model-00001-of-00001.safetensors"))
+        #expect(ModelSSDResidency.localSSDResidentBytes(at: dir) == Int64(engramBytes))
+        #expect(ModelRuntime.residentWeightBytes(
+            rawWeightsBytes: Int64(engramBytes + computeBytes), modelDirectory: dir) == Int64(computeBytes))
+    }
+
 }
