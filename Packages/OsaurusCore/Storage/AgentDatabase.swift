@@ -2077,7 +2077,9 @@ public final class AgentDatabase: @unchecked Sendable {
             """
         ) { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
-                names.append(String(cString: sqlite3_column_text(stmt, 0)))
+                if let rawName = sqlite3_column_text(stmt, 0) {
+                    names.append(String(cString: rawName))
+                }
             }
         }
         return names
@@ -2088,16 +2090,17 @@ public final class AgentDatabase: @unchecked Sendable {
         try executeRaw(
             "SELECT purpose FROM _tables_meta WHERE table_name = '\(name)'"
         ) { stmt in
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                purpose = String(cString: sqlite3_column_text(stmt, 0))
+            if sqlite3_step(stmt) == SQLITE_ROW, let rawPurpose = sqlite3_column_text(stmt, 0) {
+                purpose = String(cString: rawPurpose)
             }
         }
 
         var columns: [AgentColumnInfo] = []
         try executeRaw("PRAGMA table_info(\(name))") { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
-                let colName = String(cString: sqlite3_column_text(stmt, 1))
-                let type = String(cString: sqlite3_column_text(stmt, 2))
+                guard let rawColName = sqlite3_column_text(stmt, 1) else { continue }
+                let colName = String(cString: rawColName)
+                let type = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
                 let notNull = sqlite3_column_int(stmt, 3) != 0
                 let dflt = sqlite3_column_text(stmt, 4).map { String(cString: $0) }
                 let pk = sqlite3_column_int(stmt, 5) != 0
@@ -2118,7 +2121,8 @@ public final class AgentDatabase: @unchecked Sendable {
         var indexNames: [(name: String, unique: Bool)] = []
         try executeRaw("PRAGMA index_list(\(name))") { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
-                let idxName = String(cString: sqlite3_column_text(stmt, 1))
+                guard let rawIdxName = sqlite3_column_text(stmt, 1) else { continue }
+                let idxName = String(cString: rawIdxName)
                 let unique = sqlite3_column_int(stmt, 2) != 0
                 if !idxName.hasPrefix("sqlite_") {
                     indexNames.append((idxName, unique))
@@ -2129,7 +2133,14 @@ public final class AgentDatabase: @unchecked Sendable {
             var cols: [String] = []
             try executeRaw("PRAGMA index_info(\(entry.name))") { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    cols.append(String(cString: sqlite3_column_text(stmt, 2)))
+                    // SQLite returns NULL in column 2 (`name`) for expression indexes (cid == -2)
+                    // and implicit rowid keys (cid == -1); never force-unwrap (APPLE-MACOS-46J).
+                    if let rawCol = sqlite3_column_text(stmt, 2) {
+                        cols.append(String(cString: rawCol))
+                    } else {
+                        let cid = sqlite3_column_int(stmt, 1)
+                        cols.append(cid == -2 ? "<expr>" : "rowid")
+                    }
                 }
             }
             indexes.append(AgentIndexInfo(name: entry.name, columns: cols, unique: entry.unique))
@@ -2171,10 +2182,13 @@ public final class AgentDatabase: @unchecked Sendable {
             "SELECT name, sql, render_hint, refresh, description, pinned, created_at, updated_at FROM _views"
         ) { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
-                let name = String(cString: sqlite3_column_text(stmt, 0))
-                let sql = String(cString: sqlite3_column_text(stmt, 1))
-                let hint = String(cString: sqlite3_column_text(stmt, 2))
-                let refresh = String(cString: sqlite3_column_text(stmt, 3))
+                guard let rawName = sqlite3_column_text(stmt, 0),
+                    let rawSQL = sqlite3_column_text(stmt, 1)
+                else { continue }
+                let name = String(cString: rawName)
+                let sql = String(cString: rawSQL)
+                let hint = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
+                let refresh = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? ""
                 let desc = sqlite3_column_text(stmt, 4).map { String(cString: $0) }
                 let pinned = sqlite3_column_int(stmt, 5) != 0
                 let created = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 6)))
@@ -2575,7 +2589,7 @@ public final class AgentDatabase: @unchecked Sendable {
         case SQLITE_INTEGER: return .integer(sqlite3_column_int64(stmt, Int32(index)))
         case SQLITE_FLOAT: return .double(sqlite3_column_double(stmt, Int32(index)))
         case SQLITE_TEXT:
-            return .text(String(cString: sqlite3_column_text(stmt, Int32(index))))
+            return .text(sqlite3_column_text(stmt, Int32(index)).map { String(cString: $0) } ?? "")
         case SQLITE_BLOB:
             let bytes = sqlite3_column_bytes(stmt, Int32(index))
             guard bytes > 0,
@@ -2594,6 +2608,12 @@ public final class AgentDatabase: @unchecked Sendable {
     private func executeRaw(_ sql: String) throws {
         guard let connection = db else { throw AgentDatabaseError.notOpen }
         try Self.executeRawOn(connection: connection, sql: sql)
+    }
+
+    internal func executeRawSQLForTests(_ sql: String) throws {
+        try queue.sync {
+            try executeRaw(sql)
+        }
     }
 
     private func executeRaw(_ sql: String, handler: (OpaquePointer) throws -> Void) throws {

@@ -207,6 +207,13 @@ public enum ChatExecutionContext {
     /// Explicit effort frozen alongside the toggle; nil keeps bundle defaults.
     @TaskLocal public static var currentReasoningEffort: String?
 
+    /// Explicit speculative-decoding choice (adaptive MTP/DFlash/DSpark/DFly2 on or off)
+    /// frozen for the parent turn; nil keeps bundle/server defaults.
+    @TaskLocal public static var currentSpeculativeDecoding: Bool?
+
+    /// Explicit keep-cache-in-RAM preference frozen for the parent turn; nil keeps server defaults.
+    @TaskLocal public static var currentKeepCacheInRAM: Bool?
+
     /// Exact user text that owns the scope of the current logical turn. A
     /// parent model may choose and parameterize a tool, but it may not silently
     /// broaden that request with new side effects. Desktop subagents use this

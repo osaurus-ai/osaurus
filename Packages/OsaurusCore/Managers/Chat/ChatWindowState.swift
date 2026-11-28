@@ -2442,13 +2442,16 @@ final class ChatWindowState: ObservableObject {
     /// dropped, so the window reopens on the chat the user was reading.
     /// Returns how many tabs were restored.
     @discardableResult
-    func restoreTabs(from record: ChatTabLayoutRecord) -> Int {
+    func restoreTabs(
+        from record: ChatTabLayoutRecord,
+        preloadedStubs: [UUID: ChatSessionData]? = nil
+    ) -> Int {
         var restored = 0
         let chatIds = record.tabs.compactMap(\.sessionId).filter { sessionId in
             !tabs.contains(where: { $0.session.sessionId == sessionId })
                 && BackgroundTaskManager.shared.taskState(for: sessionId) == nil
         }
-        let stubs = transcriptStubs(for: chatIds)
+        let stubs = preloadedStubs ?? transcriptStubs(for: chatIds)
         for entry in record.tabs {
             // Workflows and their runs open in the Workflows window, not
             // as tabs; a layout saved by an earlier version may list them.
@@ -2525,10 +2528,13 @@ final class ChatWindowState: ObservableObject {
     /// The transcript loads from disk when the tab is selected; closing the
     /// tab dismisses the retained task. Returns whether a tab was added.
     @discardableResult
-    func attachRetainedTab(for task: BackgroundTaskState) -> Bool {
+    func attachRetainedTab(
+        for task: BackgroundTaskState,
+        preloadedStub: ChatSessionData? = nil
+    ) -> Bool {
         guard !task.isSubagentMirror, task.chatSession == nil, !task.status.isActive else { return false }
         guard !tabs.contains(where: { $0.session.sessionId == task.id }) else { return false }
-        guard let snapshot = transcriptStubs(for: [task.id])[task.id] else { return false }
+        guard let snapshot = preloadedStub ?? transcriptStubs(for: [task.id])[task.id] else { return false }
         let cold = makeFreshSession(agentId: snapshot.agentId ?? task.agentId, loading: snapshot)
         var tab = ChatTab(id: UUID(), session: cold)
         tab.isHibernated = true
@@ -2767,6 +2773,27 @@ final class ChatWindowState: ObservableObject {
             }
         }
         for var row in ChatSessionStore.loadMetadata(ids: missing) {
+            row.turns = []
+            stubs[row.id] = row
+        }
+        return stubs
+    }
+
+    /// Off-main variant of `transcriptStubs(for:)` that resolves cached rows
+    /// immediately and queries only uncached IDs off the main actor (APPLE-MACOS-40B).
+    func transcriptStubsAsync(for ids: [UUID]) async -> [UUID: ChatSessionData] {
+        var stubs: [UUID: ChatSessionData] = [:]
+        var missing: [UUID] = []
+        for id in ids {
+            if var cached = ChatSessionsManager.shared.session(for: id) {
+                cached.turns = []
+                stubs[id] = cached
+            } else {
+                missing.append(id)
+            }
+        }
+        guard !missing.isEmpty else { return stubs }
+        for var row in await ChatSessionStore.loadMetadataAsync(ids: missing) {
             row.turns = []
             stubs[row.id] = row
         }

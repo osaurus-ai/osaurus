@@ -31,6 +31,28 @@ struct AgentDatabaseTests {
         return db
     }
 
+    // MARK: - Expression index schema safety (APPLE-MACOS-46J)
+
+    @Test
+    func schemaSnapshotHandlesExpressionIndexWithoutCrashing() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "notes",
+            purpose: "test expression index",
+            columns: [
+                AgentColumnSpec(name: "title", type: "TEXT", nullable: false)
+            ],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        try db.executeRawSQLForTests("CREATE INDEX idx_test ON notes(LOWER(title))")
+        let snapshot = try db.schema()
+        let notes = try #require(snapshot.tables.first(where: { $0.name == "notes" }))
+        let exprIdx = try #require(notes.indexes.first(where: { $0.name == "idx_test" }))
+        #expect(exprIdx.columns == ["<expr>"])
+    }
+
     // MARK: - Soft delete defaults
 
     @Test

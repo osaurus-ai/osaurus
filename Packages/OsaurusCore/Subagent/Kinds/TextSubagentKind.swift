@@ -1075,7 +1075,9 @@ final class TextSubagentKind:
                 agentMaxTokens: targetMaxTokens,
                 generationSettings: generationSettings,
                 enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
-                    reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
+                reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
+                speculativeDecoding: scope.speculativeDecoding(forDelegatedModel: resolved.name),
+                keepCacheInRAM: scope.keepCacheInRAM(forDelegatedModel: resolved.name),
                     isInterrupted: { interrupt.isInterrupted },
                 toolset: toolset,
                 onProgress: { [feed] tokens, tokensPerSecond in

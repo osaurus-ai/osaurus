@@ -84,6 +84,7 @@ struct IMEAwareTextField: NSViewRepresentable {
         context.coordinator.parent = self
         // Don't stomp the field editor mid-composition.
         if !textView.hasMarkedText(), textView.string != text {
+            textView.undoManager?.removeAllActions()
             textView.string = text
         }
         if textView.font != font { textView.font = font }
@@ -129,6 +130,7 @@ struct IMEAwareTextField: NSViewRepresentable {
                 return true
             case #selector(NSResponder.cancelOperation(_:)) where parent.clearsOnEscape:
                 if !textView.string.isEmpty {
+                    textView.undoManager?.removeAllActions()
                     textView.string = ""
                     parent.text = ""
                 }

@@ -331,4 +331,31 @@ struct ChatTabLayoutPersistenceTests {
             #expect(window.tabs.count == 1)
         }
     }
+
+    // MARK: Async metadata restoration (APPLE-MACOS-40B)
+
+    @Test func loadMetadataAsync_andTranscriptStubsAsync_restoreTabsOffMain() async throws {
+        try await ChatHistoryTestStorage.run {
+            let first = storedSession("Async First")
+            let second = storedSession("Async Second")
+            let record = ChatTabLayoutRecord(
+                tabs: [
+                    .init(sessionId: first.id, lastActivatedAt: Date(timeIntervalSince1970: 1)),
+                    .init(sessionId: second.id, lastActivatedAt: Date(timeIntervalSince1970: 2)),
+                ],
+                activeSessionId: second.id,
+                savedAt: Date()
+            )
+
+            let rows = await ChatSessionStore.loadMetadataAsync(ids: [first.id, second.id])
+            #expect(rows.map(\.id) == [first.id, second.id])
+
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            let stubs = await window.transcriptStubsAsync(for: [first.id, second.id])
+            #expect(stubs.count == 2)
+            #expect(window.restoreTabs(from: record, preloadedStubs: stubs) == 2)
+            #expect(window.tabs.map(\.session.sessionId) == [first.id, second.id])
+        }
+    }
 }

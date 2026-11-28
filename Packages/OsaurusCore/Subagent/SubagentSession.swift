@@ -1260,6 +1260,12 @@ public enum SubagentSession {
                         try await ChatExecutionContext.$currentEnableThinking.withValue(
                             prepared.scope.enableThinking
                         ) {
+                            try await ChatExecutionContext.$currentSpeculativeDecoding.withValue(
+                                prepared.scope.speculativeDecoding
+                            ) {
+                            try await ChatExecutionContext.$currentKeepCacheInRAM.withValue(
+                                prepared.scope.keepCacheInRAM
+                            ) {
                             try await ChatExecutionContext.$currentToolCallId.withValue(
                                 prepared.scope.toolCallId
                             ) {
@@ -1300,6 +1306,8 @@ public enum SubagentSession {
                                     }
                                 }
                                 }
+                            }
+                            }
                             }
                         }
                     }

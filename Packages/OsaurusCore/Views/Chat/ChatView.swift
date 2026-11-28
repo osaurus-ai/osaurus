@@ -10440,10 +10440,16 @@ final class ChatSession: ObservableObject {
                 turnModelId
             ) { [self] () async -> Void in
             await ChatExecutionContext.$currentEnableThinking.withValue(
-                turnGenerationControls.enableThinking
+                turnGenerationControls.effectiveEnableThinking
             ) { [self] () async -> Void in
             await ChatExecutionContext.$currentReasoningEffort.withValue(
                 turnGenerationControls.reasoningEffort
+            ) { [self] () async -> Void in
+            await ChatExecutionContext.$currentSpeculativeDecoding.withValue(
+                turnGenerationControls.agentSettings?.speculativeDecoding
+            ) { [self] () async -> Void in
+            await ChatExecutionContext.$currentKeepCacheInRAM.withValue(
+                turnGenerationControls.agentSettings?.keepCacheInRAM
             ) { [self] () async -> Void in
             // Same flag `turnToMessage` uses to encode tool-turn images, so
             // `file_read` never stages an image the request would drop.
@@ -10452,6 +10458,8 @@ final class ChatSession: ObservableObject {
             ) { [self] () async -> Void in
                 await runTurn()
             }  // ChatExecutionContext.$toolResultImagesEnabled.withValue
+            }  // ChatExecutionContext.$currentKeepCacheInRAM.withValue
+            }  // ChatExecutionContext.$currentSpeculativeDecoding.withValue
             }  // ChatExecutionContext.$currentReasoningEffort.withValue
             }  // ChatExecutionContext.$currentEnableThinking.withValue
             }  // ChatExecutionContext.$currentModelName.withValue

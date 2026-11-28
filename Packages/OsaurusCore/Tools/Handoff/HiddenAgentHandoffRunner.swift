@@ -333,6 +333,8 @@ final class HiddenAgentHandoffKind: SubagentKind, SubagentPostAdmissionResidency
             temperature: resolvedTemperature,
             enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
             reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
+            speculativeDecoding: scope.speculativeDecoding(forDelegatedModel: resolved.name),
+            keepCacheInRAM: scope.keepCacheInRAM(forDelegatedModel: resolved.name),
             isInterrupted: { interrupt.isInterrupted },
             toolset: toolset,
             endsRun: endsRun,

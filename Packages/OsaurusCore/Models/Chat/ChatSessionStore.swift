@@ -75,8 +75,26 @@ enum ChatSessionStore {
     /// moments ago is not reported missing. Ids with no row are absent.
     static func loadMetadata(ids: [UUID]) -> [ChatSessionData] {
         ensureOpen()
+        return overlayingPendingMetadata(ids: ids, on: store.loadMetadata(ids: ids))
+    }
+
+    /// Off-main variant of `loadMetadata(ids:)` so window restoration never
+    /// parks the main thread behind `SyncConversationStore`'s write queue (APPLE-MACOS-40B).
+    static func loadMetadataAsync(ids: [UUID]) async -> [ChatSessionData] {
+        guard !ids.isEmpty else { return [] }
+        ensureOpen()
+        guard didOpen else { return loadMetadata(ids: ids) }
+        let db = store
+        let rows = await Task.detached(priority: .userInitiated, operation: { db.loadMetadata(ids: ids) }).value
+        return overlayingPendingMetadata(ids: ids, on: rows)
+    }
+
+    private static func overlayingPendingMetadata(
+        ids: [UUID],
+        on rows: [ChatSessionData]
+    ) -> [ChatSessionData] {
         var byId: [UUID: ChatSessionData] = [:]
-        for row in store.loadMetadata(ids: ids) {
+        for row in rows {
             byId[row.id] = row
         }
         for id in ids {

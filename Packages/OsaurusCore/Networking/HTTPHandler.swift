@@ -8657,7 +8657,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            let sessions = await MainActor.run { ChatSessionStore.loadAll() }
+            let sessions = await ChatSessionStore.loadAllAsync()
             // Like the Mac's history search: title match, or the message
             // bodies contain the query (a DB scan off the main actor).
             let contentMatches: Set<UUID> =

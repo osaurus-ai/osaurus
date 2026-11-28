@@ -38,6 +38,10 @@ public struct SubagentScope: Sendable, Equatable {
     /// own bundle default; true/false must survive every reconstructed step.
     public let enableThinking: Bool?
     public let reasoningEffort: String?
+    /// Explicit parent-turn speculative decoding choice (adaptive on/off).
+    public let speculativeDecoding: Bool?
+    /// Explicit parent-turn keep-cache-in-RAM choice.
+    public let keepCacheInRAM: Bool?
     /// The tools the workflow step that started this run lists, when it
     /// runs inside a workflow. Installing the workflow authorized them, so
     /// a kind whose tool is here skips its per-agent enable flag.
@@ -50,6 +54,8 @@ public struct SubagentScope: Sendable, Equatable {
         parentModelName: String? = nil,
         enableThinking: Bool? = nil,
         reasoningEffort: String? = nil,
+        speculativeDecoding: Bool? = nil,
+        keepCacheInRAM: Bool? = nil,
         workflowGrantedToolNames: Set<String>? = nil
     ) {
         self.sessionId = sessionId
@@ -58,6 +64,8 @@ public struct SubagentScope: Sendable, Equatable {
         self.parentModelName = parentModelName
         self.enableThinking = enableThinking
         self.reasoningEffort = reasoningEffort
+        self.speculativeDecoding = speculativeDecoding
+        self.keepCacheInRAM = keepCacheInRAM
         self.workflowGrantedToolNames = workflowGrantedToolNames
     }
 
@@ -90,6 +98,8 @@ public struct SubagentScope: Sendable, Equatable {
             parentModelName: ChatExecutionContext.currentModelName,
             enableThinking: ChatExecutionContext.currentEnableThinking,
             reasoningEffort: ChatExecutionContext.currentReasoningEffort,
+            speculativeDecoding: ChatExecutionContext.currentSpeculativeDecoding,
+            keepCacheInRAM: ChatExecutionContext.currentKeepCacheInRAM,
             workflowGrantedToolNames: ChatExecutionContext.workflowGrantedToolNames
         )
     }
@@ -119,6 +129,22 @@ public struct SubagentScope: Sendable, Equatable {
             model.caseInsensitiveCompare(parent) == .orderedSame
         else { return nil }
         return reasoningEffort
+    }
+
+    /// Same-model speculative-decoding preference (adaptive MTP/DFlash/DSpark/DFly2 on/off).
+    public func speculativeDecoding(forDelegatedModel model: String?) -> Bool? {
+        guard let parent = parentModelName, let model,
+            model.caseInsensitiveCompare(parent) == .orderedSame
+        else { return nil }
+        return speculativeDecoding
+    }
+
+    /// Same-model keep-cache-in-RAM preference.
+    public func keepCacheInRAM(forDelegatedModel model: String?) -> Bool? {
+        guard let parent = parentModelName, let model,
+            model.caseInsensitiveCompare(parent) == .orderedSame
+        else { return nil }
+        return keepCacheInRAM
     }
 }
 
