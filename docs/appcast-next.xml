@@ -3,6 +3,27 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>1.0.14</title>
+            <pubDate>Sat, 28 Nov 2026 00:17:34 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.14</sparkle:version>
+            <sparkle:shortVersionString>1.0.14</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.14/Osaurus-1.0.14.dmg" length="126512824" type="application/octet-stream" sparkle:edSignature="lTxZq2DZ2wn6KNRnx6/HnqhOzk9q678qg1m6C2tBc2Dg4DYyZwZgJPi5ZEa7W83dUcBS19fttACqi61RUgy8CA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Pin vmlx-swift for ERNIE 5.5 Flash runtime, DSpark, and reasoning controls by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3553
+* Computer Use upgrade by @tpae in https://github.com/osaurus-ai/osaurus/pull/3546
+* Holo4 27B/35B VL runtime support: pin vmlx-swift 31b5201d & reasoning-effort discovery by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3555
+* Pin vmlx-swift 85b09386: ERNIE/Inkling/Bonsai speedups, DFlash2 priority, and same-model concurrency by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3558
+* Pin vmlx-swift long-context MMA/radix/Split-K speedups and add per-agent Keep Cache in RAM by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3559
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.13...1.0.14
+]]></description>
+        </item>
+        <item>
             <title>1.0.13</title>
             <pubDate>Wed, 25 Nov 2026 19:43:50 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

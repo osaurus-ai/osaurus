@@ -3,27 +3,23 @@
   <channel>
     <title>Osaurus</title>
         <item>
-            <title>1.0.13</title>
-            <pubDate>Wed, 25 Nov 2026 19:43:50 +0000</pubDate>
-            <sparkle:version>1.0.13</sparkle:version>
-            <sparkle:shortVersionString>1.0.13</sparkle:shortVersionString>
+            <title>1.0.14</title>
+            <pubDate>Sat, 28 Nov 2026 00:17:34 +0000</pubDate>
+            <sparkle:version>1.0.14</sparkle:version>
+            <sparkle:shortVersionString>1.0.14</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.13/Osaurus-1.0.13.dmg" length="126326179" type="application/octet-stream" sparkle:edSignature="ezVN/zBHkw3feuXNTQvUa7M2Hxrz+WLh+dw/iy35bJZ787c26aH7fHeu3kcHy78G4+S+jHTLbt5CVBRRrxqoCQ=="/>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.14/Osaurus-1.0.14.dmg" length="126512824" type="application/octet-stream" sparkle:edSignature="lTxZq2DZ2wn6KNRnx6/HnqhOzk9q678qg1m6C2tBc2Dg4DYyZwZgJPi5ZEa7W83dUcBS19fttACqi61RUgy8CA=="/>
             <description sparkle:format="markdown"><![CDATA[
 ## What's Changed
-* Polish agent pages, providers and the chat launch state by @tpae in https://github.com/osaurus-ai/osaurus/pull/3544
-* Load Bonsai 2.5 Prism and JANG in Osaurus by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3545
-* Repin the runtime for Inkling JANGHT bundles by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3541
-* Run delegated first-run work on the Cloud stand-in while the local model downloads by @tpae in https://github.com/osaurus-ai/osaurus/pull/3547
-* restore settings callout action buttons by @RaajeevChandran in https://github.com/osaurus-ai/osaurus/pull/3548
-* Create pairing offer off the main thread to prevent UI hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3543
-* Probe Foundation Models off the main thread during AppConfiguration startup by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3542
-* i18n(ja): continue Japanese localization (Settings and Chat labels, batch 2) by @eightman999 in https://github.com/osaurus-ai/osaurus/pull/3549
-* Make settings search match localized setting labels by @eightman999 in https://github.com/osaurus-ai/osaurus/pull/3540
+* Pin vmlx-swift for ERNIE 5.5 Flash runtime, DSpark, and reasoning controls by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3553
+* Computer Use upgrade by @tpae in https://github.com/osaurus-ai/osaurus/pull/3546
+* Holo4 27B/35B VL runtime support: pin vmlx-swift 31b5201d & reasoning-effort discovery by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3555
+* Pin vmlx-swift 85b09386: ERNIE/Inkling/Bonsai speedups, DFlash2 priority, and same-model concurrency by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3558
+* Pin vmlx-swift long-context MMA/radix/Split-K speedups and add per-agent Keep Cache in RAM by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3559
 
 
-**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.12...1.0.13
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.13...1.0.14
 ]]></description>
             <sparkle:channel>beta</sparkle:channel>
             <sparkle:minimumAutoupdateVersion>1.0.0</sparkle:minimumAutoupdateVersion>
