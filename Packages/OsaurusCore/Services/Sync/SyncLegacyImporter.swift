@@ -70,7 +70,7 @@ final class SyncLegacyImporter: ObservableObject {
                 outcome = await Self.importAll { done, total in
                     await MainActor.run {
                         SyncLegacyImporter.shared.state = .importing(done: done, total: total)
-                        ChatSessionsManager.shared.refresh()
+                        ChatSessionsManager.shared.refreshInBackground()
                     }
                 }
                 if outcome != nil { break }
@@ -80,7 +80,7 @@ final class SyncLegacyImporter: ObservableObject {
                 importer.task = nil
                 if let outcome {
                     importer.state = .finished(imported: outcome.imported, failed: outcome.failed)
-                    ChatSessionsManager.shared.refresh()
+                    ChatSessionsManager.shared.refreshInBackground()
                 }
             }
         }

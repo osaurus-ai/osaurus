@@ -30,6 +30,10 @@ struct ChatTurnGenerationControls: Sendable, Equatable, Codable {
         overrides.reasoningEffort ?? agentSettings?.reasoningEffort ?? modelOptions?["reasoningEffort"]?.stringValue
     }
 
+    var effectiveEnableThinking: Bool? {
+        overrides.enableThinking ?? agentSettings?.enableThinking ?? enableThinking
+    }
+
     /// Derive the readout from the same frozen generation composition as dispatch.
     func reasoningOptions(for modelID: String) -> [String: ModelOptionValue] {
         var request = ResponsesInferenceRequest(model: modelID, input: [])

@@ -193,9 +193,17 @@ struct EditableTextView: NSViewRepresentable {
         // Never overwrite while an IME composition is active: assigning `string`
         // unmarks the marked text and breaks CJK input.
         guard textView.string != text, !textView.hasMarkedText() else { return }
-        textView.string = text
+        Self.applyProgrammaticText(text, to: textView)
         textView.invalidateIntrinsicContentSize()
         scrollView.invalidateIntrinsicContentSize()
+    }
+
+    /// Replaces `textView.string` programmatically and clears stale AppKit
+    /// `NSUndoTyping` records whose character ranges would otherwise point past
+    /// the new text length and raise `NSRangeException` on Cmd+Z (APPLE-MACOS-PK).
+    static func applyProgrammaticText(_ text: String, to textView: NSTextView) {
+        textView.undoManager?.removeAllActions()
+        textView.string = text
     }
 
     private func syncStyling(_ textView: CustomNSTextView, coord: Coordinator) {

@@ -36,24 +36,35 @@ final class ChatSessionsManager: ObservableObject {
     /// toucher.
     private(set) static var isInstantiated = false
 
-    /// Launch-prewarm entry point: open the sync core off the main actor,
-    /// then create `shared`, so init's synchronous `loadAll()` doesn't pay
-    /// the open (Keychain read, database open) on the launch main thread.
+    private static var prewarmedInitialSessions: [ChatSessionData]?
+
+    /// Launch-prewarm entry point: open the sync core and read initial metadata
+    /// off the main actor, then create `shared`, so init never blocks the launch
+    /// main thread on Keychain/SQLite/SyncCore locks (APPLE-MACOS-3RT).
     static func prewarmShared() async {
         guard !isInstantiated else { return }
         if !SyncService.shared.isOpen {
             await Task.detached(priority: .userInitiated) { _ = try? SyncService.shared.open() }.value
         }
+        let preloaded = await ChatSessionStore.loadAllAsync()
+        if !isInstantiated {
+            prewarmedInitialSessions = preloaded
+        }
         _ = ChatSessionsManager.shared
+        prewarmedInitialSessions = nil
     }
 
     private init() {
         Self.isInstantiated = true
-        // Load synchronously so the first reader (ChatWindowState.init)
-        // sees populated sessions. Deferring this via Task caused the
-        // sidebar to render empty on first open until something else
-        // (New Chat, agent switch) triggered a manual refresh.
-        sessions = ChatSessionStore.loadAll()
+        // Use prewarmed metadata when launched via `prewarmShared()` so startup
+        // never blocks the main thread waiting on SyncCore; fall back to
+        // synchronous load when initialized directly (e.g. unit tests).
+        if let preloaded = Self.prewarmedInitialSessions {
+            Self.prewarmedInitialSessions = nil
+            sessions = preloaded
+        } else {
+            sessions = ChatSessionStore.loadAll()
+        }
 
         // Production-only launch-race recovery: if the initial load raced a
         // key rotation, `ChatSessionStore` deferred the DB open rather than

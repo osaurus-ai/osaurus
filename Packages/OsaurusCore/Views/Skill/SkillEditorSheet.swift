@@ -629,6 +629,7 @@ private struct ThemedNSTextView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         if textView.string != text {
+            textView.undoManager?.removeAllActions()
             textView.string = text
         }
         textView.textColor = NSColor(textColor)

@@ -68,4 +68,29 @@ struct EditableTextViewSpellCheckTests {
         UserDefaults.standard.set(true, forKey: key)
         #expect(ComposerSpellCheckSetting.isEnabled == true)
     }
+
+    @Test("programmatic text replacement clears stale undo records so undo does not raise NSRangeException")
+    func programmaticTextResetClearsUndoStack() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let textView = CustomNSTextView(usingTextLayoutManager: false)
+        textView.allowsUndo = true
+        window.contentView = textView
+
+        textView.insertText("12345678", replacementRange: NSRange(location: 0, length: 0))
+        #expect(textView.string == "12345678")
+        #expect(textView.undoManager?.canUndo == true)
+
+        EditableTextView.applyProgrammaticText("", to: textView)
+        #expect(textView.string.isEmpty)
+        #expect(textView.undoManager?.canUndo == false)
+
+        // Calling undo after programmatic clear must be a safe no-op, not NSRangeException.
+        textView.undoManager?.undo()
+        #expect(textView.string.isEmpty)
+    }
 }

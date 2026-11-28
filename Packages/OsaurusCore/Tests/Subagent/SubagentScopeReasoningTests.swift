@@ -73,4 +73,28 @@ struct SubagentScopeReasoningTests {
         let s = scope(parentModel: "m", enableThinking: nil)
         #expect(s.enableThinking(forDelegatedModel: "m") == nil)
     }
+
+    @Test func sameModelSpeculationAndKeepCacheInRAMAreScopedToParentModel() {
+        let s = SubagentScope(
+            sessionId: "s",
+            toolCallId: "t",
+            agentId: Agent.defaultId,
+            parentModelName: "OsaurusAI/ERNIE-5.5-Flash",
+            speculativeDecoding: false,
+            keepCacheInRAM: true
+        )
+        #expect(s.speculativeDecoding(forDelegatedModel: "osaurusai/ernie-5.5-flash") == false)
+        #expect(s.keepCacheInRAM(forDelegatedModel: "osaurusai/ernie-5.5-flash") == true)
+        #expect(s.speculativeDecoding(forDelegatedModel: "OsaurusAI/Inkling-2-Mini") == nil)
+        #expect(s.keepCacheInRAM(forDelegatedModel: "OsaurusAI/Inkling-2-Mini") == nil)
+    }
+
+    @Test func chatTurnGenerationControlsEffectiveEnableThinkingRespectsPrecedence() {
+        var controls = ChatTurnGenerationControls.capture(activeModelOptions: ["disableThinking": .bool(true)])
+        #expect(controls.effectiveEnableThinking == false)
+        controls.agentSettings = AgentGenerationSettings(enableThinking: true)
+        #expect(controls.effectiveEnableThinking == true)
+        controls.overrides.enableThinking = false
+        #expect(controls.effectiveEnableThinking == false)
+    }
 }

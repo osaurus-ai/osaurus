@@ -1220,21 +1220,23 @@ public final class SpeechService: ObservableObject {
                 print("[SpeechService] Using system default input device")
             }
 
+            let busFormat = inputNode.outputFormat(forBus: 0)
             let hwFormat = inputNode.inputFormat(forBus: 0)
+            let captureFormat = (busFormat.sampleRate > 0 && busFormat.channelCount > 0) ? busFormat : hwFormat
             print(
-                "[SpeechService] Hardware input format: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount) channels"
+                "[SpeechService] Hardware input format: \(captureFormat.sampleRate)Hz, \(captureFormat.channelCount) channels"
             )
 
-            guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
+            guard captureFormat.sampleRate > 0, captureFormat.channelCount > 0 else {
                 throw SpeechError.transcriptionFailed(
                     "Audio input device is not available. Please check your microphone settings."
                 )
             }
 
             guard
-                let tapFormat = AVAudioFormat(
+                let monoFormat = AVAudioFormat(
                     commonFormat: .pcmFormatFloat32,
-                    sampleRate: hwFormat.sampleRate,
+                    sampleRate: captureFormat.sampleRate,
                     channels: 1,
                     interleaved: false
                 )
@@ -1242,23 +1244,21 @@ public final class SpeechService: ObservableObject {
                 throw SpeechError.transcriptionFailed("Failed to create audio format")
             }
 
+            // Pass `format: nil` so AVAudioEngine uses bus 0's native format instead of
+            // raising an uncaught NSException when a multi-channel device doesn't match a
+            // hardcoded 1-channel tap format (APPLE-MACOS-3H4). We mix down to mono in the tap.
             inputNode.removeTap(onBus: 0)
-            inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { tapBuffer, _ in
+            inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { tapBuffer, _ in
                 guard buffer.isActive else { return }
-
-                guard let floatData = tapBuffer.floatChannelData?[0] else { return }
-                let frameCount = Int(tapBuffer.frameLength)
-                guard frameCount > 0 else { return }
+                let samples = Self.extractMonoFloatSamples(from: tapBuffer, monoFormat: monoFormat)
+                guard !samples.isEmpty else { return }
 
                 var sum: Float = 0
-                for i in 0 ..< frameCount {
-                    let sample = floatData[i]
+                for sample in samples {
                     sum += sample * sample
                 }
-                let rms = sqrt(sum / Float(frameCount))
+                let rms = sqrt(sum / Float(samples.count))
                 buffer.setLevel(min(1.0, rms * 10))
-
-                let samples = Array(UnsafeBufferPointer(start: floatData, count: frameCount))
                 buffer.append(samples)
             }
 
@@ -1283,8 +1283,69 @@ public final class SpeechService: ObservableObject {
                 throw error
             }
 
-            return (engine, tapFormat)
+            return (engine, monoFormat)
         }.value
+    }
+
+    /// Converts an arbitrary input tap buffer (mono, stereo, multi-channel, or non-Float32)
+    /// into mono Float32 samples at the buffer's sample rate.
+    nonisolated static func extractMonoFloatSamples(
+        from tapBuffer: AVAudioPCMBuffer,
+        monoFormat: AVAudioFormat? = nil
+    ) -> [Float] {
+        let frameCount = Int(tapBuffer.frameLength)
+        guard frameCount > 0 else { return [] }
+        let channelCount = Int(tapBuffer.format.channelCount)
+        guard channelCount > 0 else { return [] }
+
+        if tapBuffer.format.commonFormat == .pcmFormatFloat32,
+            !tapBuffer.format.isInterleaved,
+            let floatChannels = tapBuffer.floatChannelData
+        {
+            if channelCount == 1 {
+                return Array(UnsafeBufferPointer(start: floatChannels[0], count: frameCount))
+            }
+            var mono = [Float](repeating: 0, count: frameCount)
+            let invChannels = 1.0 / Float(channelCount)
+            for ch in 0 ..< channelCount {
+                let ptr = floatChannels[ch]
+                for i in 0 ..< frameCount {
+                    mono[i] += ptr[i] * invChannels
+                }
+            }
+            return mono
+        }
+
+        // Fallback for interleaved or integer PCM input formats.
+        let targetFormat =
+            monoFormat
+            ?? AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: tapBuffer.format.sampleRate,
+                channels: 1,
+                interleaved: false
+            )
+        guard let targetFormat,
+            let converter = AVAudioConverter(from: tapBuffer.format, to: targetFormat),
+            let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: tapBuffer.frameLength)
+        else { return [] }
+
+        var consumed = false
+        var conversionError: NSError?
+        converter.convert(to: outBuffer, error: &conversionError) { _, outStatus in
+            if consumed {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            consumed = true
+            outStatus.pointee = .haveData
+            return tapBuffer
+        }
+        guard conversionError == nil,
+            let outPtr = outBuffer.floatChannelData?[0],
+            outBuffer.frameLength > 0
+        else { return [] }
+        return Array(UnsafeBufferPointer(start: outPtr, count: Int(outBuffer.frameLength)))
     }
 
     private func startAudioLevelMonitoring() {

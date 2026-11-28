@@ -172,6 +172,8 @@ enum AgentSubagentRunner {
         generationSettings: AgentGenerationSettings? = nil,
         enableThinking: Bool? = nil,
         reasoningEffort: String? = nil,
+        speculativeDecoding: Bool? = nil,
+        keepCacheInRAM: Bool? = nil,
         isAgentRequest: Bool = true,
         stopOnToolRejection: Bool = false,
         treatEmptyChoicesAsFinal: Bool = false,
@@ -271,8 +273,8 @@ enum AgentSubagentRunner {
                 // or the model's native defaults on every tool iteration.
                 generationSettings?.apply(to: &request.generation)
                 request.context.agentReasoningDefaults = AgentReasoningDefaults(settings: generationSettings)
-                request.context.speculativeDecoding = generationSettings?.speculativeDecoding
-                request.context.keepCacheInRAM = generationSettings?.keepCacheInRAM
+                request.context.speculativeDecoding = generationSettings?.speculativeDecoding ?? speculativeDecoding
+                request.context.keepCacheInRAM = generationSettings?.keepCacheInRAM ?? keepCacheInRAM
                 request.context.admissionPositionLimit = admissionPositionLimit ?? contextWindow
                 request.context.samplingParametersAreImplicit = true
                 request.context.isAgentRequest = isAgentRequest

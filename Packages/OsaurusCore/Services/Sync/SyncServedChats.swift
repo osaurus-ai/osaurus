@@ -294,7 +294,7 @@ final class SyncServedChats: ObservableObject {
             LedgerStore.markPromoted()
             if count > 0 {
                 Self.log.info("promoted \(count, privacy: .public) served chats")
-                ChatSessionsManager.shared.refresh()
+                ChatSessionsManager.shared.refreshInBackground()
                 rescan(core)
             }
         }

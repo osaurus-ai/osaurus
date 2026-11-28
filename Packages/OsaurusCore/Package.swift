@@ -389,9 +389,11 @@ let package = Package(
         // vmlx-swift#798 loads transformers 5 qwen3_5 exports that declare `Qwen3_5Tokenizer` (Holo-3.1, Holo4)
         // with the family's Qwen2Tokenizer.
         // vmlx-swift#799 adds the ERNIE 5.5 Flash runtime with native DSpark speculation.
+        // vmlx-swift#804 adds fused Metal 3/4 kernels for Inkling-2-Mini, DFlash 2, and ERNIE 5.5 decode/verify/prefill.
+        // vmlx-swift#805 updates Cmlx/mlx to e34e19d31 (osaurus-ai/mlx #57-#78) and ports mapped/resident file shims (#800).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "723306785c30d27f1e85d58f3018a6b140af66d6"
+            revision: "758a7680022e3cc873b22f8dae8f14f0d8d59e05"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the

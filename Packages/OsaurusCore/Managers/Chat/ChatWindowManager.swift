@@ -1188,15 +1188,37 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let store = ChatTabLayoutStore.shared
         let orphans = store.orphanRecords(openWindowIds: Set(windowStates.keys))
         guard !orphans.isEmpty else { return }
-        // Oldest record first; the first record whose active chat comes
-        // back is the one the merged window opens on.
-        var restored = 0
-        for orphan in orphans {
-            restored += state.restoreTabs(from: orphan.record)
-        }
+        // Remove claimed orphan records immediately so a second window opened
+        // while metadata is loading off-main cannot adopt them twice.
         store.remove(windowIds: orphans.map(\.id))
-        if restored > 0 {
-            print("[ChatWindowManager] Restored \(restored) remembered tab(s) into window \(state.windowId)")
+
+        let allIds = orphans.flatMap { $0.record.tabs.compactMap(\.sessionId) }
+        let needsDiskLookup = allIds.contains { ChatSessionsManager.shared.session(for: $0) == nil }
+        if !needsDiskLookup || RuntimeEnvironment.isUnderTests {
+            var restored = 0
+            for orphan in orphans {
+                restored += state.restoreTabs(from: orphan.record)
+            }
+            if restored > 0 {
+                print("[ChatWindowManager] Restored \(restored) remembered tab(s) into window \(state.windowId)")
+            }
+            return
+        }
+
+        // Load missing session metadata off the main actor so window creation
+        // never blocks on SyncConversationStore's write queue (APPLE-MACOS-40B).
+        let windowId = state.windowId
+        Task { @MainActor [weak self, weak state] in
+            guard let self, let state, self.windowStates[windowId] === state else { return }
+            let stubs = await state.transcriptStubsAsync(for: allIds)
+            guard self.windowStates[windowId] === state else { return }
+            var restored = 0
+            for orphan in orphans {
+                restored += state.restoreTabs(from: orphan.record, preloadedStubs: stubs)
+            }
+            if restored > 0 {
+                print("[ChatWindowManager] Restored \(restored) remembered tab(s) into window \(windowId)")
+            }
         }
     }
 
@@ -1225,12 +1247,27 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// freshly created window: live runs attach their in-memory session,
     /// runs retained across relaunch become hibernated tabs.
     private func attachRegistryRuns(to state: ChatWindowState) {
+        var uncachedRetained: [BackgroundTaskState] = []
         for task in BackgroundTaskManager.shared.tasksForTabs() {
             if let shownIn = findWindow(bySessionId: task.id), shownIn.id != state.windowId { continue }
             if task.chatSession != nil {
                 state.attachBackgroundTab(for: task)
-            } else {
+            } else if ChatSessionsManager.shared.session(for: task.id) != nil || RuntimeEnvironment.isUnderTests {
                 state.attachRetainedTab(for: task)
+            } else {
+                uncachedRetained.append(task)
+            }
+        }
+        guard !uncachedRetained.isEmpty else { return }
+        let windowId = state.windowId
+        Task { @MainActor [weak self, weak state] in
+            guard let self, let state, self.windowStates[windowId] === state else { return }
+            let stubs = await state.transcriptStubsAsync(for: uncachedRetained.map(\.id))
+            guard self.windowStates[windowId] === state else { return }
+            for task in uncachedRetained {
+                if let shownIn = self.findWindow(bySessionId: task.id), shownIn.id != windowId { continue }
+                guard let stub = stubs[task.id] else { continue }
+                state.attachRetainedTab(for: task, preloadedStub: stub)
             }
         }
     }
