@@ -391,9 +391,11 @@ let package = Package(
         // vmlx-swift#799 adds the ERNIE 5.5 Flash runtime with native DSpark speculation.
         // vmlx-swift#804 adds fused Metal 3/4 kernels for Inkling-2-Mini, DFlash 2, and ERNIE 5.5 decode/verify/prefill.
         // vmlx-swift#805 updates Cmlx/mlx to e34e19d31 (osaurus-ai/mlx #57-#78) and ports mapped/resident file shims (#800).
+        // vmlx-swift#806 adds training-free Apple LoopCD (default hidden 0.25 on 3-loop Inkling-2-Mini with isolated cacheComputationIdentity; opt-in on 2-loop Nanbeige).
+        // vmlx-swift#807 adds native Hy4-flash (`hy_v4_flash`) MXFP4/FP8/BF16 with zero-RAM SSD Engram, IndexPool MLA, and inline Adaptive DFly2.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "758a7680022e3cc873b22f8dae8f14f0d8d59e05"
+            revision: "734e7e86634efbf23c9c7f28a7f725e4d785dc3a"
         ),
         // FluidAudio minors break source compatibility (0.14.3 added a
         // required `language:` to PocketTTS downloads; 0.18.2 moved the
