@@ -308,7 +308,7 @@ final class InsightsService: ObservableObject {
         logs.removeAll()
         totalRequestCountRaw = 0
         pendingFocusLogId = nil
-        pagedLogs = []
+        replacePagedLogs(with: [])
         summary = .empty
         totalRequestCount = 0
         hasLogs = false
@@ -466,7 +466,7 @@ final class InsightsService: ObservableObject {
         guard storeAvailable else {
             // Hot-cache fallback keeps the tab useful if the store is down.
             let filtered = Self.filterInMemory(logs, filter)
-            pagedLogs = filtered
+            replacePagedLogs(with: filtered)
             totalRequestCount = filtered.count
             hasLogs = !logs.isEmpty
             canLoadMore = false
@@ -487,7 +487,7 @@ final class InsightsService: ObservableObject {
             let agents = (try? store.distinctValues(column: .agentName)) ?? []
             await MainActor.run { [weak self] in
                 guard let self, self.filter == filter else { return }
-                self.pagedLogs = rows
+                self.replacePagedLogs(with: rows)
                 self.totalRequestCount = count
                 self.summary = summary
                 self.canLoadMore = rows.count < count
@@ -497,6 +497,19 @@ final class InsightsService: ObservableObject {
                 self.knownAgents = agents
                 self.isLoading = false
             }
+        }
+    }
+
+    /// Swap in a new page of rows without freeing the old ones on the main
+    /// actor. Rows can carry full prompt/response bodies, so tearing down
+    /// hundreds of them synchronously in the `pagedLogs` setter hung the
+    /// main thread (APPLE-MACOS-47K). The outgoing array is handed to a box
+    /// that holds its last reference and is emptied on a background task.
+    private func replacePagedLogs(with rows: [RequestLog]) {
+        let outgoing = RetiredRows(pagedLogs)
+        pagedLogs = rows
+        Task.detached(priority: .utility) {
+            outgoing.release()
         }
     }
 
@@ -1403,5 +1416,20 @@ private enum PresenceProbe: Hashable, Sendable {
         case .turn(let id): return (try? store.exists(turnId: id)) ?? false
         case .request(let id): return (try? store.exists(requestId: id)) ?? false
         }
+    }
+}
+
+/// Sole owner of a `pagedLogs` array being replaced, so its teardown runs on
+/// whichever thread calls `release()` rather than in the main-actor setter.
+/// Only touched by the background task after hand-off.
+private final class RetiredRows: @unchecked Sendable {
+    private var rows: [RequestLog]
+
+    init(_ rows: [RequestLog]) {
+        self.rows = rows
+    }
+
+    func release() {
+        rows = []
     }
 }
